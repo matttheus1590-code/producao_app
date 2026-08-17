@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Cadastro de Estações · Controle de Produção{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-gear"></i> Cadastro de Estações</h4>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('estacoes_lista') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Voltar
+    </a>
+    <a href="{{ url_for('cadastros_estacoes_novo') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-circle"></i> Nova estação
+    </a>
+  </div>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Ordem</th>
+        <th>Nome</th>
+        <th>Meta de lead time (dias)</th>
+        <th>Situação</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in estacoes %}
+      <tr>
+        <td>{{ e.ordem_exibicao }}</td>
+        <td>{{ e.nome }}</td>
+        <td>{{ e.meta_lead_time_dias if e.meta_lead_time_dias is not none else "—" }}</td>
+        <td>
+          {% if e.ativo %}<span class="badge bg-success">Ativa</span>{% else %}<span class="badge bg-secondary">Inativa</span>{% endif %}
+        </td>
+        <td class="text-end">
+          <a href="{{ url_for('cadastros_estacoes_editar', estacao_id=e.id) }}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="text-center text-muted py-4">Nenhuma estação cadastrada.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

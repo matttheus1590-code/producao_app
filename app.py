@@ -17,14 +17,18 @@ from models import (
     REGIOES_OPCOES,
     SEMAFORO_CORES,
     SEMAFORO_LABELS,
+    STATUS_CHAO_CORES,
+    STATUS_CHAO_LABELS,
+    STATUS_CHAO_OPCOES,
     STATUS_CORES,
     STATUS_OPCOES,
+    Estacao,
     HistoricoAlteracao,
     ItemPedido,
     Pedido,
     Usuario,
 )
-from permissoes import ROLES, ROLES_LABELS, requer_role
+from permissoes import ROLES, ROLES_LABELS, pode_editar_estacao, requer_role
 
 MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
@@ -76,12 +80,14 @@ def create_app():
         _migrar_itens_pedido(app)
         _migrar_producao_para_itens(app)
         _migrar_usuarios_role(app)
+        _migrar_estacoes_tabela(app)
         _seed_inicial(app)
 
     @app.context_processor
     def inject_globals():
+        estacoes_ativas = [e.nome for e in Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all()]
         return dict(
-            ESTACOES=ESTACOES,
+            ESTACOES=estacoes_ativas or ESTACOES,
             STATUS_OPCOES=STATUS_OPCOES,
             PRIORIDADE_OPCOES=PRIORIDADE_OPCOES,
             FRETE_OPCOES=FRETE_OPCOES,
@@ -93,6 +99,9 @@ def create_app():
             SEMAFORO_CORES=SEMAFORO_CORES,
             SEMAFORO_LABELS=SEMAFORO_LABELS,
             PRAZO_ALERTA_DIAS=PRAZO_ALERTA_DIAS,
+            STATUS_CHAO_OPCOES=STATUS_CHAO_OPCOES,
+            STATUS_CHAO_LABELS=STATUS_CHAO_LABELS,
+            STATUS_CHAO_CORES=STATUS_CHAO_CORES,
         )
 
     register_routes(app)
@@ -224,6 +233,21 @@ def _migrar_usuarios_role(app):
         conn.execute(text("UPDATE usuarios SET role = 'ADMIN' WHERE username = 'admin'"))
         conn.execute(text("UPDATE usuarios SET ativo = TRUE WHERE ativo IS NULL"))
     app.logger.info("Migração automática: usuários existentes receberam papel de acesso (role).")
+
+
+def _migrar_estacoes_tabela(app):
+    """Cadastra as estações como registros de verdade na tabela "estacoes", com
+    os mesmos nomes e a mesma ordem da lista fixa ESTACOES (models.py).
+
+    Como itens continuam guardando a estação pelo nome (texto), nenhum pedido
+    existente precisa mudar — só passa a existir um registro correspondente
+    pra cada nome, que os cadastros/tela de Estações usam."""
+    if Estacao.query.count() > 0:
+        return  # já foi semeado (ou o usuário já está gerenciando pelo cadastro)
+    for i, nome in enumerate(ESTACOES):
+        db.session.add(Estacao(nome=nome, ordem_exibicao=i, ativo=True))
+    db.session.commit()
+    app.logger.info("Migração automática: %d estações cadastradas como tabela.", len(ESTACOES))
 
 
 def _seed_inicial(app):
@@ -931,6 +955,168 @@ def register_routes(app):
                 "info",
             )
         return redirect(url_for("usuarios_lista"))
+
+    # ------------------------------------------------------------------
+    # Estações — visão geral por setor + Kanban de produção
+    # ------------------------------------------------------------------
+    @app.route("/estacoes")
+    @login_required
+    def estacoes_lista():
+        estacoes = Estacao.query.order_by(Estacao.ordem_exibicao).all()
+        hoje = date.today()
+        linhas = []
+        for e in estacoes:
+            fila = ItemPedido.query.filter(
+                ItemPedido.estacao == e.nome, ItemPedido.status_producao != "FINALIZADO"
+            ).count()
+            criticos = ItemPedido.query.filter(
+                ItemPedido.estacao == e.nome,
+                ItemPedido.status_producao != "FINALIZADO",
+                ItemPedido.liberacao_prevista.isnot(None),
+                ItemPedido.liberacao_prevista < hoje,
+            ).count()
+            itens_lt = ItemPedido.query.filter(
+                ItemPedido.estacao == e.nome,
+                ItemPedido.inicio_producao.isnot(None),
+                ItemPedido.termino_inspecao.isnot(None),
+            ).all()
+            lt_medio = (
+                round(sum((i.termino_inspecao - i.inicio_producao).days for i in itens_lt) / len(itens_lt), 1)
+                if itens_lt
+                else None
+            )
+            linhas.append({"estacao": e, "fila": fila, "criticos": criticos, "lt_medio": lt_medio})
+        return render_template("estacoes_lista.html", linhas=linhas)
+
+    @app.route("/estacoes/<nome>")
+    @login_required
+    def estacao_kanban(nome):
+        estacao = Estacao.query.filter_by(nome=nome).first()
+        if estacao is None:
+            flash("Estação não encontrada.", "danger")
+            return redirect(url_for("estacoes_lista"))
+
+        itens = ItemPedido.query.options(selectinload(ItemPedido.pedido)).filter(ItemPedido.estacao == nome).all()
+        itens.sort(key=lambda i: (i.pedido.data_inclusao_pedido or date.min, i.pedido_id))
+
+        colunas = {chave: [] for chave in STATUS_CHAO_OPCOES}
+        for item in itens:
+            colunas[item.status_chao].append(item)
+
+        return render_template(
+            "estacoes_kanban.html",
+            estacao=estacao,
+            colunas=colunas,
+            pode_editar=pode_editar_estacao(current_user, nome),
+        )
+
+    @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
+    @login_required
+    def estacao_kanban_mover(nome):
+        item_id = request.form.get("item_id", type=int)
+        item = db.session.get(ItemPedido, item_id) if item_id else None
+        if item is None:
+            flash("Item não encontrado.", "danger")
+            return redirect(url_for("estacao_kanban", nome=nome))
+
+        if not pode_editar_estacao(current_user, item.estacao or nome):
+            flash("Você não tem permissão para mover itens desta estação.", "danger")
+            return redirect(url_for("estacao_kanban", nome=nome))
+
+        antes = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+        hoje = date.today()
+        etapa_atual = item.status_chao
+
+        if etapa_atual in ("NAO_INICIADO", "PROGRAMADO"):
+            item.inicio_producao = hoje
+        elif etapa_atual == "EM_PRODUCAO":
+            item.inicio_inspecao = hoje
+        elif etapa_atual == "INSPECAO":
+            item.termino_inspecao = hoje
+        elif etapa_atual == "EMBALAGEM":
+            item.liberacao_faturamento = hoje
+        else:
+            flash("Este item já está finalizado.", "info")
+            return redirect(url_for("estacao_kanban", nome=nome))
+
+        item.status_manual = False
+        item.atualizar_status_automatico()
+
+        depois = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+        _registrar_alteracoes("item_pedido", item.id, item.pedido_id, antes, depois, CAMPOS_HISTORICO_ITEM)
+        db.session.commit()
+
+        flash(
+            f"\"{item.descricao_produto}\" avançou para {STATUS_CHAO_LABELS.get(item.status_chao, item.status_chao)}.",
+            "success",
+        )
+        return redirect(url_for("estacao_kanban", nome=nome))
+
+    # ------------------------------------------------------------------
+    # Cadastros > Estações — CRUD simples (ADMIN/PCP)
+    # ------------------------------------------------------------------
+    @app.route("/cadastros/estacoes")
+    @requer_role("ADMIN", "PCP")
+    def cadastros_estacoes():
+        estacoes = Estacao.query.order_by(Estacao.ordem_exibicao).all()
+        return render_template("cadastros_estacoes.html", estacoes=estacoes)
+
+    @app.route("/cadastros/estacoes/novo", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def cadastros_estacoes_novo():
+        if request.method == "POST":
+            f = request.form
+            nome = f.get("nome", "").strip().upper()
+            if not nome:
+                flash("Informe o nome da estação.", "danger")
+                return render_template("cadastros_estacoes_form.html", estacao=None, form=f)
+            if Estacao.query.filter_by(nome=nome).first():
+                flash("Já existe uma estação com esse nome.", "danger")
+                return render_template("cadastros_estacoes_form.html", estacao=None, form=f)
+
+            maior_ordem = db.session.query(func.max(Estacao.ordem_exibicao)).scalar() or 0
+            meta = f.get("meta_lead_time_dias", "").strip()
+            nova = Estacao(
+                nome=nome,
+                ordem_exibicao=maior_ordem + 1,
+                meta_lead_time_dias=int(meta) if meta.isdigit() else None,
+                ativo=True,
+            )
+            db.session.add(nova)
+            db.session.commit()
+            flash(f"Estação {nome} cadastrada com sucesso.", "success")
+            return redirect(url_for("cadastros_estacoes"))
+
+        return render_template("cadastros_estacoes_form.html", estacao=None, form={})
+
+    @app.route("/cadastros/estacoes/<int:estacao_id>/editar", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def cadastros_estacoes_editar(estacao_id):
+        estacao = db.session.get(Estacao, estacao_id)
+        if estacao is None:
+            flash("Estação não encontrada.", "danger")
+            return redirect(url_for("cadastros_estacoes"))
+
+        if request.method == "POST":
+            f = request.form
+            nome = f.get("nome", "").strip().upper()
+            if not nome:
+                flash("Informe o nome da estação.", "danger")
+                return render_template("cadastros_estacoes_form.html", estacao=estacao, form=f)
+            outra = Estacao.query.filter(Estacao.nome == nome, Estacao.id != estacao.id).first()
+            if outra:
+                flash("Já existe outra estação com esse nome.", "danger")
+                return render_template("cadastros_estacoes_form.html", estacao=estacao, form=f)
+
+            estacao.nome = nome
+            meta = f.get("meta_lead_time_dias", "").strip()
+            estacao.meta_lead_time_dias = int(meta) if meta.isdigit() else None
+            estacao.ativo = bool(f.get("ativo"))
+            db.session.commit()
+            flash(f"Estação {estacao.nome} atualizada com sucesso.", "success")
+            return redirect(url_for("cadastros_estacoes"))
+
+        return render_template("cadastros_estacoes_form.html", estacao=estacao, form={})
 
 
 app = create_app()

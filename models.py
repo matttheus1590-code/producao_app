@@ -23,6 +23,28 @@ ESTACOES = [
 
 STATUS_OPCOES = ["PENDENTE", "EM TRATATIVA", "ANDAMENTO", "FINALIZADO"]
 
+# Status de CHÃO DE FÁBRICA — mais granular que o STATUS_OPCOES "comercial" acima
+# (PENDENTE/EM TRATATIVA/ANDAMENTO/FINALIZADO). É só uma leitura mais detalhada
+# das MESMAS datas que já existem em cada item (não é um campo novo, não duplica
+# nada) — usado no Kanban da tela Estações.
+STATUS_CHAO_OPCOES = ["NAO_INICIADO", "PROGRAMADO", "EM_PRODUCAO", "INSPECAO", "EMBALAGEM", "FINALIZADO"]
+STATUS_CHAO_LABELS = {
+    "NAO_INICIADO": "Pendente",
+    "PROGRAMADO": "Programado",
+    "EM_PRODUCAO": "Em produção",
+    "INSPECAO": "Inspeção",
+    "EMBALAGEM": "Embalagem",
+    "FINALIZADO": "Finalizado",
+}
+STATUS_CHAO_CORES = {
+    "NAO_INICIADO": "secondary",
+    "PROGRAMADO": "info",
+    "EM_PRODUCAO": "primary",
+    "INSPECAO": "warning",
+    "EMBALAGEM": "warning",
+    "FINALIZADO": "success",
+}
+
 # Região de cada UF, usada só para o filtro "Região" da listagem — a planilha
 # original não tem uma coluna de região separada, então agrupamos a partir do
 # estado (Pedido.estado) já existente.
@@ -110,6 +132,24 @@ class Usuario(UserMixin, db.Model):
         # Sobrescreve o padrão do Flask-Login (que assume sempre True) para que
         # usuários desativados não consigam mais entrar, sem precisar apagá-los.
         return self.ativo
+
+
+class Estacao(db.Model):
+    """Estação de produção — antes era só uma lista fixa (ESTACOES) em Python,
+    agora é uma tabela de verdade, o que permite ordenar, desativar e (no
+    futuro) guardar meta de lead time por estação sem mexer em código.
+
+    Os itens continuam guardando a estação pelo NOME (ItemPedido.estacao é
+    texto, não uma chave estrangeira) — assim nenhum pedido existente perde a
+    referência quando esta tabela é criada."""
+
+    __tablename__ = "estacoes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(40), unique=True, nullable=False)
+    ordem_exibicao = db.Column(db.Integer, nullable=False, default=0)
+    meta_lead_time_dias = db.Column(db.Integer, nullable=True)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
 
 
 class Pedido(db.Model):
@@ -280,6 +320,25 @@ class ItemPedido(db.Model):
     @property
     def semaforo(self):
         return semaforo_prazo(self.liberacao_prevista, finalizado=(self.status_producao == "FINALIZADO"))
+
+    @property
+    def status_chao(self):
+        """Status de chão de fábrica (mais granular), calculado a partir das
+        MESMAS datas que status_producao já usa — nenhum campo novo.
+
+        A etapa "PROGRAMADO" só passa a acontecer de verdade quando a
+        Programação semanal existir (fase 6); até lá esta property nunca
+        retorna "PROGRAMADO" e a coluna correspondente do Kanban fica vazia,
+        o que é esperado."""
+        if self.termino_inspecao and self.liberacao_faturamento:
+            return "FINALIZADO"
+        if self.termino_inspecao:
+            return "EMBALAGEM"
+        if self.inicio_inspecao:
+            return "INSPECAO"
+        if self.inicio_producao:
+            return "EM_PRODUCAO"
+        return "NAO_INICIADO"
 
     def atualizar_status_automatico(self):
         """Recalcula status_producao deste item a partir das datas preenchidas.

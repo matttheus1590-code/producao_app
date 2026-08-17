@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ estacao.nome }} · Kanban{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-kanban"></i> {{ estacao.nome }}</h4>
+  <div class="d-flex align-items-center gap-2">
+    {% if not pode_editar %}
+    <span class="badge bg-secondary">Somente leitura</span>
+    {% endif %}
+    <a href="{{ url_for('estacoes_lista') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Voltar
+    </a>
+  </div>
+</div>
+
+<div class="kanban-board">
+  {% for etapa in STATUS_CHAO_OPCOES %}
+  <div class="kanban-coluna">
+    <div class="kanban-coluna-titulo bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }} bg-opacity-25">
+      {{ STATUS_CHAO_LABELS.get(etapa, etapa) }}
+      <span class="badge bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }}">{{ colunas[etapa] | length }}</span>
+    </div>
+    <div class="kanban-coluna-corpo">
+      {% for item in colunas[etapa] %}
+      {% set cor, dias = item.semaforo %}
+      <div class="card kanban-card mb-2 border-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">
+        <div class="card-body p-2">
+          <div class="small text-muted">
+            Pedido {{ item.pedido.pedido_venda or ('#' + item.pedido.id|string) }} — {{ item.pedido.cliente }}
+          </div>
+          <div class="fw-semibold small mb-1">{{ item.descricao_produto }}</div>
+          <div class="d-flex justify-content-between align-items-center">
+            <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
+              {% if dias is none %}sem prazo{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
+            </span>
+            <a href="{{ url_for('detalhe_pedido', pedido_id=item.pedido_id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Ver pedido">
+              <i class="bi bi-eye"></i>
+            </a>
+          </div>
+          {% if pode_editar and etapa != 'FINALIZADO' %}
+          <form method="post" action="{{ url_for('estacao_kanban_mover', nome=estacao.nome) }}" class="mt-2">
+            <input type="hidden" name="item_id" value="{{ item.id }}">
+            <button type="submit" class="btn btn-sm btn-primary w-100">Avançar ▶</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <div class="text-muted small text-center py-3">
+        {% if etapa == 'PROGRAMADO' %}
+          Vazio até a Programação semanal existir
+        {% else %}
+          Vazio
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

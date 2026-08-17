@@ -26,6 +26,17 @@
         <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
           <i class="bi bi-plus-circle"></i> <span>Novo pedido</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint in ('estacoes_lista', 'estacao_kanban') %}active{% endif %}" href="{{ url_for('estacoes_lista') }}">
+          <i class="bi bi-kanban"></i> <span>Estações</span>
+        </a>
+
+        {% if current_user.role in ('ADMIN', 'PCP') %}
+        <div class="app-nav-section">Cadastros</div>
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('cadastros_estacoes') %}active{% endif %}" href="{{ url_for('cadastros_estacoes') }}">
+          <i class="bi bi-diagram-3"></i> <span>Estações</span>
+        </a>
+        {% endif %}
+
         {% if current_user.role == 'ADMIN' %}
         <div class="app-nav-section">Administração</div>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('usuarios_') %}active{% endif %}" href="{{ url_for('usuarios_lista') }}">
