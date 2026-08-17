@@ -32,6 +32,9 @@
         <a class="app-nav-link {% if request.endpoint == 'programacao_semana' %}active{% endif %}" href="{{ url_for('programacao_semana') }}">
           <i class="bi bi-calendar-week"></i> <span>Programação</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'kpis' %}active{% endif %}" href="{{ url_for('kpis') }}">
+          <i class="bi bi-graph-up"></i> <span>KPIs</span>
+        </a>
 
         {% if current_user.role in ('ADMIN', 'PCP') %}
         <div class="app-nav-section">Cadastros</div>

@@ -472,6 +472,90 @@ def _backlog_por_estacao():
     return [{"estacao": e or "—", "quantidade": q} for e, q in linhas]
 
 
+def _lead_time_por_estacao(desde=None):
+    """Lead time médio (dias) agrupado por estação, entre os itens que já têm
+    início de produção e término de inspeção preenchidos."""
+    query = ItemPedido.query.filter(
+        ItemPedido.inicio_producao.isnot(None), ItemPedido.termino_inspecao.isnot(None), ItemPedido.estacao.isnot(None)
+    )
+    if desde:
+        query = query.filter(ItemPedido.termino_inspecao >= desde)
+    agrupado = {}
+    for item in query.all():
+        agrupado.setdefault(item.estacao, []).append((item.termino_inspecao - item.inicio_producao).days)
+
+    resultado = [
+        {"estacao": estacao, "lt_medio": round(sum(dias) / len(dias), 1), "quantidade": len(dias)}
+        for estacao, dias in agrupado.items()
+    ]
+    resultado.sort(key=lambda r: r["lt_medio"], reverse=True)
+    return resultado
+
+
+def _otd_por_vendedor(desde=None):
+    """OTD (% no prazo) agrupado por vendedor, entre os itens finalizados que
+    têm liberação prevista e término de inspeção preenchidos."""
+    query = ItemPedido.query.options(selectinload(ItemPedido.pedido)).filter(
+        ItemPedido.status_producao == "FINALIZADO",
+        ItemPedido.liberacao_prevista.isnot(None),
+        ItemPedido.termino_inspecao.isnot(None),
+    )
+    if desde:
+        query = query.filter(ItemPedido.termino_inspecao >= desde)
+
+    agrupado = {}
+    for item in query.all():
+        vendedor = (item.pedido.vendedor if item.pedido and item.pedido.vendedor else "Sem vendedor")
+        grupo = agrupado.setdefault(vendedor, {"no_prazo": 0, "total": 0})
+        grupo["total"] += 1
+        if item.termino_inspecao <= item.liberacao_prevista:
+            grupo["no_prazo"] += 1
+
+    resultado = [
+        {"vendedor": vendedor, "otd": round(100 * g["no_prazo"] / g["total"], 1), "total": g["total"]}
+        for vendedor, g in agrupado.items()
+    ]
+    resultado.sort(key=lambda r: r["otd"])
+    return resultado
+
+
+def _tendencia_kpis(meses=6):
+    """Finalizados / lead time médio / OTD por mês, dos últimos N meses — para
+    os gráficos de tendência da tela de KPIs."""
+    hoje = date.today()
+    pontos = []
+    ano, mes = hoje.year, hoje.month
+    for _ in range(meses):
+        pontos.append((ano, mes))
+        mes -= 1
+        if mes == 0:
+            mes, ano = 12, ano - 1
+    pontos.reverse()
+
+    resultado = []
+    for ano, mes in pontos:
+        inicio = date(ano, mes, 1)
+        fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
+        itens = ItemPedido.query.filter(
+            ItemPedido.termino_inspecao.isnot(None),
+            ItemPedido.termino_inspecao >= inicio,
+            ItemPedido.termino_inspecao < fim,
+        ).all()
+
+        lt_medio, otd = None, None
+        if itens:
+            lts = [(i.termino_inspecao - i.inicio_producao).days for i in itens if i.inicio_producao]
+            if lts:
+                lt_medio = round(sum(lts) / len(lts), 1)
+            com_prazo = [i for i in itens if i.liberacao_prevista]
+            if com_prazo:
+                no_prazo = sum(1 for i in com_prazo if i.termino_inspecao <= i.liberacao_prevista)
+                otd = round(100 * no_prazo / len(com_prazo), 1)
+
+        resultado.append({"mes": f"{MESES_PT[mes - 1]}/{ano}", "finalizados": len(itens), "lt_medio": lt_medio, "otd": otd})
+    return resultado
+
+
 def _construir_timeline(pedido):
     """Monta uma lista de eventos (data + descrição) a partir das datas já
     preenchidas no pedido e em cada item, para exibir como linha do tempo."""
@@ -552,6 +636,22 @@ def register_routes(app):
             tendencia_faturamento=_faturamento_tendencia(),
             backlog_estacao=_backlog_por_estacao(),
             pedidos_atrasados=pedidos_atrasados,
+        )
+
+    @app.route("/kpis")
+    @login_required
+    def kpis():
+        meses = request.args.get("meses", 6, type=int)
+        if meses not in (3, 6, 12):
+            meses = 6
+        desde = date.today() - timedelta(days=30 * meses)
+
+        return render_template(
+            "kpis.html",
+            meses=meses,
+            lead_time_estacao=_lead_time_por_estacao(desde=desde),
+            otd_vendedor=_otd_por_vendedor(desde=desde),
+            tendencia=_tendencia_kpis(meses=meses),
         )
 
     @app.route("/")
