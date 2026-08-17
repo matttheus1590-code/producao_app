@@ -23,6 +23,19 @@ ESTACOES = [
 
 STATUS_OPCOES = ["PENDENTE", "EM TRATATIVA", "ANDAMENTO", "FINALIZADO"]
 
+# Região de cada UF, usada só para o filtro "Região" da listagem — a planilha
+# original não tem uma coluna de região separada, então agrupamos a partir do
+# estado (Pedido.estado) já existente.
+REGIAO_POR_UF = {
+    "AC": "Norte", "AP": "Norte", "AM": "Norte", "PA": "Norte", "RO": "Norte", "RR": "Norte", "TO": "Norte",
+    "AL": "Nordeste", "BA": "Nordeste", "CE": "Nordeste", "MA": "Nordeste", "PB": "Nordeste",
+    "PE": "Nordeste", "PI": "Nordeste", "RN": "Nordeste", "SE": "Nordeste",
+    "DF": "Centro-Oeste", "GO": "Centro-Oeste", "MT": "Centro-Oeste", "MS": "Centro-Oeste",
+    "ES": "Sudeste", "MG": "Sudeste", "RJ": "Sudeste", "SP": "Sudeste",
+    "PR": "Sul", "RS": "Sul", "SC": "Sul",
+}
+REGIOES_OPCOES = ["Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul"]
+
 PRIORIDADE_OPCOES = ["BAIXA", "MÉDIA", "ALTA"]
 
 FRETE_OPCOES = ["CIF", "FOB", "SEM FRETE", "EXPORTAÇÃO", "OUTRO"]
@@ -39,6 +52,35 @@ PRIORIDADE_CORES = {
     "MÉDIA": "info",
     "ALTA": "danger",
 }
+
+# ---------------------------------------------------------------------------
+# Semáforo de prazo: compara a liberação prevista com hoje.
+#   verde    -> ainda falta bastante tempo
+#   amarelo  -> vencendo (dentro de PRAZO_ALERTA_DIAS dias)
+#   vermelho -> já passou do prazo
+#   cinza    -> não dá pra saber (sem data prevista, ou item já finalizado)
+# ---------------------------------------------------------------------------
+PRAZO_ALERTA_DIAS = 3  # ajuste este número se quiser um limite diferente de "vencendo"
+
+SEMAFORO_CORES = {"verde": "success", "amarelo": "warning", "vermelho": "danger", "cinza": "secondary"}
+SEMAFORO_LABELS = {"verde": "No prazo", "amarelo": "Vencendo", "vermelho": "Atrasado", "cinza": "Sem prazo"}
+_SEMAFORO_PRIORIDADE = {"vermelho": 0, "amarelo": 1, "verde": 2, "cinza": 3}  # menor = mais urgente
+
+
+def semaforo_prazo(liberacao_prevista, finalizado=False, hoje=None):
+    """Retorna (cor, dias) comparando a liberação prevista com hoje.
+
+    dias negativo = atrasado; dias positivo = quanto falta.
+    """
+    hoje = hoje or date.today()
+    if finalizado or not liberacao_prevista:
+        return ("cinza", None)
+    dias = (liberacao_prevista - hoje).days
+    if dias < 0:
+        return ("vermelho", dias)
+    if dias <= PRAZO_ALERTA_DIAS:
+        return ("amarelo", dias)
+    return ("verde", dias)
 
 
 class Usuario(UserMixin, db.Model):
@@ -175,6 +217,14 @@ class Pedido(db.Model):
             fim = date.today()
         return (fim - self.data_cliente).days
 
+    @property
+    def semaforo(self):
+        """Pior semáforo de prazo entre os itens do pedido (o mais urgente manda)."""
+        if not self.itens:
+            return ("cinza", None)
+        piores = sorted((item.semaforo for item in self.itens), key=lambda s: _SEMAFORO_PRIORIDADE[s[0]])
+        return piores[0]
+
 
 class ItemPedido(db.Model):
     """Um produto dentro de um pedido. Um pedido pode ter vários itens, e cada
@@ -226,6 +276,10 @@ class ItemPedido(db.Model):
             return None
         fim = self.termino_inspecao or date.today()
         return (fim - self.pedido.data_cliente).days
+
+    @property
+    def semaforo(self):
+        return semaforo_prazo(self.liberacao_prevista, finalizado=(self.status_producao == "FINALIZADO"))
 
     def atualizar_status_automatico(self):
         """Recalcula status_producao deste item a partir das datas preenchidas.

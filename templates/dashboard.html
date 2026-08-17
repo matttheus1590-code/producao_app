@@ -85,6 +85,32 @@
   <div class="col-md-1 d-grid">
     <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
   </div>
+
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Produto</label>
+    <input type="text" class="form-control" name="produto" value="{{ filtros.produto }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Região</label>
+    <select class="form-select" name="regiao">
+      <option value="">Todas</option>
+      {% for r in REGIOES_OPCOES %}
+        <option value="{{ r }}" {% if filtros.regiao == r %}selected{% endif %}>{{ r }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Incluído de</label>
+    <input type="date" class="form-control" name="data_inicio" value="{{ filtros.data_inicio }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Incluído até</label>
+    <input type="date" class="form-control" name="data_fim" value="{{ filtros.data_fim }}">
+  </div>
+  <div class="col-md-3 form-check ps-4">
+    <input type="checkbox" class="form-check-input" id="filtroAtrasados" name="atrasados" value="1" {% if filtros.atrasados %}checked{% endif %}>
+    <label class="form-check-label" for="filtroAtrasados">🔴 Só pedidos atrasados</label>
+  </div>
 </form>
 
 <div class="table-responsive">
@@ -98,6 +124,7 @@
         <th>Prioridade</th>
         <th>Estação</th>
         <th>Status</th>
+        <th>Prazo</th>
         <th>Lead time (dias)</th>
         <th></th>
       </tr>
@@ -112,6 +139,12 @@
         <td><span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade or "—" }}</span></td>
         <td>{{ p.estacao_resumo }}</td>
         <td><span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span></td>
+        <td>
+          {% set cor, dias = p.semaforo %}
+          <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
+            {% if dias is none %}—{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
+          </span>
+        </td>
         <td>{{ p.prazo_total_dias if p.prazo_total_dias is not none else "—" }}</td>
         <td class="text-end">
           <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
@@ -123,7 +156,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

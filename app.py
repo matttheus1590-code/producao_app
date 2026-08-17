@@ -1,9 +1,9 @@
 import os
-from datetime import datetime
+from datetime import date, datetime
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
-from sqlalchemy import inspect, text
+from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import selectinload
 
 from extensions import db, login_manager
@@ -12,6 +12,10 @@ from models import (
     FRETE_OPCOES,
     PRIORIDADE_CORES,
     PRIORIDADE_OPCOES,
+    REGIAO_POR_UF,
+    REGIOES_OPCOES,
+    SEMAFORO_CORES,
+    SEMAFORO_LABELS,
     STATUS_CORES,
     STATUS_OPCOES,
     HistoricoAlteracao,
@@ -82,6 +86,9 @@ def create_app():
             PRIORIDADE_CORES=PRIORIDADE_CORES,
             ROLES=ROLES,
             ROLES_LABELS=ROLES_LABELS,
+            REGIOES_OPCOES=REGIOES_OPCOES,
+            SEMAFORO_CORES=SEMAFORO_CORES,
+            SEMAFORO_LABELS=SEMAFORO_LABELS,
         )
 
     register_routes(app)
@@ -275,6 +282,66 @@ def _registrar_alteracoes(entidade_tipo, entidade_id, pedido_id, antes, depois, 
         )
 
 
+def _predicado_status(status):
+    """Traduz o status "calculado" do pedido (Pedido.status_producao) para uma
+    condição de SQL equivalente, para poder filtrar/contar direto no banco em
+    vez de carregar todo mundo em Python (como a tela inicial fazia antes).
+
+    Precisa reproduzir exatamente as mesmas regras da property Pedido.status_producao:
+      - algum item "EM TRATATIVA"   -> EM TRATATIVA (tem prioridade sobre o resto)
+      - todos os itens "FINALIZADO" -> FINALIZADO
+      - todos os itens "PENDENTE" (ou pedido sem item) -> PENDENTE
+      - qualquer outra mistura      -> ANDAMENTO
+    """
+    tem_itens = Pedido.itens.any()
+
+    if status == "EM TRATATIVA":
+        return Pedido.itens.any(ItemPedido.status_producao == "EM TRATATIVA")
+
+    if status == "FINALIZADO":
+        return and_(tem_itens, ~Pedido.itens.any(ItemPedido.status_producao != "FINALIZADO"))
+
+    if status == "PENDENTE":
+        return or_(~tem_itens, and_(tem_itens, ~Pedido.itens.any(ItemPedido.status_producao != "PENDENTE")))
+
+    if status == "ANDAMENTO":
+        return and_(
+            tem_itens,
+            ~Pedido.itens.any(ItemPedido.status_producao == "EM TRATATIVA"),
+            Pedido.itens.any(ItemPedido.status_producao != "FINALIZADO"),
+            Pedido.itens.any(ItemPedido.status_producao != "PENDENTE"),
+        )
+
+    return None
+
+
+def _predicado_atrasado():
+    """Pedido "atrasado": tem pelo menos um item com liberação prevista já
+    vencida e que ainda não foi finalizado — mesma regra do semáforo vermelho."""
+    return Pedido.itens.any(
+        and_(ItemPedido.liberacao_prevista < date.today(), ItemPedido.status_producao != "FINALIZADO")
+    )
+
+
+def _calcular_resumo():
+    """Contagens gerais (cards do topo) calculadas direto no banco — antes esta
+    função carregava TODOS os pedidos em Python a cada acesso à tela inicial."""
+    total = Pedido.query.count()
+    pendente = Pedido.query.filter(_predicado_status("PENDENTE")).count()
+    em_tratativa = Pedido.query.filter(_predicado_status("EM TRATATIVA")).count()
+    andamento = Pedido.query.filter(_predicado_status("ANDAMENTO")).count()
+    finalizado = Pedido.query.filter(_predicado_status("FINALIZADO")).count()
+    valor_total = db.session.query(func.sum(ItemPedido.quantidade * ItemPedido.custo_unitario)).scalar() or 0.0
+    return {
+        "total": total,
+        "pendente": pendente,
+        "em_tratativa": em_tratativa,
+        "andamento": andamento,
+        "finalizado": finalizado,
+        "valor_total": round(valor_total, 2),
+    }
+
+
 def _construir_timeline(pedido):
     """Monta uma lista de eventos (data + descrição) a partir das datas já
     preenchidas no pedido e em cada item, para exibir como linha do tempo."""
@@ -326,9 +393,6 @@ def register_routes(app):
     @app.route("/")
     @login_required
     def dashboard():
-        # status_producao do pedido agora é calculado a partir do status de cada
-        # item (produtos diferentes podem estar em etapas diferentes), então não
-        # dá mais pra filtrar/contar isso direto no banco — filtramos em Python.
         query = Pedido.query.options(selectinload(Pedido.itens))
 
         cliente = request.args.get("cliente", "").strip()
@@ -336,6 +400,11 @@ def register_routes(app):
         estacao = request.args.get("estacao", "").strip()
         vendedor = request.args.get("vendedor", "").strip()
         busca = request.args.get("busca", "").strip()
+        produto = request.args.get("produto", "").strip()
+        regiao = request.args.get("regiao", "").strip()
+        data_inicio = request.args.get("data_inicio", "").strip()
+        data_fim = request.args.get("data_fim", "").strip()
+        atrasados = request.args.get("atrasados", "").strip()
         page = request.args.get("page", 1, type=int)
 
         if cliente:
@@ -347,34 +416,40 @@ def register_routes(app):
         if busca:
             like = f"%{busca}%"
             query = query.filter(
-                db.or_(
+                or_(
                     Pedido.pedido_venda.ilike(like),
                     Pedido.cliente.ilike(like),
                     Pedido.itens.any(ItemPedido.descricao_produto.ilike(like)),
                 )
             )
+        if produto:
+            query = query.filter(Pedido.itens.any(ItemPedido.descricao_produto.ilike(f"%{produto}%")))
+        if regiao:
+            ufs_da_regiao = [uf for uf, r in REGIAO_POR_UF.items() if r == regiao]
+            if ufs_da_regiao:
+                query = query.filter(Pedido.estado.in_(ufs_da_regiao))
+        if data_inicio:
+            data_inicio_parsed = _parse_data_form(data_inicio)
+            if data_inicio_parsed:
+                query = query.filter(Pedido.data_inclusao_pedido >= data_inicio_parsed)
+        if data_fim:
+            data_fim_parsed = _parse_data_form(data_fim)
+            if data_fim_parsed:
+                query = query.filter(Pedido.data_inclusao_pedido <= data_fim_parsed)
+        if atrasados:
+            query = query.filter(_predicado_atrasado())
+        if status:
+            predicado = _predicado_status(status)
+            if predicado is not None:
+                query = query.filter(predicado)
 
         query = query.order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
 
-        if status:
-            encontrados = [p for p in query.all() if p.status_producao == status]
-            total_filtrado = len(encontrados)
-            pedidos = encontrados[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
-        else:
-            total_filtrado = query.count()
-            pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
-
+        total_filtrado = query.count()
+        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
         total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
 
-        todos_pedidos = Pedido.query.options(selectinload(Pedido.itens)).all()
-        resumo = {
-            "total": len(todos_pedidos),
-            "pendente": sum(1 for p in todos_pedidos if p.status_producao == "PENDENTE"),
-            "em_tratativa": sum(1 for p in todos_pedidos if p.status_producao == "EM TRATATIVA"),
-            "andamento": sum(1 for p in todos_pedidos if p.status_producao == "ANDAMENTO"),
-            "finalizado": sum(1 for p in todos_pedidos if p.status_producao == "FINALIZADO"),
-            "valor_total": sum(p.valor_total for p in todos_pedidos),
-        }
+        resumo = _calcular_resumo()
 
         return render_template(
             "dashboard.html",
@@ -383,7 +458,18 @@ def register_routes(app):
             page=page,
             total_paginas=total_paginas,
             total_filtrado=total_filtrado,
-            filtros=dict(cliente=cliente, status=status, estacao=estacao, vendedor=vendedor, busca=busca),
+            filtros=dict(
+                cliente=cliente,
+                status=status,
+                estacao=estacao,
+                vendedor=vendedor,
+                busca=busca,
+                produto=produto,
+                regiao=regiao,
+                data_inicio=data_inicio,
+                data_fim=data_fim,
+                atrasados=atrasados,
+            ),
         )
 
     @app.route("/pedidos/novo", methods=["GET", "POST"])
