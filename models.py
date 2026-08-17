@@ -324,12 +324,9 @@ class ItemPedido(db.Model):
     @property
     def status_chao(self):
         """Status de chão de fábrica (mais granular), calculado a partir das
-        MESMAS datas que status_producao já usa — nenhum campo novo.
-
-        A etapa "PROGRAMADO" só passa a acontecer de verdade quando a
-        Programação semanal existir (fase 6); até lá esta property nunca
-        retorna "PROGRAMADO" e a coluna correspondente do Kanban fica vazia,
-        o que é esperado."""
+        MESMAS datas que status_producao já usa — nenhum campo novo — mais a
+        existência de uma Programação ativa para decidir entre "Pendente" e
+        "Programado"."""
         if self.termino_inspecao and self.liberacao_faturamento:
             return "FINALIZADO"
         if self.termino_inspecao:
@@ -338,6 +335,8 @@ class ItemPedido(db.Model):
             return "INSPECAO"
         if self.inicio_producao:
             return "EM_PRODUCAO"
+        if any(p.status == "ATIVA" for p in self.programacoes):
+            return "PROGRAMADO"
         return "NAO_INICIADO"
 
     def atualizar_status_automatico(self):
@@ -362,6 +361,34 @@ class ItemPedido(db.Model):
             self.status_producao = "ANDAMENTO"
         else:
             self.status_producao = "PENDENTE"
+
+
+class Programacao(db.Model):
+    """Um agendamento de produção: "este item vai ser trabalhado na estação X,
+    no dia Y". Reprogramar NUNCA sobrescreve a data antiga — marca o registro
+    velho como REPROGRAMADA e cria um novo ATIVO, então o histórico de
+    reagendamentos fica registrado automaticamente, sem precisar duplicar isso
+    no histórico de alterações."""
+
+    __tablename__ = "programacoes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    item_pedido_id = db.Column(db.Integer, db.ForeignKey("itens_pedido.id"), nullable=False)
+    item = db.relationship("ItemPedido", backref="programacoes")
+
+    data_programada = db.Column(db.Date, nullable=False)
+    estacao = db.Column(db.String(40), nullable=False)  # snapshot — pode divergir do item se ele for reatribuído depois
+    prioridade_producao = db.Column(db.String(20), nullable=True)  # independente da prioridade comercial do pedido
+    observacao = db.Column(db.Text, nullable=True)
+
+    responsavel_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    responsavel = db.relationship("Usuario", foreign_keys=[responsavel_id])
+
+    status = db.Column(db.String(20), nullable=False, default="ATIVA")  # ATIVA / REPROGRAMADA / CANCELADA
+
+    criado_por_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    criado_por = db.relationship("Usuario", foreign_keys=[criado_por_id])
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class HistoricoAlteracao(db.Model):

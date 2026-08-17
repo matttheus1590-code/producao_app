@@ -29,6 +29,9 @@
         <a class="app-nav-link {% if request.endpoint in ('estacoes_lista', 'estacao_kanban') %}active{% endif %}" href="{{ url_for('estacoes_lista') }}">
           <i class="bi bi-kanban"></i> <span>Estações</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'programacao_semana' %}active{% endif %}" href="{{ url_for('programacao_semana') }}">
+          <i class="bi bi-calendar-week"></i> <span>Programação</span>
+        </a>
 
         {% if current_user.role in ('ADMIN', 'PCP') %}
         <div class="app-nav-section">Cadastros</div>

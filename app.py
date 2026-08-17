@@ -26,6 +26,7 @@ from models import (
     HistoricoAlteracao,
     ItemPedido,
     Pedido,
+    Programacao,
     Usuario,
 )
 from permissoes import ROLES, ROLES_LABELS, pode_editar_estacao, requer_role
@@ -1117,6 +1118,131 @@ def register_routes(app):
             return redirect(url_for("cadastros_estacoes"))
 
         return render_template("cadastros_estacoes_form.html", estacao=estacao, form={})
+
+    # ------------------------------------------------------------------
+    # Programação semanal (segunda a sexta) — PCP programa/reprograma
+    # ------------------------------------------------------------------
+    @app.route("/programacao")
+    @login_required
+    def programacao_semana():
+        semana_param = request.args.get("semana", "").strip()
+        referencia = _parse_data_form(semana_param) if semana_param else date.today()
+        referencia = referencia or date.today()
+        segunda = referencia - timedelta(days=referencia.weekday())
+        dias = [segunda + timedelta(days=i) for i in range(5)]
+
+        programacoes = (
+            Programacao.query.options(
+                selectinload(Programacao.item).selectinload(ItemPedido.pedido),
+                selectinload(Programacao.responsavel),
+            )
+            .filter(Programacao.data_programada.in_(dias), Programacao.status == "ATIVA")
+            .all()
+        )
+        por_dia = {d: [] for d in dias}
+        for p in programacoes:
+            por_dia[p.data_programada].append(p)
+
+        ja_programados = {p.item_pedido_id for p in Programacao.query.filter_by(status="ATIVA").all()}
+        itens_disponiveis = (
+            ItemPedido.query.options(selectinload(ItemPedido.pedido))
+            .filter(ItemPedido.status_producao != "FINALIZADO")
+            .all()
+        )
+        itens_disponiveis = [i for i in itens_disponiveis if i.id not in ja_programados]
+        itens_disponiveis.sort(key=lambda i: (i.pedido.cliente or "", i.descricao_produto))
+
+        responsaveis = Usuario.query.filter_by(ativo=True).order_by(Usuario.nome).all()
+
+        return render_template(
+            "programacao_semana.html",
+            dias=dias,
+            por_dia=por_dia,
+            segunda=segunda,
+            semana_anterior=segunda - timedelta(days=7),
+            semana_seguinte=segunda + timedelta(days=7),
+            itens_disponiveis=itens_disponiveis,
+            responsaveis=responsaveis,
+            pode_editar=(current_user.role in ("ADMIN", "PCP")),
+        )
+
+    @app.route("/programacao/novo", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def programacao_novo():
+        f = request.form
+        item_id = f.get("item_pedido_id", type=int)
+        data_programada = _parse_data_form(f.get("data_programada"))
+        item = db.session.get(ItemPedido, item_id) if item_id else None
+
+        if item is None or data_programada is None:
+            flash("Selecione um item e uma data válidos para programar.", "danger")
+            return redirect(url_for("programacao_semana"))
+
+        estacao_escolhida = f.get("estacao") or item.estacao or "—"
+
+        nova = Programacao(
+            item_pedido_id=item.id,
+            data_programada=data_programada,
+            estacao=estacao_escolhida,
+            prioridade_producao=f.get("prioridade_producao") or None,
+            observacao=f.get("observacao", "").strip() or None,
+            responsavel_id=f.get("responsavel_id", type=int) or None,
+            criado_por_id=current_user.id,
+            status="ATIVA",
+        )
+        db.session.add(nova)
+
+        # o Kanban de Estações mostra o item pela estação DELE (item.estacao), não
+        # pela estação gravada na programação — então programar pra uma estação
+        # diferente da atual também reatribui o item, pra ele aparecer no board certo
+        if estacao_escolhida and estacao_escolhida != "—" and item.estacao != estacao_escolhida:
+            antes = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+            item.estacao = estacao_escolhida
+            depois = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+            _registrar_alteracoes("item_pedido", item.id, item.pedido_id, antes, depois, CAMPOS_HISTORICO_ITEM)
+
+        db.session.commit()
+        flash(f"\"{item.descricao_produto}\" programado para {data_programada.strftime('%d/%m/%Y')}.", "success")
+        return redirect(url_for("programacao_semana", semana=data_programada.isoformat()))
+
+    @app.route("/programacao/<int:programacao_id>/reprogramar", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def programacao_reprogramar(programacao_id):
+        atual = db.session.get(Programacao, programacao_id)
+        if atual is None or atual.status != "ATIVA":
+            flash("Programação não encontrada ou já não está mais ativa.", "danger")
+            return redirect(url_for("programacao_semana"))
+
+        nova_data = _parse_data_form(request.form.get("data_programada"))
+        if nova_data is None:
+            flash("Informe uma nova data válida para reprogramar.", "danger")
+            return redirect(url_for("programacao_semana"))
+
+        atual.status = "REPROGRAMADA"
+        nova = Programacao(
+            item_pedido_id=atual.item_pedido_id,
+            data_programada=nova_data,
+            estacao=atual.estacao,
+            prioridade_producao=atual.prioridade_producao,
+            observacao=atual.observacao,
+            responsavel_id=atual.responsavel_id,
+            criado_por_id=current_user.id,
+            status="ATIVA",
+        )
+        db.session.add(nova)
+        db.session.commit()
+        flash(f"Reprogramado para {nova_data.strftime('%d/%m/%Y')}.", "success")
+        return redirect(url_for("programacao_semana", semana=nova_data.isoformat()))
+
+    @app.route("/programacao/<int:programacao_id>/cancelar", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def programacao_cancelar(programacao_id):
+        atual = db.session.get(Programacao, programacao_id)
+        if atual is not None and atual.status == "ATIVA":
+            atual.status = "CANCELADA"
+            db.session.commit()
+            flash("Programação cancelada.", "info")
+        return redirect(url_for("programacao_semana"))
 
 
 app = create_app()
