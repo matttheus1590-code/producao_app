@@ -20,10 +20,21 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PAGE_SIZE = 25
 
 
+def _resolve_database_uri():
+    """Usa DATABASE_URL (Postgres do Render) quando existir; senão, SQLite local."""
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        # Render/Heroku às vezes fornecem "postgres://", mas o SQLAlchemy 2.x exige "postgresql://"
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return url
+    return "sqlite:///" + os.path.join(BASE_DIR, "instance", "pedidos.db")
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "troque-esta-chave-em-producao")
-    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(BASE_DIR, "instance", "pedidos.db")
+    app.config["SQLALCHEMY_DATABASE_URI"] = _resolve_database_uri()
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     db.init_app(app)
