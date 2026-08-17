@@ -114,7 +114,10 @@
         <td><span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span></td>
         <td>{{ p.prazo_total_dias if p.prazo_total_dias is not none else "—" }}</td>
         <td class="text-end">
-          <a href="{{ url_for('editar_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary">
+          <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
+            <i class="bi bi-eye"></i>
+          </a>
+          <a href="{{ url_for('editar_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
             <i class="bi bi-pencil-square"></i>
           </a>
         </td>

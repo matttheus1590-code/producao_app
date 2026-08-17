@@ -24,6 +24,20 @@ from permissoes import ROLES, ROLES_LABELS, requer_role
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PAGE_SIZE = 25
 
+# Campos "importantes" que geram uma linha no histórico de alterações quando
+# mudam de valor (não registramos tudo, só o que realmente importa acompanhar).
+CAMPOS_HISTORICO_PEDIDO = ["cliente", "prioridade", "vendedor", "frete"]
+CAMPOS_HISTORICO_ITEM = [
+    "estacao",
+    "status_producao",
+    "inicio_producao",
+    "inicio_inspecao",
+    "termino_inspecao",
+    "liberacao_faturamento",
+    "liberacao_prevista",
+    "rnc",
+]
+
 
 def _resolve_database_uri():
     """Usa DATABASE_URL (Postgres do Render) quando existir; senão, SQLite local."""
@@ -237,6 +251,54 @@ def _parse_float_form(valor, default=0.0):
         return default
 
 
+def _registrar_alteracoes(entidade_tipo, entidade_id, pedido_id, antes, depois, campos):
+    """Compara os valores de "antes"/"depois" de uma lista de campos e grava uma
+    linha no histórico para cada campo que realmente mudou de valor. Gravado na
+    mesma sessão do banco que a alteração em si — só vira permanente quando o
+    resto da rota der commit()."""
+    for campo in campos:
+        v_antes = antes.get(campo)
+        v_depois = depois.get(campo)
+        if v_antes == v_depois:
+            continue
+        db.session.add(
+            HistoricoAlteracao(
+                entidade_tipo=entidade_tipo,
+                entidade_id=entidade_id,
+                pedido_id=pedido_id,
+                usuario_id=current_user.id if current_user.is_authenticated else None,
+                usuario_nome=current_user.nome if current_user.is_authenticated else None,
+                campo=campo,
+                valor_anterior=None if v_antes is None else str(v_antes),
+                valor_novo=None if v_depois is None else str(v_depois),
+            )
+        )
+
+
+def _construir_timeline(pedido):
+    """Monta uma lista de eventos (data + descrição) a partir das datas já
+    preenchidas no pedido e em cada item, para exibir como linha do tempo."""
+    eventos = []
+    if pedido.data_cliente:
+        eventos.append({"data": pedido.data_cliente, "titulo": "Data do cliente", "item": None})
+    if pedido.data_inclusao_pedido:
+        eventos.append({"data": pedido.data_inclusao_pedido, "titulo": "Pedido incluído no sistema", "item": None})
+
+    for item in pedido.itens:
+        rotulo = item.descricao_produto
+        if item.inicio_producao:
+            eventos.append({"data": item.inicio_producao, "titulo": f"Início de produção — {rotulo}", "item": item})
+        if item.inicio_inspecao:
+            eventos.append({"data": item.inicio_inspecao, "titulo": f"Início de inspeção/embalagem — {rotulo}", "item": item})
+        if item.termino_inspecao:
+            eventos.append({"data": item.termino_inspecao, "titulo": f"Término de inspeção/embalagem — {rotulo}", "item": item})
+        if item.liberacao_faturamento:
+            eventos.append({"data": item.liberacao_faturamento, "titulo": f"Liberado para faturamento — {rotulo}", "item": item})
+
+    eventos.sort(key=lambda e: e["data"])
+    return eventos
+
+
 def register_routes(app):
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -325,7 +387,7 @@ def register_routes(app):
         )
 
     @app.route("/pedidos/novo", methods=["GET", "POST"])
-    @login_required
+    @requer_role("ADMIN", "PCP")
     def novo_pedido():
         if request.method == "POST":
             f = request.form
@@ -377,7 +439,7 @@ def register_routes(app):
         return render_template("novo_pedido.html", form={}, itens=[])
 
     @app.route("/pedidos/<int:pedido_id>/editar", methods=["GET", "POST"])
-    @login_required
+    @requer_role("ADMIN", "PCP", "LIDER")
     def editar_pedido(pedido_id):
         pedido = db.session.get(Pedido, pedido_id)
         if pedido is None:
@@ -386,6 +448,8 @@ def register_routes(app):
 
         if request.method == "POST":
             f = request.form
+
+            pedido_antes = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_PEDIDO}
 
             pedido.data_cliente = _parse_data_form(f.get("data_cliente"))
             pedido.data_inclusao_pedido = _parse_data_form(f.get("data_inclusao_pedido"))
@@ -400,6 +464,9 @@ def register_routes(app):
 
             pedido.prioridade = f.get("prioridade") or pedido.prioridade
             pedido.obs = f.get("obs", "").strip() or None
+
+            pedido_depois = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_PEDIDO}
+            _registrar_alteracoes("pedido", pedido.id, pedido.id, pedido_antes, pedido_depois, CAMPOS_HISTORICO_PEDIDO)
 
             # ---- itens do pedido (vários produtos, cada um com sua própria produção) ----
             item_ids = f.getlist("item_id[]")
@@ -416,6 +483,9 @@ def register_routes(app):
             liberacoes_prevista = f.getlist("item_liberacao_prevista[]")
 
             itens_originais = {item.id: item for item in pedido.itens}
+            # snapshot ANTES de qualquer alteração, só dos itens que já existiam
+            # (itens novos não têm "antes" pra comparar — são uma inclusão, não uma mudança)
+            itens_antes = {iid: {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM} for iid, item in itens_originais.items()}
             ids_mantidos = set()
 
             linhas = zip(
@@ -460,6 +530,10 @@ def register_routes(app):
 
                 if item_id:
                     ids_mantidos.add(int(item_id))
+                    item_depois = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+                    _registrar_alteracoes(
+                        "item_pedido", int(item_id), pedido.id, itens_antes[int(item_id)], item_depois, CAMPOS_HISTORICO_ITEM
+                    )
 
             for iid, item in itens_originais.items():
                 if iid not in ids_mantidos:
@@ -475,8 +549,23 @@ def register_routes(app):
 
         return render_template("editar_pedido.html", pedido=pedido)
 
-    @app.route("/pedidos/<int:pedido_id>/excluir", methods=["POST"])
+    @app.route("/pedidos/<int:pedido_id>")
     @login_required
+    def detalhe_pedido(pedido_id):
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(url_for("dashboard"))
+        historico = (
+            HistoricoAlteracao.query.filter_by(pedido_id=pedido.id)
+            .order_by(HistoricoAlteracao.criado_em.desc())
+            .all()
+        )
+        timeline = _construir_timeline(pedido)
+        return render_template("detalhe_pedido.html", pedido=pedido, historico=historico, timeline=timeline)
+
+    @app.route("/pedidos/<int:pedido_id>/excluir", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
     def excluir_pedido(pedido_id):
         pedido = db.session.get(Pedido, pedido_id)
         if pedido is not None:

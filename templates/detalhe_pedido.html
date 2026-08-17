@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Pedido #{{ pedido.id }} · Detalhe{% endblock %}
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-11">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h4 class="mb-0"><i class="bi bi-file-earmark-text"></i> Pedido #{{ pedido.id }} — {{ pedido.cliente }}</h4>
+      <div class="d-flex align-items-center gap-2">
+        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-arrow-left"></i> Voltar
+        </a>
+        <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-primary btn-sm">
+          <i class="bi bi-pencil-square"></i> Editar
+        </a>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-3">
+        <div class="card text-center h-100"><div class="card-body py-2">
+          <div class="text-muted small">Status geral</div>
+          <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }} fs-6 mt-1">{{ pedido.status_producao }}</span>
+        </div></div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card text-center h-100"><div class="card-body py-2">
+          <div class="text-muted small">Prioridade</div>
+          <span class="badge bg-{{ PRIORIDADE_CORES.get(pedido.prioridade, 'secondary') }} fs-6 mt-1">{{ pedido.prioridade or "—" }}</span>
+        </div></div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card text-center h-100"><div class="card-body py-2">
+          <div class="text-muted small">Valor total</div>
+          <div class="fs-5 fw-semibold">R$ {{ "{:,.2f}".format(pedido.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card text-center h-100"><div class="card-body py-2">
+          <div class="text-muted small">Prazo total</div>
+          <div class="fs-5 fw-semibold">{{ pedido.prazo_total_dias if pedido.prazo_total_dias is not none else "—" }}</div>
+          <div class="text-muted small">dias</div>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="row g-4">
+      <div class="col-lg-7">
+
+        <div class="card mb-4">
+          <div class="card-body">
+            <h6 class="text-uppercase text-muted small mb-3">Informações comerciais</h6>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <div class="text-muted small">Cliente</div>
+                <div>{{ pedido.cliente }}</div>
+              </div>
+              <div class="col-md-6">
+                <div class="text-muted small">CNPJ</div>
+                <div>{{ pedido.cnpj or "—" }}</div>
+              </div>
+              <div class="col-md-6">
+                <div class="text-muted small">Vendedor</div>
+                <div>{{ pedido.vendedor or "—" }}</div>
+              </div>
+              <div class="col-md-6">
+                <div class="text-muted small">Pedido de venda</div>
+                <div>{{ pedido.pedido_venda or "—" }}</div>
+              </div>
+              <div class="col-md-4">
+                <div class="text-muted small">Cidade</div>
+                <div>{{ pedido.cidade or "—" }}</div>
+              </div>
+              <div class="col-md-4">
+                <div class="text-muted small">Estado</div>
+                <div>{{ pedido.estado or "—" }}</div>
+              </div>
+              <div class="col-md-4">
+                <div class="text-muted small">País</div>
+                <div>{{ pedido.pais or "—" }}</div>
+              </div>
+              <div class="col-md-4">
+                <div class="text-muted small">Frete</div>
+                <div>{{ pedido.frete or "—" }}</div>
+              </div>
+              <div class="col-md-4">
+                <div class="text-muted small">Data do cliente</div>
+                <div>{{ pedido.data_cliente or "—" }}</div>
+              </div>
+              <div class="col-md-4">
+                <div class="text-muted small">Data de inclusão</div>
+                <div>{{ pedido.data_inclusao_pedido or "—" }}</div>
+              </div>
+              <div class="col-12">
+                <div class="text-muted small">Observações</div>
+                <div class="normal-case">{{ pedido.obs or "—" }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-4">
+          <div class="card-body">
+            <h6 class="text-uppercase text-muted small mb-3">Produtos / itens do pedido</h6>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>Produto</th>
+                    <th>Qtd</th>
+                    <th>Valor</th>
+                    <th>Estação</th>
+                    <th>Status</th>
+                    <th>Faturamento</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for item in pedido.itens %}
+                  <tr>
+                    <td>{{ item.descricao_produto }}</td>
+                    <td>{{ item.quantidade }}</td>
+                    <td>R$ {{ "{:,.2f}".format(item.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+                    <td>{{ item.estacao or "—" }}</td>
+                    <td><span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span></td>
+                    <td>{{ item.liberacao_faturamento or "—" }}</td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="6" class="text-center text-muted py-3">Nenhum item.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <h6 class="text-uppercase text-muted small mb-3">Linha do tempo</h6>
+            {% if timeline %}
+            <ul class="list-unstyled mb-0">
+              {% for evento in timeline %}
+              <li class="d-flex mb-3">
+                <div class="me-3 text-center" style="width: 90px; flex-shrink: 0;">
+                  <div class="small text-muted">{{ evento.data.strftime('%d/%m/%Y') }}</div>
+                </div>
+                <div class="border-start border-2 ps-3">
+                  {{ evento.titulo }}
+                </div>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-muted mb-0">Ainda não há datas registradas para montar a linha do tempo.</p>
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+
+      <div class="col-lg-5">
+        <div class="card">
+          <div class="card-body">
+            <h6 class="text-uppercase text-muted small mb-3">Histórico de alterações</h6>
+            {% if historico %}
+            <ul class="list-unstyled mb-0" style="max-height: 640px; overflow-y: auto;">
+              {% for h in historico %}
+              <li class="mb-3 pb-2 border-bottom">
+                <div class="small text-muted">
+                  {{ h.criado_em.strftime('%d/%m/%Y %H:%M') }} · {{ h.usuario_nome or "sistema" }}
+                </div>
+                <div>
+                  <strong class="normal-case">{{ h.campo }}</strong>:
+                  <span class="text-muted normal-case">{{ h.valor_anterior or "—" }}</span>
+                  <i class="bi bi-arrow-right mx-1"></i>
+                  <span class="normal-case">{{ h.valor_novo or "—" }}</span>
+                </div>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-muted mb-0">Nenhuma alteração registrada ainda para este pedido.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}

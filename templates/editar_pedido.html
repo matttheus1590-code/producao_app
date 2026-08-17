@@ -6,7 +6,12 @@
   <div class="col-12 col-lg-11">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h4 class="mb-0"><i class="bi bi-pencil-square"></i> Pedido #{{ pedido.id }} — {{ pedido.cliente }}</h4>
-      <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }} fs-6" title="Status geral do pedido, calculado a partir do status de cada item">{{ pedido.status_producao }}</span>
+      <div class="d-flex align-items-center gap-2">
+        <a href="{{ url_for('detalhe_pedido', pedido_id=pedido.id) }}" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-eye"></i> Ver detalhe / histórico
+        </a>
+        <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }} fs-6" title="Status geral do pedido, calculado a partir do status de cada item">{{ pedido.status_producao }}</span>
+      </div>
     </div>
 
     <div class="row g-3 mb-4">
