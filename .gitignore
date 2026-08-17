@@ -2,3 +2,6 @@ venv/
 __pycache__/
 *.pyc
 instance/*.db
+auto_push.ps1
+instalar_auto_push.bat
+desinstalar_auto_push.bat

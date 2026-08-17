@@ -4,34 +4,44 @@
 
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-2">
-    <div class="card text-center h-100"><div class="card-body">
-      <div class="text-muted small">Total de pedidos</div>
-      <div class="fs-3 fw-semibold">{{ resumo.total }}</div>
-    </div></div>
+    <a class="stat-card-link" href="{{ url_for('dashboard') }}">
+      <div class="card text-center h-100 stat-card {% if not filtros.status %}stat-card-active{% endif %}"><div class="card-body">
+        <div class="text-muted small">Total de pedidos</div>
+        <div class="fs-3 fw-semibold">{{ resumo.total }}</div>
+      </div></div>
+    </a>
   </div>
   <div class="col-6 col-lg-2">
-    <div class="card text-center h-100 border-secondary"><div class="card-body">
-      <div class="text-muted small">Pendentes</div>
-      <div class="fs-3 fw-semibold text-secondary">{{ resumo.pendente }}</div>
-    </div></div>
+    <a class="stat-card-link" href="{{ url_for('dashboard', status='PENDENTE') }}">
+      <div class="card text-center h-100 border-secondary stat-card {% if filtros.status == 'PENDENTE' %}stat-card-active{% endif %}"><div class="card-body">
+        <div class="text-muted small">Pendentes</div>
+        <div class="fs-3 fw-semibold text-secondary">{{ resumo.pendente }}</div>
+      </div></div>
+    </a>
   </div>
   <div class="col-6 col-lg-2">
-    <div class="card text-center h-100 border-warning"><div class="card-body">
-      <div class="text-muted small">Em tratativa</div>
-      <div class="fs-3 fw-semibold text-warning">{{ resumo.em_tratativa }}</div>
-    </div></div>
+    <a class="stat-card-link" href="{{ url_for('dashboard', status='EM TRATATIVA') }}">
+      <div class="card text-center h-100 border-warning stat-card {% if filtros.status == 'EM TRATATIVA' %}stat-card-active{% endif %}"><div class="card-body">
+        <div class="text-muted small">Em tratativa</div>
+        <div class="fs-3 fw-semibold text-warning">{{ resumo.em_tratativa }}</div>
+      </div></div>
+    </a>
   </div>
   <div class="col-6 col-lg-2">
-    <div class="card text-center h-100 border-info"><div class="card-body">
-      <div class="text-muted small">Em andamento</div>
-      <div class="fs-3 fw-semibold text-info">{{ resumo.andamento }}</div>
-    </div></div>
+    <a class="stat-card-link" href="{{ url_for('dashboard', status='ANDAMENTO') }}">
+      <div class="card text-center h-100 border-info stat-card {% if filtros.status == 'ANDAMENTO' %}stat-card-active{% endif %}"><div class="card-body">
+        <div class="text-muted small">Em andamento</div>
+        <div class="fs-3 fw-semibold text-info">{{ resumo.andamento }}</div>
+      </div></div>
+    </a>
   </div>
   <div class="col-6 col-lg-2">
-    <div class="card text-center h-100 border-success"><div class="card-body">
-      <div class="text-muted small">Finalizados</div>
-      <div class="fs-3 fw-semibold text-success">{{ resumo.finalizado }}</div>
-    </div></div>
+    <a class="stat-card-link" href="{{ url_for('dashboard', status='FINALIZADO') }}">
+      <div class="card text-center h-100 border-success stat-card {% if filtros.status == 'FINALIZADO' %}stat-card-active{% endif %}"><div class="card-body">
+        <div class="text-muted small">Finalizados</div>
+        <div class="fs-3 fw-semibold text-success">{{ resumo.finalizado }}</div>
+      </div></div>
+    </a>
   </div>
   <div class="col-6 col-lg-2">
     <div class="card text-center h-100"><div class="card-body">

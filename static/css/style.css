@@ -17,3 +17,24 @@ body {
 .navbar-brand i {
   color: #6ea8fe;
 }
+
+.stat-card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+.stat-card {
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.stat-card-link:hover .stat-card {
+  transform: translateY(-2px);
+  box-shadow: 0 0.35rem 0.9rem rgba(0, 0, 0, 0.12);
+}
+
+.stat-card-active {
+  box-shadow: 0 0 0 2px currentColor inset;
+  background-color: rgba(0, 0, 0, 0.02);
+}
