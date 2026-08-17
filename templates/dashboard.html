@@ -13,9 +13,9 @@
   </div>
   <div class="col-6 col-lg-2">
     <a class="stat-card-link" href="{{ url_for('dashboard', status='PENDENTE') }}">
-      <div class="card text-center h-100 border-secondary stat-card {% if filtros.status == 'PENDENTE' %}stat-card-active{% endif %}"><div class="card-body">
+      <div class="card text-center h-100 border-danger stat-card {% if filtros.status == 'PENDENTE' %}stat-card-active{% endif %}"><div class="card-body">
         <div class="text-muted small">Pendentes</div>
-        <div class="fs-3 fw-semibold text-secondary">{{ resumo.pendente }}</div>
+        <div class="fs-3 fw-semibold text-danger">{{ resumo.pendente }}</div>
       </div></div>
     </a>
   </div>
