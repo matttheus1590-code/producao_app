@@ -124,14 +124,6 @@ def importar_planilha(caminho, primeira_linha=PRIMEIRA_LINHA, ultima_linha=ULTIM
             vendedor=_texto(ws.cell(row=r, column=COL["vendedor"]).value),
             pedido_venda=_texto(ws.cell(row=r, column=COL["pedido_venda"]).value),
             prioridade=_texto(ws.cell(row=r, column=COL["prioridade"]).value, default="MÉDIA", upper=True),
-            estacao=_texto(ws.cell(row=r, column=COL["estacao"]).value, upper=True),
-            status_producao=_texto(ws.cell(row=r, column=COL["status"]).value, default="PENDENTE", upper=True),
-            inicio_producao=_parse_data(ws.cell(row=r, column=COL["inicio_producao"]).value),
-            inicio_inspecao=_parse_data(ws.cell(row=r, column=COL["inicio_inspecao"]).value),
-            termino_inspecao=_parse_data(ws.cell(row=r, column=COL["termino_inspecao"]).value),
-            liberacao_faturamento=_parse_data(ws.cell(row=r, column=COL["liberacao_faturamento"]).value),
-            liberacao_prevista=_parse_data(ws.cell(row=r, column=COL["liberacao_prevista"]).value),
-            rnc=_texto(ws.cell(row=r, column=COL["rnc"]).value),
             obs=_texto(ws.cell(row=r, column=COL["obs"]).value),
         )
         pedido.itens.append(
@@ -139,6 +131,14 @@ def importar_planilha(caminho, primeira_linha=PRIMEIRA_LINHA, ultima_linha=ULTIM
                 descricao_produto=_texto(descricao, default="SEM DESCRIÇÃO"),
                 quantidade=_numero(ws.cell(row=r, column=COL["quantidade"]).value),
                 custo_unitario=_numero(ws.cell(row=r, column=COL["custo_unitario"]).value),
+                estacao=_texto(ws.cell(row=r, column=COL["estacao"]).value, upper=True),
+                status_producao=_texto(ws.cell(row=r, column=COL["status"]).value, default="PENDENTE", upper=True),
+                inicio_producao=_parse_data(ws.cell(row=r, column=COL["inicio_producao"]).value),
+                inicio_inspecao=_parse_data(ws.cell(row=r, column=COL["inicio_inspecao"]).value),
+                termino_inspecao=_parse_data(ws.cell(row=r, column=COL["termino_inspecao"]).value),
+                liberacao_faturamento=_parse_data(ws.cell(row=r, column=COL["liberacao_faturamento"]).value),
+                liberacao_prevista=_parse_data(ws.cell(row=r, column=COL["liberacao_prevista"]).value),
+                rnc=_texto(ws.cell(row=r, column=COL["rnc"]).value),
             )
         )
         db.session.add(pedido)

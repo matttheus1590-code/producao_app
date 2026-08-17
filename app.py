@@ -51,6 +51,7 @@ def create_app():
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
         _migrar_itens_pedido(app)
+        _migrar_producao_para_itens(app)
         _seed_inicial(app)
 
     @app.context_processor
@@ -98,6 +99,69 @@ def _migrar_itens_pedido(app):
         conn.execute(text("ALTER TABLE pedidos DROP COLUMN quantidade"))
         conn.execute(text("ALTER TABLE pedidos DROP COLUMN custo_unitario"))
     app.logger.info("Migração automática: produtos dos pedidos movidos para itens_pedido com sucesso.")
+
+
+_COLUNAS_PRODUCAO = [
+    "estacao",
+    "status_producao",
+    "status_manual",
+    "inicio_producao",
+    "inicio_inspecao",
+    "termino_inspecao",
+    "liberacao_faturamento",
+    "liberacao_prevista",
+    "rnc",
+]
+
+_TIPOS_COLUNAS_PRODUCAO = {
+    "estacao": "VARCHAR(40)",
+    "status_producao": "VARCHAR(20)",
+    "status_manual": "BOOLEAN",
+    "inicio_producao": "DATE",
+    "inicio_inspecao": "DATE",
+    "termino_inspecao": "DATE",
+    "liberacao_faturamento": "DATE",
+    "liberacao_prevista": "DATE",
+    "rnc": "VARCHAR(120)",
+}
+
+
+def _migrar_producao_para_itens(app):
+    """Migra bancos criados antes da produção (estação, status, datas, RNC) virar
+    algo por ITEM em vez de por pedido inteiro.
+
+    Como cada pedido tinha exatamente 1 item na época em que essas colunas ainda
+    ficavam em "pedidos", a migração é uma cópia direta: cada item recebe os
+    dados de produção do pedido que o originou. Não apaga nenhum dado.
+    """
+    inspector = inspect(db.engine)
+    if "pedidos" not in inspector.get_table_names():
+        return
+
+    colunas_pedidos = {c["name"] for c in inspector.get_columns("pedidos")}
+    formato_antigo = set(_COLUNAS_PRODUCAO).issubset(colunas_pedidos)
+    if not formato_antigo:
+        return  # já está no formato novo
+
+    # db.create_all() não altera tabelas já existentes — "itens_pedido" pode já
+    # existir (criada pela migração anterior) sem essas colunas novas ainda.
+    colunas_itens = {c["name"] for c in inspector.get_columns("itens_pedido")}
+
+    with db.engine.begin() as conn:
+        for coluna, tipo in _TIPOS_COLUNAS_PRODUCAO.items():
+            if coluna not in colunas_itens:
+                conn.execute(text(f"ALTER TABLE itens_pedido ADD COLUMN {coluna} {tipo}"))
+        for coluna in _COLUNAS_PRODUCAO:
+            conn.execute(
+                text(
+                    f"UPDATE itens_pedido SET {coluna} = ("
+                    f"SELECT p.{coluna} FROM pedidos p WHERE p.id = itens_pedido.pedido_id"
+                    f")"
+                )
+            )
+        for coluna in _COLUNAS_PRODUCAO:
+            conn.execute(text(f"ALTER TABLE pedidos DROP COLUMN {coluna}"))
+    app.logger.info("Migração automática: dados de produção movidos dos pedidos para os itens com sucesso.")
 
 
 def _seed_inicial(app):
@@ -163,7 +227,10 @@ def register_routes(app):
     @app.route("/")
     @login_required
     def dashboard():
-        query = Pedido.query
+        # status_producao do pedido agora é calculado a partir do status de cada
+        # item (produtos diferentes podem estar em etapas diferentes), então não
+        # dá mais pra filtrar/contar isso direto no banco — filtramos em Python.
+        query = Pedido.query.options(selectinload(Pedido.itens))
 
         cliente = request.args.get("cliente", "").strip()
         status = request.args.get("status", "").strip()
@@ -174,10 +241,8 @@ def register_routes(app):
 
         if cliente:
             query = query.filter(Pedido.cliente.ilike(f"%{cliente}%"))
-        if status:
-            query = query.filter(Pedido.status_producao == status)
         if estacao:
-            query = query.filter(Pedido.estacao == estacao)
+            query = query.filter(Pedido.itens.any(ItemPedido.estacao == estacao))
         if vendedor:
             query = query.filter(Pedido.vendedor.ilike(f"%{vendedor}%"))
         if busca:
@@ -190,23 +255,26 @@ def register_routes(app):
                 )
             )
 
-        total_filtrado = query.count()
-        pedidos = (
-            query.options(selectinload(Pedido.itens))
-            .order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
-            .offset((page - 1) * PAGE_SIZE)
-            .limit(PAGE_SIZE)
-            .all()
-        )
+        query = query.order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
+
+        if status:
+            encontrados = [p for p in query.all() if p.status_producao == status]
+            total_filtrado = len(encontrados)
+            pedidos = encontrados[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
+        else:
+            total_filtrado = query.count()
+            pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+
         total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
 
+        todos_pedidos = Pedido.query.options(selectinload(Pedido.itens)).all()
         resumo = {
-            "total": Pedido.query.count(),
-            "pendente": Pedido.query.filter_by(status_producao="PENDENTE").count(),
-            "em_tratativa": Pedido.query.filter_by(status_producao="EM TRATATIVA").count(),
-            "andamento": Pedido.query.filter_by(status_producao="ANDAMENTO").count(),
-            "finalizado": Pedido.query.filter_by(status_producao="FINALIZADO").count(),
-            "valor_total": sum(p.valor_total for p in Pedido.query.options(selectinload(Pedido.itens)).all()),
+            "total": len(todos_pedidos),
+            "pendente": sum(1 for p in todos_pedidos if p.status_producao == "PENDENTE"),
+            "em_tratativa": sum(1 for p in todos_pedidos if p.status_producao == "EM TRATATIVA"),
+            "andamento": sum(1 for p in todos_pedidos if p.status_producao == "ANDAMENTO"),
+            "finalizado": sum(1 for p in todos_pedidos if p.status_producao == "FINALIZADO"),
+            "valor_total": sum(p.valor_total for p in todos_pedidos),
         }
 
         return render_template(
@@ -262,7 +330,8 @@ def register_routes(app):
                 flash("Cliente e ao menos um produto (com descrição) são obrigatórios.", "danger")
                 return render_template("novo_pedido.html", form=f, itens=itens_recarregados)
 
-            pedido.atualizar_status_automatico()
+            for item in itens:
+                item.atualizar_status_automatico()
             db.session.add(pedido)
             db.session.commit()
             flash(f"Pedido de {pedido.cliente} incluído com sucesso ({len(itens)} item(ns)).", "success")
@@ -292,17 +361,35 @@ def register_routes(app):
             pedido.vendedor = f.get("vendedor", "").strip() or None
             pedido.pedido_venda = f.get("pedido_venda", "").strip() or None
 
-            # ---- itens do pedido (vários produtos) ----
+            pedido.prioridade = f.get("prioridade") or pedido.prioridade
+            pedido.obs = f.get("obs", "").strip() or None
+
+            # ---- itens do pedido (vários produtos, cada um com sua própria produção) ----
             item_ids = f.getlist("item_id[]")
             descricoes = f.getlist("item_descricao[]")
             quantidades = f.getlist("item_quantidade[]")
             custos = f.getlist("item_custo[]")
+            estacoes = f.getlist("item_estacao[]")
+            status_itens = f.getlist("item_status[]")
+            rncs = f.getlist("item_rnc[]")
+            inicios_producao = f.getlist("item_inicio_producao[]")
+            inicios_inspecao = f.getlist("item_inicio_inspecao[]")
+            terminos_inspecao = f.getlist("item_termino_inspecao[]")
+            liberacoes_faturamento = f.getlist("item_liberacao_faturamento[]")
+            liberacoes_prevista = f.getlist("item_liberacao_prevista[]")
 
             itens_originais = {item.id: item for item in pedido.itens}
             ids_mantidos = set()
 
-            for item_id, desc, qtd, custo in zip(item_ids, descricoes, quantidades, custos):
+            linhas = zip(
+                item_ids, descricoes, quantidades, custos, estacoes, status_itens, rncs,
+                inicios_producao, inicios_inspecao, terminos_inspecao,
+                liberacoes_faturamento, liberacoes_prevista,
+            )
+            for (item_id, desc, qtd, custo, estacao_item, status_item, rnc,
+                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev) in linhas:
                 desc = desc.strip()
+
                 if item_id:
                     iid = int(item_id)
                     item = itens_originais.get(iid)
@@ -310,20 +397,32 @@ def register_routes(app):
                         continue
                     if not desc:
                         continue  # descrição apagada -> item será removido abaixo
-                    item.descricao_produto = desc
-                    item.quantidade = _parse_float_form(qtd)
-                    item.custo_unitario = _parse_float_form(custo)
-                    ids_mantidos.add(iid)
                 else:
                     if not desc:
                         continue
-                    pedido.itens.append(
-                        ItemPedido(
-                            descricao_produto=desc,
-                            quantidade=_parse_float_form(qtd),
-                            custo_unitario=_parse_float_form(custo),
-                        )
-                    )
+                    item = ItemPedido()
+                    pedido.itens.append(item)
+
+                item.descricao_produto = desc
+                item.quantidade = _parse_float_form(qtd)
+                item.custo_unitario = _parse_float_form(custo)
+                item.estacao = estacao_item or None
+                item.rnc = rnc.strip() or None
+                item.inicio_producao = _parse_data_form(ini_prod)
+                item.inicio_inspecao = _parse_data_form(ini_insp)
+                item.termino_inspecao = _parse_data_form(term_insp)
+                item.liberacao_faturamento = _parse_data_form(lib_fat)
+                item.liberacao_prevista = _parse_data_form(lib_prev)
+
+                if status_item == "EM TRATATIVA":
+                    item.status_manual = True
+                    item.status_producao = "EM TRATATIVA"
+                else:
+                    item.status_manual = False
+                item.atualizar_status_automatico()
+
+                if item_id:
+                    ids_mantidos.add(int(item_id))
 
             for iid, item in itens_originais.items():
                 if iid not in ids_mantidos:
@@ -333,25 +432,6 @@ def register_routes(app):
                 flash("O pedido precisa ter ao menos um produto.", "danger")
                 return render_template("editar_pedido.html", pedido=pedido)
 
-            # ---- campos parametrizados ----
-            pedido.prioridade = f.get("prioridade") or pedido.prioridade
-            pedido.estacao = f.get("estacao") or None
-            pedido.inicio_producao = _parse_data_form(f.get("inicio_producao"))
-            pedido.inicio_inspecao = _parse_data_form(f.get("inicio_inspecao"))
-            pedido.termino_inspecao = _parse_data_form(f.get("termino_inspecao"))
-            pedido.liberacao_faturamento = _parse_data_form(f.get("liberacao_faturamento"))
-            pedido.liberacao_prevista = _parse_data_form(f.get("liberacao_prevista"))
-            pedido.rnc = f.get("rnc", "").strip() or None
-            pedido.obs = f.get("obs", "").strip() or None
-
-            status_form = f.get("status_producao")
-            if status_form == "EM TRATATIVA":
-                pedido.status_manual = True
-                pedido.status_producao = "EM TRATATIVA"
-            else:
-                pedido.status_manual = False
-
-            pedido.atualizar_status_automatico()
             db.session.commit()
             flash("Pedido atualizado com sucesso.", "success")
             return redirect(url_for("editar_pedido", pedido_id=pedido.id))
@@ -378,10 +458,20 @@ def register_routes(app):
             {
                 "valor_total": pedido.valor_total,
                 "lt_comercial_dias": pedido.lt_comercial_dias,
-                "tempo_espera_dias": pedido.tempo_espera_dias,
-                "lt_producao_dias": pedido.lt_producao_dias,
                 "prazo_total_dias": pedido.prazo_total_dias,
                 "status_producao": pedido.status_producao,
+                "itens": [
+                    {
+                        "descricao_produto": item.descricao_produto,
+                        "estacao": item.estacao,
+                        "status_producao": item.status_producao,
+                        "tempo_espera_dias": item.tempo_espera_dias,
+                        "lt_producao_dias": item.lt_producao_dias,
+                        "prazo_total_dias": item.prazo_total_dias,
+                        "valor_total": item.valor_total,
+                    }
+                    for item in pedido.itens
+                ],
             }
         )
 

@@ -3,37 +3,30 @@
 {% block content %}
 
 <div class="row justify-content-center">
-  <div class="col-12 col-lg-10">
+  <div class="col-12 col-lg-11">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h4 class="mb-0"><i class="bi bi-pencil-square"></i> Pedido #{{ pedido.id }} — {{ pedido.cliente }}</h4>
-      <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }} fs-6">{{ pedido.status_producao }}</span>
+      <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }} fs-6" title="Status geral do pedido, calculado a partir do status de cada item">{{ pedido.status_producao }}</span>
     </div>
 
     <div class="row g-3 mb-4">
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-md-4">
         <div class="card text-center h-100"><div class="card-body py-2">
           <div class="text-muted small">LT comercial</div>
           <div class="fs-5 fw-semibold">{{ pedido.lt_comercial_dias if pedido.lt_comercial_dias is not none else "—" }}</div>
           <div class="text-muted small">dias</div>
         </div></div>
       </div>
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-md-4">
         <div class="card text-center h-100"><div class="card-body py-2">
-          <div class="text-muted small">Tempo de espera</div>
-          <div class="fs-5 fw-semibold">{{ pedido.tempo_espera_dias if pedido.tempo_espera_dias is not none else "—" }}</div>
-          <div class="text-muted small">dias</div>
+          <div class="text-muted small">Itens no pedido</div>
+          <div class="fs-5 fw-semibold">{{ pedido.itens | length }}</div>
+          <div class="text-muted small">produtos</div>
         </div></div>
       </div>
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-md-4">
         <div class="card text-center h-100"><div class="card-body py-2">
-          <div class="text-muted small">LT produção</div>
-          <div class="fs-5 fw-semibold">{{ pedido.lt_producao_dias if pedido.lt_producao_dias is not none else "—" }}</div>
-          <div class="text-muted small">dias</div>
-        </div></div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="card text-center h-100"><div class="card-body py-2">
-          <div class="text-muted small">Prazo total (até hoje ou término)</div>
+          <div class="text-muted small">Prazo total (até hoje ou último item)</div>
           <div class="fs-5 fw-semibold">{{ pedido.prazo_total_dias if pedido.prazo_total_dias is not none else "—" }}</div>
           <div class="text-muted small">dias</div>
         </div></div>
@@ -94,65 +87,6 @@
             <label class="form-label">País</label>
             <input type="text" class="form-control" name="pais" value="{{ pedido.pais or '' }}">
           </div>
-
-          <div class="col-12"><hr class="my-1"></div>
-
-          <div class="col-12">
-            <label class="form-label mb-2">Itens do pedido * <span class="text-muted fw-normal">(adicione quantos produtos diferentes forem necessários)</span></label>
-            <div id="itensContainer">
-              {% for item in pedido.itens %}
-              <div class="row g-2 item-row mb-2 align-items-center">
-                <input type="hidden" class="item-id" name="item_id[]" value="{{ item.id }}">
-                <div class="col-md-6">
-                  <input type="text" class="form-control item-descricao" name="item_descricao[]" value="{{ item.descricao_produto }}" placeholder="Descrição do produto">
-                </div>
-                <div class="col-md-2">
-                  <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" value="{{ item.quantidade }}" placeholder="Qtd">
-                </div>
-                <div class="col-md-3">
-                  <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" value="{{ item.custo_unitario }}" placeholder="Custo unitário (R$)">
-                </div>
-                <div class="col-md-1 d-grid">
-                  <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
-                </div>
-              </div>
-              {% else %}
-              <div class="row g-2 item-row mb-2 align-items-center">
-                <input type="hidden" class="item-id" name="item_id[]" value="">
-                <div class="col-md-6">
-                  <input type="text" class="form-control item-descricao" name="item_descricao[]" placeholder="Descrição do produto">
-                </div>
-                <div class="col-md-2">
-                  <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
-                </div>
-                <div class="col-md-3">
-                  <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
-                </div>
-                <div class="col-md-1 d-grid">
-                  <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
-                </div>
-              </div>
-              {% endfor %}
-            </div>
-            <button type="button" id="btnAdicionarItem" class="btn btn-sm btn-outline-primary mt-1">
-              <i class="bi bi-plus-circle"></i> Adicionar outro produto
-            </button>
-          </div>
-
-          <div class="col-12 mt-3">
-            <div class="alert alert-light border d-flex justify-content-between align-items-center mb-0">
-              <span class="text-muted">Valor total do pedido</span>
-              <strong id="valorTotalPreview">R$ {{ "{:,.2f}".format(pedido.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card p-4 shadow-sm mb-4">
-        <h6 class="text-uppercase text-muted small mb-3">
-          Produção <span class="fw-normal normal-case">— parametrizado: preencha conforme o pedido avança e o status/lead time se atualizam sozinhos</span>
-        </h6>
-        <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">Prioridade</label>
             <select class="form-select" name="prioridade">
@@ -161,56 +95,108 @@
               {% endfor %}
             </select>
           </div>
-          <div class="col-md-3">
-            <label class="form-label">Estação</label>
-            <select class="form-select" name="estacao">
-              <option value="">—</option>
-              {% for e in ESTACOES %}
-                <option value="{{ e }}" {% if pedido.estacao == e %}selected{% endif %}>{{ e }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Status
-              <i class="bi bi-info-circle text-muted" title="PENDENTE, ANDAMENTO e FINALIZADO são automáticos conforme as datas abaixo. Selecione EM TRATATIVA manualmente quando necessário."></i>
-            </label>
-            <select class="form-select" name="status_producao">
-              {% for s in STATUS_OPCOES %}
-                <option value="{{ s }}" {% if pedido.status_producao == s %}selected{% endif %}>{{ s }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">RNC</label>
-            <input type="text" class="form-control" name="rnc" value="{{ pedido.rnc or '' }}">
-          </div>
-
-          <div class="col-md-3">
-            <label class="form-label">Início produção</label>
-            <input type="date" class="form-control" name="inicio_producao" value="{{ pedido.inicio_producao or '' }}">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Início inspeção/embalagem</label>
-            <input type="date" class="form-control" name="inicio_inspecao" value="{{ pedido.inicio_inspecao or '' }}">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Término inspeção/embalagem</label>
-            <input type="date" class="form-control" name="termino_inspecao" value="{{ pedido.termino_inspecao or '' }}">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Liberação de faturamento</label>
-            <input type="date" class="form-control" name="liberacao_faturamento" value="{{ pedido.liberacao_faturamento or '' }}">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Liberação prevista</label>
-            <input type="date" class="form-control" name="liberacao_prevista" value="{{ pedido.liberacao_prevista or '' }}">
-          </div>
 
           <div class="col-12">
-            <label class="form-label">Observações</label>
+            <label class="form-label">Observações do pedido</label>
             <textarea class="form-control" name="obs" rows="2">{{ pedido.obs or '' }}</textarea>
           </div>
         </div>
+      </div>
+
+      <h6 class="text-uppercase text-muted small mb-2">
+        Itens do pedido <span class="fw-normal normal-case">— cada produto tem sua própria estação, status e datas de produção, porque eles podem avançar em ritmos diferentes</span>
+      </h6>
+
+      <div id="itensContainer">
+        {% for item in pedido.itens %}
+        <div class="card p-3 shadow-sm mb-3 item-row">
+          <input type="hidden" class="item-id" name="item_id[]" value="{{ item.id }}">
+          <div class="row g-2 align-items-end mb-2">
+            <div class="col-md-5">
+              <label class="form-label small text-muted mb-1">Descrição do produto</label>
+              <input type="text" class="form-control item-descricao" name="item_descricao[]" value="{{ item.descricao_produto }}" placeholder="Descrição do produto">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-muted mb-1">Quantidade</label>
+              <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" value="{{ item.quantidade }}" placeholder="Qtd">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-muted mb-1">Custo unitário (R$)</label>
+              <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" value="{{ item.custo_unitario }}" placeholder="Custo unitário (R$)">
+            </div>
+            <div class="col-md-2">
+              <span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span>
+            </div>
+            <div class="col-md-1 d-grid">
+              <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
+            </div>
+          </div>
+
+          <hr class="my-2">
+          <div class="row g-2">
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Estação</label>
+              <select class="form-select item-estacao" name="item_estacao[]">
+                <option value="">—</option>
+                {% for e in ESTACOES %}
+                  <option value="{{ e }}" {% if item.estacao == e %}selected{% endif %}>{{ e }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Status
+                <i class="bi bi-info-circle text-muted" title="PENDENTE, ANDAMENTO e FINALIZADO são automáticos conforme as datas abaixo. Selecione EM TRATATIVA manualmente quando necessário."></i>
+              </label>
+              <select class="form-select item-status" name="item_status[]">
+                {% for s in STATUS_OPCOES %}
+                  <option value="{{ s }}" {% if item.status_producao == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">RNC</label>
+              <input type="text" class="form-control" name="item_rnc[]" value="{{ item.rnc or '' }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Lead time deste item</label>
+              <div class="form-control-plaintext small text-muted">
+                Espera: {{ item.tempo_espera_dias if item.tempo_espera_dias is not none else "—" }}d ·
+                Produção: {{ item.lt_producao_dias if item.lt_producao_dias is not none else "—" }}d ·
+                Total: {{ item.prazo_total_dias if item.prazo_total_dias is not none else "—" }}d
+              </div>
+            </div>
+
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Início produção</label>
+              <input type="date" class="form-control" name="item_inicio_producao[]" value="{{ item.inicio_producao or '' }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Início inspeção/embalagem</label>
+              <input type="date" class="form-control" name="item_inicio_inspecao[]" value="{{ item.inicio_inspecao or '' }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Término inspeção/embalagem</label>
+              <input type="date" class="form-control" name="item_termino_inspecao[]" value="{{ item.termino_inspecao or '' }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Liberação de faturamento</label>
+              <input type="date" class="form-control" name="item_liberacao_faturamento[]" value="{{ item.liberacao_faturamento or '' }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Liberação prevista</label>
+              <input type="date" class="form-control" name="item_liberacao_prevista[]" value="{{ item.liberacao_prevista or '' }}">
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" id="btnAdicionarItem" class="btn btn-sm btn-outline-primary mb-3">
+        <i class="bi bi-plus-circle"></i> Adicionar outro produto
+      </button>
+
+      <div class="alert alert-light border d-flex justify-content-between align-items-center mb-4">
+        <span class="text-muted">Valor total do pedido</span>
+        <strong id="valorTotalPreview">R$ {{ "{:,.2f}".format(pedido.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</strong>
       </div>
 
       <div class="d-flex justify-content-between mt-4">
@@ -234,23 +220,78 @@
   const container = document.getElementById('itensContainer');
   const btnAdd = document.getElementById('btnAdicionarItem');
   const totalEl = document.getElementById('valorTotalPreview');
+  const ESTACOES = [{% for e in ESTACOES %}{{ e | tojson }},{% endfor %}];
+  const STATUS_OPCOES = [{% for s in STATUS_OPCOES %}{{ s | tojson }},{% endfor %}];
+
+  function opcoes(lista, comVazio) {
+    let html = comVazio ? '<option value="">—</option>' : '';
+    lista.forEach(function(v) { html += `<option value="${v}">${v}</option>`; });
+    return html;
+  }
 
   function linhaTemplate() {
     const div = document.createElement('div');
-    div.className = 'row g-2 item-row mb-2 align-items-center';
+    div.className = 'card p-3 shadow-sm mb-3 item-row';
     div.innerHTML = `
       <input type="hidden" class="item-id" name="item_id[]" value="">
-      <div class="col-md-6">
-        <input type="text" class="form-control item-descricao" name="item_descricao[]" placeholder="Descrição do produto">
+      <div class="row g-2 align-items-end mb-2">
+        <div class="col-md-5">
+          <label class="form-label small text-muted mb-1">Descrição do produto</label>
+          <input type="text" class="form-control item-descricao" name="item_descricao[]" placeholder="Descrição do produto">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small text-muted mb-1">Quantidade</label>
+          <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small text-muted mb-1">Custo unitário (R$)</label>
+          <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
+        </div>
+        <div class="col-md-2">
+          <span class="badge bg-secondary">PENDENTE</span>
+        </div>
+        <div class="col-md-1 d-grid">
+          <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
+        </div>
       </div>
-      <div class="col-md-2">
-        <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
-      </div>
-      <div class="col-md-3">
-        <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
-      </div>
-      <div class="col-md-1 d-grid">
-        <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
+      <hr class="my-2">
+      <div class="row g-2">
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Estação</label>
+          <select class="form-select item-estacao" name="item_estacao[]">${opcoes(ESTACOES, true)}</select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Status</label>
+          <select class="form-select item-status" name="item_status[]">${opcoes(STATUS_OPCOES, false)}</select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">RNC</label>
+          <input type="text" class="form-control" name="item_rnc[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Lead time deste item</label>
+          <div class="form-control-plaintext small text-muted">Item novo — sem histórico ainda</div>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Início produção</label>
+          <input type="date" class="form-control" name="item_inicio_producao[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Início inspeção/embalagem</label>
+          <input type="date" class="form-control" name="item_inicio_inspecao[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Término inspeção/embalagem</label>
+          <input type="date" class="form-control" name="item_termino_inspecao[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Liberação de faturamento</label>
+          <input type="date" class="form-control" name="item_liberacao_faturamento[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Liberação prevista</label>
+          <input type="date" class="form-control" name="item_liberacao_prevista[]">
+        </div>
       </div>`;
     return div;
   }
@@ -276,7 +317,7 @@
     if (linhas.length > 1) {
       btn.closest('.item-row').remove();
     } else {
-      btn.closest('.item-row').querySelectorAll('input[type="text"], input[type="number"]').forEach(function(inp) { inp.value = ''; });
+      btn.closest('.item-row').querySelectorAll('input[type="text"], input[type="number"], input[type="date"]').forEach(function(inp) { inp.value = ''; });
     }
     atualizarTotal();
   });

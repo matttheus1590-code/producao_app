@@ -81,22 +81,12 @@ class Pedido(db.Model):
         order_by="ItemPedido.id",
     )
 
-    # ------------- Dados PARAMETRIZADOS (evoluem durante a produção) -------------
+    # ------------- Dados do pedido como um todo -------------
     prioridade = db.Column(db.String(20), default="MÉDIA")
-    estacao = db.Column(db.String(40), nullable=True)
-    status_producao = db.Column(db.String(20), default="PENDENTE")
-    # quando True, o status foi definido manualmente como "EM TRATATIVA" e o
-    # cálculo automático não deve sobrescrevê-lo até que as datas de término existam
-    status_manual = db.Column(db.Boolean, default=False)
-
-    inicio_producao = db.Column(db.Date, nullable=True)
-    inicio_inspecao = db.Column(db.Date, nullable=True)
-    termino_inspecao = db.Column(db.Date, nullable=True)
-    liberacao_faturamento = db.Column(db.Date, nullable=True)
-    liberacao_prevista = db.Column(db.Date, nullable=True)
-
-    rnc = db.Column(db.String(120), nullable=True)
     obs = db.Column(db.Text, nullable=True)
+
+    # Estação, status, datas de produção e RNC ficam em cada ITEM (ItemPedido),
+    # já que produtos diferentes do mesmo pedido podem estar em etapas diferentes.
 
     criado_em = db.Column(db.DateTime, default=datetime.utcnow)
     atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -123,15 +113,91 @@ class Pedido(db.Model):
         return primeiro
 
     @property
+    def estacao_resumo(self):
+        """Texto curto para listagens: estação, ou aviso se os itens estão em estações diferentes."""
+        estacoes = {item.estacao for item in self.itens if item.estacao}
+        if not estacoes:
+            return "—"
+        if len(estacoes) == 1:
+            return next(iter(estacoes))
+        return f"{len(estacoes)} estações"
+
+    @property
+    def status_producao(self):
+        """Status do pedido como um todo, calculado a partir do status de cada item.
+
+        Regras:
+          - Algum item "EM TRATATIVA"          -> pedido "EM TRATATIVA" (precisa de atenção)
+          - Todos os itens "FINALIZADO"        -> pedido "FINALIZADO"
+          - Todos os itens "PENDENTE"          -> pedido "PENDENTE"
+          - Qualquer outra mistura de status   -> pedido "ANDAMENTO"
+        """
+        if not self.itens:
+            return "PENDENTE"
+        status_itens = {item.status_producao for item in self.itens}
+        if "EM TRATATIVA" in status_itens:
+            return "EM TRATATIVA"
+        if status_itens == {"FINALIZADO"}:
+            return "FINALIZADO"
+        if status_itens == {"PENDENTE"}:
+            return "PENDENTE"
+        return "ANDAMENTO"
+
+    @property
     def lt_comercial_dias(self):
         if self.data_cliente and self.data_inclusao_pedido:
             return (self.data_inclusao_pedido - self.data_cliente).days
         return None
 
     @property
+    def prazo_total_dias(self):
+        """Prazo do pedido inteiro: da data do cliente até o item que terminar por último
+        (ou até hoje, se ainda tiver item em aberto)."""
+        if not self.data_cliente:
+            return None
+        if self.itens and all(item.termino_inspecao for item in self.itens):
+            fim = max(item.termino_inspecao for item in self.itens)
+        else:
+            fim = date.today()
+        return (fim - self.data_cliente).days
+
+
+class ItemPedido(db.Model):
+    """Um produto dentro de um pedido. Um pedido pode ter vários itens, e cada
+    item avança pela produção de forma independente (estação, status, datas)."""
+
+    __tablename__ = "itens_pedido"
+
+    id = db.Column(db.Integer, primary_key=True)
+    pedido_id = db.Column(db.Integer, db.ForeignKey("pedidos.id"), nullable=False)
+
+    descricao_produto = db.Column(db.String(300), nullable=False)
+    quantidade = db.Column(db.Float, nullable=False, default=0)
+    custo_unitario = db.Column(db.Float, nullable=False, default=0)
+
+    # ------------- Dados PARAMETRIZADOS (evoluem durante a produção deste item) -------------
+    estacao = db.Column(db.String(40), nullable=True)
+    status_producao = db.Column(db.String(20), default="PENDENTE")
+    # quando True, o status foi definido manualmente como "EM TRATATIVA" e o
+    # cálculo automático não deve sobrescrevê-lo até que as datas de término existam
+    status_manual = db.Column(db.Boolean, default=False)
+
+    inicio_producao = db.Column(db.Date, nullable=True)
+    inicio_inspecao = db.Column(db.Date, nullable=True)
+    termino_inspecao = db.Column(db.Date, nullable=True)
+    liberacao_faturamento = db.Column(db.Date, nullable=True)
+    liberacao_prevista = db.Column(db.Date, nullable=True)
+
+    rnc = db.Column(db.String(120), nullable=True)
+
+    @property
+    def valor_total(self):
+        return round((self.quantidade or 0) * (self.custo_unitario or 0), 2)
+
+    @property
     def tempo_espera_dias(self):
-        if self.data_inclusao_pedido and self.inicio_producao:
-            return (self.inicio_producao - self.data_inclusao_pedido).days
+        if self.pedido and self.pedido.data_inclusao_pedido and self.inicio_producao:
+            return (self.inicio_producao - self.pedido.data_inclusao_pedido).days
         return None
 
     @property
@@ -142,20 +208,20 @@ class Pedido(db.Model):
 
     @property
     def prazo_total_dias(self):
-        if not self.data_cliente:
+        if not (self.pedido and self.pedido.data_cliente):
             return None
         fim = self.termino_inspecao or date.today()
-        return (fim - self.data_cliente).days
+        return (fim - self.pedido.data_cliente).days
 
     def atualizar_status_automatico(self):
-        """Recalcula status_producao a partir das datas preenchidas.
+        """Recalcula status_producao deste item a partir das datas preenchidas.
 
         Regras:
           - Término de inspeção + liberação de faturamento preenchidos -> FINALIZADO
           - Início de produção preenchido (mas ainda sem término)      -> ANDAMENTO
           - Nada preenchido                                            -> PENDENTE
           - "EM TRATATIVA" é um estado manual: uma vez selecionado pelo
-            usuário ele fica travado até o pedido ser finalizado.
+            usuário ele fica travado até o item ser finalizado.
         """
         if self.termino_inspecao and self.liberacao_faturamento:
             self.status_producao = "FINALIZADO"
@@ -169,20 +235,3 @@ class Pedido(db.Model):
             self.status_producao = "ANDAMENTO"
         else:
             self.status_producao = "PENDENTE"
-
-
-class ItemPedido(db.Model):
-    """Um produto dentro de um pedido. Um pedido pode ter vários itens."""
-
-    __tablename__ = "itens_pedido"
-
-    id = db.Column(db.Integer, primary_key=True)
-    pedido_id = db.Column(db.Integer, db.ForeignKey("pedidos.id"), nullable=False)
-
-    descricao_produto = db.Column(db.String(300), nullable=False)
-    quantidade = db.Column(db.Float, nullable=False, default=0)
-    custo_unitario = db.Column(db.Float, nullable=False, default=0)
-
-    @property
-    def valor_total(self):
-        return round((self.quantidade or 0) * (self.custo_unitario or 0), 2)
