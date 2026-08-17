@@ -294,6 +294,17 @@ class ItemPedido(db.Model):
 
     rnc = db.Column(db.String(120), nullable=True)
 
+    # ------------- Faturamento (dados novos — a planilha original não tinha isso) -------------
+    numero_nota_fiscal = db.Column(db.String(30), nullable=True)
+    valor_faturado = db.Column(db.Float, nullable=True)
+
+    @property
+    def valor_faturamento_realizado(self):
+        """Valor a considerar como "realizado" no previsto × realizado: usa o
+        valor faturado de verdade quando preenchido, senão cai pro valor do
+        item (comportamento antigo, antes deste campo existir)."""
+        return self.valor_faturado if self.valor_faturado is not None else self.valor_total
+
     @property
     def valor_total(self):
         return round((self.quantidade or 0) * (self.custo_unitario or 0), 2)

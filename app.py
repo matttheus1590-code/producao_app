@@ -48,6 +48,8 @@ CAMPOS_HISTORICO_ITEM = [
     "liberacao_faturamento",
     "liberacao_prevista",
     "rnc",
+    "numero_nota_fiscal",
+    "valor_faturado",
 ]
 
 
@@ -82,6 +84,7 @@ def create_app():
         _migrar_producao_para_itens(app)
         _migrar_usuarios_role(app)
         _migrar_estacoes_tabela(app)
+        _migrar_faturamento_itens(app)
         _seed_inicial(app)
 
     @app.context_processor
@@ -251,6 +254,30 @@ def _migrar_estacoes_tabela(app):
     app.logger.info("Migração automática: %d estações cadastradas como tabela.", len(ESTACOES))
 
 
+def _migrar_faturamento_itens(app):
+    """Adiciona os campos de faturamento (número da nota fiscal e valor
+    faturado) nos itens criados antes dessa fase existir.
+
+    São campos 100% novos — a planilha original não tinha essa informação —
+    então não há nada pra migrar/copiar: só ficam em branco nos itens antigos
+    e passam a ser preenchidos dali pra frente."""
+    inspector = inspect(db.engine)
+    if "itens_pedido" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("itens_pedido")}
+    faltando = [c for c in ("numero_nota_fiscal", "valor_faturado") if c not in colunas]
+    if not faltando:
+        return
+
+    with db.engine.begin() as conn:
+        if "numero_nota_fiscal" not in colunas:
+            conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN numero_nota_fiscal VARCHAR(30)"))
+        if "valor_faturado" not in colunas:
+            conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN valor_faturado FLOAT"))
+    app.logger.info("Migração automática: campos de faturamento (NF e valor faturado) adicionados aos itens.")
+
+
 def _seed_inicial(app):
     """Cria o usuário admin padrão e importa a planilha na primeira execução."""
     if Usuario.query.count() == 0:
@@ -387,22 +414,29 @@ def _predicado_vencendo():
     return and_(tem_item_vencendo, ~_predicado_atrasado())
 
 
-def _faturamento_mes(ano, mes):
-    """Soma o valor (quantidade × custo) dos itens com liberação PREVISTA e com
-    liberação REALIZADA (faturamento) dentro de um mês — usado no previsto × realizado."""
+def _faturamento_mes(ano, mes, filtros=None):
+    """Soma o valor dos itens com liberação PREVISTA (usa quantidade × custo)
+    e com liberação REALIZADA (usa o valor faturado de verdade quando
+    preenchido, senão cai pro quantidade × custo) dentro de um mês — usado no
+    previsto × realizado. `filtros` (opcional) é uma lista de condições extras
+    (ex.: cliente/região/vendedor) aplicadas a ambas as somas via join com Pedido."""
     inicio = date(ano, mes, 1)
     fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
-    valor_expr = ItemPedido.quantidade * ItemPedido.custo_unitario
+    valor_calculado = ItemPedido.quantidade * ItemPedido.custo_unitario
+    valor_realizado = func.coalesce(ItemPedido.valor_faturado, valor_calculado)
+    filtros = filtros or []
 
     previsto = (
-        db.session.query(func.sum(valor_expr))
-        .filter(ItemPedido.liberacao_prevista >= inicio, ItemPedido.liberacao_prevista < fim)
+        db.session.query(func.sum(valor_calculado))
+        .join(Pedido, ItemPedido.pedido_id == Pedido.id)
+        .filter(ItemPedido.liberacao_prevista >= inicio, ItemPedido.liberacao_prevista < fim, *filtros)
         .scalar()
         or 0.0
     )
     realizado = (
-        db.session.query(func.sum(valor_expr))
-        .filter(ItemPedido.liberacao_faturamento >= inicio, ItemPedido.liberacao_faturamento < fim)
+        db.session.query(func.sum(valor_realizado))
+        .join(Pedido, ItemPedido.pedido_id == Pedido.id)
+        .filter(ItemPedido.liberacao_faturamento >= inicio, ItemPedido.liberacao_faturamento < fim, *filtros)
         .scalar()
         or 0.0
     )
@@ -611,6 +645,46 @@ def _gargalos_por_estacao():
     return resultado
 
 
+def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
+    """Previsto × realizado de um mês específico, com o mesmo valor já
+    quebrado por cliente / região / vendedor — usado na tela de Faturamento."""
+    inicio = date(ano, mes, 1)
+    fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
+
+    base = ItemPedido.query.options(selectinload(ItemPedido.pedido)).join(Pedido, ItemPedido.pedido_id == Pedido.id)
+    if cliente:
+        base = base.filter(Pedido.cliente.ilike(f"%{cliente}%"))
+    if vendedor:
+        base = base.filter(Pedido.vendedor.ilike(f"%{vendedor}%"))
+    if regiao:
+        ufs_da_regiao = [uf for uf, r in REGIAO_POR_UF.items() if r == regiao]
+        if ufs_da_regiao:
+            base = base.filter(Pedido.estado.in_(ufs_da_regiao))
+
+    itens_previstos = base.filter(ItemPedido.liberacao_prevista >= inicio, ItemPedido.liberacao_prevista < fim).all()
+    itens_realizados = base.filter(
+        ItemPedido.liberacao_faturamento >= inicio, ItemPedido.liberacao_faturamento < fim
+    ).all()
+
+    def _agrupar(itens, chave_fn):
+        agrupado = {}
+        for i in itens:
+            chave = chave_fn(i) or "—"
+            agrupado[chave] = agrupado.get(chave, 0.0) + i.valor_faturamento_realizado
+        linhas = [{"chave": k, "valor": round(v, 2)} for k, v in agrupado.items()]
+        linhas.sort(key=lambda l: l["valor"], reverse=True)
+        return linhas
+
+    return {
+        "previsto_total": round(sum(i.valor_total for i in itens_previstos), 2),
+        "realizado_total": round(sum(i.valor_faturamento_realizado for i in itens_realizados), 2),
+        "itens_realizados": len(itens_realizados),
+        "por_cliente": _agrupar(itens_realizados, lambda i: i.pedido.cliente if i.pedido else None),
+        "por_regiao": _agrupar(itens_realizados, lambda i: REGIAO_POR_UF.get(i.pedido.estado) if i.pedido and i.pedido.estado else None),
+        "por_vendedor": _agrupar(itens_realizados, lambda i: i.pedido.vendedor if i.pedido else None),
+    }
+
+
 def _construir_timeline(pedido):
     """Monta uma lista de eventos (data + descrição) a partir das datas já
     preenchidas no pedido e em cada item, para exibir como linha do tempo."""
@@ -713,6 +787,35 @@ def register_routes(app):
     @login_required
     def gargalos():
         return render_template("gargalos.html", linhas=_gargalos_por_estacao())
+
+    @app.route("/faturamento")
+    @login_required
+    def faturamento():
+        hoje = date.today()
+        ano = request.args.get("ano", hoje.year, type=int)
+        mes = request.args.get("mes", hoje.month, type=int)
+        if not (1 <= mes <= 12):
+            mes = hoje.month
+
+        cliente = request.args.get("cliente", "").strip()
+        regiao = request.args.get("regiao", "").strip()
+        vendedor = request.args.get("vendedor", "").strip()
+
+        dados = _faturamento_detalhado(ano, mes, cliente=cliente or None, regiao=regiao or None, vendedor=vendedor or None)
+
+        mes_anterior_ano, mes_anterior_mes = (ano, mes - 1) if mes > 1 else (ano - 1, 12)
+        mes_seguinte_ano, mes_seguinte_mes = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
+
+        return render_template(
+            "faturamento.html",
+            ano=ano,
+            mes=mes,
+            mes_label=f"{MESES_PT[mes - 1]}/{ano}",
+            mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
+            mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
+            filtros=dict(cliente=cliente, regiao=regiao, vendedor=vendedor),
+            **dados,
+        )
 
     @app.route("/")
     @login_required
@@ -891,6 +994,8 @@ def register_routes(app):
             terminos_inspecao = f.getlist("item_termino_inspecao[]")
             liberacoes_faturamento = f.getlist("item_liberacao_faturamento[]")
             liberacoes_prevista = f.getlist("item_liberacao_prevista[]")
+            notas_fiscais = f.getlist("item_numero_nota_fiscal[]")
+            valores_faturados = f.getlist("item_valor_faturado[]")
 
             itens_originais = {item.id: item for item in pedido.itens}
             # snapshot ANTES de qualquer alteração, só dos itens que já existiam
@@ -901,10 +1006,10 @@ def register_routes(app):
             linhas = zip(
                 item_ids, descricoes, quantidades, custos, estacoes, status_itens, rncs,
                 inicios_producao, inicios_inspecao, terminos_inspecao,
-                liberacoes_faturamento, liberacoes_prevista,
+                liberacoes_faturamento, liberacoes_prevista, notas_fiscais, valores_faturados,
             )
             for (item_id, desc, qtd, custo, estacao_item, status_item, rnc,
-                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev) in linhas:
+                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev, nf, valor_faturado) in linhas:
                 desc = desc.strip()
 
                 if item_id:
@@ -930,6 +1035,8 @@ def register_routes(app):
                 item.termino_inspecao = _parse_data_form(term_insp)
                 item.liberacao_faturamento = _parse_data_form(lib_fat)
                 item.liberacao_prevista = _parse_data_form(lib_prev)
+                item.numero_nota_fiscal = nf.strip() or None
+                item.valor_faturado = _parse_float_form(valor_faturado, default=None) if valor_faturado.strip() else None
 
                 if status_item == "EM TRATATIVA":
                     item.status_manual = True

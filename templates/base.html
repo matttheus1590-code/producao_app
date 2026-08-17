@@ -38,6 +38,9 @@
         <a class="app-nav-link {% if request.endpoint == 'gargalos' %}active{% endif %}" href="{{ url_for('gargalos') }}">
           <i class="bi bi-exclamation-triangle"></i> <span>Gargalos</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'faturamento' %}active{% endif %}" href="{{ url_for('faturamento') }}">
+          <i class="bi bi-cash-coin"></i> <span>Faturamento</span>
+        </a>
 
         {% if current_user.role in ('ADMIN', 'PCP') %}
         <div class="app-nav-section">Cadastros</div>

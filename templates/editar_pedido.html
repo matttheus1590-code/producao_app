@@ -191,6 +191,15 @@
               <label class="form-label small text-muted mb-1">Liberação prevista</label>
               <input type="date" class="form-control" name="item_liberacao_prevista[]" value="{{ item.liberacao_prevista or '' }}">
             </div>
+
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Nº nota fiscal</label>
+              <input type="text" class="form-control" name="item_numero_nota_fiscal[]" value="{{ item.numero_nota_fiscal or '' }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Valor faturado (R$)</label>
+              <input type="number" step="any" min="0" class="form-control" name="item_valor_faturado[]" value="{{ item.valor_faturado if item.valor_faturado is not none else '' }}" placeholder="usa o valor do item se vazio">
+            </div>
           </div>
         </div>
         {% endfor %}
@@ -296,6 +305,14 @@
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Liberação prevista</label>
           <input type="date" class="form-control" name="item_liberacao_prevista[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Nº nota fiscal</label>
+          <input type="text" class="form-control" name="item_numero_nota_fiscal[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Valor faturado (R$)</label>
+          <input type="number" step="any" min="0" class="form-control" name="item_valor_faturado[]" placeholder="usa o valor do item se vazio">
         </div>
       </div>`;
     return div;
