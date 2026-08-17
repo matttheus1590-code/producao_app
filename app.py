@@ -27,6 +27,7 @@ from models import (
     ItemPedido,
     Pedido,
     Programacao,
+    Transportadora,
     Usuario,
 )
 from permissoes import ROLES, ROLES_LABELS, pode_editar_estacao, requer_role
@@ -50,6 +51,8 @@ CAMPOS_HISTORICO_ITEM = [
     "rnc",
     "numero_nota_fiscal",
     "valor_faturado",
+    "transportadora_id",
+    "data_envio",
 ]
 
 
@@ -85,6 +88,7 @@ def create_app():
         _migrar_usuarios_role(app)
         _migrar_estacoes_tabela(app)
         _migrar_faturamento_itens(app)
+        _migrar_logistica_itens(app)
         _seed_inicial(app)
 
     @app.context_processor
@@ -276,6 +280,31 @@ def _migrar_faturamento_itens(app):
         if "valor_faturado" not in colunas:
             conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN valor_faturado FLOAT"))
     app.logger.info("Migração automática: campos de faturamento (NF e valor faturado) adicionados aos itens.")
+
+
+def _migrar_logistica_itens(app):
+    """Adiciona os campos de logística (transportadora e data de envio) nos
+    itens criados antes dessa fase existir.
+
+    Assim como faturamento, são campos 100% novos — a planilha original não
+    tinha essa informação — então ficam em branco nos itens antigos e passam
+    a ser preenchidos dali pra frente. "transportadora_id" não usa FK de
+    verdade (ver comentário no models.py), então a coluna é só um INTEGER."""
+    inspector = inspect(db.engine)
+    if "itens_pedido" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("itens_pedido")}
+    faltando = [c for c in ("transportadora_id", "data_envio") if c not in colunas]
+    if not faltando:
+        return
+
+    with db.engine.begin() as conn:
+        if "transportadora_id" not in colunas:
+            conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN transportadora_id INTEGER"))
+        if "data_envio" not in colunas:
+            conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN data_envio DATE"))
+    app.logger.info("Migração automática: campos de logística (transportadora e data de envio) adicionados aos itens.")
 
 
 def _seed_inicial(app):
@@ -817,6 +846,124 @@ def register_routes(app):
             **dados,
         )
 
+    @app.route("/logistica")
+    @login_required
+    def logistica():
+        query = ItemPedido.query.join(Pedido).options(selectinload(ItemPedido.pedido))
+
+        regiao = request.args.get("regiao", "").strip()
+        estado = request.args.get("estado", "").strip()
+        cidade = request.args.get("cidade", "").strip()
+        frete = request.args.get("frete", "").strip()
+        transportadora_id = request.args.get("transportadora_id", "").strip()
+        em_risco = request.args.get("em_risco", "").strip()
+        mostrar_finalizados = request.args.get("mostrar_finalizados", "").strip()
+
+        if regiao:
+            ufs_da_regiao = [uf for uf, r in REGIAO_POR_UF.items() if r == regiao]
+            if ufs_da_regiao:
+                query = query.filter(Pedido.estado.in_(ufs_da_regiao))
+        if estado:
+            query = query.filter(Pedido.estado == estado)
+        if cidade:
+            query = query.filter(Pedido.cidade.ilike(f"%{cidade}%"))
+        if frete:
+            query = query.filter(Pedido.frete == frete)
+        if transportadora_id.isdigit():
+            query = query.filter(ItemPedido.transportadora_id == int(transportadora_id))
+        if not mostrar_finalizados:
+            query = query.filter(ItemPedido.status_producao != "FINALIZADO")
+
+        query = query.order_by(Pedido.data_inclusao_pedido.desc().nullslast(), ItemPedido.id.desc())
+        itens = query.all()
+
+        # semáforo é calculado em Python (depende de "hoje"), então o filtro
+        # "em risco" é aplicado depois da consulta — mas como os filtros acima
+        # já reduzem bastante a lista (nunca é a tabela inteira), não há o
+        # mesmo problema de performance que o dashboard antigo tinha.
+        if em_risco:
+            itens = [i for i in itens if i.semaforo[0] in ("amarelo", "vermelho")]
+
+        transportadoras = Transportadora.query.filter_by(ativo=True).order_by(Transportadora.nome).all()
+        estados_disponiveis = [
+            r[0]
+            for r in db.session.query(Pedido.estado)
+            .filter(Pedido.estado.isnot(None), Pedido.estado != "")
+            .distinct()
+            .order_by(Pedido.estado)
+            .all()
+        ]
+
+        return render_template(
+            "logistica.html",
+            itens=itens,
+            transportadoras=transportadoras,
+            estados_disponiveis=estados_disponiveis,
+            filtros=dict(
+                regiao=regiao,
+                estado=estado,
+                cidade=cidade,
+                frete=frete,
+                transportadora_id=transportadora_id,
+                em_risco=em_risco,
+                mostrar_finalizados=mostrar_finalizados,
+            ),
+        )
+
+    @app.route("/cadastros/transportadoras")
+    @requer_role("ADMIN", "PCP")
+    def cadastros_transportadoras():
+        transportadoras = Transportadora.query.order_by(Transportadora.nome).all()
+        return render_template("cadastros_transportadoras.html", transportadoras=transportadoras)
+
+    @app.route("/cadastros/transportadoras/novo", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def cadastros_transportadoras_novo():
+        if request.method == "POST":
+            f = request.form
+            nome = f.get("nome", "").strip()
+            if not nome:
+                flash("Informe o nome da transportadora.", "danger")
+                return render_template("cadastros_transportadoras_form.html", transportadora=None, form=f)
+            if Transportadora.query.filter_by(nome=nome).first():
+                flash("Já existe uma transportadora com esse nome.", "danger")
+                return render_template("cadastros_transportadoras_form.html", transportadora=None, form=f)
+
+            nova = Transportadora(nome=nome, ativo=True)
+            db.session.add(nova)
+            db.session.commit()
+            flash(f"Transportadora {nome} cadastrada com sucesso.", "success")
+            return redirect(url_for("cadastros_transportadoras"))
+
+        return render_template("cadastros_transportadoras_form.html", transportadora=None, form={})
+
+    @app.route("/cadastros/transportadoras/<int:transportadora_id>/editar", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def cadastros_transportadoras_editar(transportadora_id):
+        transportadora = db.session.get(Transportadora, transportadora_id)
+        if transportadora is None:
+            flash("Transportadora não encontrada.", "danger")
+            return redirect(url_for("cadastros_transportadoras"))
+
+        if request.method == "POST":
+            f = request.form
+            nome = f.get("nome", "").strip()
+            if not nome:
+                flash("Informe o nome da transportadora.", "danger")
+                return render_template("cadastros_transportadoras_form.html", transportadora=transportadora, form=f)
+            outra = Transportadora.query.filter(Transportadora.nome == nome, Transportadora.id != transportadora.id).first()
+            if outra:
+                flash("Já existe outra transportadora com esse nome.", "danger")
+                return render_template("cadastros_transportadoras_form.html", transportadora=transportadora, form=f)
+
+            transportadora.nome = nome
+            transportadora.ativo = bool(f.get("ativo"))
+            db.session.commit()
+            flash(f"Transportadora {transportadora.nome} atualizada com sucesso.", "success")
+            return redirect(url_for("cadastros_transportadoras"))
+
+        return render_template("cadastros_transportadoras_form.html", transportadora=transportadora, form={})
+
     @app.route("/")
     @login_required
     def dashboard():
@@ -959,6 +1106,8 @@ def register_routes(app):
             flash("Pedido não encontrado.", "danger")
             return redirect(url_for("dashboard"))
 
+        transportadoras = Transportadora.query.filter_by(ativo=True).order_by(Transportadora.nome).all()
+
         if request.method == "POST":
             f = request.form
 
@@ -996,6 +1145,8 @@ def register_routes(app):
             liberacoes_prevista = f.getlist("item_liberacao_prevista[]")
             notas_fiscais = f.getlist("item_numero_nota_fiscal[]")
             valores_faturados = f.getlist("item_valor_faturado[]")
+            transportadoras_ids = f.getlist("item_transportadora_id[]")
+            datas_envio = f.getlist("item_data_envio[]")
 
             itens_originais = {item.id: item for item in pedido.itens}
             # snapshot ANTES de qualquer alteração, só dos itens que já existiam
@@ -1007,9 +1158,11 @@ def register_routes(app):
                 item_ids, descricoes, quantidades, custos, estacoes, status_itens, rncs,
                 inicios_producao, inicios_inspecao, terminos_inspecao,
                 liberacoes_faturamento, liberacoes_prevista, notas_fiscais, valores_faturados,
+                transportadoras_ids, datas_envio,
             )
             for (item_id, desc, qtd, custo, estacao_item, status_item, rnc,
-                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev, nf, valor_faturado) in linhas:
+                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev, nf, valor_faturado,
+                 transportadora_id, data_envio) in linhas:
                 desc = desc.strip()
 
                 if item_id:
@@ -1037,6 +1190,8 @@ def register_routes(app):
                 item.liberacao_prevista = _parse_data_form(lib_prev)
                 item.numero_nota_fiscal = nf.strip() or None
                 item.valor_faturado = _parse_float_form(valor_faturado, default=None) if valor_faturado.strip() else None
+                item.transportadora_id = int(transportadora_id) if transportadora_id.strip().isdigit() else None
+                item.data_envio = _parse_data_form(data_envio)
 
                 if status_item == "EM TRATATIVA":
                     item.status_manual = True
@@ -1058,13 +1213,13 @@ def register_routes(app):
 
             if not pedido.itens:
                 flash("O pedido precisa ter ao menos um produto.", "danger")
-                return render_template("editar_pedido.html", pedido=pedido)
+                return render_template("editar_pedido.html", pedido=pedido, transportadoras=transportadoras)
 
             db.session.commit()
             flash("Pedido atualizado com sucesso.", "success")
             return redirect(url_for("editar_pedido", pedido_id=pedido.id))
 
-        return render_template("editar_pedido.html", pedido=pedido)
+        return render_template("editar_pedido.html", pedido=pedido, transportadoras=transportadoras)
 
     @app.route("/pedidos/<int:pedido_id>")
     @login_required

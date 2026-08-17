@@ -41,11 +41,17 @@
         <a class="app-nav-link {% if request.endpoint == 'faturamento' %}active{% endif %}" href="{{ url_for('faturamento') }}">
           <i class="bi bi-cash-coin"></i> <span>Faturamento</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'logistica' %}active{% endif %}" href="{{ url_for('logistica') }}">
+          <i class="bi bi-truck"></i> <span>Logística</span>
+        </a>
 
         {% if current_user.role in ('ADMIN', 'PCP') %}
         <div class="app-nav-section">Cadastros</div>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('cadastros_estacoes') %}active{% endif %}" href="{{ url_for('cadastros_estacoes') }}">
           <i class="bi bi-diagram-3"></i> <span>Estações</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('cadastros_transportadoras') %}active{% endif %}" href="{{ url_for('cadastros_transportadoras') }}">
+          <i class="bi bi-truck"></i> <span>Transportadoras</span>
         </a>
         {% endif %}
 

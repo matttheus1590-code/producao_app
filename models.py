@@ -152,6 +152,17 @@ class Estacao(db.Model):
     ativo = db.Column(db.Boolean, nullable=False, default=True)
 
 
+class Transportadora(db.Model):
+    """Cadastro de transportadoras — dado 100% novo, não existe nada parecido
+    na planilha original (só o "Modelo Frete"/incoterm, que é outra coisa)."""
+
+    __tablename__ = "transportadoras"
+
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(120), unique=True, nullable=False)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
+
+
 class Pedido(db.Model):
     __tablename__ = "pedidos"
 
@@ -297,6 +308,20 @@ class ItemPedido(db.Model):
     # ------------- Faturamento (dados novos — a planilha original não tinha isso) -------------
     numero_nota_fiscal = db.Column(db.String(30), nullable=True)
     valor_faturado = db.Column(db.Float, nullable=True)
+
+    # ------------- Logística (dados novos) -------------
+    # transportadora_id NÃO usa db.ForeignKey de propósito: essa coluna é
+    # adicionada numa tabela que já existe (via ALTER TABLE), e SQLite não
+    # aplica chave estrangeira de verdade nesse caso — então validamos na
+    # aplicação (rota) em vez de depender do banco pra isso.
+    transportadora_id = db.Column(db.Integer, nullable=True)
+    data_envio = db.Column(db.Date, nullable=True)
+
+    @property
+    def transportadora(self):
+        if not self.transportadora_id:
+            return None
+        return db.session.get(Transportadora, self.transportadora_id)
 
     @property
     def valor_faturamento_realizado(self):

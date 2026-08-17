@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Logística · Controle de Produção{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h4 class="mb-0"><i class="bi bi-truck"></i> Logística</h4>
+  {% if current_user.role in ('ADMIN', 'PCP') %}
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('cadastros_transportadoras') }}">
+    <i class="bi bi-gear"></i> Transportadoras
+  </a>
+  {% endif %}
+</div>
+
+<form class="row g-2 align-items-end mb-4" method="get">
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Região</label>
+    <select class="form-select" name="regiao">
+      <option value="">Todas</option>
+      {% for r in REGIOES_OPCOES %}
+        <option value="{{ r }}" {% if filtros.regiao == r %}selected{% endif %}>{{ r }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Estado</label>
+    <select class="form-select" name="estado">
+      <option value="">Todos</option>
+      {% for uf in estados_disponiveis %}
+        <option value="{{ uf }}" {% if filtros.estado == uf %}selected{% endif %}>{{ uf }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Cidade</label>
+    <input type="text" class="form-control" name="cidade" value="{{ filtros.cidade }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Frete</label>
+    <select class="form-select" name="frete">
+      <option value="">Todos</option>
+      {% for f in FRETE_OPCOES %}
+        <option value="{{ f }}" {% if filtros.frete == f %}selected{% endif %}>{{ f }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Transportadora</label>
+    <select class="form-select" name="transportadora_id">
+      <option value="">Todas</option>
+      {% for t in transportadoras %}
+        <option value="{{ t.id }}" {% if filtros.transportadora_id == t.id | string %}selected{% endif %}>{{ t.nome }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2 d-grid">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+  </div>
+  <div class="col-12 d-flex gap-3 mt-1">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="em_risco" id="campoEmRisco" value="1" {% if filtros.em_risco %}checked{% endif %} onchange="this.form.submit()">
+      <label class="form-check-label" for="campoEmRisco">Só pedidos em risco (semáforo amarelo/vermelho)</label>
+    </div>
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="mostrar_finalizados" id="campoFinalizados" value="1" {% if filtros.mostrar_finalizados %}checked{% endif %} onchange="this.form.submit()">
+      <label class="form-check-label" for="campoFinalizados">Mostrar itens finalizados</label>
+    </div>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Pedido</th>
+        <th>Cliente</th>
+        <th>Produto</th>
+        <th>Cidade/UF</th>
+        <th>Frete</th>
+        <th>Status</th>
+        <th>Prazo</th>
+        <th>Transportadora</th>
+        <th>Envio</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in itens %}
+      {% set cor, dias = item.semaforo %}
+      <tr>
+        <td>{{ item.pedido.pedido_venda or "—" }}</td>
+        <td>{{ item.pedido.cliente if item.pedido else "—" }}</td>
+        <td class="text-truncate" style="max-width: 220px;" title="{{ item.descricao_produto }}">{{ item.descricao_produto }}</td>
+        <td>{{ item.pedido.cidade or "—" }}{% if item.pedido and item.pedido.estado %}/{{ item.pedido.estado }}{% endif %}</td>
+        <td>{{ item.pedido.frete or "—" if item.pedido else "—" }}</td>
+        <td><span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span></td>
+        <td>
+          <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
+            {% if dias is none %}—{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
+          </span>
+        </td>
+        <td>{{ item.transportadora.nome if item.transportadora else "—" }}</td>
+        <td>{{ item.data_envio or "—" }}</td>
+        <td class="text-end">
+          {% if item.pedido %}
+          <a href="{{ url_for('editar_pedido', pedido_id=item.pedido.id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum item encontrado com esses filtros.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
