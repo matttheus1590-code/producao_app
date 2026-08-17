@@ -17,8 +17,11 @@
       </div>
 
       <nav class="app-sidebar-nav">
-        <a class="app-nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">
+        <a class="app-nav-link {% if request.endpoint == 'painel' %}active{% endif %}" href="{{ url_for('painel') }}">
           <i class="bi bi-speedometer2"></i> <span>Painel</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint in ('dashboard', 'detalhe_pedido', 'editar_pedido') %}active{% endif %}" href="{{ url_for('dashboard') }}">
+          <i class="bi bi-list-ul"></i> <span>Listagem Geral</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
           <i class="bi bi-plus-circle"></i> <span>Novo pedido</span>

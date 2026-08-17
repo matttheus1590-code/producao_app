@@ -1,5 +1,5 @@
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
@@ -10,6 +10,7 @@ from extensions import db, login_manager
 from models import (
     ESTACOES,
     FRETE_OPCOES,
+    PRAZO_ALERTA_DIAS,
     PRIORIDADE_CORES,
     PRIORIDADE_OPCOES,
     REGIAO_POR_UF,
@@ -24,6 +25,8 @@ from models import (
     Usuario,
 )
 from permissoes import ROLES, ROLES_LABELS, requer_role
+
+MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PAGE_SIZE = 25
@@ -89,6 +92,7 @@ def create_app():
             REGIOES_OPCOES=REGIOES_OPCOES,
             SEMAFORO_CORES=SEMAFORO_CORES,
             SEMAFORO_LABELS=SEMAFORO_LABELS,
+            PRAZO_ALERTA_DIAS=PRAZO_ALERTA_DIAS,
         )
 
     register_routes(app)
@@ -342,6 +346,107 @@ def _calcular_resumo():
     }
 
 
+def _predicado_vencendo():
+    """Pedido "vencendo": tem item com liberação prevista nos próximos
+    PRAZO_ALERTA_DIAS dias (e ainda não atrasado nenhum item) — mesma regra do
+    semáforo amarelo."""
+    limite = date.today() + timedelta(days=PRAZO_ALERTA_DIAS)
+    tem_item_vencendo = Pedido.itens.any(
+        and_(
+            ItemPedido.liberacao_prevista.isnot(None),
+            ItemPedido.liberacao_prevista >= date.today(),
+            ItemPedido.liberacao_prevista <= limite,
+            ItemPedido.status_producao != "FINALIZADO",
+        )
+    )
+    return and_(tem_item_vencendo, ~_predicado_atrasado())
+
+
+def _faturamento_mes(ano, mes):
+    """Soma o valor (quantidade × custo) dos itens com liberação PREVISTA e com
+    liberação REALIZADA (faturamento) dentro de um mês — usado no previsto × realizado."""
+    inicio = date(ano, mes, 1)
+    fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
+    valor_expr = ItemPedido.quantidade * ItemPedido.custo_unitario
+
+    previsto = (
+        db.session.query(func.sum(valor_expr))
+        .filter(ItemPedido.liberacao_prevista >= inicio, ItemPedido.liberacao_prevista < fim)
+        .scalar()
+        or 0.0
+    )
+    realizado = (
+        db.session.query(func.sum(valor_expr))
+        .filter(ItemPedido.liberacao_faturamento >= inicio, ItemPedido.liberacao_faturamento < fim)
+        .scalar()
+        or 0.0
+    )
+    return round(previsto, 2), round(realizado, 2)
+
+
+def _faturamento_tendencia(meses=6):
+    """Previsto × realizado dos últimos N meses (incluindo o atual), para o gráfico de tendência."""
+    hoje = date.today()
+    pontos = []
+    ano, mes = hoje.year, hoje.month
+    for _ in range(meses):
+        pontos.append((ano, mes))
+        mes -= 1
+        if mes == 0:
+            mes, ano = 12, ano - 1
+    pontos.reverse()
+
+    resultado = []
+    for ano, mes in pontos:
+        previsto, realizado = _faturamento_mes(ano, mes)
+        resultado.append({"mes": f"{MESES_PT[mes - 1]}/{ano}", "previsto": previsto, "realizado": realizado})
+    return resultado
+
+
+def _lead_time_medio_dias():
+    """Média de dias entre início de produção e término de inspeção/embalagem,
+    entre os itens que já têm as duas datas preenchidas.
+
+    Cálculo feito em Python (não em SQL) de propósito: diferença de datas tem
+    sintaxe diferente entre SQLite e Postgres, e a quantidade de itens aqui é
+    pequena o bastante pra isso não pesar."""
+    itens = ItemPedido.query.filter(
+        ItemPedido.inicio_producao.isnot(None), ItemPedido.termino_inspecao.isnot(None)
+    ).all()
+    if not itens:
+        return None
+    dias = [(i.termino_inspecao - i.inicio_producao).days for i in itens]
+    return round(sum(dias) / len(dias), 1)
+
+
+def _otd_percentual():
+    """OTD (On-Time Delivery): % dos itens finalizados cujo término de inspeção
+    aconteceu até a data de liberação prevista. Primeira proposta de cálculo —
+    ajustável se o critério de "no prazo" precisar ser outro."""
+    itens = ItemPedido.query.filter(
+        ItemPedido.status_producao == "FINALIZADO",
+        ItemPedido.liberacao_prevista.isnot(None),
+        ItemPedido.termino_inspecao.isnot(None),
+    ).all()
+    if not itens:
+        return None
+    no_prazo = sum(1 for i in itens if i.termino_inspecao <= i.liberacao_prevista)
+    return round(100 * no_prazo / len(itens), 1)
+
+
+def _backlog_por_estacao():
+    """Quantidade de itens não finalizados por estação — usado no gráfico do
+    Painel e é a base do ranking de Gargalos (fase 8)."""
+    linhas = (
+        db.session.query(ItemPedido.estacao, func.count(ItemPedido.id))
+        .filter(ItemPedido.status_producao != "FINALIZADO", ItemPedido.estacao.isnot(None))
+        .group_by(ItemPedido.estacao)
+        .order_by(func.count(ItemPedido.id).desc())
+        .all()
+    )
+    return [{"estacao": e or "—", "quantidade": q} for e, q in linhas]
+
+
 def _construir_timeline(pedido):
     """Monta uma lista de eventos (data + descrição) a partir das datas já
     preenchidas no pedido e em cada item, para exibir como linha do tempo."""
@@ -389,6 +494,40 @@ def register_routes(app):
     def logout():
         logout_user()
         return redirect(url_for("login"))
+
+    @app.route("/painel")
+    @login_required
+    def painel():
+        resumo = _calcular_resumo()
+        atrasados = Pedido.query.filter(_predicado_atrasado()).count()
+        vencendo = Pedido.query.filter(_predicado_vencendo()).count()
+        backlog = resumo["total"] - resumo["finalizado"]
+
+        hoje = date.today()
+        previsto_mes, realizado_mes = _faturamento_mes(hoje.year, hoje.month)
+
+        pedidos_atrasados = (
+            Pedido.query.options(selectinload(Pedido.itens))
+            .filter(_predicado_atrasado())
+            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+            .limit(10)
+            .all()
+        )
+
+        return render_template(
+            "painel.html",
+            resumo=resumo,
+            atrasados=atrasados,
+            vencendo=vencendo,
+            backlog=backlog,
+            previsto_mes=previsto_mes,
+            realizado_mes=realizado_mes,
+            lead_time_medio=_lead_time_medio_dias(),
+            otd=_otd_percentual(),
+            tendencia_faturamento=_faturamento_tendencia(),
+            backlog_estacao=_backlog_por_estacao(),
+            pedidos_atrasados=pedidos_atrasados,
+        )
 
     @app.route("/")
     @login_required

@@ -1,0 +1,21 @@
+{% macro stat_card(titulo, valor, cor=None, link=None, ativo=False, borda=None, sufixo=None) %}
+{% if link %}
+<a class="stat-card-link" href="{{ link }}">
+  <div class="card text-center h-100 stat-card {% if borda %}border-{{ borda }}{% endif %} {% if ativo %}stat-card-active{% endif %}">
+    <div class="card-body">
+      <div class="text-muted small">{{ titulo }}</div>
+      <div class="fs-3 fw-semibold {% if cor %}text-{{ cor }}{% endif %}">{{ valor }}</div>
+      {% if sufixo %}<div class="text-muted small">{{ sufixo }}</div>{% endif %}
+    </div>
+  </div>
+</a>
+{% else %}
+<div class="card text-center h-100 {% if borda %}border-{{ borda }}{% endif %}">
+  <div class="card-body">
+    <div class="text-muted small">{{ titulo }}</div>
+    <div class="fs-3 fw-semibold {% if cor %}text-{{ cor }}{% endif %}">{{ valor }}</div>
+    {% if sufixo %}<div class="text-muted small">{{ sufixo }}</div>{% endif %}
+  </div>
+</div>
+{% endif %}
+{% endmacro %}

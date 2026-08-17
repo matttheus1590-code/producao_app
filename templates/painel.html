@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat_card %}
+{% block title %}Painel · Controle de Produção{% endblock %}
+{% block content %}
+
+<h4 class="mb-3"><i class="bi bi-speedometer2"></i> Painel</h4>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Backlog (não finalizado)", backlog) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("🔴 Atrasados", atrasados, cor="danger", borda="danger", link=url_for('dashboard', atrasados='1')) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("🟡 Vencendo (" + PRAZO_ALERTA_DIAS|string + "d)", vencendo, cor="warning", borda="warning") }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Faturamento previsto (mês)", "R$ " + "{:,.0f}".format(previsto_mes).replace(",", ".")) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Faturamento realizado (mês)", "R$ " + "{:,.0f}".format(realizado_mes).replace(",", ".")) }}
+  </div>
+  <div class="col-6 col-lg-2" title="Calculado a partir de itens com 'Início de produção' e 'Término de inspeção/embalagem' preenchidos">
+    {{ stat_card("Lead time médio", (lead_time_medio|string + "d") if lead_time_medio is not none else "—", sufixo="OTD: " + ((otd|string + "%") if otd is not none else "—")) }}
+  </div>
+</div>
+
+{% if lead_time_medio is none or otd is none %}
+<div class="alert alert-light border small text-muted mb-4">
+  <i class="bi bi-info-circle"></i>
+  Lead time médio e OTD aparecem em branco porque os pedidos importados do histórico raramente têm as datas de
+  "Início de produção" e "Término de inspeção/embalagem" preenchidas juntas. Esses dois indicadores passam a
+  funcionar automaticamente conforme os pedidos novos forem preenchidos com essas datas.
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Pedidos por status</h6>
+        <canvas id="graficoStatus" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Faturamento previsto × realizado (6 meses)</h6>
+        <canvas id="graficoFaturamento" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Backlog por estação</h6>
+        <canvas id="graficoBacklog" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-3">🔴 Pedidos atrasados (mais recentes primeiro)</h6>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Pedido</th>
+            <th>Cliente</th>
+            <th>Itens</th>
+            <th>Valor total</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in pedidos_atrasados %}
+          <tr>
+            <td>{{ p.pedido_venda or "—" }}</td>
+            <td>{{ p.cliente }}</td>
+            <td class="text-truncate" style="max-width: 260px;">{{ p.descricao_resumo }}</td>
+            <td>R$ {{ "{:,.2f}".format(p.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td><span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span></td>
+            <td class="text-end">
+              <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">Nenhum pedido atrasado no momento 🎉</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  const corTexto = "#495057";
+  Chart.defaults.color = corTexto;
+  Chart.defaults.font.size = 12;
+
+  new Chart(document.getElementById("graficoStatus"), {
+    type: "doughnut",
+    data: {
+      labels: ["Pendente", "Em tratativa", "Em andamento", "Finalizado"],
+      datasets: [{
+        data: [{{ resumo.pendente }}, {{ resumo.em_tratativa }}, {{ resumo.andamento }}, {{ resumo.finalizado }}],
+        backgroundColor: ["#6c757d", "#ffc107", "#0dcaf0", "#198754"],
+      }],
+    },
+    options: { plugins: { legend: { position: "bottom" } } },
+  });
+
+  const tendencia = {{ tendencia_faturamento | tojson }};
+  new Chart(document.getElementById("graficoFaturamento"), {
+    type: "bar",
+    data: {
+      labels: tendencia.map(function (p) { return p.mes; }),
+      datasets: [
+        { label: "Previsto", data: tendencia.map(function (p) { return p.previsto; }), backgroundColor: "#6ea8fe" },
+        { label: "Realizado", data: tendencia.map(function (p) { return p.realizado; }), backgroundColor: "#198754" },
+      ],
+    },
+    options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
+  });
+
+  const backlogEstacao = {{ backlog_estacao | tojson }};
+  new Chart(document.getElementById("graficoBacklog"), {
+    type: "bar",
+    data: {
+      labels: backlogEstacao.map(function (p) { return p.estacao; }),
+      datasets: [{ label: "Itens em aberto", data: backlogEstacao.map(function (p) { return p.quantidade; }), backgroundColor: "#f59f00" }],
+    },
+    options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
+  });
+})();
+</script>
+{% endblock %}
