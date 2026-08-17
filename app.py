@@ -14,10 +14,12 @@ from models import (
     PRIORIDADE_OPCOES,
     STATUS_CORES,
     STATUS_OPCOES,
+    HistoricoAlteracao,
     ItemPedido,
     Pedido,
     Usuario,
 )
+from permissoes import ROLES, ROLES_LABELS, requer_role
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PAGE_SIZE = 25
@@ -52,6 +54,7 @@ def create_app():
         db.create_all()
         _migrar_itens_pedido(app)
         _migrar_producao_para_itens(app)
+        _migrar_usuarios_role(app)
         _seed_inicial(app)
 
     @app.context_processor
@@ -63,6 +66,8 @@ def create_app():
             FRETE_OPCOES=FRETE_OPCOES,
             STATUS_CORES=STATUS_CORES,
             PRIORIDADE_CORES=PRIORIDADE_CORES,
+            ROLES=ROLES,
+            ROLES_LABELS=ROLES_LABELS,
         )
 
     register_routes(app)
@@ -164,10 +169,42 @@ def _migrar_producao_para_itens(app):
     app.logger.info("Migração automática: dados de produção movidos dos pedidos para os itens com sucesso.")
 
 
+def _migrar_usuarios_role(app):
+    """Adiciona os campos de papel de acesso (role/setor/ativo) em usuários
+    criados antes do Dashboard Gerencial de PCP existir.
+
+    Roda sozinha a cada início do site e só faz alguma coisa se detectar que
+    essas colunas ainda não existem — não apaga nem altera nenhum usuário além
+    de garantir que o "admin" original continue com acesso total (ADMIN) e que
+    todo o resto continue podendo fazer o que já fazia hoje (PCP).
+    """
+    inspector = inspect(db.engine)
+    if "usuarios" not in inspector.get_table_names():
+        return  # banco novo — db.create_all() já cuidou de tudo
+
+    colunas = {c["name"] for c in inspector.get_columns("usuarios")}
+    faltando = [c for c in ("role", "setor", "ativo") if c not in colunas]
+    if not faltando:
+        return  # já está no formato novo
+
+    with db.engine.begin() as conn:
+        if "role" not in colunas:
+            conn.execute(text("ALTER TABLE usuarios ADD COLUMN role VARCHAR(20)"))
+        if "setor" not in colunas:
+            conn.execute(text("ALTER TABLE usuarios ADD COLUMN setor VARCHAR(40)"))
+        if "ativo" not in colunas:
+            conn.execute(text("ALTER TABLE usuarios ADD COLUMN ativo BOOLEAN"))
+
+        conn.execute(text("UPDATE usuarios SET role = 'PCP' WHERE role IS NULL"))
+        conn.execute(text("UPDATE usuarios SET role = 'ADMIN' WHERE username = 'admin'"))
+        conn.execute(text("UPDATE usuarios SET ativo = TRUE WHERE ativo IS NULL"))
+    app.logger.info("Migração automática: usuários existentes receberam papel de acesso (role).")
+
+
 def _seed_inicial(app):
     """Cria o usuário admin padrão e importa a planilha na primeira execução."""
     if Usuario.query.count() == 0:
-        admin = Usuario(nome="Administrador", username="admin")
+        admin = Usuario(nome="Administrador", username="admin", role="ADMIN")
         admin.set_senha("admin123")
         db.session.add(admin)
         db.session.commit()
@@ -474,6 +511,112 @@ def register_routes(app):
                 ],
             }
         )
+
+    # ------------------------------------------------------------------
+    # Usuários (papéis de acesso) — só ADMIN cadastra/edita usuários
+    # ------------------------------------------------------------------
+    @app.route("/usuarios")
+    @requer_role("ADMIN")
+    def usuarios_lista():
+        usuarios = Usuario.query.order_by(Usuario.nome).all()
+        return render_template("usuarios_lista.html", usuarios=usuarios)
+
+    @app.route("/usuarios/novo", methods=["GET", "POST"])
+    @requer_role("ADMIN")
+    def usuarios_novo():
+        if request.method == "POST":
+            f = request.form
+            nome = f.get("nome", "").strip()
+            username = f.get("username", "").strip()
+            senha = f.get("senha", "")
+            role = f.get("role") or "PCP"
+            setor = f.get("setor", "").strip() or None
+
+            if not nome or not username or not senha:
+                flash("Nome, usuário e senha são obrigatórios.", "danger")
+                return render_template("usuarios_form.html", usuario=None, form=f)
+
+            if Usuario.query.filter_by(username=username).first():
+                flash("Já existe um usuário com esse nome de login.", "danger")
+                return render_template("usuarios_form.html", usuario=None, form=f)
+
+            if role not in ROLES:
+                role = "PCP"
+
+            novo = Usuario(nome=nome, username=username, role=role, setor=setor if role == "LIDER" else None)
+            novo.set_senha(senha)
+            db.session.add(novo)
+            db.session.commit()
+            flash(f"Usuário {nome} criado com sucesso.", "success")
+            return redirect(url_for("usuarios_lista"))
+
+        return render_template("usuarios_form.html", usuario=None, form={})
+
+    @app.route("/usuarios/<int:usuario_id>/editar", methods=["GET", "POST"])
+    @requer_role("ADMIN")
+    def usuarios_editar(usuario_id):
+        usuario = db.session.get(Usuario, usuario_id)
+        if usuario is None:
+            flash("Usuário não encontrado.", "danger")
+            return redirect(url_for("usuarios_lista"))
+
+        if request.method == "POST":
+            f = request.form
+            nome = f.get("nome", "").strip()
+            username = f.get("username", "").strip()
+            role = f.get("role") or usuario.role
+            setor = f.get("setor", "").strip() or None
+            senha = f.get("senha", "")
+
+            if not nome or not username:
+                flash("Nome e usuário são obrigatórios.", "danger")
+                return render_template("usuarios_form.html", usuario=usuario, form=f)
+
+            outro = Usuario.query.filter(Usuario.username == username, Usuario.id != usuario.id).first()
+            if outro:
+                flash("Já existe outro usuário com esse nome de login.", "danger")
+                return render_template("usuarios_form.html", usuario=usuario, form=f)
+
+            if role not in ROLES:
+                role = usuario.role
+
+            usuario.nome = nome
+            usuario.username = username
+            usuario.role = role
+            usuario.setor = setor if role == "LIDER" else None
+            usuario.ativo = bool(f.get("ativo"))
+            if senha:
+                usuario.set_senha(senha)
+
+            # o usuário admin original nunca perde acesso total nem fica desativado,
+            # mesmo que alguém manipule o formulário
+            if usuario.username == "admin":
+                usuario.role = "ADMIN"
+                usuario.setor = None
+                usuario.ativo = True
+
+            db.session.commit()
+            flash(f"Usuário {usuario.nome} atualizado com sucesso.", "success")
+            return redirect(url_for("usuarios_lista"))
+
+        return render_template("usuarios_form.html", usuario=usuario, form={})
+
+    @app.route("/usuarios/<int:usuario_id>/desativar", methods=["POST"])
+    @requer_role("ADMIN")
+    def usuarios_desativar(usuario_id):
+        usuario = db.session.get(Usuario, usuario_id)
+        if usuario is None:
+            flash("Usuário não encontrado.", "danger")
+        elif usuario.username == "admin":
+            flash("O usuário admin original não pode ser desativado.", "danger")
+        else:
+            usuario.ativo = not usuario.ativo
+            db.session.commit()
+            flash(
+                f"Usuário {usuario.nome} {'reativado' if usuario.ativo else 'desativado'} com sucesso.",
+                "info",
+            )
+        return redirect(url_for("usuarios_lista"))
 
 
 app = create_app()

@@ -10,32 +10,68 @@
 </head>
 <body>
   {% if current_user.is_authenticated %}
-  <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-    <div class="container-fluid">
-      <a class="navbar-brand fw-semibold" href="{{ url_for('dashboard') }}">
-        <i class="bi bi-diagram-3"></i> Controle de Produção
-      </a>
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
-        <span class="navbar-toggler-icon"></span>
-      </button>
-      <div class="collapse navbar-collapse" id="navMenu">
-        <ul class="navbar-nav me-auto">
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-speedometer2"></i> Painel</a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('novo_pedido') }}"><i class="bi bi-plus-circle"></i> Novo pedido</a>
-          </li>
-        </ul>
-        <span class="navbar-text text-light me-3">
-          <i class="bi bi-person-circle"></i> {{ current_user.nome }}
-        </span>
-        <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}">Sair</a>
+  <div class="app-shell">
+    <aside class="app-sidebar" id="appSidebar">
+      <div class="app-sidebar-brand">
+        <i class="bi bi-diagram-3"></i> <span>Controle de Produção</span>
+      </div>
+
+      <nav class="app-sidebar-nav">
+        <a class="app-nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">
+          <i class="bi bi-speedometer2"></i> <span>Painel</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
+          <i class="bi bi-plus-circle"></i> <span>Novo pedido</span>
+        </a>
+        {% if current_user.role == 'ADMIN' %}
+        <div class="app-nav-section">Administração</div>
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('usuarios_') %}active{% endif %}" href="{{ url_for('usuarios_lista') }}">
+          <i class="bi bi-people"></i> <span>Usuários</span>
+        </a>
+        {% endif %}
+      </nav>
+
+      <div class="app-sidebar-footer">
+        <div class="app-sidebar-user">
+          <i class="bi bi-person-circle"></i>
+          <div class="app-sidebar-user-info">
+            <div class="fw-semibold">{{ current_user.nome }}</div>
+            <div class="small text-white-50">{{ ROLES_LABELS.get(current_user.role, current_user.role) }}</div>
+          </div>
+        </div>
+        <a class="btn btn-outline-light btn-sm w-100 mt-2" href="{{ url_for('logout') }}">
+          <i class="bi bi-box-arrow-right"></i> Sair
+        </a>
+      </div>
+    </aside>
+
+    <div class="app-sidebar-backdrop" id="appSidebarBackdrop"></div>
+
+    <div class="app-main">
+      <header class="app-topbar d-lg-none">
+        <button class="btn btn-outline-secondary btn-sm" type="button" id="btnToggleSidebar" aria-label="Abrir menu">
+          <i class="bi bi-list"></i>
+        </button>
+        <span class="fw-semibold ms-2"><i class="bi bi-diagram-3"></i> Controle de Produção</span>
+      </header>
+
+      <div class="container-fluid px-4 py-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
       </div>
     </div>
-  </nav>
-  {% endif %}
-
+  </div>
+  {% else %}
   <div class="container-fluid px-4">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -48,8 +84,9 @@
       {% endif %}
     {% endwith %}
 
-    {% block content %}{% endblock %}
+    {% block content_login %}{% endblock %}
   </div>
+  {% endif %}
 
   <script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>

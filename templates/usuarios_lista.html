@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Usuários · Controle de Produção{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-people"></i> Usuários</h4>
+  <a class="btn btn-primary btn-sm" href="{{ url_for('usuarios_novo') }}">
+    <i class="bi bi-plus-circle"></i> Novo usuário
+  </a>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Nome</th>
+        <th>Usuário</th>
+        <th>Papel</th>
+        <th>Setor</th>
+        <th>Situação</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in usuarios %}
+      <tr>
+        <td>{{ u.nome }}</td>
+        <td>{{ u.username }}</td>
+        <td><span class="badge bg-secondary">{{ ROLES_LABELS.get(u.role, u.role) }}</span></td>
+        <td>{{ u.setor or "—" }}</td>
+        <td>
+          {% if u.ativo %}
+            <span class="badge bg-success">Ativo</span>
+          {% else %}
+            <span class="badge bg-secondary">Desativado</span>
+          {% endif %}
+        </td>
+        <td class="text-end">
+          <a href="{{ url_for('usuarios_editar', usuario_id=u.id) }}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+          {% if u.username != "admin" %}
+          <form method="post" action="{{ url_for('usuarios_desativar', usuario_id=u.id) }}" class="d-inline">
+            <button type="submit" class="btn btn-sm btn-outline-{{ 'secondary' if u.ativo else 'success' }}"
+              onclick="return confirm('{{ 'Desativar' if u.ativo else 'Reativar' }} o usuário {{ u.nome }}?')">
+              <i class="bi bi-{{ 'slash-circle' if u.ativo else 'arrow-counterclockwise' }}"></i>
+            </button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-4">Nenhum usuário cadastrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ "Editar usuário" if usuario else "Novo usuário" }} · Controle de Produção{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">
+    <i class="bi bi-person-{{ 'gear' if usuario else 'plus' }}"></i>
+    {{ "Editar usuário" if usuario else "Novo usuário" }}
+  </h4>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('usuarios_lista') }}">
+    <i class="bi bi-arrow-left"></i> Voltar
+  </a>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label small text-muted mb-1">Nome</label>
+          <input type="text" class="form-control" name="nome" required
+            value="{{ form.get('nome', usuario.nome if usuario else '') }}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label small text-muted mb-1">Usuário (login)</label>
+          <input type="text" class="form-control" name="username" required
+            value="{{ form.get('username', usuario.username if usuario else '') }}"
+            {{ 'readonly' if usuario and usuario.username == 'admin' else '' }}>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label small text-muted mb-1">
+            Senha {% if usuario %}<span class="text-muted">(deixe em branco para manter a atual)</span>{% endif %}
+          </label>
+          <input type="password" class="form-control" name="senha" {{ 'required' if not usuario else '' }}>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Papel</label>
+          <select class="form-select" name="role" id="campoRole"
+            {{ 'disabled' if usuario and usuario.username == 'admin' else '' }}>
+            {% for r in ROLES %}
+              <option value="{{ r }}"
+                {% if (form.get('role', usuario.role if usuario else 'PCP')) == r %}selected{% endif %}>
+                {{ ROLES_LABELS.get(r, r) }}
+              </option>
+            {% endfor %}
+          </select>
+          {% if usuario and usuario.username == 'admin' %}
+            <input type="hidden" name="role" value="ADMIN">
+            <div class="form-text">O usuário admin original sempre tem acesso total.</div>
+          {% endif %}
+        </div>
+
+        <div class="col-md-3" id="campoSetorWrap">
+          <label class="form-label small text-muted mb-1">Setor (só para Líder)</label>
+          <select class="form-select" name="setor">
+            <option value="">—</option>
+            {% for e in ESTACOES %}
+              <option value="{{ e }}" {% if (form.get('setor', usuario.setor if usuario else '')) == e %}selected{% endif %}>{{ e }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {% if usuario %}
+        <div class="col-12">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="ativo" id="campoAtivo" value="1"
+              {% if usuario.ativo %}checked{% endif %}
+              {{ 'disabled' if usuario.username == 'admin' else '' }}>
+            <label class="form-check-label" for="campoAtivo">Usuário ativo (pode fazer login)</label>
+            {% if usuario.username == 'admin' %}
+              <input type="hidden" name="ativo" value="1">
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="mt-4 d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-check-circle"></i> Salvar
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    const campoRole = document.getElementById("campoRole");
+    const campoSetorWrap = document.getElementById("campoSetorWrap");
+    if (!campoRole || !campoSetorWrap) return;
+
+    function atualizar() {
+      campoSetorWrap.style.display = campoRole.value === "LIDER" ? "" : "none";
+    }
+    campoRole.addEventListener("change", atualizar);
+    atualizar();
+  })();
+</script>
+{% endblock %}

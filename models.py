@@ -49,11 +49,25 @@ class Usuario(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     senha_hash = db.Column(db.String(255), nullable=False)
 
+    # ---- Papéis de acesso (ADMIN / PCP / LIDER / GESTAO) ----
+    # ADMIN e PCP podem cadastrar/editar pedidos e programação.
+    # LIDER só edita a produção da própria estação (campo "setor").
+    # GESTAO acompanha tudo, mas não edita pedidos/produção.
+    role = db.Column(db.String(20), nullable=False, default="PCP")
+    setor = db.Column(db.String(40), nullable=True)  # usado só quando role == "LIDER"
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
+
     def set_senha(self, senha):
         self.senha_hash = generate_password_hash(senha)
 
     def checar_senha(self, senha):
         return check_password_hash(self.senha_hash, senha)
+
+    @property
+    def is_active(self):
+        # Sobrescreve o padrão do Flask-Login (que assume sempre True) para que
+        # usuários desativados não consigam mais entrar, sem precisar apagá-los.
+        return self.ativo
 
 
 class Pedido(db.Model):
@@ -235,3 +249,27 @@ class ItemPedido(db.Model):
             self.status_producao = "ANDAMENTO"
         else:
             self.status_producao = "PENDENTE"
+
+
+class HistoricoAlteracao(db.Model):
+    """Registro de auditoria: quem mudou o quê, quando, e qual era o valor antes.
+
+    Gravado manualmente nos pontos onde o pedido/item é salvo (não usa eventos
+    automáticos do SQLAlchemy) — assim cada rota escolhe exatamente quais
+    campos importam registrar, sem "mágica" escondida.
+    """
+
+    __tablename__ = "historico_alteracoes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    entidade_tipo = db.Column(db.String(20), nullable=False)  # "pedido" ou "item_pedido"
+    entidade_id = db.Column(db.Integer, nullable=False)
+    # pedido_id fica preenchido mesmo quando a mudança é de um item, para que o
+    # histórico completo de um pedido (itens inclusos) seja uma única consulta.
+    pedido_id = db.Column(db.Integer, db.ForeignKey("pedidos.id"), nullable=True)
+    usuario_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    usuario_nome = db.Column(db.String(120), nullable=True)  # snapshot, sobrevive se o usuário for desativado
+    campo = db.Column(db.String(60), nullable=False)
+    valor_anterior = db.Column(db.Text, nullable=True)
+    valor_novo = db.Column(db.Text, nullable=True)
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
