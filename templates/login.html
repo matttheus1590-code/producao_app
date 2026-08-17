@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Entrar · Controle de Produção{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-11 col-sm-8 col-md-5 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <div class="text-center mb-4">
+          <i class="bi bi-diagram-3 fs-1 text-primary"></i>
+          <h4 class="mt-2 mb-0">Controle de Produção</h4>
+          <small class="text-muted">Acesse com seu usuário</small>
+        </div>
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label">Usuário</label>
+            <input type="text" class="form-control" name="username" autofocus required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Senha</label>
+            <input type="password" class="form-control" name="senha" required>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">Entrar</button>
+        </form>
+      </div>
+    </div>
+    <p class="text-center text-muted small mt-3">
+      Usuário inicial: <code>admin</code> / senha: <code>admin123</code> — troque depois de entrar.
+    </p>
+  </div>
+</div>
+{% endblock %}

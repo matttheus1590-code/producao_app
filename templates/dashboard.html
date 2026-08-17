@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Painel · Controle de Produção{% endblock %}
+{% block content %}
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Total de pedidos</div>
+      <div class="fs-3 fw-semibold">{{ resumo.total }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-secondary"><div class="card-body">
+      <div class="text-muted small">Pendentes</div>
+      <div class="fs-3 fw-semibold text-secondary">{{ resumo.pendente }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-warning"><div class="card-body">
+      <div class="text-muted small">Em tratativa</div>
+      <div class="fs-3 fw-semibold text-warning">{{ resumo.em_tratativa }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-info"><div class="card-body">
+      <div class="text-muted small">Em andamento</div>
+      <div class="fs-3 fw-semibold text-info">{{ resumo.andamento }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-success"><div class="card-body">
+      <div class="text-muted small">Finalizados</div>
+      <div class="fs-3 fw-semibold text-success">{{ resumo.finalizado }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Valor total</div>
+      <div class="fs-5 fw-semibold">R$ {{ "{:,.2f}".format(resumo.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+    </div></div>
+  </div>
+</div>
+
+<form class="row g-2 align-items-end mb-3" method="get">
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
+    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Cliente</label>
+    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Vendedor</label>
+    <input type="text" class="form-control" name="vendedor" value="{{ filtros.vendedor }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Status</label>
+    <select class="form-select" name="status">
+      <option value="">Todos</option>
+      {% for s in STATUS_OPCOES %}
+        <option value="{{ s }}" {% if filtros.status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Estação</label>
+    <select class="form-select" name="estacao">
+      <option value="">Todas</option>
+      {% for e in ESTACOES %}
+        <option value="{{ e }}" {% if filtros.estacao == e %}selected{% endif %}>{{ e }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-1 d-grid">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Pedido</th>
+        <th>Cliente</th>
+        <th>Produto</th>
+        <th>Qtd</th>
+        <th>Valor total</th>
+        <th>Prioridade</th>
+        <th>Estação</th>
+        <th>Status</th>
+        <th>Lead time (dias)</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pedidos %}
+      <tr>
+        <td>{{ p.pedido_venda or "—" }}</td>
+        <td>{{ p.cliente }}</td>
+        <td class="text-truncate" style="max-width: 220px;" title="{{ p.descricao_produto }}">{{ p.descricao_produto }}</td>
+        <td>{{ p.quantidade | int if p.quantidade == p.quantidade|int else p.quantidade }}</td>
+        <td>R$ {{ "{:,.2f}".format(p.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+        <td><span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade or "—" }}</span></td>
+        <td>{{ p.estacao or "—" }}</td>
+        <td><span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span></td>
+        <td>{{ p.prazo_total_dias if p.prazo_total_dias is not none else "—" }}</td>
+        <td class="text-end">
+          <a href="{{ url_for('editar_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('dashboard', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}

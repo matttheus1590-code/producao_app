@@ -1,0 +1,19 @@
+body {
+  background-color: #f4f6f9;
+}
+
+.card {
+  border-radius: 0.6rem;
+}
+
+.table td, .table th {
+  vertical-align: middle;
+}
+
+.normal-case {
+  text-transform: none;
+}
+
+.navbar-brand i {
+  color: #6ea8fe;
+}
