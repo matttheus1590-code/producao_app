@@ -3,6 +3,8 @@ from datetime import datetime
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+from sqlalchemy import inspect, text
+from sqlalchemy.orm import selectinload
 
 from extensions import db, login_manager
 from models import (
@@ -12,6 +14,7 @@ from models import (
     PRIORIDADE_OPCOES,
     STATUS_CORES,
     STATUS_OPCOES,
+    ItemPedido,
     Pedido,
     Usuario,
 )
@@ -47,6 +50,7 @@ def create_app():
     with app.app_context():
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
+        _migrar_itens_pedido(app)
         _seed_inicial(app)
 
     @app.context_processor
@@ -62,6 +66,38 @@ def create_app():
 
     register_routes(app)
     return app
+
+
+def _migrar_itens_pedido(app):
+    """Migra bancos criados antes de pedidos aceitarem vários produtos.
+
+    Antes, cada Pedido tinha um único produto (colunas descricao_produto,
+    quantidade e custo_unitario direto na tabela "pedidos"). Agora esses
+    dados moram na tabela "itens_pedido" (um pedido -> vários itens). Esta
+    função roda sozinha a cada start do site e só faz alguma coisa se
+    detectar o formato antigo — não apaga nenhum pedido, só reorganiza os
+    dados de produto para o novo formato.
+    """
+    inspector = inspect(db.engine)
+    if "pedidos" not in inspector.get_table_names():
+        return  # banco novo — db.create_all() já cuidou de tudo
+
+    colunas_pedidos = {c["name"] for c in inspector.get_columns("pedidos")}
+    formato_antigo = {"descricao_produto", "quantidade", "custo_unitario"}.issubset(colunas_pedidos)
+    if not formato_antigo:
+        return  # já está no formato novo
+
+    with db.engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO itens_pedido (pedido_id, descricao_produto, quantidade, custo_unitario) "
+                "SELECT id, descricao_produto, quantidade, custo_unitario FROM pedidos"
+            )
+        )
+        conn.execute(text("ALTER TABLE pedidos DROP COLUMN descricao_produto"))
+        conn.execute(text("ALTER TABLE pedidos DROP COLUMN quantidade"))
+        conn.execute(text("ALTER TABLE pedidos DROP COLUMN custo_unitario"))
+    app.logger.info("Migração automática: produtos dos pedidos movidos para itens_pedido com sucesso.")
 
 
 def _seed_inicial(app):
@@ -149,14 +185,15 @@ def register_routes(app):
             query = query.filter(
                 db.or_(
                     Pedido.pedido_venda.ilike(like),
-                    Pedido.descricao_produto.ilike(like),
                     Pedido.cliente.ilike(like),
+                    Pedido.itens.any(ItemPedido.descricao_produto.ilike(like)),
                 )
             )
 
         total_filtrado = query.count()
         pedidos = (
-            query.order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
+            query.options(selectinload(Pedido.itens))
+            .order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
             .offset((page - 1) * PAGE_SIZE)
             .limit(PAGE_SIZE)
             .all()
@@ -169,7 +206,7 @@ def register_routes(app):
             "em_tratativa": Pedido.query.filter_by(status_producao="EM TRATATIVA").count(),
             "andamento": Pedido.query.filter_by(status_producao="ANDAMENTO").count(),
             "finalizado": Pedido.query.filter_by(status_producao="FINALIZADO").count(),
-            "valor_total": sum(p.valor_total for p in Pedido.query.all()),
+            "valor_total": sum(p.valor_total for p in Pedido.query.options(selectinload(Pedido.itens)).all()),
         }
 
         return render_template(
@@ -187,6 +224,25 @@ def register_routes(app):
     def novo_pedido():
         if request.method == "POST":
             f = request.form
+            descricoes = f.getlist("item_descricao[]")
+            quantidades = f.getlist("item_quantidade[]")
+            custos = f.getlist("item_custo[]")
+
+            itens = []
+            itens_recarregados = []
+            for desc, qtd, custo in zip(descricoes, quantidades, custos):
+                itens_recarregados.append({"descricao": desc, "quantidade": qtd, "custo": custo})
+                desc = desc.strip()
+                if not desc:
+                    continue
+                itens.append(
+                    ItemPedido(
+                        descricao_produto=desc,
+                        quantidade=_parse_float_form(qtd),
+                        custo_unitario=_parse_float_form(custo),
+                    )
+                )
+
             pedido = Pedido(
                 data_cliente=_parse_data_form(f.get("data_cliente")),
                 data_inclusao_pedido=_parse_data_form(f.get("data_inclusao_pedido")),
@@ -198,23 +254,21 @@ def register_routes(app):
                 frete=f.get("frete") or None,
                 vendedor=f.get("vendedor", "").strip() or None,
                 pedido_venda=f.get("pedido_venda", "").strip() or None,
-                descricao_produto=f.get("descricao_produto", "").strip(),
-                quantidade=_parse_float_form(f.get("quantidade")),
-                custo_unitario=_parse_float_form(f.get("custo_unitario")),
                 prioridade=f.get("prioridade") or "MÉDIA",
             )
+            pedido.itens = itens
 
-            if not pedido.cliente or not pedido.descricao_produto:
-                flash("Cliente e Descrição do Produto são obrigatórios.", "danger")
-                return render_template("novo_pedido.html", form=f)
+            if not pedido.cliente or not itens:
+                flash("Cliente e ao menos um produto (com descrição) são obrigatórios.", "danger")
+                return render_template("novo_pedido.html", form=f, itens=itens_recarregados)
 
             pedido.atualizar_status_automatico()
             db.session.add(pedido)
             db.session.commit()
-            flash(f"Pedido de {pedido.cliente} incluído com sucesso.", "success")
+            flash(f"Pedido de {pedido.cliente} incluído com sucesso ({len(itens)} item(ns)).", "success")
             return redirect(url_for("editar_pedido", pedido_id=pedido.id))
 
-        return render_template("novo_pedido.html", form={})
+        return render_template("novo_pedido.html", form={}, itens=[])
 
     @app.route("/pedidos/<int:pedido_id>/editar", methods=["GET", "POST"])
     @login_required
@@ -237,9 +291,47 @@ def register_routes(app):
             pedido.frete = f.get("frete") or None
             pedido.vendedor = f.get("vendedor", "").strip() or None
             pedido.pedido_venda = f.get("pedido_venda", "").strip() or None
-            pedido.descricao_produto = f.get("descricao_produto", "").strip() or pedido.descricao_produto
-            pedido.quantidade = _parse_float_form(f.get("quantidade"))
-            pedido.custo_unitario = _parse_float_form(f.get("custo_unitario"))
+
+            # ---- itens do pedido (vários produtos) ----
+            item_ids = f.getlist("item_id[]")
+            descricoes = f.getlist("item_descricao[]")
+            quantidades = f.getlist("item_quantidade[]")
+            custos = f.getlist("item_custo[]")
+
+            itens_originais = {item.id: item for item in pedido.itens}
+            ids_mantidos = set()
+
+            for item_id, desc, qtd, custo in zip(item_ids, descricoes, quantidades, custos):
+                desc = desc.strip()
+                if item_id:
+                    iid = int(item_id)
+                    item = itens_originais.get(iid)
+                    if item is None:
+                        continue
+                    if not desc:
+                        continue  # descrição apagada -> item será removido abaixo
+                    item.descricao_produto = desc
+                    item.quantidade = _parse_float_form(qtd)
+                    item.custo_unitario = _parse_float_form(custo)
+                    ids_mantidos.add(iid)
+                else:
+                    if not desc:
+                        continue
+                    pedido.itens.append(
+                        ItemPedido(
+                            descricao_produto=desc,
+                            quantidade=_parse_float_form(qtd),
+                            custo_unitario=_parse_float_form(custo),
+                        )
+                    )
+
+            for iid, item in itens_originais.items():
+                if iid not in ids_mantidos:
+                    pedido.itens.remove(item)
+
+            if not pedido.itens:
+                flash("O pedido precisa ter ao menos um produto.", "danger")
+                return render_template("editar_pedido.html", pedido=pedido)
 
             # ---- campos parametrizados ----
             pedido.prioridade = f.get("prioridade") or pedido.prioridade

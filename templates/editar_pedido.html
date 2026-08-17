@@ -95,23 +95,54 @@
             <input type="text" class="form-control" name="pais" value="{{ pedido.pais or '' }}">
           </div>
 
-          <div class="col-md-6">
-            <label class="form-label">Descrição do produto *</label>
-            <input type="text" class="form-control" name="descricao_produto" value="{{ pedido.descricao_produto }}" required>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Quantidade</label>
-            <input type="number" step="any" min="0" class="form-control" name="quantidade" value="{{ pedido.quantidade }}">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Custo unitário (R$)</label>
-            <input type="number" step="any" min="0" class="form-control" name="custo_unitario" value="{{ pedido.custo_unitario }}">
-          </div>
+          <div class="col-12"><hr class="my-1"></div>
 
           <div class="col-12">
+            <label class="form-label mb-2">Itens do pedido * <span class="text-muted fw-normal">(adicione quantos produtos diferentes forem necessários)</span></label>
+            <div id="itensContainer">
+              {% for item in pedido.itens %}
+              <div class="row g-2 item-row mb-2 align-items-center">
+                <input type="hidden" class="item-id" name="item_id[]" value="{{ item.id }}">
+                <div class="col-md-6">
+                  <input type="text" class="form-control item-descricao" name="item_descricao[]" value="{{ item.descricao_produto }}" placeholder="Descrição do produto">
+                </div>
+                <div class="col-md-2">
+                  <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" value="{{ item.quantidade }}" placeholder="Qtd">
+                </div>
+                <div class="col-md-3">
+                  <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" value="{{ item.custo_unitario }}" placeholder="Custo unitário (R$)">
+                </div>
+                <div class="col-md-1 d-grid">
+                  <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
+                </div>
+              </div>
+              {% else %}
+              <div class="row g-2 item-row mb-2 align-items-center">
+                <input type="hidden" class="item-id" name="item_id[]" value="">
+                <div class="col-md-6">
+                  <input type="text" class="form-control item-descricao" name="item_descricao[]" placeholder="Descrição do produto">
+                </div>
+                <div class="col-md-2">
+                  <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
+                </div>
+                <div class="col-md-3">
+                  <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
+                </div>
+                <div class="col-md-1 d-grid">
+                  <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            <button type="button" id="btnAdicionarItem" class="btn btn-sm btn-outline-primary mt-1">
+              <i class="bi bi-plus-circle"></i> Adicionar outro produto
+            </button>
+          </div>
+
+          <div class="col-12 mt-3">
             <div class="alert alert-light border d-flex justify-content-between align-items-center mb-0">
               <span class="text-muted">Valor total do pedido</span>
-              <strong>R$ {{ "{:,.2f}".format(pedido.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</strong>
+              <strong id="valorTotalPreview">R$ {{ "{:,.2f}".format(pedido.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</strong>
             </div>
           </div>
         </div>
@@ -196,4 +227,65 @@
   </div>
 </div>
 
+{% endblock %}
+{% block scripts %}
+<script>
+(function() {
+  const container = document.getElementById('itensContainer');
+  const btnAdd = document.getElementById('btnAdicionarItem');
+  const totalEl = document.getElementById('valorTotalPreview');
+
+  function linhaTemplate() {
+    const div = document.createElement('div');
+    div.className = 'row g-2 item-row mb-2 align-items-center';
+    div.innerHTML = `
+      <input type="hidden" class="item-id" name="item_id[]" value="">
+      <div class="col-md-6">
+        <input type="text" class="form-control item-descricao" name="item_descricao[]" placeholder="Descrição do produto">
+      </div>
+      <div class="col-md-2">
+        <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
+      </div>
+      <div class="col-md-3">
+        <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
+      </div>
+      <div class="col-md-1 d-grid">
+        <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
+      </div>`;
+    return div;
+  }
+
+  function atualizarTotal() {
+    let total = 0;
+    container.querySelectorAll('.item-row').forEach(function(row) {
+      const q = parseFloat(row.querySelector('.item-quantidade').value || 0);
+      const c = parseFloat(row.querySelector('.item-custo').value || 0);
+      total += q * c;
+    });
+    totalEl.textContent = 'R$ ' + total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  btnAdd.addEventListener('click', function() {
+    container.appendChild(linhaTemplate());
+  });
+
+  container.addEventListener('click', function(e) {
+    const btn = e.target.closest('.btn-remover-item');
+    if (!btn) return;
+    const linhas = container.querySelectorAll('.item-row');
+    if (linhas.length > 1) {
+      btn.closest('.item-row').remove();
+    } else {
+      btn.closest('.item-row').querySelectorAll('input[type="text"], input[type="number"]').forEach(function(inp) { inp.value = ''; });
+    }
+    atualizarTotal();
+  });
+
+  container.addEventListener('input', function(e) {
+    if (e.target.classList.contains('item-quantidade') || e.target.classList.contains('item-custo')) {
+      atualizarTotal();
+    }
+  });
+})();
+</script>
 {% endblock %}

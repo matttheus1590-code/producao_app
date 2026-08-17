@@ -72,9 +72,14 @@ class Pedido(db.Model):
     frete = db.Column(db.String(30), nullable=True)
     vendedor = db.Column(db.String(120), nullable=True)
     pedido_venda = db.Column(db.String(40), nullable=True)
-    descricao_produto = db.Column(db.String(300), nullable=False)
-    quantidade = db.Column(db.Float, nullable=False, default=0)
-    custo_unitario = db.Column(db.Float, nullable=False, default=0)
+
+    # Um pedido pode ter vários produtos diferentes (itens)
+    itens = db.relationship(
+        "ItemPedido",
+        backref="pedido",
+        cascade="all, delete-orphan",
+        order_by="ItemPedido.id",
+    )
 
     # ------------- Dados PARAMETRIZADOS (evoluem durante a produção) -------------
     prioridade = db.Column(db.String(20), default="MÉDIA")
@@ -101,7 +106,21 @@ class Pedido(db.Model):
     # ---------------------------------------------------------------------
     @property
     def valor_total(self):
-        return round((self.quantidade or 0) * (self.custo_unitario or 0), 2)
+        return round(sum((item.valor_total for item in self.itens), 0.0), 2)
+
+    @property
+    def quantidade_total(self):
+        return sum((item.quantidade or 0) for item in self.itens)
+
+    @property
+    def descricao_resumo(self):
+        """Texto curto para listagens: primeiro produto + contagem dos demais."""
+        if not self.itens:
+            return "—"
+        primeiro = self.itens[0].descricao_produto
+        if len(self.itens) > 1:
+            return f"{primeiro} (+{len(self.itens) - 1} item(ns))"
+        return primeiro
 
     @property
     def lt_comercial_dias(self):
@@ -150,3 +169,20 @@ class Pedido(db.Model):
             self.status_producao = "ANDAMENTO"
         else:
             self.status_producao = "PENDENTE"
+
+
+class ItemPedido(db.Model):
+    """Um produto dentro de um pedido. Um pedido pode ter vários itens."""
+
+    __tablename__ = "itens_pedido"
+
+    id = db.Column(db.Integer, primary_key=True)
+    pedido_id = db.Column(db.Integer, db.ForeignKey("pedidos.id"), nullable=False)
+
+    descricao_produto = db.Column(db.String(300), nullable=False)
+    quantidade = db.Column(db.Float, nullable=False, default=0)
+    custo_unitario = db.Column(db.Float, nullable=False, default=0)
+
+    @property
+    def valor_total(self):
+        return round((self.quantidade or 0) * (self.custo_unitario or 0), 2)

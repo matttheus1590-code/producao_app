@@ -83,8 +83,7 @@
       <tr>
         <th>Pedido</th>
         <th>Cliente</th>
-        <th>Produto</th>
-        <th>Qtd</th>
+        <th>Itens</th>
         <th>Valor total</th>
         <th>Prioridade</th>
         <th>Estação</th>
@@ -98,8 +97,7 @@
       <tr>
         <td>{{ p.pedido_venda or "—" }}</td>
         <td>{{ p.cliente }}</td>
-        <td class="text-truncate" style="max-width: 220px;" title="{{ p.descricao_produto }}">{{ p.descricao_produto }}</td>
-        <td>{{ p.quantidade | int if p.quantidade == p.quantidade|int else p.quantidade }}</td>
+        <td class="text-truncate" style="max-width: 260px;" title="{{ p.itens | map(attribute='descricao_produto') | join(', ') }}">{{ p.descricao_resumo }}</td>
         <td>R$ {{ "{:,.2f}".format(p.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td><span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade or "—" }}</span></td>
         <td>{{ p.estacao or "—" }}</td>
@@ -112,7 +110,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="9" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

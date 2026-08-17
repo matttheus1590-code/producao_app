@@ -11,7 +11,7 @@ from datetime import date, datetime
 import openpyxl
 
 from extensions import db
-from models import Pedido
+from models import ItemPedido, Pedido
 
 SHEET_NAME = "GERAL TESTE"
 PRIMEIRA_LINHA = 3
@@ -103,7 +103,7 @@ def importar_planilha(caminho, primeira_linha=PRIMEIRA_LINHA, ultima_linha=ULTIM
     wb = openpyxl.load_workbook(caminho, data_only=True)
     ws = wb[SHEET_NAME]
 
-    novos = []
+    total = 0
     for r in range(primeira_linha, ultima_linha + 1):
         cliente = ws.cell(row=r, column=COL["cliente"]).value
         descricao = ws.cell(row=r, column=COL["descricao"]).value
@@ -123,9 +123,6 @@ def importar_planilha(caminho, primeira_linha=PRIMEIRA_LINHA, ultima_linha=ULTIM
             frete=_texto(ws.cell(row=r, column=COL["frete"]).value, upper=True),
             vendedor=_texto(ws.cell(row=r, column=COL["vendedor"]).value),
             pedido_venda=_texto(ws.cell(row=r, column=COL["pedido_venda"]).value),
-            descricao_produto=_texto(descricao, default="SEM DESCRIÇÃO"),
-            quantidade=_numero(ws.cell(row=r, column=COL["quantidade"]).value),
-            custo_unitario=_numero(ws.cell(row=r, column=COL["custo_unitario"]).value),
             prioridade=_texto(ws.cell(row=r, column=COL["prioridade"]).value, default="MÉDIA", upper=True),
             estacao=_texto(ws.cell(row=r, column=COL["estacao"]).value, upper=True),
             status_producao=_texto(ws.cell(row=r, column=COL["status"]).value, default="PENDENTE", upper=True),
@@ -137,11 +134,18 @@ def importar_planilha(caminho, primeira_linha=PRIMEIRA_LINHA, ultima_linha=ULTIM
             rnc=_texto(ws.cell(row=r, column=COL["rnc"]).value),
             obs=_texto(ws.cell(row=r, column=COL["obs"]).value),
         )
-        novos.append(pedido)
+        pedido.itens.append(
+            ItemPedido(
+                descricao_produto=_texto(descricao, default="SEM DESCRIÇÃO"),
+                quantidade=_numero(ws.cell(row=r, column=COL["quantidade"]).value),
+                custo_unitario=_numero(ws.cell(row=r, column=COL["custo_unitario"]).value),
+            )
+        )
+        db.session.add(pedido)
+        total += 1
 
-    db.session.bulk_save_objects(novos)
     db.session.commit()
-    return len(novos)
+    return total
 
 
 if __name__ == "__main__":
