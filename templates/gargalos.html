@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Gargalos · Controle de Produção{% endblock %}
+{% block content %}
+
+<h4 class="mb-3"><i class="bi bi-exclamation-triangle"></i> Gargalos por estação</h4>
+<p class="text-muted small mb-3">Ranking das estações com mais itens parados (fila), do maior gargalo para o menor.</p>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <canvas id="graficoGargalos" height="110"></canvas>
+  </div>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-hover align-middle bg-white fs-6">
+    <thead class="table-light">
+      <tr>
+        <th>Estação</th>
+        <th class="text-center">Fila</th>
+        <th class="text-center">Atrasados</th>
+        <th class="text-center">Tempo de espera médio</th>
+        <th class="text-center">Lead time médio</th>
+        <th class="text-end">Valor parado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in linhas %}
+      <tr>
+        <td class="fw-semibold">{{ l.estacao }}</td>
+        <td class="text-center">
+          <span class="badge bg-{{ 'danger' if l.fila > 10 else ('warning' if l.fila > 0 else 'secondary') }} fs-6">{{ l.fila }}</span>
+        </td>
+        <td class="text-center">
+          {% if l.atraso > 0 %}<span class="badge bg-danger fs-6">{{ l.atraso }}</span>{% else %}—{% endif %}
+        </td>
+        <td class="text-center">{{ (l.tempo_espera_medio ~ "d") if l.tempo_espera_medio is not none else "—" }}</td>
+        <td class="text-center">{{ (l.lt_medio ~ "d") if l.lt_medio is not none else "—" }}</td>
+        <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_parado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-4">Nenhuma estação cadastrada.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  Chart.defaults.color = "#495057";
+  Chart.defaults.font.size = 14;
+
+  const linhas = {{ linhas | tojson }};
+  new Chart(document.getElementById("graficoGargalos"), {
+    type: "bar",
+    data: {
+      labels: linhas.map(function (l) { return l.estacao; }),
+      datasets: [{
+        label: "Itens na fila",
+        data: linhas.map(function (l) { return l.fila; }),
+        backgroundColor: linhas.map(function (l) { return l.atraso > 0 ? "#dc3545" : "#f59f00"; }),
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+})();
+</script>
+{% endblock %}

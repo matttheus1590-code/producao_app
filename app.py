@@ -556,6 +556,61 @@ def _tendencia_kpis(meses=6):
     return resultado
 
 
+def _gargalos_por_estacao():
+    """Ranking de estações por "quanto está travado ali": fila, atraso, tempo
+    de espera médio, lead time médio e valor parado (não finalizado).
+
+    Consultado estação por estação (poucas estações, poucas linhas cada) em vez
+    de carregar TODOS os pedidos em Python — o mesmo cuidado de performance já
+    aplicado na tela inicial (fase 3) e na visão geral de Estações (fase 5)."""
+    hoje = date.today()
+    estacoes = Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all()
+    resultado = []
+
+    for e in estacoes:
+        nome = e.nome
+        abertos = ItemPedido.query.filter(ItemPedido.estacao == nome, ItemPedido.status_producao != "FINALIZADO")
+        fila = abertos.count()
+        atraso = abertos.filter(
+            ItemPedido.liberacao_prevista.isnot(None), ItemPedido.liberacao_prevista < hoje
+        ).count()
+        valor_parado = (
+            db.session.query(func.sum(ItemPedido.quantidade * ItemPedido.custo_unitario))
+            .filter(ItemPedido.estacao == nome, ItemPedido.status_producao != "FINALIZADO")
+            .scalar()
+            or 0.0
+        )
+
+        itens_com_inicio = (
+            ItemPedido.query.options(selectinload(ItemPedido.pedido))
+            .filter(ItemPedido.estacao == nome, ItemPedido.inicio_producao.isnot(None))
+            .all()
+        )
+        esperas = [
+            (i.inicio_producao - i.pedido.data_inclusao_pedido).days
+            for i in itens_com_inicio
+            if i.pedido and i.pedido.data_inclusao_pedido
+        ]
+        tempo_espera_medio = round(sum(esperas) / len(esperas), 1) if esperas else None
+
+        lts = [(i.termino_inspecao - i.inicio_producao).days for i in itens_com_inicio if i.termino_inspecao]
+        lt_medio = round(sum(lts) / len(lts), 1) if lts else None
+
+        resultado.append(
+            {
+                "estacao": nome,
+                "fila": fila,
+                "atraso": atraso,
+                "tempo_espera_medio": tempo_espera_medio,
+                "lt_medio": lt_medio,
+                "valor_parado": round(valor_parado, 2),
+            }
+        )
+
+    resultado.sort(key=lambda r: (r["fila"], r["atraso"]), reverse=True)
+    return resultado
+
+
 def _construir_timeline(pedido):
     """Monta uma lista de eventos (data + descrição) a partir das datas já
     preenchidas no pedido e em cada item, para exibir como linha do tempo."""
@@ -653,6 +708,11 @@ def register_routes(app):
             otd_vendedor=_otd_por_vendedor(desde=desde),
             tendencia=_tendencia_kpis(meses=meses),
         )
+
+    @app.route("/gargalos")
+    @login_required
+    def gargalos():
+        return render_template("gargalos.html", linhas=_gargalos_por_estacao())
 
     @app.route("/")
     @login_required
