@@ -74,6 +74,76 @@
 </div>
 {% endif %}
 
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h6 class="text-uppercase text-muted small mb-0">Projeção PCP por mês (soma das semanas do mês)</h6>
+    </div>
+    <p class="text-muted small mb-3">
+      "Finalizado" = já entregue/concluído; "Em aberto" = ainda projetado pra aquele mês.
+      Use o filtro pra ver meses anteriores (quanto foi entregue) ou meses à frente (quanto já está projetado).
+    </p>
+
+    <form class="row g-2 align-items-end mb-3" method="get">
+      <div class="col-auto">
+        <label class="form-label small text-muted mb-1">De</label>
+        <input type="month" class="form-control" name="pcp_de" value="{{ pcp_de_str }}">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small text-muted mb-1">Até</label>
+        <input type="month" class="form-control" name="pcp_ate" value="{{ pcp_ate_str }}">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+      </div>
+    </form>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Mês</th>
+            <th class="text-center">Pedidos finalizados</th>
+            <th class="text-end">Valor finalizado</th>
+            <th class="text-center">Pedidos em aberto</th>
+            <th class="text-end">Valor em aberto</th>
+            <th class="text-center">Total pedidos</th>
+            <th class="text-end">Total valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in projecao_pcp_mensal %}
+          <tr>
+            <td class="fw-semibold">{{ l.label }}</td>
+            <td class="text-center"><span class="badge bg-success">{{ l.pedidos_finalizados }}</span></td>
+            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_finalizado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td class="text-center"><span class="badge bg-primary">{{ l.pedidos_em_aberto }}</span></td>
+            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_em_aberto).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td class="text-center fw-semibold">{{ l.pedidos_total }}</td>
+            <td class="text-end fw-semibold">R$ {{ "{:,.2f}".format(l.valor_total_mes).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="text-center text-muted py-4">Nenhum pedido com semana PCP definida nesse período.</td></tr>
+          {% endfor %}
+        </tbody>
+        {% if projecao_pcp_mensal %}
+        <tfoot class="table-light">
+          <tr class="fw-bold">
+            <td>Total do período</td>
+            <td class="text-center">{{ projecao_pcp_mensal | sum(attribute="pedidos_finalizados") }}</td>
+            <td class="text-end">R$ {{ "{:,.2f}".format(projecao_pcp_mensal | sum(attribute="valor_finalizado")).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td class="text-center">{{ projecao_pcp_mensal | sum(attribute="pedidos_em_aberto") }}</td>
+            <td class="text-end">R$ {{ "{:,.2f}".format(projecao_pcp_mensal | sum(attribute="valor_em_aberto")).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td class="text-center">{{ projecao_pcp_mensal | sum(attribute="pedidos_total") }}</td>
+            <td class="text-end">R$ {{ "{:,.2f}".format(projecao_pcp_mensal | sum(attribute="valor_total_mes")).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+          </tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </div>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-body">
     <h6 class="text-uppercase text-muted small mb-3">🔴 Pedidos atrasados (mais recentes primeiro)</h6>

@@ -641,6 +641,106 @@ def _projecao_pcp():
     return linhas
 
 
+# Nomes de mês (abreviados e por extenso) que já apareceram no campo Término
+# Semanal PCP — cobre tanto o formato novo ("SEMANA 04 / JUL / 2026") quanto
+# valores antigos digitados à mão antes dessa convenção existir ("DEZEMBRO/2025").
+_MESES_NUM_PCP = {
+    "JAN": 1, "JANEIRO": 1,
+    "FEV": 2, "FEVEREIRO": 2,
+    "MAR": 3, "MARÇO": 3, "MARCO": 3,
+    "ABR": 4, "ABRIL": 4,
+    "MAI": 5, "MAIO": 5,
+    "JUN": 6, "JUNHO": 6,
+    "JUL": 7, "JULHO": 7,
+    "AGO": 8, "AGOSTO": 8,
+    "SET": 9, "SETEMBRO": 9,
+    "OUT": 10, "OUTUBRO": 10,
+    "NOV": 11, "NOVEMBRO": 11,
+    "DEZ": 12, "DEZEMBRO": 12,
+}
+
+
+def _mes_ano_da_semana_pcp(semana):
+    """Extrai (ano, mês) de dentro do valor de Término Semanal PCP, não
+    importa se é "SEMANA 04 / JUL / 2026" (formato novo) ou "DEZEMBRO/2025"
+    (formato antigo, digitado à mão) — devolve None se não conseguir entender."""
+    if not semana:
+        return None
+    m = re.search(r"([A-ZÇÃÕ]+)\s*/\s*(\d{4})", semana.upper())
+    if not m:
+        return None
+    nome_mes, ano = m.groups()
+    mes = _MESES_NUM_PCP.get(nome_mes)
+    if not mes:
+        return None
+    return (int(ano), mes)
+
+
+def _somar_meses(ano, mes, delta):
+    total = (ano * 12 + (mes - 1)) + delta
+    return (total // 12, total % 12 + 1)
+
+
+def _parse_mes_ano_form(valor, default):
+    """Lê um <input type=month> (formato "YYYY-MM") — devolve `default` se
+    vier vazio ou num formato que não reconhece."""
+    if not valor:
+        return default
+    try:
+        ano_s, mes_s = valor.split("-")
+        ano, mes = int(ano_s), int(mes_s)
+        if 1 <= mes <= 12:
+            return (ano, mes)
+    except (ValueError, AttributeError):
+        pass
+    return default
+
+
+def _projecao_pcp_mensal(mes_de, mes_ate):
+    """Soma a projeção semanal de PCP por MÊS (soma de todas as semanas
+    dentro do mês), separando o que já foi finalizado do que ainda está em
+    aberto — em quantidade de pedidos e em valor (R$). `mes_de`/`mes_ate` são
+    tuplas (ano, mês), intervalo fechado (inclusive nas duas pontas)."""
+    pedidos = (
+        Pedido.query.options(selectinload(Pedido.itens))
+        .filter(Pedido.go_termino_semanal_pcp.isnot(None))
+        .all()
+    )
+
+    baldes = {}
+    for p in pedidos:
+        chave = _mes_ano_da_semana_pcp(p.go_termino_semanal_pcp)
+        if chave is None or not (mes_de <= chave <= mes_ate):
+            continue
+        b = baldes.setdefault(chave, {"pedidos_fin": 0, "valor_fin": 0.0, "pedidos_aberto": 0, "valor_aberto": 0.0})
+        if p.status_producao == "FINALIZADO":
+            b["pedidos_fin"] += 1
+            b["valor_fin"] += p.valor_total
+        else:
+            b["pedidos_aberto"] += 1
+            b["valor_aberto"] += p.valor_total
+
+    linhas = []
+    ano, mes = mes_de
+    while (ano, mes) <= mes_ate:
+        b = baldes.get((ano, mes), {"pedidos_fin": 0, "valor_fin": 0.0, "pedidos_aberto": 0, "valor_aberto": 0.0})
+        linhas.append(
+            {
+                "ano": ano,
+                "mes": mes,
+                "label": f"{MESES_PT[mes - 1]}/{ano}",
+                "pedidos_finalizados": b["pedidos_fin"],
+                "valor_finalizado": round(b["valor_fin"], 2),
+                "pedidos_em_aberto": b["pedidos_aberto"],
+                "valor_em_aberto": round(b["valor_aberto"], 2),
+                "pedidos_total": b["pedidos_fin"] + b["pedidos_aberto"],
+                "valor_total_mes": round(b["valor_fin"] + b["valor_aberto"], 2),
+            }
+        )
+        ano, mes = _somar_meses(ano, mes, 1)
+    return linhas
+
+
 def _predicado_vencendo():
     """Pedido "vencendo": tem item com liberação prevista nos próximos
     PRAZO_ALERTA_DIAS dias (e ainda não atrasado nenhum item) — mesma regra do
@@ -1196,6 +1296,17 @@ def register_routes(app):
             .all()
         )
 
+        # Quadro mensal de projeção PCP (soma das semanas dentro de cada mês) —
+        # filtro de período em <input type=month>, com um intervalo padrão de
+        # 3 meses atrás até 6 meses à frente (dá pra ver "quanto foi entregue"
+        # nos meses passados e "quanto já está projetado" nos meses seguintes).
+        pcp_de_padrao = _somar_meses(hoje.year, hoje.month, -3)
+        pcp_ate_padrao = _somar_meses(hoje.year, hoje.month, 6)
+        pcp_de = _parse_mes_ano_form(request.args.get("pcp_de"), pcp_de_padrao)
+        pcp_ate = _parse_mes_ano_form(request.args.get("pcp_ate"), pcp_ate_padrao)
+        if pcp_de > pcp_ate:
+            pcp_de, pcp_ate = pcp_ate, pcp_de
+
         return render_template(
             "painel.html",
             resumo=resumo,
@@ -1210,6 +1321,9 @@ def register_routes(app):
             backlog_estacao=_backlog_por_estacao(),
             pedidos_atrasados=pedidos_atrasados,
             projecao_pcp=_projecao_pcp(),
+            projecao_pcp_mensal=_projecao_pcp_mensal(pcp_de, pcp_ate),
+            pcp_de_str=f"{pcp_de[0]:04d}-{pcp_de[1]:02d}",
+            pcp_ate_str=f"{pcp_ate[0]:04d}-{pcp_ate[1]:02d}",
         )
 
     @app.route("/kpis")
