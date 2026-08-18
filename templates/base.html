@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Controle de Produção{% endblock %}</title>
+  <title>{% block title %}Gestão da Produção e Operação{% endblock %}</title>
   <link href="{{ url_for('static', filename='vendor/bootstrap/css/bootstrap.min.css') }}" rel="stylesheet">
   <link href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.css') }}" rel="stylesheet">
   <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
@@ -13,7 +13,8 @@
   <div class="app-shell">
     <aside class="app-sidebar" id="appSidebar">
       <div class="app-sidebar-brand">
-        <i class="bi bi-diagram-3"></i> <span>Controle de Produção</span>
+        <img src="{{ url_for('static', filename='img/logo_4pipe.png') }}" alt="4PIPE Solutions" class="app-sidebar-logo">
+        <span class="app-sidebar-brand-subtitulo">Gestão da Produção e Operação</span>
       </div>
 
       <nav class="app-sidebar-nav">
@@ -90,7 +91,7 @@
         <button class="btn btn-outline-secondary btn-sm" type="button" id="btnToggleSidebar" aria-label="Abrir menu">
           <i class="bi bi-list"></i>
         </button>
-        <span class="fw-semibold ms-2"><i class="bi bi-diagram-3"></i> Controle de Produção</span>
+        <img src="{{ url_for('static', filename='img/logo_4pipe.png') }}" alt="4PIPE Solutions" class="app-topbar-logo ms-2">
       </header>
 
       <div class="container-fluid px-4 py-4">

@@ -63,15 +63,26 @@ body {
 }
 
 .app-sidebar-brand {
-  padding: 1.1rem 1.25rem;
-  font-weight: 600;
-  font-size: 1.05rem;
+  padding: 1rem 1.1rem 0.85rem;
+  background-color: #fff;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: center;
 }
 
-.app-sidebar-brand i {
-  color: #6ea8fe;
-  margin-right: 0.4rem;
+.app-sidebar-logo {
+  max-width: 100%;
+  height: auto;
+  max-height: 46px;
+}
+
+.app-sidebar-brand-subtitulo {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #6b7280;
 }
 
 .app-sidebar-nav {
@@ -146,6 +157,11 @@ body {
   position: sticky;
   top: 0;
   z-index: 1020;
+}
+
+.app-topbar-logo {
+  height: 28px;
+  width: auto;
 }
 
 .app-sidebar-backdrop {
