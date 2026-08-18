@@ -39,6 +39,15 @@
   </div>
 </form>
 
+<div class="d-flex justify-content-end gap-2 mb-4">
+  <a href="{{ url_for('relatorio_faturamento_csv', ano=ano, mes=mes, **filtros) }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-filetype-csv"></i> Exportar CSV
+  </a>
+  <a href="{{ url_for('relatorio_faturamento_xlsx', ano=ano, mes=mes, **filtros) }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-file-earmark-excel"></i> Exportar Excel
+  </a>
+</div>
+
 <div class="row g-3 mb-4">
   <div class="col-md-4">
     <div class="card text-center h-100"><div class="card-body">

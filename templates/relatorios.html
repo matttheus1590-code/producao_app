@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Relatórios · Controle de Produção{% endblock %}
+{% block content %}
+
+<h4 class="mb-3"><i class="bi bi-download"></i> Relatórios</h4>
+<p class="text-muted small mb-4">Exportações sob demanda em CSV ou Excel — geradas na hora, sem agendamento automático.</p>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body d-flex flex-column">
+        <h6 class="text-uppercase text-muted small mb-2"><i class="bi bi-list-ul"></i> Listagem geral</h6>
+        <p class="small text-muted flex-grow-1">Exporta a listagem de pedidos com os filtros aplicados agora mesmo em <a href="{{ url_for('dashboard') }}">Listagem Geral</a> — abra a tela lá, filtre como quiser e use os botões "Exportar" no topo da tabela. Os botões abaixo exportam sem nenhum filtro (todos os pedidos).</p>
+        <div class="d-flex gap-2">
+          <a href="{{ url_for('relatorio_listagem_csv') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-filetype-csv"></i> CSV
+          </a>
+          <a href="{{ url_for('relatorio_listagem_xlsx') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-file-earmark-excel"></i> Excel
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body d-flex flex-column">
+        <h6 class="text-uppercase text-muted small mb-2"><i class="bi bi-cash-coin"></i> Faturamento mensal</h6>
+        <p class="small text-muted">Itens faturados (realizado) no mês escolhido, com pedido, cliente, produto, valor e nota fiscal.</p>
+        <form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('relatorio_faturamento_csv') }}" id="formFaturamento">
+          <div class="col-6">
+            <label class="form-label small text-muted mb-1">Ano</label>
+            <input type="number" class="form-control" name="ano" value="{{ hoje.year }}" min="2000" max="2100">
+          </div>
+          <div class="col-6">
+            <label class="form-label small text-muted mb-1">Mês</label>
+            <select class="form-select" name="mes">
+              {% for m in range(1, 13) %}
+                <option value="{{ m }}" {% if m == hoje.month %}selected{% endif %}>{{ m }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </form>
+        <div class="d-flex gap-2 mt-auto">
+          <button type="submit" form="formFaturamento" formaction="{{ url_for('relatorio_faturamento_csv') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-filetype-csv"></i> CSV
+          </button>
+          <button type="submit" form="formFaturamento" formaction="{{ url_for('relatorio_faturamento_xlsx') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-file-earmark-excel"></i> Excel
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body d-flex flex-column">
+        <h6 class="text-uppercase text-muted small mb-2"><i class="bi bi-exclamation-triangle"></i> Gargalos</h6>
+        <p class="small text-muted flex-grow-1">Retrato atual do ranking de gargalos por estação (fila, atraso, tempo de espera, lead time e valor parado).</p>
+        <div class="d-flex gap-2">
+          <a href="{{ url_for('relatorio_gargalos_csv') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-filetype-csv"></i> CSV
+          </a>
+          <a href="{{ url_for('relatorio_gargalos_xlsx') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-file-earmark-excel"></i> Excel
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

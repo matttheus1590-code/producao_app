@@ -86,6 +86,15 @@
   </div>
 </form>
 
+<div class="d-flex justify-content-end gap-2 mb-3">
+  <a href="{{ url_for('relatorio_listagem_csv', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-filetype-csv"></i> Exportar CSV
+  </a>
+  <a href="{{ url_for('relatorio_listagem_xlsx', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-file-earmark-excel"></i> Exportar Excel
+  </a>
+</div>
+
 <div class="table-responsive">
   <table class="table table-hover table-sm align-middle bg-white">
     <thead class="table-light">

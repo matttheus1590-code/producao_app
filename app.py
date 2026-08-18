@@ -1,8 +1,12 @@
+import csv
+import io
 import os
 from datetime import date, datetime, timedelta
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import selectinload
 
@@ -711,6 +715,10 @@ def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
         "por_cliente": _agrupar(itens_realizados, lambda i: i.pedido.cliente if i.pedido else None),
         "por_regiao": _agrupar(itens_realizados, lambda i: REGIAO_POR_UF.get(i.pedido.estado) if i.pedido and i.pedido.estado else None),
         "por_vendedor": _agrupar(itens_realizados, lambda i: i.pedido.vendedor if i.pedido else None),
+        # lista "crua" dos itens realizados (não usada na tela, só na exportação
+        # de relatório — mantida separada da contagem "itens_realizados" acima
+        # pra não mudar o que a tela de Faturamento já espera receber)
+        "itens_realizados_lista": itens_realizados,
     }
 
 
@@ -755,6 +763,184 @@ def _construir_timeline(pedido):
 
     eventos.sort(key=lambda e: e["data"])
     return eventos
+
+
+def _filtrar_pedidos(args):
+    """Aplica exatamente os mesmos filtros da tela de Listagem (rota "/") a
+    partir de um dict tipo request.args, devolvendo a query já filtrada (sem
+    paginação) e o dicionário de filtros usado.
+
+    Extraído da rota "dashboard" pra ser compartilhado com a exportação de
+    relatório (fase 12) — assim a exportação nunca corre o risco de aplicar
+    uma regra de filtro diferente da que a tela usa."""
+    query = Pedido.query.options(selectinload(Pedido.itens))
+
+    cliente = args.get("cliente", "").strip()
+    status = args.get("status", "").strip()
+    estacao = args.get("estacao", "").strip()
+    vendedor = args.get("vendedor", "").strip()
+    busca = args.get("busca", "").strip()
+    produto = args.get("produto", "").strip()
+    regiao = args.get("regiao", "").strip()
+    data_inicio = args.get("data_inicio", "").strip()
+    data_fim = args.get("data_fim", "").strip()
+    atrasados = args.get("atrasados", "").strip()
+
+    if cliente:
+        query = query.filter(Pedido.cliente.ilike(f"%{cliente}%"))
+    if estacao:
+        query = query.filter(Pedido.itens.any(ItemPedido.estacao == estacao))
+    if vendedor:
+        query = query.filter(Pedido.vendedor.ilike(f"%{vendedor}%"))
+    if busca:
+        like = f"%{busca}%"
+        query = query.filter(
+            or_(
+                Pedido.pedido_venda.ilike(like),
+                Pedido.cliente.ilike(like),
+                Pedido.itens.any(ItemPedido.descricao_produto.ilike(like)),
+            )
+        )
+    if produto:
+        query = query.filter(Pedido.itens.any(ItemPedido.descricao_produto.ilike(f"%{produto}%")))
+    if regiao:
+        ufs_da_regiao = [uf for uf, r in REGIAO_POR_UF.items() if r == regiao]
+        if ufs_da_regiao:
+            query = query.filter(Pedido.estado.in_(ufs_da_regiao))
+    if data_inicio:
+        data_inicio_parsed = _parse_data_form(data_inicio)
+        if data_inicio_parsed:
+            query = query.filter(Pedido.data_inclusao_pedido >= data_inicio_parsed)
+    if data_fim:
+        data_fim_parsed = _parse_data_form(data_fim)
+        if data_fim_parsed:
+            query = query.filter(Pedido.data_inclusao_pedido <= data_fim_parsed)
+    if atrasados:
+        query = query.filter(_predicado_atrasado())
+    if status:
+        predicado = _predicado_status(status)
+        if predicado is not None:
+            query = query.filter(predicado)
+
+    query = query.order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
+
+    filtros = dict(
+        cliente=cliente,
+        status=status,
+        estacao=estacao,
+        vendedor=vendedor,
+        busca=busca,
+        produto=produto,
+        regiao=regiao,
+        data_inicio=data_inicio,
+        data_fim=data_fim,
+        atrasados=atrasados,
+    )
+    return query, filtros
+
+
+# ----------------------------------------------------------------------
+# Relatórios (fase 12) — exportações CSV/Excel sob demanda, sem agendamento
+# automático (geradas na hora, a partir dos mesmos dados já calculados
+# pelas telas de Listagem, Faturamento e Gargalos).
+# ----------------------------------------------------------------------
+def _linhas_export_listagem(pedidos):
+    cabecalho = [
+        "Pedido", "Cliente", "Cidade", "UF", "Vendedor", "Produto(s)",
+        "Valor total (R$)", "Prioridade", "Estação", "Status",
+        "Semáforo", "Dias (negativo = atrasado)", "Data de inclusão",
+    ]
+    linhas = []
+    for p in pedidos:
+        cor, dias = p.semaforo
+        linhas.append([
+            p.pedido_venda or "",
+            p.cliente,
+            p.cidade or "",
+            p.estado or "",
+            p.vendedor or "",
+            p.descricao_resumo,
+            round(p.valor_total, 2),
+            p.prioridade or "",
+            p.estacao_resumo,
+            p.status_producao,
+            SEMAFORO_LABELS.get(cor, cor),
+            dias if dias is not None else "",
+            p.data_inclusao_pedido.isoformat() if p.data_inclusao_pedido else "",
+        ])
+    return cabecalho, linhas
+
+
+def _linhas_export_faturamento(itens):
+    cabecalho = ["Pedido", "Cliente", "UF", "Vendedor", "Produto", "Valor faturado (R$)", "Nº nota fiscal", "Data de faturamento"]
+    linhas = []
+    for i in itens:
+        p = i.pedido
+        linhas.append([
+            p.pedido_venda if p else "",
+            p.cliente if p else "—",
+            p.estado if p else "",
+            p.vendedor if p else "",
+            i.descricao_produto,
+            round(i.valor_faturamento_realizado, 2),
+            i.numero_nota_fiscal or "",
+            i.liberacao_faturamento.isoformat() if i.liberacao_faturamento else "",
+        ])
+    return cabecalho, linhas
+
+
+def _linhas_export_gargalos(linhas_gargalo):
+    cabecalho = ["Estação", "Fila", "Atrasados", "Tempo de espera médio (dias)", "Lead time médio (dias)", "Valor parado (R$)"]
+    linhas = [
+        [
+            g["estacao"],
+            g["fila"],
+            g["atraso"],
+            g["tempo_espera_medio"] if g["tempo_espera_medio"] is not None else "",
+            g["lt_medio"] if g["lt_medio"] is not None else "",
+            g["valor_parado"],
+        ]
+        for g in linhas_gargalo
+    ]
+    return cabecalho, linhas
+
+
+def _responder_csv(nome_arquivo, cabecalho, linhas):
+    """Gera um CSV com ';' como separador (padrão do Excel em pt-BR) e um BOM
+    UTF-8 no início, pra acentos abrirem certo direto no Excel."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=";")
+    writer.writerow(cabecalho)
+    writer.writerows(linhas)
+    conteudo = "﻿" + buffer.getvalue()
+    resposta = Response(conteudo, mimetype="text/csv; charset=utf-8")
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+def _responder_xlsx(nome_arquivo, cabecalho, linhas, titulo="Relatório"):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = titulo[:31] or "Relatório"
+    ws.append(cabecalho)
+    for celula in ws[1]:
+        celula.font = Font(bold=True)
+    for linha in linhas:
+        ws.append(linha)
+    for coluna in ws.columns:
+        valores = [len(str(c.value)) for c in coluna if c.value is not None]
+        largura = max(valores) if valores else 10
+        ws.column_dimensions[coluna[0].column_letter].width = min(largura + 2, 45)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    resposta = Response(
+        buffer.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
 
 
 def register_routes(app):
@@ -1009,60 +1195,77 @@ def register_routes(app):
             faturamento_pendente=faturamento_pendente,
         )
 
+    # ------------------------------------------------------------------
+    # Relatórios (fase 12) — exportações sob demanda, sem agendamento
+    # automático. Cada relatório tem uma versão .csv e uma .xlsx.
+    # ------------------------------------------------------------------
+    @app.route("/relatorios")
+    @login_required
+    def relatorios():
+        hoje = date.today()
+        return render_template("relatorios.html", hoje=hoje)
+
+    @app.route("/relatorios/listagem.csv")
+    @login_required
+    def relatorio_listagem_csv():
+        query, _ = _filtrar_pedidos(request.args)
+        cabecalho, linhas = _linhas_export_listagem(query.all())
+        return _responder_csv("listagem_pedidos.csv", cabecalho, linhas)
+
+    @app.route("/relatorios/listagem.xlsx")
+    @login_required
+    def relatorio_listagem_xlsx():
+        query, _ = _filtrar_pedidos(request.args)
+        cabecalho, linhas = _linhas_export_listagem(query.all())
+        return _responder_xlsx("listagem_pedidos.xlsx", cabecalho, linhas, titulo="Listagem")
+
+    @app.route("/relatorios/faturamento.csv")
+    @login_required
+    def relatorio_faturamento_csv():
+        hoje = date.today()
+        ano = request.args.get("ano", hoje.year, type=int)
+        mes = request.args.get("mes", hoje.month, type=int)
+        if not (1 <= mes <= 12):
+            mes = hoje.month
+        cliente = request.args.get("cliente", "").strip()
+        regiao = request.args.get("regiao", "").strip()
+        vendedor = request.args.get("vendedor", "").strip()
+        dados = _faturamento_detalhado(ano, mes, cliente=cliente or None, regiao=regiao or None, vendedor=vendedor or None)
+        cabecalho, linhas = _linhas_export_faturamento(dados["itens_realizados_lista"])
+        return _responder_csv(f"faturamento_{ano}_{mes:02d}.csv", cabecalho, linhas)
+
+    @app.route("/relatorios/faturamento.xlsx")
+    @login_required
+    def relatorio_faturamento_xlsx():
+        hoje = date.today()
+        ano = request.args.get("ano", hoje.year, type=int)
+        mes = request.args.get("mes", hoje.month, type=int)
+        if not (1 <= mes <= 12):
+            mes = hoje.month
+        cliente = request.args.get("cliente", "").strip()
+        regiao = request.args.get("regiao", "").strip()
+        vendedor = request.args.get("vendedor", "").strip()
+        dados = _faturamento_detalhado(ano, mes, cliente=cliente or None, regiao=regiao or None, vendedor=vendedor or None)
+        cabecalho, linhas = _linhas_export_faturamento(dados["itens_realizados_lista"])
+        return _responder_xlsx(f"faturamento_{ano}_{mes:02d}.xlsx", cabecalho, linhas, titulo="Faturamento")
+
+    @app.route("/relatorios/gargalos.csv")
+    @login_required
+    def relatorio_gargalos_csv():
+        cabecalho, linhas = _linhas_export_gargalos(_gargalos_por_estacao())
+        return _responder_csv("gargalos.csv", cabecalho, linhas)
+
+    @app.route("/relatorios/gargalos.xlsx")
+    @login_required
+    def relatorio_gargalos_xlsx():
+        cabecalho, linhas = _linhas_export_gargalos(_gargalos_por_estacao())
+        return _responder_xlsx("gargalos.xlsx", cabecalho, linhas, titulo="Gargalos")
+
     @app.route("/")
     @login_required
     def dashboard():
-        query = Pedido.query.options(selectinload(Pedido.itens))
-
-        cliente = request.args.get("cliente", "").strip()
-        status = request.args.get("status", "").strip()
-        estacao = request.args.get("estacao", "").strip()
-        vendedor = request.args.get("vendedor", "").strip()
-        busca = request.args.get("busca", "").strip()
-        produto = request.args.get("produto", "").strip()
-        regiao = request.args.get("regiao", "").strip()
-        data_inicio = request.args.get("data_inicio", "").strip()
-        data_fim = request.args.get("data_fim", "").strip()
-        atrasados = request.args.get("atrasados", "").strip()
         page = request.args.get("page", 1, type=int)
-
-        if cliente:
-            query = query.filter(Pedido.cliente.ilike(f"%{cliente}%"))
-        if estacao:
-            query = query.filter(Pedido.itens.any(ItemPedido.estacao == estacao))
-        if vendedor:
-            query = query.filter(Pedido.vendedor.ilike(f"%{vendedor}%"))
-        if busca:
-            like = f"%{busca}%"
-            query = query.filter(
-                or_(
-                    Pedido.pedido_venda.ilike(like),
-                    Pedido.cliente.ilike(like),
-                    Pedido.itens.any(ItemPedido.descricao_produto.ilike(like)),
-                )
-            )
-        if produto:
-            query = query.filter(Pedido.itens.any(ItemPedido.descricao_produto.ilike(f"%{produto}%")))
-        if regiao:
-            ufs_da_regiao = [uf for uf, r in REGIAO_POR_UF.items() if r == regiao]
-            if ufs_da_regiao:
-                query = query.filter(Pedido.estado.in_(ufs_da_regiao))
-        if data_inicio:
-            data_inicio_parsed = _parse_data_form(data_inicio)
-            if data_inicio_parsed:
-                query = query.filter(Pedido.data_inclusao_pedido >= data_inicio_parsed)
-        if data_fim:
-            data_fim_parsed = _parse_data_form(data_fim)
-            if data_fim_parsed:
-                query = query.filter(Pedido.data_inclusao_pedido <= data_fim_parsed)
-        if atrasados:
-            query = query.filter(_predicado_atrasado())
-        if status:
-            predicado = _predicado_status(status)
-            if predicado is not None:
-                query = query.filter(predicado)
-
-        query = query.order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
+        query, filtros = _filtrar_pedidos(request.args)
 
         total_filtrado = query.count()
         pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
@@ -1077,18 +1280,7 @@ def register_routes(app):
             page=page,
             total_paginas=total_paginas,
             total_filtrado=total_filtrado,
-            filtros=dict(
-                cliente=cliente,
-                status=status,
-                estacao=estacao,
-                vendedor=vendedor,
-                busca=busca,
-                produto=produto,
-                regiao=regiao,
-                data_inicio=data_inicio,
-                data_fim=data_fim,
-                atrasados=atrasados,
-            ),
+            filtros=filtros,
         )
 
     @app.route("/pedidos/novo", methods=["GET", "POST"])
