@@ -169,6 +169,32 @@ body {
 }
 
 /* ---------------------------------------------------------------------
+   Gestão Operação (Fase 13) — 4 blocos coloridos (mesmas cores da planilha):
+   Comercial (azul), PCP (cinza), Logística/NF (amarelo), Resultados/OTD (verde)
+--------------------------------------------------------------------- */
+.go-subnav .nav-link {
+  border-radius: 0.5rem;
+  font-weight: 600;
+  color: #495057;
+  margin-right: 0.35rem;
+}
+
+.go-subnav .go-subnav-comercial.active { background-color: #0d6efd; color: #fff; }
+.go-subnav .go-subnav-pcp.active { background-color: #6c757d; color: #fff; }
+.go-subnav .go-subnav-logistica.active { background-color: #f5b90a; color: #212529; }
+.go-subnav .go-subnav-resultados.active { background-color: #198754; color: #fff; }
+
+.go-bloco-comercial { border-left: 5px solid #0d6efd; }
+.go-bloco-pcp { border-left: 5px solid #6c757d; }
+.go-bloco-logistica { border-left: 5px solid #f5b90a; }
+.go-bloco-resultados { border-left: 5px solid #198754; }
+
+.go-bloco-comercial .go-bloco-titulo { color: #0d6efd; }
+.go-bloco-pcp .go-bloco-titulo { color: #6c757d; }
+.go-bloco-logistica .go-bloco-titulo { color: #b8860b; }
+.go-bloco-resultados .go-bloco-titulo { color: #198754; }
+
+/* ---------------------------------------------------------------------
    Kanban da tela Estações
 --------------------------------------------------------------------- */
 .kanban-board {

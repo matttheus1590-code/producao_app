@@ -14,6 +14,7 @@ from extensions import db, login_manager
 from models import (
     ESTACOES,
     FRETE_OPCOES,
+    GO_OTD_META_PERCENTUAL,
     PRAZO_ALERTA_DIAS,
     PRIORIDADE_CORES,
     PRIORIDADE_OPCOES,
@@ -59,6 +60,23 @@ CAMPOS_HISTORICO_ITEM = [
     "data_envio",
 ]
 
+# Campos de Gestão Operação (Fase 13) que geram histórico de alteração —
+# igual em espírito a CAMPOS_HISTORICO_PEDIDO/ITEM, só que namespaced com
+# "go_" (não precisa de tabela nova: usa o mesmo HistoricoAlteracao de sempre).
+CAMPOS_HISTORICO_GESTAO_OPERACAO = [
+    "go_tipo_pedido",
+    "go_status_pedido_info",
+    "go_previsao_liberacao_pcp",
+    "go_data_efetiva_liberacao_pcp",
+    "go_status_logistica",
+    "go_data_pedido_expedido",
+    "go_transportadora_id",
+    "go_data_real_entrega",
+    "go_otd_realizado",
+    "go_data_entregue_cliente",
+    "go_status_final_alinhamento",
+]
+
 
 def _resolve_database_uri():
     """Usa DATABASE_URL (Postgres do Render) quando existir; senão, SQLite local."""
@@ -93,7 +111,9 @@ def create_app():
         _migrar_estacoes_tabela(app)
         _migrar_faturamento_itens(app)
         _migrar_logistica_itens(app)
+        _migrar_gestao_operacao_pedidos(app)
         _seed_inicial(app)
+        _importar_gestao_operacao(app)
 
     @app.context_processor
     def inject_globals():
@@ -114,6 +134,7 @@ def create_app():
             STATUS_CHAO_OPCOES=STATUS_CHAO_OPCOES,
             STATUS_CHAO_LABELS=STATUS_CHAO_LABELS,
             STATUS_CHAO_CORES=STATUS_CHAO_CORES,
+            GO_OTD_META_PERCENTUAL=GO_OTD_META_PERCENTUAL,
         )
 
     register_routes(app)
@@ -311,6 +332,66 @@ def _migrar_logistica_itens(app):
     app.logger.info("Migração automática: campos de logística (transportadora e data de envio) adicionados aos itens.")
 
 
+# Colunas novas da Fase 13 (Gestão Operação) e seu tipo SQL — todas opcionais,
+# nenhuma substitui nada que já existe em Pedido.
+_COLUNAS_GESTAO_OPERACAO = {
+    # Comercial
+    "go_tipo_pedido": "VARCHAR(60)",
+    "go_contrato": "VARCHAR(60)",
+    "go_pedido_compra_cliente": "VARCHAR(60)",
+    "go_proposta": "VARCHAR(60)",
+    "go_data_solicitada_entrega": "DATE",
+    "go_status_pedido_info": "VARCHAR(120)",
+    "go_valor_pedido_operacao": "FLOAT",
+    # PCP
+    "go_previsao_liberacao_pcp": "DATE",
+    "go_data_efetiva_liberacao_pcp": "DATE",
+    "go_data_solicitada_cliente_retira": "DATE",
+    "go_custo_producao_real": "FLOAT",
+    "go_termino_semanal_pcp": "VARCHAR(40)",
+    # Logística / NF
+    "go_data_emissao_nf": "DATE",
+    "go_valor_nf_emitida": "FLOAT",
+    "go_numero_nf": "VARCHAR(30)",
+    "go_status_logistica": "VARCHAR(60)",
+    "go_data_pedido_expedido": "DATE",
+    "go_transportadora_id": "INTEGER",
+    "go_custo_frete_previsto": "FLOAT",
+    "go_custo_frete_final": "FLOAT",
+    "go_custo_frete_sobre_nota": "FLOAT",
+    "go_data_prevista_entrega": "DATE",
+    "go_data_real_entrega": "DATE",
+    # Resultados / OTD
+    "go_otd_realizado": "VARCHAR(10)",
+    "go_data_solicitada_cliente_final": "DATE",
+    "go_data_entregue_cliente": "DATE",
+    "go_obs_operacao": "TEXT",
+    "go_status_final_alinhamento": "VARCHAR(60)",
+}
+
+
+def _migrar_gestao_operacao_pedidos(app):
+    """Adiciona as colunas novas da Fase 13 (Gestão Operação: Comercial / PCP /
+    Logística-NF / Resultados-OTD) em pedidos criados antes dessa fase existir.
+
+    Mesmo padrão das migrações anteriores: só adiciona o que ainda não existe,
+    roda sozinha a cada início do site, não apaga nem altera nenhum pedido."""
+    inspector = inspect(db.engine)
+    if "pedidos" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("pedidos")}
+    faltando = [c for c in _COLUNAS_GESTAO_OPERACAO if c not in colunas]
+    if not faltando:
+        return
+
+    with db.engine.begin() as conn:
+        for coluna in faltando:
+            tipo = _COLUNAS_GESTAO_OPERACAO[coluna]
+            conn.execute(text(f"ALTER TABLE pedidos ADD COLUMN {coluna} {tipo}"))
+    app.logger.info("Migração automática: %d campos de Gestão Operação adicionados aos pedidos.", len(faltando))
+
+
 def _seed_inicial(app):
     """Cria o usuário admin padrão e importa a planilha na primeira execução."""
     if Usuario.query.count() == 0:
@@ -327,6 +408,36 @@ def _seed_inicial(app):
 
             total = importar_planilha(xlsx_path)
             app.logger.info(f"{total} pedidos importados da planilha original.")
+
+
+def _importar_gestao_operacao(app):
+    """Importa (uma única vez) a planilha nova "Gestão de Fluxo Produtivo"
+    (Fase 13) por cima dos pedidos que já existem, casando por pedido_venda.
+
+    Diferente de _seed_inicial (que só roda em banco vazio), esta função roda
+    em cima de um banco JÁ POVOADO — por isso a proteção "já rodou antes" não
+    pode ser "Pedido.query.count() == 0"; usamos um campo novo (go_tipo_pedido)
+    como marcador: se algum pedido já tem esse campo preenchido, o import já
+    rodou e não faz nada."""
+    if Pedido.query.filter(Pedido.go_tipo_pedido.isnot(None)).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "gestao_fluxo_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from importar_gestao_operacao import importar_gestao_operacao
+
+    resultado = importar_gestao_operacao(xlsx_path)
+    app.logger.info(
+        "Importação Gestão Operação: %d linhas | %d exatas | %d aproximadas | "
+        "%d pedidos novos | %d transportadoras.",
+        resultado["total"],
+        resultado["exato"],
+        resultado["aproximado"],
+        resultado["novos"],
+        len(resultado["transportadoras_canonicas"]),
+    )
 
 
 def _parse_data_form(valor):
@@ -428,6 +539,51 @@ def _calcular_resumo():
         "andamento": andamento,
         "finalizado": finalizado,
         "valor_total": round(valor_total, 2),
+    }
+
+
+def _resumo_otd():
+    """Estatísticas de OTD (On-Time Delivery) da Gestão Operação — usa o campo
+    go_otd_realizado (SIM/NÃO preenchido manualmente na planilha/tela), bem
+    mais confiável que o _otd_percentual() antigo (que depende de datas quase
+    nunca preenchidas no histórico). Só considera pedidos com OTD preenchido —
+    quem ainda não tem essa informação fica de fora do percentual (não conta
+    como "não cumpriu")."""
+    base = Pedido.query.filter(Pedido.go_otd_realizado.isnot(None))
+    total = base.count()
+    no_prazo = base.filter(Pedido.go_otd_realizado == "SIM").count()
+    percentual = round((no_prazo / total) * 100, 1) if total else None
+
+    def _quebra_por(campo):
+        linhas = (
+            db.session.query(
+                campo.label("chave"),
+                func.count(Pedido.id).label("total"),
+                func.sum(func.cast(Pedido.go_otd_realizado == "SIM", db.Integer)).label("no_prazo"),
+            )
+            .filter(Pedido.go_otd_realizado.isnot(None), campo.isnot(None))
+            .group_by(campo)
+            .order_by(func.count(Pedido.id).desc())
+            .limit(10)
+            .all()
+        )
+        return [
+            {
+                "chave": chave,
+                "total": total_linha,
+                "no_prazo": no_prazo_linha or 0,
+                "percentual": round(((no_prazo_linha or 0) / total_linha) * 100, 1) if total_linha else None,
+            }
+            for chave, total_linha, no_prazo_linha in linhas
+        ]
+
+    return {
+        "total": total,
+        "no_prazo": no_prazo,
+        "percentual": percentual,
+        "atinge_meta": (percentual is not None and percentual >= GO_OTD_META_PERCENTUAL),
+        "por_vendedor": _quebra_por(Pedido.vendedor),
+        "por_cliente": _quebra_por(Pedido.cliente),
     }
 
 
@@ -1509,6 +1665,130 @@ def register_routes(app):
                 ],
             }
         )
+
+    # ------------------------------------------------------------------
+    # Gestão Operação (Fase 13) — 4 sub-abas coloridas (Comercial/PCP/
+    # Logística/Resultados), uma linha por PEDIDO, reaproveitando os mesmos
+    # filtros e paginação da Listagem Geral (_filtrar_pedidos) — só muda o
+    # conjunto de colunas mostrado em cada template.
+    # ------------------------------------------------------------------
+    @app.route("/gestao-operacao/comercial")
+    @login_required
+    def gestao_operacao_comercial():
+        page = request.args.get("page", 1, type=int)
+        query, filtros = _filtrar_pedidos(request.args)
+        total_filtrado = query.count()
+        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        return render_template(
+            "gestao_operacao_comercial.html",
+            pedidos=pedidos, page=page, total_paginas=total_paginas,
+            total_filtrado=total_filtrado, filtros=filtros,
+        )
+
+    @app.route("/gestao-operacao/pcp")
+    @login_required
+    def gestao_operacao_pcp():
+        page = request.args.get("page", 1, type=int)
+        query, filtros = _filtrar_pedidos(request.args)
+        total_filtrado = query.count()
+        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        return render_template(
+            "gestao_operacao_pcp.html",
+            pedidos=pedidos, page=page, total_paginas=total_paginas,
+            total_filtrado=total_filtrado, filtros=filtros,
+        )
+
+    @app.route("/gestao-operacao/logistica")
+    @login_required
+    def gestao_operacao_logistica():
+        page = request.args.get("page", 1, type=int)
+        query, filtros = _filtrar_pedidos(request.args)
+        total_filtrado = query.count()
+        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        return render_template(
+            "gestao_operacao_logistica.html",
+            pedidos=pedidos, page=page, total_paginas=total_paginas,
+            total_filtrado=total_filtrado, filtros=filtros,
+        )
+
+    @app.route("/gestao-operacao/resultados")
+    @login_required
+    def gestao_operacao_resultados():
+        page = request.args.get("page", 1, type=int)
+        query, filtros = _filtrar_pedidos(request.args)
+        total_filtrado = query.count()
+        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        otd = _resumo_otd()
+        return render_template(
+            "gestao_operacao_resultados.html",
+            pedidos=pedidos, page=page, total_paginas=total_paginas,
+            total_filtrado=total_filtrado, filtros=filtros, otd=otd,
+        )
+
+    @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def gestao_operacao_editar(pedido_id):
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(url_for("gestao_operacao_comercial"))
+
+        transportadoras = Transportadora.query.filter_by(ativo=True).order_by(Transportadora.nome).all()
+
+        if request.method == "POST":
+            f = request.form
+            antes = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
+
+            # -- Comercial --
+            pedido.go_tipo_pedido = f.get("go_tipo_pedido", "").strip() or None
+            pedido.go_contrato = f.get("go_contrato", "").strip() or None
+            pedido.go_pedido_compra_cliente = f.get("go_pedido_compra_cliente", "").strip() or None
+            pedido.go_proposta = f.get("go_proposta", "").strip() or None
+            pedido.go_data_solicitada_entrega = _parse_data_form(f.get("go_data_solicitada_entrega"))
+            pedido.go_status_pedido_info = f.get("go_status_pedido_info", "").strip() or None
+            pedido.go_valor_pedido_operacao = _parse_float_form(f.get("go_valor_pedido_operacao"), default=None) if f.get("go_valor_pedido_operacao", "").strip() else None
+
+            # -- PCP --
+            pedido.go_previsao_liberacao_pcp = _parse_data_form(f.get("go_previsao_liberacao_pcp"))
+            pedido.go_data_efetiva_liberacao_pcp = _parse_data_form(f.get("go_data_efetiva_liberacao_pcp"))
+            pedido.go_data_solicitada_cliente_retira = _parse_data_form(f.get("go_data_solicitada_cliente_retira"))
+            pedido.go_custo_producao_real = _parse_float_form(f.get("go_custo_producao_real"), default=None) if f.get("go_custo_producao_real", "").strip() else None
+            pedido.go_termino_semanal_pcp = f.get("go_termino_semanal_pcp", "").strip() or None
+
+            # -- Logística / NF --
+            pedido.go_data_emissao_nf = _parse_data_form(f.get("go_data_emissao_nf"))
+            pedido.go_valor_nf_emitida = _parse_float_form(f.get("go_valor_nf_emitida"), default=None) if f.get("go_valor_nf_emitida", "").strip() else None
+            pedido.go_numero_nf = f.get("go_numero_nf", "").strip() or None
+            pedido.go_status_logistica = f.get("go_status_logistica", "").strip() or None
+            pedido.go_data_pedido_expedido = _parse_data_form(f.get("go_data_pedido_expedido"))
+            transportadora_id = f.get("go_transportadora_id", "")
+            pedido.go_transportadora_id = int(transportadora_id) if transportadora_id.strip().isdigit() else None
+            pedido.go_custo_frete_previsto = _parse_float_form(f.get("go_custo_frete_previsto"), default=None) if f.get("go_custo_frete_previsto", "").strip() else None
+            pedido.go_custo_frete_final = _parse_float_form(f.get("go_custo_frete_final"), default=None) if f.get("go_custo_frete_final", "").strip() else None
+            pedido.go_custo_frete_sobre_nota = _parse_float_form(f.get("go_custo_frete_sobre_nota"), default=None) if f.get("go_custo_frete_sobre_nota", "").strip() else None
+            pedido.go_data_prevista_entrega = _parse_data_form(f.get("go_data_prevista_entrega"))
+            pedido.go_data_real_entrega = _parse_data_form(f.get("go_data_real_entrega"))
+
+            # -- Resultados / OTD --
+            otd_form = f.get("go_otd_realizado", "").strip()
+            pedido.go_otd_realizado = otd_form or None
+            pedido.go_data_solicitada_cliente_final = _parse_data_form(f.get("go_data_solicitada_cliente_final"))
+            pedido.go_data_entregue_cliente = _parse_data_form(f.get("go_data_entregue_cliente"))
+            pedido.go_obs_operacao = f.get("go_obs_operacao", "").strip() or None
+            pedido.go_status_final_alinhamento = f.get("go_status_final_alinhamento", "").strip() or None
+
+            depois = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
+            _registrar_alteracoes("pedido", pedido.id, pedido.id, antes, depois, CAMPOS_HISTORICO_GESTAO_OPERACAO)
+
+            db.session.commit()
+            flash("Gestão Operação do pedido atualizada com sucesso.", "success")
+            return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id))
+
+        return render_template("gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras)
 
     # ------------------------------------------------------------------
     # Usuários (papéis de acesso) — só ADMIN cadastra/edita usuários

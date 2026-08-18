@@ -1,0 +1,22 @@
+<ul class="nav nav-pills go-subnav mb-3">
+  <li class="nav-item">
+    <a class="nav-link go-subnav-comercial {% if request.endpoint == 'gestao_operacao_comercial' %}active{% endif %}" href="{{ url_for('gestao_operacao_comercial') }}">
+      <i class="bi bi-briefcase"></i> Comercial
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link go-subnav-pcp {% if request.endpoint == 'gestao_operacao_pcp' %}active{% endif %}" href="{{ url_for('gestao_operacao_pcp') }}">
+      <i class="bi bi-gear"></i> PCP
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link go-subnav-logistica {% if request.endpoint == 'gestao_operacao_logistica' %}active{% endif %}" href="{{ url_for('gestao_operacao_logistica') }}">
+      <i class="bi bi-truck"></i> Logística / NF
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link go-subnav-resultados {% if request.endpoint == 'gestao_operacao_resultados' %}active{% endif %}" href="{{ url_for('gestao_operacao_resultados') }}">
+      <i class="bi bi-graph-up-arrow"></i> Resultados / OTD
+    </a>
+  </li>
+</ul>

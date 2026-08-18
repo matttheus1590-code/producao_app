@@ -88,6 +88,12 @@ SEMAFORO_CORES = {"verde": "success", "amarelo": "warning", "vermelho": "danger"
 SEMAFORO_LABELS = {"verde": "No prazo", "amarelo": "Vencendo", "vermelho": "Atrasado", "cinza": "Sem prazo"}
 _SEMAFORO_PRIORIDADE = {"vermelho": 0, "amarelo": 1, "verde": 2, "cinza": 3}  # menor = mais urgente
 
+# ---------------------------------------------------------------------------
+# Gestão Operação (Fase 13) — meta mínima de OTD (On-Time Delivery), pedida
+# pelo Bruno. Ajuste este número se a meta mudar — todo o resto lê daqui.
+# ---------------------------------------------------------------------------
+GO_OTD_META_PERCENTUAL = 78
+
 
 def semaforo_prazo(liberacao_prevista, finalizado=False, hoje=None):
     """Retorna (cor, dias) comparando a liberação prevista com hoje.
@@ -195,6 +201,54 @@ class Pedido(db.Model):
     # Estação, status, datas de produção e RNC ficam em cada ITEM (ItemPedido),
     # já que produtos diferentes do mesmo pedido podem estar em etapas diferentes.
 
+    # ---------------------------------------------------------------------
+    # Gestão Operação (Fase 13) — fluxo comercial completo do PEDIDO (não do
+    # item), em 4 blocos que espelham a planilha "Gestão de Fluxo Produtivo":
+    # Comercial (azul) -> PCP (cinza) -> Logística/NF (amarelo) -> Resultados
+    # e OTD (verde). Campos 100% novos e opcionais — não substituem nada que
+    # já existe; onde já havia um campo equivalente em Pedido (cliente,
+    # vendedor, pedido_venda, data_inclusao_pedido, prioridade, frete, pais,
+    # estado, cidade) ele é reaproveitado, não duplicado aqui.
+    # ---------------------------------------------------------------------
+
+    # -- Comercial (azul) --
+    go_tipo_pedido = db.Column(db.String(60), nullable=True)
+    go_contrato = db.Column(db.String(60), nullable=True)
+    go_pedido_compra_cliente = db.Column(db.String(60), nullable=True)
+    go_proposta = db.Column(db.String(60), nullable=True)
+    go_data_solicitada_entrega = db.Column(db.Date, nullable=True)
+    go_status_pedido_info = db.Column(db.String(120), nullable=True)
+    go_valor_pedido_operacao = db.Column(db.Float, nullable=True)
+
+    # -- PCP (cinza) --
+    go_previsao_liberacao_pcp = db.Column(db.Date, nullable=True)
+    go_data_efetiva_liberacao_pcp = db.Column(db.Date, nullable=True)
+    go_data_solicitada_cliente_retira = db.Column(db.Date, nullable=True)
+    go_custo_producao_real = db.Column(db.Float, nullable=True)
+    go_termino_semanal_pcp = db.Column(db.String(40), nullable=True)
+
+    # -- Logística / NF (amarelo) --
+    go_data_emissao_nf = db.Column(db.Date, nullable=True)
+    go_valor_nf_emitida = db.Column(db.Float, nullable=True)
+    go_numero_nf = db.Column(db.String(30), nullable=True)
+    go_status_logistica = db.Column(db.String(60), nullable=True)
+    go_data_pedido_expedido = db.Column(db.Date, nullable=True)
+    # Mesmo padrão do ItemPedido.transportadora_id (sem FK de banco de verdade
+    # — validado na aplicação, não no banco).
+    go_transportadora_id = db.Column(db.Integer, nullable=True)
+    go_custo_frete_previsto = db.Column(db.Float, nullable=True)
+    go_custo_frete_final = db.Column(db.Float, nullable=True)
+    go_custo_frete_sobre_nota = db.Column(db.Float, nullable=True)
+    go_data_prevista_entrega = db.Column(db.Date, nullable=True)
+    go_data_real_entrega = db.Column(db.Date, nullable=True)
+
+    # -- Resultados / OTD (verde) --
+    go_otd_realizado = db.Column(db.String(10), nullable=True)  # "SIM" / "NÃO"
+    go_data_solicitada_cliente_final = db.Column(db.Date, nullable=True)
+    go_data_entregue_cliente = db.Column(db.Date, nullable=True)
+    go_obs_operacao = db.Column(db.Text, nullable=True)
+    go_status_final_alinhamento = db.Column(db.String(60), nullable=True)
+
     criado_em = db.Column(db.DateTime, default=datetime.utcnow)
     atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -275,6 +329,37 @@ class Pedido(db.Model):
             return ("cinza", None)
         piores = sorted((item.semaforo for item in self.itens), key=lambda s: _SEMAFORO_PRIORIDADE[s[0]])
         return piores[0]
+
+    # ---------------------------------------------------------------------
+    # Gestão Operação — calculados, nunca editados diretamente (mesmo padrão
+    # de lt_comercial_dias/prazo_total_dias acima).
+    # ---------------------------------------------------------------------
+    @property
+    def go_transportadora(self):
+        if not self.go_transportadora_id:
+            return None
+        return db.session.get(Transportadora, self.go_transportadora_id)
+
+    @property
+    def go_lead_time_frete_dias(self):
+        """Saída (expedição) até chegada (entrega/coleta real)."""
+        if self.go_data_pedido_expedido and self.go_data_real_entrega:
+            return (self.go_data_real_entrega - self.go_data_pedido_expedido).days
+        return None
+
+    @property
+    def go_lead_time_operacao_dias(self):
+        """Inclusão do pedido até a entrega efetiva no cliente."""
+        if self.data_inclusao_pedido and self.go_data_entregue_cliente:
+            return (self.go_data_entregue_cliente - self.data_inclusao_pedido).days
+        return None
+
+    @property
+    def go_dias_atraso_antecipacao(self):
+        """Positivo = entregue depois do solicitado (atraso); negativo = antes (antecipação)."""
+        if self.go_data_solicitada_cliente_final and self.go_data_entregue_cliente:
+            return (self.go_data_entregue_cliente - self.go_data_solicitada_cliente_final).days
+        return None
 
 
 class ItemPedido(db.Model):

@@ -21,6 +21,22 @@
         <a class="app-nav-link {% if request.endpoint == 'painel' %}active{% endif %}" href="{{ url_for('painel') }}">
           <i class="bi bi-speedometer2"></i> <span>Painel</span>
         </a>
+
+        <div class="app-nav-section">Gestão Operação</div>
+        <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_comercial' %}active{% endif %}" href="{{ url_for('gestao_operacao_comercial') }}">
+          <i class="bi bi-briefcase"></i> <span>Comercial</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_pcp' %}active{% endif %}" href="{{ url_for('gestao_operacao_pcp') }}">
+          <i class="bi bi-gear"></i> <span>PCP</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_logistica' %}active{% endif %}" href="{{ url_for('gestao_operacao_logistica') }}">
+          <i class="bi bi-truck"></i> <span>Logística</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_resultados' %}active{% endif %}" href="{{ url_for('gestao_operacao_resultados') }}">
+          <i class="bi bi-graph-up-arrow"></i> <span>Resultados</span>
+        </a>
+
+        <div class="app-nav-section">Gestão Produção</div>
         <a class="app-nav-link {% if request.endpoint in ('dashboard', 'detalhe_pedido', 'editar_pedido') %}active{% endif %}" href="{{ url_for('dashboard') }}">
           <i class="bi bi-list-ul"></i> <span>Listagem Geral</span>
         </a>
@@ -45,6 +61,7 @@
         <a class="app-nav-link {% if request.endpoint == 'logistica' %}active{% endif %}" href="{{ url_for('logistica') }}">
           <i class="bi bi-truck"></i> <span>Logística</span>
         </a>
+
         <a class="app-nav-link {% if request.endpoint == 'alertas' %}active{% endif %}" href="{{ url_for('alertas') }}">
           <i class="bi bi-bell"></i> <span>Alertas</span>
         </a>

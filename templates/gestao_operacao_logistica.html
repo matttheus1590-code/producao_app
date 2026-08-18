@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · Logística / NF · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+{% include "_gestao_operacao_subnav.html" with context %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-truck"></i> Logística / Nota Fiscal</h4>
+  <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
+</div>
+<p class="text-muted small mb-3">Emissão de nota fiscal, expedição e entrega de cada pedido.</p>
+
+<form class="row g-2 align-items-end mb-3" method="get">
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
+    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Cliente</label>
+    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
+  </div>
+  <div class="col-md-2 d-grid">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-warning">
+      <tr>
+        <th>Pedido</th>
+        <th>Cliente</th>
+        <th>Nº NF</th>
+        <th>Emissão NF</th>
+        <th>Status logística</th>
+        <th>Expedido em</th>
+        <th>Transportadora</th>
+        <th>Prevista entrega</th>
+        <th>Real entrega</th>
+        <th>Lead time frete</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pedidos %}
+      <tr>
+        <td>{{ p.pedido_venda or "—" }}</td>
+        <td>{{ p.cliente }}</td>
+        <td>{{ p.go_numero_nf or "—" }}</td>
+        <td>{{ p.go_data_emissao_nf.strftime("%d/%m/%Y") if p.go_data_emissao_nf else "—" }}</td>
+        <td>{{ p.go_status_logistica or "—" }}</td>
+        <td>{{ p.go_data_pedido_expedido.strftime("%d/%m/%Y") if p.go_data_pedido_expedido else "—" }}</td>
+        <td>{{ p.go_transportadora.nome if p.go_transportadora else "—" }}</td>
+        <td>{{ p.go_data_prevista_entrega.strftime("%d/%m/%Y") if p.go_data_prevista_entrega else "—" }}</td>
+        <td>{{ p.go_data_real_entrega.strftime("%d/%m/%Y") if p.go_data_real_entrega else "—" }}</td>
+        <td>{{ p.go_lead_time_frete_dias ~ "d" if p.go_lead_time_frete_dias is not none else "—" }}</td>
+        <td class="text-end">
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar Gestão Operação">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('gestao_operacao_logistica', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}

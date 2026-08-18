@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat_card %}
+{% block title %}Gestão Operação · Resultados / OTD · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+{% include "_gestao_operacao_subnav.html" with context %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Resultados / OTD</h4>
+  <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
+</div>
+<p class="text-muted small mb-3">
+  OTD (On-Time Delivery) — entregas dentro do prazo solicitado pelo cliente. Meta mínima: <strong>{{ GO_OTD_META_PERCENTUAL }}%</strong>.
+  Considera só os pedidos com OTD já registrado ({{ otd.total }} de {{ total_filtrado }}).
+</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    {{ stat_card("OTD geral", (otd.percentual ~ "%") if otd.percentual is not none else "—", cor=("success" if otd.atinge_meta else "danger"), borda=("success" if otd.atinge_meta else "danger"), sufixo=("Meta: " ~ GO_OTD_META_PERCENTUAL ~ "% " ~ ("✓ atingida" if otd.atinge_meta else "abaixo da meta"))) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Entregues no prazo", otd.no_prazo, cor="success") }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Fora do prazo", (otd.total - otd.no_prazo) if otd.total else 0, cor="danger") }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Pedidos com OTD registrado", otd.total) }}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">OTD por vendedor</h6>
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Vendedor</th><th class="text-center">Pedidos</th><th class="text-end">OTD</th></tr></thead>
+          <tbody>
+          {% for l in otd.por_vendedor %}
+            <tr>
+              <td>{{ l.chave }}</td>
+              <td class="text-center">{{ l.total }}</td>
+              <td class="text-end">
+                <span class="badge bg-{{ 'success' if l.percentual is not none and l.percentual >= GO_OTD_META_PERCENTUAL else 'danger' }}">
+                  {{ (l.percentual ~ "%") if l.percentual is not none else "—" }}
+                </span>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">Sem dados de OTD ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">OTD por cliente</h6>
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Cliente</th><th class="text-center">Pedidos</th><th class="text-end">OTD</th></tr></thead>
+          <tbody>
+          {% for l in otd.por_cliente %}
+            <tr>
+              <td>{{ l.chave }}</td>
+              <td class="text-center">{{ l.total }}</td>
+              <td class="text-end">
+                <span class="badge bg-{{ 'success' if l.percentual is not none and l.percentual >= GO_OTD_META_PERCENTUAL else 'danger' }}">
+                  {{ (l.percentual ~ "%") if l.percentual is not none else "—" }}
+                </span>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">Sem dados de OTD ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-success">
+      <tr>
+        <th>Pedido</th>
+        <th>Cliente</th>
+        <th>OTD</th>
+        <th>Solicitada cliente</th>
+        <th>Entregue cliente</th>
+        <th>Dias atraso/antecipação</th>
+        <th>Status final</th>
+        <th>Obs.</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pedidos %}
+      <tr>
+        <td>{{ p.pedido_venda or "—" }}</td>
+        <td>{{ p.cliente }}</td>
+        <td>
+          {% if p.go_otd_realizado == "SIM" %}
+            <span class="badge bg-success">SIM</span>
+          {% elif p.go_otd_realizado %}
+            <span class="badge bg-danger">{{ p.go_otd_realizado }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ p.go_data_solicitada_cliente_final.strftime("%d/%m/%Y") if p.go_data_solicitada_cliente_final else "—" }}</td>
+        <td>{{ p.go_data_entregue_cliente.strftime("%d/%m/%Y") if p.go_data_entregue_cliente else "—" }}</td>
+        <td>
+          {% set dias = p.go_dias_atraso_antecipacao %}
+          {% if dias is none %}—
+          {% elif dias > 0 %}<span class="text-danger">{{ dias }}d atraso</span>
+          {% elif dias < 0 %}<span class="text-success">{{ -dias }}d antecipado</span>
+          {% else %}no dia{% endif %}
+        </td>
+        <td>{{ p.go_status_final_alinhamento or "—" }}</td>
+        <td class="text-truncate" style="max-width: 200px;" title="{{ p.go_obs_operacao or '' }}">{{ p.go_obs_operacao or "—" }}</td>
+        <td class="text-end">
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar Gestão Operação">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('gestao_operacao_resultados', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}

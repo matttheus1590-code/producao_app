@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · PCP · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+{% include "_gestao_operacao_subnav.html" with context %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-gear"></i> PCP</h4>
+  <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
+</div>
+<p class="text-muted small mb-3">Planejamento e liberação de produção de cada pedido.</p>
+
+<form class="row g-2 align-items-end mb-3" method="get">
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
+    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Cliente</label>
+    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Estação</label>
+    <select class="form-select" name="estacao">
+      <option value="">Todas</option>
+      {% for e in ESTACOES %}
+        <option value="{{ e }}" {% if filtros.estacao == e %}selected{% endif %}>{{ e }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2 d-grid">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-secondary">
+      <tr>
+        <th>Pedido</th>
+        <th>Cliente</th>
+        <th>Status produção</th>
+        <th>Previsão liberação PCP</th>
+        <th>Data efetiva liberação</th>
+        <th>Solicitada cliente/retira</th>
+        <th>Custo produção real</th>
+        <th>Término semanal</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pedidos %}
+      <tr>
+        <td>{{ p.pedido_venda or "—" }}</td>
+        <td>{{ p.cliente }}</td>
+        <td><span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span></td>
+        <td>{{ p.go_previsao_liberacao_pcp.strftime("%d/%m/%Y") if p.go_previsao_liberacao_pcp else "—" }}</td>
+        <td>{{ p.go_data_efetiva_liberacao_pcp.strftime("%d/%m/%Y") if p.go_data_efetiva_liberacao_pcp else "—" }}</td>
+        <td>{{ p.go_data_solicitada_cliente_retira.strftime("%d/%m/%Y") if p.go_data_solicitada_cliente_retira else "—" }}</td>
+        <td>
+          {% if p.go_custo_producao_real is not none %}
+            R$ {{ "{:,.2f}".format(p.go_custo_producao_real).replace(",", "X").replace(".", ",").replace("X", ".") }}
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ p.go_termino_semanal_pcp or "—" }}</td>
+        <td class="text-end">
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar Gestão Operação">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('gestao_operacao_pcp', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · Comercial · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+{% include "_gestao_operacao_subnav.html" with context %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-briefcase"></i> Comercial</h4>
+  <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
+</div>
+<p class="text-muted small mb-3">Dados comerciais de cada pedido — do cadastro até a entrada em produção.</p>
+
+<form class="row g-2 align-items-end mb-3" method="get">
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
+    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Cliente</label>
+    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Vendedor</label>
+    <input type="text" class="form-control" name="vendedor" value="{{ filtros.vendedor }}">
+  </div>
+  <div class="col-md-2 d-grid">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-primary">
+      <tr>
+        <th>Pedido</th>
+        <th>Cliente</th>
+        <th>Tipo</th>
+        <th>Contrato / Proposta</th>
+        <th>Pedido compra cliente</th>
+        <th>Data inclusão</th>
+        <th>Data solicitada entrega</th>
+        <th>Status (info)</th>
+        <th>Valor pedido</th>
+        <th>Criticidade</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pedidos %}
+      <tr>
+        <td>{{ p.pedido_venda or "—" }}</td>
+        <td>{{ p.cliente }}</td>
+        <td>{{ p.go_tipo_pedido or "—" }}</td>
+        <td>{{ p.go_contrato or p.go_proposta or "—" }}</td>
+        <td>{{ p.go_pedido_compra_cliente or "—" }}</td>
+        <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
+        <td>{{ p.go_data_solicitada_entrega.strftime("%d/%m/%Y") if p.go_data_solicitada_entrega else "—" }}</td>
+        <td>{{ p.go_status_pedido_info or "—" }}</td>
+        <td>
+          {% if p.go_valor_pedido_operacao is not none %}
+            R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
+          {% else %}—{% endif %}
+        </td>
+        <td><span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade or "—" }}</span></td>
+        <td class="text-end">
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar Gestão Operação">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('gestao_operacao_comercial', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}

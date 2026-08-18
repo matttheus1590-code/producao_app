@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · Pedido #{{ pedido.id }} · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-11">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h4 class="mb-0"><i class="bi bi-diagram-3"></i> Gestão Operação — Pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }} — {{ pedido.cliente }}</h4>
+      <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-box-seam"></i> Ver produção/itens deste pedido
+      </a>
+    </div>
+
+    <form method="post">
+      <div class="card p-4 shadow-sm mb-4 go-bloco-comercial">
+        <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-briefcase"></i> Comercial</h6>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Tipo de pedido</label>
+            <input type="text" class="form-control" name="go_tipo_pedido" value="{{ pedido.go_tipo_pedido or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Contrato</label>
+            <input type="text" class="form-control" name="go_contrato" value="{{ pedido.go_contrato or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Proposta</label>
+            <input type="text" class="form-control" name="go_proposta" value="{{ pedido.go_proposta or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Pedido de compra do cliente</label>
+            <input type="text" class="form-control" name="go_pedido_compra_cliente" value="{{ pedido.go_pedido_compra_cliente or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Data solicitada entrega</label>
+            <input type="date" class="form-control" name="go_data_solicitada_entrega" value="{{ pedido.go_data_solicitada_entrega or '' }}">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label">Status do pedido (informações)</label>
+            <input type="text" class="form-control" name="go_status_pedido_info" value="{{ pedido.go_status_pedido_info or '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Valor do pedido (Gestão Operação)</label>
+            <input type="text" class="form-control" name="go_valor_pedido_operacao" value="{{ pedido.go_valor_pedido_operacao if pedido.go_valor_pedido_operacao is not none else '' }}">
+            <div class="form-text">Valor informado na planilha de operação — pode divergir do valor calculado pelos itens ({{ "R$ %.2f"|format(pedido.valor_total) }}).</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-4 shadow-sm mb-4 go-bloco-pcp">
+        <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-gear"></i> PCP</h6>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Previsão de liberação (PCP)</label>
+            <input type="date" class="form-control" name="go_previsao_liberacao_pcp" value="{{ pedido.go_previsao_liberacao_pcp or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Data efetiva de liberação (PCP)</label>
+            <input type="date" class="form-control" name="go_data_efetiva_liberacao_pcp" value="{{ pedido.go_data_efetiva_liberacao_pcp or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Data solicitada no cliente / retira</label>
+            <input type="date" class="form-control" name="go_data_solicitada_cliente_retira" value="{{ pedido.go_data_solicitada_cliente_retira or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Término semanal (cenário real)</label>
+            <input type="text" class="form-control" name="go_termino_semanal_pcp" value="{{ pedido.go_termino_semanal_pcp or '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Custo produção real (MP/serviços)</label>
+            <input type="text" class="form-control" name="go_custo_producao_real" value="{{ pedido.go_custo_producao_real if pedido.go_custo_producao_real is not none else '' }}">
+          </div>
+          <div class="col-md-8 d-flex align-items-end">
+            <div class="text-muted small">Status de produção (calculado): <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }}">{{ pedido.status_producao }}</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-4 shadow-sm mb-4 go-bloco-logistica">
+        <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-truck"></i> Logística / Nota Fiscal</h6>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Data emissão NF</label>
+            <input type="date" class="form-control" name="go_data_emissao_nf" value="{{ pedido.go_data_emissao_nf or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Nº da NF</label>
+            <input type="text" class="form-control" name="go_numero_nf" value="{{ pedido.go_numero_nf or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Valor NF emitida</label>
+            <input type="text" class="form-control" name="go_valor_nf_emitida" value="{{ pedido.go_valor_nf_emitida if pedido.go_valor_nf_emitida is not none else '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Status logística</label>
+            <input type="text" class="form-control" name="go_status_logistica" value="{{ pedido.go_status_logistica or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Data pedido expedido</label>
+            <input type="date" class="form-control" name="go_data_pedido_expedido" value="{{ pedido.go_data_pedido_expedido or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Transportadora</label>
+            <select class="form-select" name="go_transportadora_id">
+              <option value="">—</option>
+              {% for t in transportadoras %}
+                <option value="{{ t.id }}" {% if pedido.go_transportadora_id == t.id %}selected{% endif %}>{{ t.nome }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Data prevista entrega/coleta</label>
+            <input type="date" class="form-control" name="go_data_prevista_entrega" value="{{ pedido.go_data_prevista_entrega or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Data real entrega/coleta</label>
+            <input type="date" class="form-control" name="go_data_real_entrega" value="{{ pedido.go_data_real_entrega or '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Custo frete previsto</label>
+            <input type="text" class="form-control" name="go_custo_frete_previsto" value="{{ pedido.go_custo_frete_previsto if pedido.go_custo_frete_previsto is not none else '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Custo frete final</label>
+            <input type="text" class="form-control" name="go_custo_frete_final" value="{{ pedido.go_custo_frete_final if pedido.go_custo_frete_final is not none else '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Custo frete sobre a nota (%)</label>
+            <input type="text" class="form-control" name="go_custo_frete_sobre_nota" value="{{ pedido.go_custo_frete_sobre_nota if pedido.go_custo_frete_sobre_nota is not none else '' }}">
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-4 shadow-sm mb-4 go-bloco-resultados">
+        <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-graph-up-arrow"></i> Resultados / OTD</h6>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">OTD (entregue no prazo?)</label>
+            <select class="form-select" name="go_otd_realizado">
+              <option value="">—</option>
+              <option value="SIM" {% if pedido.go_otd_realizado == "SIM" %}selected{% endif %}>SIM</option>
+              <option value="NÃO" {% if pedido.go_otd_realizado == "NÃO" %}selected{% endif %}>NÃO</option>
+            </select>
+            <div class="form-text">Meta mínima: {{ GO_OTD_META_PERCENTUAL }}%</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Data solicitada cliente (final)</label>
+            <input type="date" class="form-control" name="go_data_solicitada_cliente_final" value="{{ pedido.go_data_solicitada_cliente_final or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Data entregue cliente</label>
+            <input type="date" class="form-control" name="go_data_entregue_cliente" value="{{ pedido.go_data_entregue_cliente or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Status final (alinhamento)</label>
+            <input type="text" class="form-control" name="go_status_final_alinhamento" value="{{ pedido.go_status_final_alinhamento or '' }}">
+          </div>
+          <div class="col-md-12">
+            <label class="form-label">Observações da operação</label>
+            <textarea class="form-control" name="go_obs_operacao" rows="2">{{ pedido.go_obs_operacao or '' }}</textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-end gap-2">
+        <a href="{{ url_for('gestao_operacao_comercial') }}" class="btn btn-outline-secondary">Cancelar</a>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle"></i> Salvar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
