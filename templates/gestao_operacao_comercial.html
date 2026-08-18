@@ -57,9 +57,7 @@
         <td>{{ p.go_data_solicitada_entrega.strftime("%d/%m/%Y") if p.go_data_solicitada_entrega else "—" }}</td>
         <td>{{ p.go_status_pedido_info or "—" }}</td>
         <td>
-          {% if p.go_valor_pedido_operacao is not none %}
-            R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
-          {% else %}—{% endif %}
+          R$ {{ "{:,.2f}".format(p.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}
         </td>
         <td><span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade or "—" }}</span></td>
         <td class="text-end">

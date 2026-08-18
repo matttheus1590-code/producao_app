@@ -545,39 +545,109 @@ def _calcular_resumo():
     }
 
 
+class _LinhaGestaoOperacao:
+    """Uma linha consolidada de Gestão Operação — representa UM pedido
+    comercial (mesmo pedido_venda), mesmo que no banco existam vários
+    registros Pedido "legados" pra ele. Isso acontece porque o import
+    original (seed.py) criou 1 registro Pedido + 1 ItemPedido por LINHA da
+    planilha antiga, não por pedido comercial — então pedidos grandes (com
+    vários produtos) viraram vários registros Pedido separados, todos com o
+    mesmo pedido_venda. O import da Fase 13 grava os mesmos campos go_* em
+    TODOS esses registros (ver importar_gestao_operacao.py), então eles já
+    ficam idênticos entre si — esta classe só evita mostrar essa mesma
+    informação repetida em várias linhas na tela.
+
+    Delega os atributos "informativos" (datas, frete, região, campos go_*
+    etc.) pro registro de menor id do grupo, e só SOMA o que precisa ser
+    somado de verdade: o valor total (calculado a partir dos itens de cada
+    registro do grupo) e a quantidade."""
+
+    def __init__(self, membros):
+        self.membros = sorted(membros, key=lambda p: p.id)
+        self.representante = self.membros[0]
+        self.qtd_registros_legados = len(self.membros)
+
+    def __getattr__(self, nome):
+        return getattr(self.representante, nome)
+
+    @property
+    def valor_total(self):
+        return round(sum(m.valor_total for m in self.membros), 2)
+
+    @property
+    def quantidade_total(self):
+        return sum(m.quantidade_total for m in self.membros)
+
+    @property
+    def status_producao(self):
+        status_all = {m.status_producao for m in self.membros}
+        if "EM TRATATIVA" in status_all:
+            return "EM TRATATIVA"
+        if status_all == {"FINALIZADO"}:
+            return "FINALIZADO"
+        if status_all == {"PENDENTE"}:
+            return "PENDENTE"
+        return "ANDAMENTO"
+
+
+def _agrupar_por_pedido_venda(pedidos):
+    """Agrupa uma lista de Pedido (já filtrada) em linhas consolidadas — uma
+    por pedido_venda. Pedidos sem pedido_venda preenchido não têm uma chave
+    segura pra agrupar (não dá pra saber se são o mesmo pedido comercial ou
+    não) e cada um vira sua própria linha. Preserva a ordem original (pela
+    primeira ocorrência de cada chave)."""
+    grupos = {}
+    ordem = []
+    for p in pedidos:
+        chave = p.pedido_venda.strip() if p.pedido_venda else f"__pedido_{p.id}"
+        if chave not in grupos:
+            grupos[chave] = []
+            ordem.append(chave)
+        grupos[chave].append(p)
+    return [_LinhaGestaoOperacao(grupos[chave]) for chave in ordem]
+
+
 def _resumo_otd():
     """Estatísticas de OTD (On-Time Delivery) da Gestão Operação — usa o campo
     go_otd_realizado (SIM/NÃO preenchido manualmente na planilha/tela), bem
     mais confiável que o _otd_percentual() antigo (que depende de datas quase
     nunca preenchidas no histórico). Só considera pedidos com OTD preenchido —
     quem ainda não tem essa informação fica de fora do percentual (não conta
-    como "não cumpriu")."""
-    base = Pedido.query.filter(Pedido.go_otd_realizado.isnot(None))
-    total = base.count()
-    no_prazo = base.filter(Pedido.go_otd_realizado == "SIM").count()
+    como "não cumpriu").
+
+    Agrupa por pedido_venda (_agrupar_por_pedido_venda) antes de contar —
+    senão um pedido comercial com vários registros Pedido legados (import
+    antigo, 1 por item) contaria várias vezes nas estatísticas."""
+    pedidos = (
+        Pedido.query.options(selectinload(Pedido.itens))
+        .filter(Pedido.go_otd_realizado.isnot(None))
+        .all()
+    )
+    linhas = _agrupar_por_pedido_venda(pedidos)
+
+    total = len(linhas)
+    no_prazo = sum(1 for l in linhas if l.go_otd_realizado == "SIM")
     percentual = round((no_prazo / total) * 100, 1) if total else None
 
-    def _quebra_por(campo):
-        linhas = (
-            db.session.query(
-                campo.label("chave"),
-                func.count(Pedido.id).label("total"),
-                func.sum(func.cast(Pedido.go_otd_realizado == "SIM", db.Integer)).label("no_prazo"),
-            )
-            .filter(Pedido.go_otd_realizado.isnot(None), campo.isnot(None))
-            .group_by(campo)
-            .order_by(func.count(Pedido.id).desc())
-            .limit(10)
-            .all()
-        )
+    def _quebra_por(atributo):
+        contagem = {}
+        for l in linhas:
+            chave = getattr(l, atributo)
+            if not chave:
+                continue
+            c = contagem.setdefault(chave, {"total": 0, "no_prazo": 0})
+            c["total"] += 1
+            if l.go_otd_realizado == "SIM":
+                c["no_prazo"] += 1
+        top10 = sorted(contagem.items(), key=lambda kv: -kv[1]["total"])[:10]
         return [
             {
                 "chave": chave,
-                "total": total_linha,
-                "no_prazo": no_prazo_linha or 0,
-                "percentual": round(((no_prazo_linha or 0) / total_linha) * 100, 1) if total_linha else None,
+                "total": v["total"],
+                "no_prazo": v["no_prazo"],
+                "percentual": round((v["no_prazo"] / v["total"]) * 100, 1) if v["total"] else None,
             }
-            for chave, total_linha, no_prazo_linha in linhas
+            for chave, v in top10
         ]
 
     return {
@@ -585,8 +655,8 @@ def _resumo_otd():
         "no_prazo": no_prazo,
         "percentual": percentual,
         "atinge_meta": (percentual is not None and percentual >= GO_OTD_META_PERCENTUAL),
-        "por_vendedor": _quebra_por(Pedido.vendedor),
-        "por_cliente": _quebra_por(Pedido.cliente),
+        "por_vendedor": _quebra_por("vendedor"),
+        "por_cliente": _quebra_por("cliente"),
     }
 
 
@@ -603,34 +673,36 @@ def _semana_label_curto(semana):
 
 
 def _projecao_pcp():
-    """Projeção de carga por semana de PCP (Painel) — quantos pedidos estão
-    marcados pra cada "Término Semanal PCP" (Gestão Operação), separando o que
-    já foi finalizado do que ainda está em aberto. Usa a mesma lista/ordem
-    cronológica de gerar_semanas_pcp() (1 mês atrás até 6 meses à frente) —
-    semanas sem nenhum pedido nas pontas são cortadas pra não poluir o gráfico."""
+    """Projeção de carga por semana de PCP (Painel) — quantos PEDIDOS
+    COMERCIAIS (agrupados por pedido_venda — ver _agrupar_por_pedido_venda)
+    estão marcados pra cada "Término Semanal PCP" (Gestão Operação), separando
+    o que já foi finalizado do que ainda está em aberto. Usa a mesma
+    lista/ordem cronológica de gerar_semanas_pcp() (1 mês atrás até 6 meses à
+    frente) — semanas sem nenhum pedido nas pontas são cortadas pra não
+    poluir o gráfico."""
     semanas = gerar_semanas_pcp()
 
-    finalizados = dict(
-        db.session.query(Pedido.go_termino_semanal_pcp, func.count(Pedido.id))
+    pedidos = (
+        Pedido.query.options(selectinload(Pedido.itens))
         .filter(Pedido.go_termino_semanal_pcp.in_(semanas))
-        .filter(_predicado_status("FINALIZADO"))
-        .group_by(Pedido.go_termino_semanal_pcp)
         .all()
     )
-    em_aberto = dict(
-        db.session.query(Pedido.go_termino_semanal_pcp, func.count(Pedido.id))
-        .filter(Pedido.go_termino_semanal_pcp.in_(semanas))
-        .filter(~_predicado_status("FINALIZADO"))
-        .group_by(Pedido.go_termino_semanal_pcp)
-        .all()
-    )
+    linhas_agrupadas = _agrupar_por_pedido_venda(pedidos)
+
+    contagem = {}
+    for l in linhas_agrupadas:
+        c = contagem.setdefault(l.go_termino_semanal_pcp, {"finalizado": 0, "em_aberto": 0})
+        if l.status_producao == "FINALIZADO":
+            c["finalizado"] += 1
+        else:
+            c["em_aberto"] += 1
 
     linhas = [
         {
             "semana": s,
             "semana_curta": _semana_label_curto(s),
-            "finalizado": finalizados.get(s, 0),
-            "em_aberto": em_aberto.get(s, 0),
+            "finalizado": contagem.get(s, {}).get("finalizado", 0),
+            "em_aberto": contagem.get(s, {}).get("em_aberto", 0),
         }
         for s in semanas
     ]
@@ -699,26 +771,28 @@ def _parse_mes_ano_form(valor, default):
 def _projecao_pcp_mensal(mes_de, mes_ate):
     """Soma a projeção semanal de PCP por MÊS (soma de todas as semanas
     dentro do mês), separando o que já foi finalizado do que ainda está em
-    aberto — em quantidade de pedidos e em valor (R$). `mes_de`/`mes_ate` são
-    tuplas (ano, mês), intervalo fechado (inclusive nas duas pontas)."""
+    aberto — em quantidade de PEDIDOS COMERCIAIS (agrupados por pedido_venda)
+    e em valor (R$, somado a partir dos itens de cada registro do grupo).
+    `mes_de`/`mes_ate` são tuplas (ano, mês), intervalo fechado."""
     pedidos = (
         Pedido.query.options(selectinload(Pedido.itens))
         .filter(Pedido.go_termino_semanal_pcp.isnot(None))
         .all()
     )
+    linhas_agrupadas = _agrupar_por_pedido_venda(pedidos)
 
     baldes = {}
-    for p in pedidos:
-        chave = _mes_ano_da_semana_pcp(p.go_termino_semanal_pcp)
+    for l in linhas_agrupadas:
+        chave = _mes_ano_da_semana_pcp(l.go_termino_semanal_pcp)
         if chave is None or not (mes_de <= chave <= mes_ate):
             continue
         b = baldes.setdefault(chave, {"pedidos_fin": 0, "valor_fin": 0.0, "pedidos_aberto": 0, "valor_aberto": 0.0})
-        if p.status_producao == "FINALIZADO":
+        if l.status_producao == "FINALIZADO":
             b["pedidos_fin"] += 1
-            b["valor_fin"] += p.valor_total
+            b["valor_fin"] += l.valor_total
         else:
             b["pedidos_aberto"] += 1
-            b["valor_aberto"] += p.valor_total
+            b["valor_aberto"] += l.valor_total
 
     linhas = []
     ano, mes = mes_de
@@ -1147,6 +1221,25 @@ def _filtrar_pedidos(args):
         atrasados=atrasados,
     )
     return query, filtros
+
+
+def _linhas_gestao_operacao(args):
+    """Usado pelas 4 sub-abas de Gestão Operação: aplica os mesmos filtros de
+    _filtrar_pedidos, agrupa por pedido_venda (_agrupar_por_pedido_venda —
+    cada linha = 1 pedido comercial, não 1 registro Pedido legado) e só
+    depois pagina. O agrupamento acontece em Python porque a "mesma
+    identidade" (pedido_venda) é uma coluna de texto com duplicatas legadas —
+    não dá pra paginar direto no SQL sem já ter agrupado antes. O total de
+    pedidos no sistema (~1200) é pequeno o bastante pra isso ser seguro."""
+    page = args.get("page", 1, type=int)
+    query, filtros = _filtrar_pedidos(args)
+    pedidos = query.all()
+    linhas = _agrupar_por_pedido_venda(pedidos)
+
+    total_filtrado = len(linhas)
+    total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+    pagina = linhas[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
+    return pagina, page, total_paginas, total_filtrado, filtros
 
 
 # ----------------------------------------------------------------------
@@ -1844,11 +1937,7 @@ def register_routes(app):
     @app.route("/gestao-operacao/comercial")
     @login_required
     def gestao_operacao_comercial():
-        page = request.args.get("page", 1, type=int)
-        query, filtros = _filtrar_pedidos(request.args)
-        total_filtrado = query.count()
-        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
-        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
         return render_template(
             "gestao_operacao_comercial.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -1858,11 +1947,7 @@ def register_routes(app):
     @app.route("/gestao-operacao/pcp")
     @login_required
     def gestao_operacao_pcp():
-        page = request.args.get("page", 1, type=int)
-        query, filtros = _filtrar_pedidos(request.args)
-        total_filtrado = query.count()
-        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
-        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
         return render_template(
             "gestao_operacao_pcp.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -1872,11 +1957,7 @@ def register_routes(app):
     @app.route("/gestao-operacao/logistica")
     @login_required
     def gestao_operacao_logistica():
-        page = request.args.get("page", 1, type=int)
-        query, filtros = _filtrar_pedidos(request.args)
-        total_filtrado = query.count()
-        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
-        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
         return render_template(
             "gestao_operacao_logistica.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -1886,11 +1967,7 @@ def register_routes(app):
     @app.route("/gestao-operacao/resultados")
     @login_required
     def gestao_operacao_resultados():
-        page = request.args.get("page", 1, type=int)
-        query, filtros = _filtrar_pedidos(request.args)
-        total_filtrado = query.count()
-        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
-        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
         otd = _resumo_otd()
         return render_template(
             "gestao_operacao_resultados.html",
@@ -1912,49 +1989,71 @@ def register_routes(app):
             f = request.form
             antes = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
 
-            # -- Comercial --
-            pedido.go_tipo_pedido = f.get("go_tipo_pedido", "").strip() or None
-            pedido.go_contrato = f.get("go_contrato", "").strip() or None
-            pedido.go_pedido_compra_cliente = f.get("go_pedido_compra_cliente", "").strip() or None
-            pedido.go_proposta = f.get("go_proposta", "").strip() or None
-            pedido.go_data_solicitada_entrega = _parse_data_form(f.get("go_data_solicitada_entrega"))
-            pedido.go_status_pedido_info = f.get("go_status_pedido_info", "").strip() or None
-            pedido.go_valor_pedido_operacao = _parse_float_form(f.get("go_valor_pedido_operacao"), default=None) if f.get("go_valor_pedido_operacao", "").strip() else None
+            # Um pedido comercial pode ter vários registros Pedido "legados" (mesmo
+            # pedido_venda — ver _agrupar_por_pedido_venda). A tela de edição mostra
+            # UMA linha consolidada, então o que for salvo aqui precisa ser propagado
+            # pra todos os registros do grupo, senão a consolidação volta a mostrar
+            # dado desatualizado/divergente entre eles depois do próximo GET.
+            irmaos = []
+            if pedido.pedido_venda and pedido.pedido_venda.strip():
+                irmaos = Pedido.query.filter(
+                    Pedido.pedido_venda == pedido.pedido_venda,
+                    Pedido.id != pedido.id,
+                ).all()
+            alvos = [pedido] + irmaos
 
-            # -- PCP --
-            pedido.go_previsao_liberacao_pcp = _parse_data_form(f.get("go_previsao_liberacao_pcp"))
-            pedido.go_data_efetiva_liberacao_pcp = _parse_data_form(f.get("go_data_efetiva_liberacao_pcp"))
-            pedido.go_data_solicitada_cliente_retira = _parse_data_form(f.get("go_data_solicitada_cliente_retira"))
-            pedido.go_custo_producao_real = _parse_float_form(f.get("go_custo_producao_real"), default=None) if f.get("go_custo_producao_real", "").strip() else None
-            pedido.go_termino_semanal_pcp = f.get("go_termino_semanal_pcp", "").strip() or None
-
-            # -- Logística / NF --
-            pedido.go_data_emissao_nf = _parse_data_form(f.get("go_data_emissao_nf"))
-            pedido.go_valor_nf_emitida = _parse_float_form(f.get("go_valor_nf_emitida"), default=None) if f.get("go_valor_nf_emitida", "").strip() else None
-            pedido.go_numero_nf = f.get("go_numero_nf", "").strip() or None
-            pedido.go_status_logistica = f.get("go_status_logistica", "").strip() or None
-            pedido.go_data_pedido_expedido = _parse_data_form(f.get("go_data_pedido_expedido"))
             transportadora_id = f.get("go_transportadora_id", "")
-            pedido.go_transportadora_id = int(transportadora_id) if transportadora_id.strip().isdigit() else None
-            pedido.go_custo_frete_previsto = _parse_float_form(f.get("go_custo_frete_previsto"), default=None) if f.get("go_custo_frete_previsto", "").strip() else None
-            pedido.go_custo_frete_final = _parse_float_form(f.get("go_custo_frete_final"), default=None) if f.get("go_custo_frete_final", "").strip() else None
-            pedido.go_custo_frete_sobre_nota = _parse_float_form(f.get("go_custo_frete_sobre_nota"), default=None) if f.get("go_custo_frete_sobre_nota", "").strip() else None
-            pedido.go_data_prevista_entrega = _parse_data_form(f.get("go_data_prevista_entrega"))
-            pedido.go_data_real_entrega = _parse_data_form(f.get("go_data_real_entrega"))
 
-            # -- Resultados / OTD --
-            otd_form = f.get("go_otd_realizado", "").strip()
-            pedido.go_otd_realizado = otd_form or None
-            pedido.go_data_solicitada_cliente_final = _parse_data_form(f.get("go_data_solicitada_cliente_final"))
-            pedido.go_data_entregue_cliente = _parse_data_form(f.get("go_data_entregue_cliente"))
-            pedido.go_obs_operacao = f.get("go_obs_operacao", "").strip() or None
-            pedido.go_status_final_alinhamento = f.get("go_status_final_alinhamento", "").strip() or None
+            valores = {
+                # -- Comercial --
+                "go_tipo_pedido": f.get("go_tipo_pedido", "").strip() or None,
+                "go_contrato": f.get("go_contrato", "").strip() or None,
+                "go_pedido_compra_cliente": f.get("go_pedido_compra_cliente", "").strip() or None,
+                "go_proposta": f.get("go_proposta", "").strip() or None,
+                "go_data_solicitada_entrega": _parse_data_form(f.get("go_data_solicitada_entrega")),
+                "go_status_pedido_info": f.get("go_status_pedido_info", "").strip() or None,
+                "go_valor_pedido_operacao": _parse_float_form(f.get("go_valor_pedido_operacao"), default=None) if f.get("go_valor_pedido_operacao", "").strip() else None,
+                # -- PCP --
+                "go_previsao_liberacao_pcp": _parse_data_form(f.get("go_previsao_liberacao_pcp")),
+                "go_data_efetiva_liberacao_pcp": _parse_data_form(f.get("go_data_efetiva_liberacao_pcp")),
+                "go_data_solicitada_cliente_retira": _parse_data_form(f.get("go_data_solicitada_cliente_retira")),
+                "go_custo_producao_real": _parse_float_form(f.get("go_custo_producao_real"), default=None) if f.get("go_custo_producao_real", "").strip() else None,
+                "go_termino_semanal_pcp": f.get("go_termino_semanal_pcp", "").strip() or None,
+                # -- Logística / NF --
+                "go_data_emissao_nf": _parse_data_form(f.get("go_data_emissao_nf")),
+                "go_valor_nf_emitida": _parse_float_form(f.get("go_valor_nf_emitida"), default=None) if f.get("go_valor_nf_emitida", "").strip() else None,
+                "go_numero_nf": f.get("go_numero_nf", "").strip() or None,
+                "go_status_logistica": f.get("go_status_logistica", "").strip() or None,
+                "go_data_pedido_expedido": _parse_data_form(f.get("go_data_pedido_expedido")),
+                "go_transportadora_id": int(transportadora_id) if transportadora_id.strip().isdigit() else None,
+                "go_custo_frete_previsto": _parse_float_form(f.get("go_custo_frete_previsto"), default=None) if f.get("go_custo_frete_previsto", "").strip() else None,
+                "go_custo_frete_final": _parse_float_form(f.get("go_custo_frete_final"), default=None) if f.get("go_custo_frete_final", "").strip() else None,
+                "go_custo_frete_sobre_nota": _parse_float_form(f.get("go_custo_frete_sobre_nota"), default=None) if f.get("go_custo_frete_sobre_nota", "").strip() else None,
+                "go_data_prevista_entrega": _parse_data_form(f.get("go_data_prevista_entrega")),
+                "go_data_real_entrega": _parse_data_form(f.get("go_data_real_entrega")),
+                # -- Resultados / OTD --
+                "go_otd_realizado": f.get("go_otd_realizado", "").strip() or None,
+                "go_data_solicitada_cliente_final": _parse_data_form(f.get("go_data_solicitada_cliente_final")),
+                "go_data_entregue_cliente": _parse_data_form(f.get("go_data_entregue_cliente")),
+                "go_obs_operacao": f.get("go_obs_operacao", "").strip() or None,
+                "go_status_final_alinhamento": f.get("go_status_final_alinhamento", "").strip() or None,
+            }
+
+            for alvo in alvos:
+                for campo, valor in valores.items():
+                    setattr(alvo, campo, valor)
 
             depois = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
             _registrar_alteracoes("pedido", pedido.id, pedido.id, antes, depois, CAMPOS_HISTORICO_GESTAO_OPERACAO)
 
             db.session.commit()
-            flash("Gestão Operação do pedido atualizada com sucesso.", "success")
+            if irmaos:
+                flash(
+                    f"Gestão Operação do pedido atualizada com sucesso ({1 + len(irmaos)} registros sincronizados).",
+                    "success",
+                )
+            else:
+                flash("Gestão Operação do pedido atualizada com sucesso.", "success")
             return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id))
 
         return render_template("gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras)
