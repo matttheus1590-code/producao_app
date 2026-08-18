@@ -191,6 +191,15 @@
               <label class="form-label small text-muted mb-1">Liberação prevista</label>
               <input type="date" class="form-control" name="item_liberacao_prevista[]" value="{{ item.liberacao_prevista or '' }}">
             </div>
+            <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
+              <select class="form-select" name="item_planejamento_semanal[]">
+                <option value="">—</option>
+                {% for semana in GO_SEMANAS_PCP %}
+                  <option value="{{ semana }}" {% if item.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
+                {% endfor %}
+              </select>
+            </div>
 
             <div class="col-md-3">
               <label class="form-label small text-muted mb-1">Nº nota fiscal</label>
@@ -250,6 +259,7 @@
   const totalEl = document.getElementById('valorTotalPreview');
   const ESTACOES = [{% for e in ESTACOES %}{{ e | tojson }},{% endfor %}];
   const STATUS_OPCOES = [{% for s in STATUS_OPCOES %}{{ s | tojson }},{% endfor %}];
+  const GO_SEMANAS_PCP = [{% for s in GO_SEMANAS_PCP %}{{ s | tojson }},{% endfor %}];
   const TRANSPORTADORAS = [{% for t in transportadoras %}{id: {{ t.id }}, nome: {{ t.nome | tojson }}},{% endfor %}];
 
   function opcoes(lista, comVazio) {
@@ -326,6 +336,10 @@
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Liberação prevista</label>
           <input type="date" class="form-control" name="item_liberacao_prevista[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
+          <select class="form-select" name="item_planejamento_semanal[]">${opcoes(GO_SEMANAS_PCP, true)}</select>
         </div>
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Nº nota fiscal</label>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat_card %}
+{% from "_macros.html" import stat_card, sort_th %}
 {% block title %}Listagem · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
@@ -84,6 +84,20 @@
     <input type="checkbox" class="form-check-input" id="filtroAtrasados" name="atrasados" value="1" {% if filtros.atrasados %}checked{% endif %}>
     <label class="form-check-label" for="filtroAtrasados">🔴 Só pedidos atrasados</label>
   </div>
+
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
+    <select class="form-select" name="planejamento_semanal">
+      <option value="">Todas as semanas</option>
+      {% for semana in GO_SEMANAS_PCP %}
+        <option value="{{ semana }}" {% if filtros.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Planejamento mensal (PCP)</label>
+    <input type="month" class="form-control" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
+  </div>
 </form>
 
 <div class="d-flex justify-content-end gap-2 mb-3">
@@ -99,46 +113,64 @@
   <table class="table table-hover table-sm align-middle bg-white">
     <thead class="table-light">
       <tr>
-        <th>Pedido</th>
-        <th>Cliente</th>
-        <th>Itens</th>
-        <th>Valor total</th>
-        <th>Prioridade</th>
-        <th>Estação</th>
-        <th>Status</th>
-        <th>Prazo</th>
-        <th>Lead time (dias)</th>
+        {{ sort_th("Pedido", "pedido_venda", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Cliente", "cliente", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Vendedor", "vendedor", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Data inclusão", "data_inclusao", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Prioridade", "prioridade", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Produto", "produto", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Qtd.", "quantidade", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Venda unidade", "venda_unidade", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Venda total", "venda_total", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Estação", "estacao", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Status", "status", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Liberação prevista", "liberacao_prevista", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Planej. semanal", "planejamento_semanal", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Frete", "frete", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("País", "pais", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("UF", "estado", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Cidade", "cidade", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Prazo", "prazo", "dashboard", sort, dir_ordenacao, filtros) }}
         <th></th>
       </tr>
     </thead>
     <tbody>
-      {% for p in pedidos %}
+      {% for l in linhas %}
       <tr>
-        <td>{{ p.pedido_venda or "—" }}</td>
-        <td>{{ p.cliente }}</td>
-        <td class="text-truncate" style="max-width: 260px;" title="{{ p.itens | map(attribute='descricao_produto') | join(', ') }}">{{ p.descricao_resumo }}</td>
-        <td>R$ {{ "{:,.2f}".format(p.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-        <td><span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade or "—" }}</span></td>
-        <td>{{ p.estacao_resumo }}</td>
-        <td><span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span></td>
+        <td>{{ l.pedido_venda or "—" }}</td>
+        <td>{{ l.cliente }}</td>
+        <td>{{ l.vendedor or "—" }}</td>
+        <td>{{ l.data_inclusao_pedido.strftime("%d/%m/%Y") if l.data_inclusao_pedido else "—" }}</td>
+        <td><span class="badge bg-{{ PRIORIDADE_CORES.get(l.prioridade, 'secondary') }}">{{ l.prioridade or "—" }}</span></td>
+        <td class="text-truncate" style="max-width: 220px;" title="{{ l.descricao_produto }}">{{ l.descricao_produto }}</td>
+        <td>{{ l.quantidade }}</td>
+        <td>R$ {{ "{:,.2f}".format(l.venda_unidade).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+        <td>R$ {{ "{:,.2f}".format(l.venda_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+        <td>{{ l.estacao or "—" }}</td>
+        <td><span class="badge bg-{{ STATUS_CORES.get(l.status_producao, 'secondary') }}">{{ l.status_producao }}</span></td>
+        <td>{{ l.liberacao_prevista.strftime("%d/%m/%Y") if l.liberacao_prevista else "—" }}</td>
+        <td>{{ l.planejamento_semanal or "—" }}</td>
+        <td>{{ l.frete or "—" }}</td>
+        <td>{{ l.pais or "—" }}</td>
+        <td>{{ l.estado or "—" }}</td>
+        <td>{{ l.cidade or "—" }}</td>
         <td>
-          {% set cor, dias = p.semaforo %}
+          {% set cor, dias = l.semaforo %}
           <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
             {% if dias is none %}—{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
           </span>
         </td>
-        <td>{{ p.prazo_total_dias if p.prazo_total_dias is not none else "—" }}</td>
         <td class="text-end">
-          <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
+          <a href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
             <i class="bi bi-eye"></i>
           </a>
-          <a href="{{ url_for('editar_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
+          <a href="{{ url_for('editar_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
             <i class="bi bi-pencil-square"></i>
           </a>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="19" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -149,7 +181,7 @@
   <ul class="pagination">
     {% for pg in range(1, total_paginas + 1) %}
       <li class="page-item {% if pg == page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('dashboard', page=pg, **filtros) }}">{{ pg }}</a>
+        <a class="page-link" href="{{ url_for('dashboard', page=pg, **filtros_paginacao) }}">{{ pg }}</a>
       </li>
     {% endfor %}
   </ul>

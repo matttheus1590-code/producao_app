@@ -19,3 +19,17 @@
 </div>
 {% endif %}
 {% endmacro %}
+
+{% macro sort_th(label, campo, endpoint, sort_atual, dir_atual, filtros) %}
+{% set nova_dir = 'desc' if (sort_atual == campo and dir_atual == 'asc') else 'asc' %}
+<th>
+  <a href="{{ url_for(endpoint, sort=campo, dir=nova_dir, **filtros) }}" class="text-decoration-none text-dark d-inline-flex align-items-center gap-1 text-nowrap">
+    {{ label }}
+    {% if sort_atual == campo %}
+      <i class="bi bi-caret-{{ 'up' if dir_atual == 'asc' else 'down' }}-fill small"></i>
+    {% else %}
+      <i class="bi bi-arrow-down-up text-muted small" style="opacity:.35;"></i>
+    {% endif %}
+  </a>
+</th>
+{% endmacro %}

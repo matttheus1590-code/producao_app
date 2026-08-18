@@ -418,6 +418,10 @@ class ItemPedido(db.Model):
     termino_inspecao = db.Column(db.Date, nullable=True)
     liberacao_faturamento = db.Column(db.Date, nullable=True)
     liberacao_prevista = db.Column(db.Date, nullable=True)
+    # Preenchido manualmente pelo PCP, junto com a liberação prevista — não é
+    # calculado a partir dela. Guarda o rótulo de semana no mesmo formato de
+    # gerar_semanas_pcp() (ex.: "SEMANA 03 / AGO / 2026").
+    planejamento_semanal = db.Column(db.String(40), nullable=True)
 
     rnc = db.Column(db.String(120), nullable=True)
 

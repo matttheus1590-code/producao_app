@@ -8,7 +8,7 @@ from flask import Flask, Response, flash, jsonify, redirect, render_template, re
 from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from sqlalchemy import and_, func, inspect, or_, text
+from sqlalchemy import and_, false, func, inspect, or_, text
 from sqlalchemy.orm import selectinload
 
 from extensions import db, login_manager
@@ -56,6 +56,7 @@ CAMPOS_HISTORICO_ITEM = [
     "termino_inspecao",
     "liberacao_faturamento",
     "liberacao_prevista",
+    "planejamento_semanal",
     "rnc",
     "numero_nota_fiscal",
     "valor_faturado",
@@ -114,6 +115,7 @@ def create_app():
         _migrar_estacoes_tabela(app)
         _migrar_faturamento_itens(app)
         _migrar_logistica_itens(app)
+        _migrar_planejamento_semanal_itens(app)
         _migrar_gestao_operacao_pedidos(app)
         _migrar_dados_go_para_pedidos_operacao(app)
         _seed_inicial(app)
@@ -335,6 +337,26 @@ def _migrar_logistica_itens(app):
         if "data_envio" not in colunas:
             conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN data_envio DATE"))
     app.logger.info("Migração automática: campos de logística (transportadora e data de envio) adicionados aos itens.")
+
+
+def _migrar_planejamento_semanal_itens(app):
+    """Adiciona o campo de planejamento semanal (preenchido manualmente pelo
+    PCP, junto com a liberação prevista) nos itens criados antes dessa fase
+    existir.
+
+    É um campo 100% novo — não deriva de nenhum dado existente — então fica
+    em branco nos itens antigos e passa a ser preenchido dali pra frente."""
+    inspector = inspect(db.engine)
+    if "itens_pedido" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("itens_pedido")}
+    if "planejamento_semanal" in colunas:
+        return
+
+    with db.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN planejamento_semanal VARCHAR(40)"))
+    app.logger.info("Migração automática: campo de planejamento semanal adicionado aos itens.")
 
 
 # Colunas novas da Fase 13 (Gestão Operação) e seu tipo SQL — todas opcionais,
@@ -739,6 +761,21 @@ def _mes_ano_da_semana_pcp(semana):
     if not mes:
         return None
     return (int(ano), mes)
+
+
+def _chave_semana_pcp(semana):
+    """Chave de ordenação cronológica pro rótulo de semana (ano, mês, nº da
+    semana) — usada tanto pelo planejamento semanal da Listagem Geral quanto,
+    se precisar no futuro, por qualquer outro campo no mesmo formato."""
+    if not semana:
+        return None
+    mes_ano = _mes_ano_da_semana_pcp(semana)
+    m = re.search(r"SEMANA\s*(\d+)", semana.upper())
+    semana_num = int(m.group(1)) if m else 0
+    if mes_ano is None:
+        return (9999, 99, semana_num)
+    ano, mes = mes_ano
+    return (ano, mes, semana_num)
 
 
 def _somar_meses(ano, mes, delta):
@@ -1158,6 +1195,8 @@ def _filtrar_pedidos(args):
     data_inicio = args.get("data_inicio", "").strip()
     data_fim = args.get("data_fim", "").strip()
     atrasados = args.get("atrasados", "").strip()
+    planejamento_semanal = args.get("planejamento_semanal", "").strip()
+    planejamento_mensal = args.get("planejamento_mensal", "").strip()
 
     if cliente:
         query = query.filter(Pedido.cliente.ilike(f"%{cliente}%"))
@@ -1194,6 +1233,23 @@ def _filtrar_pedidos(args):
         predicado = _predicado_status(status)
         if predicado is not None:
             query = query.filter(predicado)
+    if planejamento_semanal:
+        query = query.filter(Pedido.itens.any(ItemPedido.planejamento_semanal == planejamento_semanal))
+    if planejamento_mensal:
+        mes_ano = _parse_mes_ano_form(planejamento_mensal, None)
+        if mes_ano:
+            semanas_do_mes = [
+                s for (s,) in db.session.query(ItemPedido.planejamento_semanal)
+                .filter(ItemPedido.planejamento_semanal.isnot(None))
+                .distinct()
+                if _mes_ano_da_semana_pcp(s) == mes_ano
+            ]
+            if semanas_do_mes:
+                query = query.filter(Pedido.itens.any(ItemPedido.planejamento_semanal.in_(semanas_do_mes)))
+            else:
+                # Mês escolhido não tem nenhum planejamento semanal preenchido
+                # ainda — não deve mostrar nada (em vez de ignorar o filtro).
+                query = query.filter(false())
 
     query = query.order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
 
@@ -1208,8 +1264,172 @@ def _filtrar_pedidos(args):
         data_inicio=data_inicio,
         data_fim=data_fim,
         atrasados=atrasados,
+        planejamento_semanal=planejamento_semanal,
+        planejamento_mensal=planejamento_mensal,
     )
     return query, filtros
+
+
+class _LinhaListagemGeral:
+    """Uma linha da Listagem Geral = 1 pedido + 1 item (produto) dele — o
+    mesmo número de pedido pode aparecer em várias linhas, uma por produto
+    distinto, igual à planilha de referência. Só une os dois objetos num
+    lugar só pra o template não precisar fazer `linha.pedido.x` /
+    `linha.item.y` o tempo todo."""
+
+    def __init__(self, pedido, item):
+        self.pedido = pedido
+        self.item = item
+
+    # ---- identidade do pedido ----
+    @property
+    def pedido_id(self):
+        return self.pedido.id
+
+    @property
+    def pedido_venda(self):
+        return self.pedido.pedido_venda
+
+    @property
+    def cliente(self):
+        return self.pedido.cliente
+
+    @property
+    def vendedor(self):
+        return self.pedido.vendedor
+
+    @property
+    def data_inclusao_pedido(self):
+        return self.pedido.data_inclusao_pedido
+
+    @property
+    def prioridade(self):
+        return self.pedido.prioridade
+
+    @property
+    def frete(self):
+        return self.pedido.frete
+
+    @property
+    def pais(self):
+        return self.pedido.pais
+
+    @property
+    def estado(self):
+        return self.pedido.estado
+
+    @property
+    def cidade(self):
+        return self.pedido.cidade
+
+    # ---- dados do item (produto) ----
+    @property
+    def item_id(self):
+        return self.item.id
+
+    @property
+    def descricao_produto(self):
+        return self.item.descricao_produto
+
+    @property
+    def quantidade(self):
+        return self.item.quantidade
+
+    @property
+    def venda_unidade(self):
+        """Mesmo dado de custo que já existe (custo_unitario) — só exibido
+        sob o rótulo "Venda" pedido pelo Bruno."""
+        return self.item.custo_unitario
+
+    @property
+    def venda_total(self):
+        return self.item.valor_total
+
+    @property
+    def estacao(self):
+        return self.item.estacao
+
+    @property
+    def status_producao(self):
+        return self.item.status_producao
+
+    @property
+    def liberacao_prevista(self):
+        return self.item.liberacao_prevista
+
+    @property
+    def planejamento_semanal(self):
+        return self.item.planejamento_semanal
+
+    @property
+    def semaforo(self):
+        return self.item.semaforo
+
+
+def _linhas_listagem_geral(pedidos, args):
+    """Achata a lista de Pedido (com itens já carregados) em 1 linha por
+    ItemPedido — a granularidade que a Listagem Geral usa agora (1 linha por
+    produto, igual ao print de referência).
+
+    `_filtrar_pedidos` já decidiu quais PEDIDOS entram (algum item bate o
+    filtro); aqui, pros filtros que são naturalmente por ITEM — estação,
+    produto, planejamento semanal/mensal —, mostra só os produtos que batem,
+    não o pedido inteiro. Sem isso, filtrar por "semana X" mostraria também
+    os outros produtos do mesmo pedido que caem em semanas diferentes."""
+    estacao = args.get("estacao", "").strip()
+    produto = args.get("produto", "").strip().upper()
+    planejamento_semanal = args.get("planejamento_semanal", "").strip()
+    planejamento_mensal = args.get("planejamento_mensal", "").strip()
+    mes_ano = _parse_mes_ano_form(planejamento_mensal, None) if planejamento_mensal else None
+
+    linhas = []
+    for pedido in pedidos:
+        for item in pedido.itens:
+            if estacao and item.estacao != estacao:
+                continue
+            if produto and produto not in (item.descricao_produto or "").upper():
+                continue
+            if planejamento_semanal and item.planejamento_semanal != planejamento_semanal:
+                continue
+            if mes_ano and _mes_ano_da_semana_pcp(item.planejamento_semanal) != mes_ano:
+                continue
+            linhas.append(_LinhaListagemGeral(pedido, item))
+    return linhas
+
+
+def _ordenar_com_nulos_no_fim(linhas, chave, reverse):
+    """Ordena por `chave(linha)`, deixando quem não tem valor (None) sempre
+    no fim, não importa a direção — comportamento mais previsível pro
+    usuário do que deixar o Python inverter os vazios junto com o resto."""
+    com_valor = [l for l in linhas if chave(l) is not None]
+    sem_valor = [l for l in linhas if chave(l) is None]
+    com_valor.sort(key=chave, reverse=reverse)
+    return com_valor + sem_valor
+
+
+SORT_KEYS_LISTAGEM_GERAL = {
+    "pedido_venda": lambda l: (l.pedido_venda or "").upper() or None,
+    "cliente": lambda l: (l.cliente or "").upper() or None,
+    "vendedor": lambda l: (l.vendedor or "").upper() or None,
+    "data_inclusao": lambda l: l.data_inclusao_pedido,
+    "prioridade": lambda l: PRIORIDADE_OPCOES.index(l.prioridade) if l.prioridade in PRIORIDADE_OPCOES else None,
+    "produto": lambda l: (l.descricao_produto or "").upper() or None,
+    "quantidade": lambda l: l.quantidade,
+    "venda_unidade": lambda l: l.venda_unidade,
+    "venda_total": lambda l: l.venda_total,
+    "estacao": lambda l: (l.estacao or "").upper() or None,
+    "status": lambda l: STATUS_OPCOES.index(l.status_producao) if l.status_producao in STATUS_OPCOES else None,
+    "liberacao_prevista": lambda l: l.liberacao_prevista,
+    "planejamento_semanal": lambda l: _chave_semana_pcp(l.planejamento_semanal),
+    "frete": lambda l: (l.frete or "").upper() or None,
+    "pais": lambda l: (l.pais or "").upper() or None,
+    "estado": lambda l: (l.estado or "").upper() or None,
+    "cidade": lambda l: (l.cidade or "").upper() or None,
+    "prazo": lambda l: l.semaforo[1],
+}
+
+SORT_PADRAO = "data_inclusao"
+DIR_PADRAO = "desc"
 
 
 def _filtrar_pedidos_operacao(args):
@@ -1695,22 +1915,43 @@ def register_routes(app):
     @login_required
     def dashboard():
         page = request.args.get("page", 1, type=int)
-        query, filtros = _filtrar_pedidos(request.args)
+        sort = request.args.get("sort", SORT_PADRAO)
+        dir_ordenacao = request.args.get("dir", DIR_PADRAO)
+        if sort not in SORT_KEYS_LISTAGEM_GERAL:
+            sort = SORT_PADRAO
+        if dir_ordenacao not in ("asc", "desc"):
+            dir_ordenacao = DIR_PADRAO
 
-        total_filtrado = query.count()
-        pedidos = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+        # A Listagem Geral mostra 1 linha por PRODUTO (item), não por pedido —
+        # então a ordenação/paginação não dá mais pra fazer em SQL direto (várias
+        # colunas, como prioridade/status/prazo, têm ordem própria calculada em
+        # Python). Busca tudo que passou pelo filtro, achata em linhas por item,
+        # ordena e pagina em Python — mesmo padrão já usado em Gestão Operação e
+        # no Painel pra esse tipo de coluna.
+        query, filtros = _filtrar_pedidos(request.args)
+        pedidos = query.all()
+        linhas = _linhas_listagem_geral(pedidos, request.args)
+        linhas = _ordenar_com_nulos_no_fim(linhas, SORT_KEYS_LISTAGEM_GERAL[sort], reverse=(dir_ordenacao == "desc"))
+
+        total_filtrado = len(linhas)
         total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        linhas_pagina = linhas[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
 
         resumo = _calcular_resumo()
 
+        filtros_paginacao = dict(filtros, sort=sort, dir=dir_ordenacao)
+
         return render_template(
             "dashboard.html",
-            pedidos=pedidos,
+            linhas=linhas_pagina,
             resumo=resumo,
             page=page,
             total_paginas=total_paginas,
             total_filtrado=total_filtrado,
             filtros=filtros,
+            filtros_paginacao=filtros_paginacao,
+            sort=sort,
+            dir_ordenacao=dir_ordenacao,
         )
 
     @app.route("/pedidos/novo", methods=["GET", "POST"])
@@ -1810,6 +2051,7 @@ def register_routes(app):
             terminos_inspecao = f.getlist("item_termino_inspecao[]")
             liberacoes_faturamento = f.getlist("item_liberacao_faturamento[]")
             liberacoes_prevista = f.getlist("item_liberacao_prevista[]")
+            planejamentos_semanais = f.getlist("item_planejamento_semanal[]")
             notas_fiscais = f.getlist("item_numero_nota_fiscal[]")
             valores_faturados = f.getlist("item_valor_faturado[]")
             transportadoras_ids = f.getlist("item_transportadora_id[]")
@@ -1824,11 +2066,11 @@ def register_routes(app):
             linhas = zip(
                 item_ids, descricoes, quantidades, custos, estacoes, status_itens, rncs,
                 inicios_producao, inicios_inspecao, terminos_inspecao,
-                liberacoes_faturamento, liberacoes_prevista, notas_fiscais, valores_faturados,
+                liberacoes_faturamento, liberacoes_prevista, planejamentos_semanais, notas_fiscais, valores_faturados,
                 transportadoras_ids, datas_envio,
             )
             for (item_id, desc, qtd, custo, estacao_item, status_item, rnc,
-                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev, nf, valor_faturado,
+                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev, planejamento_semanal, nf, valor_faturado,
                  transportadora_id, data_envio) in linhas:
                 desc = desc.strip()
 
@@ -1855,6 +2097,7 @@ def register_routes(app):
                 item.termino_inspecao = _parse_data_form(term_insp)
                 item.liberacao_faturamento = _parse_data_form(lib_fat)
                 item.liberacao_prevista = _parse_data_form(lib_prev)
+                item.planejamento_semanal = planejamento_semanal.strip() or None
                 item.numero_nota_fiscal = nf.strip() or None
                 item.valor_faturado = _parse_float_form(valor_faturado, default=None) if valor_faturado.strip() else None
                 item.transportadora_id = int(transportadora_id) if transportadora_id.strip().isdigit() else None
