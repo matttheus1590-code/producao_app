@@ -40,11 +40,11 @@
         </a>
 
         <div class="app-nav-section">Gestão Produção</div>
-        <a class="app-nav-link {% if request.endpoint in ('dashboard', 'detalhe_pedido', 'editar_pedido') %}active{% endif %}" href="{{ url_for('dashboard') }}">
-          <i class="bi bi-list-ul"></i> <span>Listagem Geral</span>
-        </a>
         <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
           <i class="bi bi-plus-circle"></i> <span>Novo pedido</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint in ('dashboard', 'detalhe_pedido', 'editar_pedido') %}active{% endif %}" href="{{ url_for('dashboard') }}">
+          <i class="bi bi-list-ul"></i> <span>Listagem Geral</span>
         </a>
         <a class="app-nav-link {% if request.endpoint in ('estacoes_lista', 'estacao_kanban') %}active{% endif %}" href="{{ url_for('estacoes_lista') }}">
           <i class="bi bi-kanban"></i> <span>Estações</span>

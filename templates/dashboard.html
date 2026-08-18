@@ -25,7 +25,7 @@
 </div>
 
 <form class="row g-2 align-items-end mb-3" method="get">
-  <div class="col-md-3">
+  <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
   </div>
@@ -56,7 +56,10 @@
     </select>
   </div>
   <div class="col-md-1 d-grid">
-    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
+    <button class="btn btn-primary" type="submit" title="Buscar"><i class="bi bi-search"></i></button>
+  </div>
+  <div class="col-md-1 d-grid">
+    <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary" title="Limpar todos os filtros"><i class="bi bi-eraser"></i></a>
   </div>
 
   <div class="col-md-3">
@@ -110,9 +113,10 @@
 </div>
 
 <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white">
+  <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral">
     <thead class="table-light">
       <tr>
+        <th></th>
         {{ sort_th("Pedido", "pedido_venda", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Cliente", "cliente", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Vendedor", "vendedor", "dashboard", sort, dir_ordenacao, filtros) }}
@@ -124,6 +128,7 @@
         {{ sort_th("Data solic. cliente", "data_cliente", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Liberação prevista", "liberacao_prevista", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Liberação real", "liberacao_real", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Planej. semanal", "planejamento_semanal", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Prioridade", "prioridade", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Produto", "produto", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Qtd.", "quantidade", "dashboard", sort, dir_ordenacao, filtros) }}
@@ -132,13 +137,19 @@
         {{ sort_th("Venda unidade item", "venda_unidade", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Venda total item", "venda_total", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Venda total pedido", "venda_total_pedido", "dashboard", sort, dir_ordenacao, filtros) }}
-        {{ sort_th("Planej. semanal", "planejamento_semanal", "dashboard", sort, dir_ordenacao, filtros) }}
-        <th></th>
       </tr>
     </thead>
     <tbody>
       {% for l in linhas %}
       <tr>
+        <td class="text-nowrap">
+          <a href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
+            <i class="bi bi-eye"></i>
+          </a>
+          <a href="{{ url_for('editar_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
         <td>{{ l.pedido_venda or "—" }}</td>
         <td>{{ l.cliente }}</td>
         <td>{{ l.vendedor or "—" }}</td>
@@ -150,6 +161,7 @@
         <td>{{ l.data_cliente.strftime("%d/%m/%Y") if l.data_cliente else "—" }}</td>
         <td>{{ l.liberacao_prevista.strftime("%d/%m/%Y") if l.liberacao_prevista else "—" }}</td>
         <td>{{ l.liberacao_real.strftime("%d/%m/%Y") if l.liberacao_real else "—" }}</td>
+        <td>{{ l.planejamento_semanal or "—" }}</td>
         <td><span class="badge bg-{{ PRIORIDADE_CORES.get(l.prioridade, 'secondary') }}">{{ l.prioridade or "—" }}</span></td>
         <td class="text-truncate" style="max-width: 220px;" title="{{ l.descricao_produto }}">{{ l.descricao_produto }}</td>
         <td>{{ l.quantidade }}</td>
@@ -158,15 +170,6 @@
         <td>R$ {{ "{:,.2f}".format(l.venda_unidade).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td>R$ {{ "{:,.2f}".format(l.venda_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td>R$ {{ "{:,.2f}".format(l.venda_total_pedido).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-        <td>{{ l.planejamento_semanal or "—" }}</td>
-        <td class="text-end">
-          <a href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
-            <i class="bi bi-eye"></i>
-          </a>
-          <a href="{{ url_for('editar_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
-            <i class="bi bi-pencil-square"></i>
-          </a>
-        </td>
       </tr>
       {% else %}
       <tr><td colspan="21" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>

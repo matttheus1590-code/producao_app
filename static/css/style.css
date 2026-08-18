@@ -10,6 +10,37 @@ body {
   vertical-align: middle;
 }
 
+/* Listagem Geral (Gestão Produção): linhas mais compactas e nítidas,
+   sem depender de zoom do navegador. */
+.tabela-listagem-geral td,
+.tabela-listagem-geral th {
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+  font-size: 0.82rem;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.tabela-listagem-geral td.text-truncate {
+  white-space: nowrap;
+}
+
+.tabela-listagem-geral th {
+  font-size: 0.72rem;
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+
+.tabela-listagem-geral .badge {
+  font-size: 0.72rem;
+  padding: 0.28em 0.5em;
+}
+
+.tabela-listagem-geral .btn-sm {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.78rem;
+}
+
 .normal-case {
   text-transform: none;
 }
