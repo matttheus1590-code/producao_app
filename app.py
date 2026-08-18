@@ -120,6 +120,11 @@ def create_app():
         _migrar_liberacao_real_itens(app)
         _migrar_gestao_operacao_pedidos(app)
         _migrar_dados_go_para_pedidos_operacao(app)
+        # Só depois de TODAS as colunas de pedidos/itens existirem de verdade
+        # (senão o ORM tenta selecionar coluna que ainda não foi criada nesta
+        # execução, em bancos antigos que ainda não passaram pelas migrações
+        # acima) — consolida os pedidos fragmentados em vários registros.
+        _consolidar_pedidos_duplicados(app)
         _seed_inicial(app)
         _importar_gestao_operacao(app)
 
@@ -243,6 +248,82 @@ def _migrar_producao_para_itens(app):
         for coluna in _COLUNAS_PRODUCAO:
             conn.execute(text(f"ALTER TABLE pedidos DROP COLUMN {coluna}"))
     app.logger.info("Migração automática: dados de produção movidos dos pedidos para os itens com sucesso.")
+
+
+def _consolidar_pedidos_duplicados(app):
+    """Corrige um problema histórico do import original: pedidos com mais de
+    um produto foram importados como VÁRIOS registros `Pedido` separados (um
+    por linha da planilha, cada um com 1 item só) em vez de 1 `Pedido` com
+    vários `ItemPedido` dentro. Isso fazia "Venda total pedido" somar só 1
+    produto por vez, e a tela de editar não mostrar todos os produtos de um
+    pedido juntos (ex.: CATTALINI 728 = 4 registros `Pedido` separados, cada
+    um com 1 item, em vez de 1 registro com 4 itens).
+
+    Roda uma vez: agrupa os `Pedido` que compartilham o mesmo `pedido_venda`,
+    escolhe o de menor id como "principal", move todos os itens — e o
+    histórico de alterações — dos outros pra ele, e apaga os registros que
+    sobraram vazios. Não perde nenhum item nem histórico, só reorganiza quem
+    é o dono (pedido_id). Idempotente: numa segunda execução não encontra
+    mais grupos com mais de 1 registro por pedido_venda, então não faz nada."""
+    grupos = (
+        db.session.query(Pedido.pedido_venda)
+        .filter(Pedido.pedido_venda.isnot(None), Pedido.pedido_venda != "")
+        .group_by(Pedido.pedido_venda)
+        .having(func.count(Pedido.id) > 1)
+        .all()
+    )
+    if not grupos:
+        return
+
+    total_pedidos_removidos = 0
+    total_itens_movidos = 0
+
+    for (pedido_venda,) in grupos:
+        registros = Pedido.query.filter(Pedido.pedido_venda == pedido_venda).order_by(Pedido.id).all()
+        if len(registros) < 2:
+            continue  # já foi consolidado nesta mesma rodada (não deveria acontecer, mas por segurança)
+
+        primario, duplicados = registros[0], registros[1:]
+
+        datas_inclusao = [r.data_inclusao_pedido for r in registros if r.data_inclusao_pedido]
+        if datas_inclusao:
+            primario.data_inclusao_pedido = min(datas_inclusao)
+
+        # Todos os outros campos escalares do pedido (comerciais + os go_*
+        # legados de Gestão Operação, que ainda vivem fisicamente na tabela
+        # mesmo sem serem mais lidos pelo app) — mantém o valor do principal
+        # se já tiver algo, senão pega o primeiro valor não vazio encontrado
+        # entre os duplicados. Genérico de propósito, pra não perder nenhum
+        # dado esquecido numa lista manual de campos.
+        campos_genericos = [
+            c.name for c in Pedido.__table__.columns if c.name not in ("id", "pedido_venda", "data_inclusao_pedido")
+        ]
+        for campo in campos_genericos:
+            if not getattr(primario, campo):
+                for dup in duplicados:
+                    valor = getattr(dup, campo)
+                    if valor:
+                        setattr(primario, campo, valor)
+                        break
+
+        for dup in duplicados:
+            for item in list(dup.itens):
+                item.pedido = primario  # via relationship, não só pedido_id — mantém o cascade consistente
+                total_itens_movidos += 1
+            HistoricoAlteracao.query.filter_by(pedido_id=dup.id).update(
+                {"pedido_id": primario.id}, synchronize_session=False
+            )
+            db.session.flush()
+            db.session.delete(dup)
+            total_pedidos_removidos += 1
+
+    db.session.commit()
+    app.logger.info(
+        "Migração automática: %d pedidos duplicados consolidados (%d registros removidos, %d itens reagrupados).",
+        len(grupos),
+        total_pedidos_removidos,
+        total_itens_movidos,
+    )
 
 
 def _migrar_usuarios_role(app):
