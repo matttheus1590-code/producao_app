@@ -1303,6 +1303,13 @@ class _LinhaListagemGeral:
         return self.pedido.data_inclusao_pedido
 
     @property
+    def data_cliente(self):
+        """Data solicitada pelo cliente (prazo comercial) — já existia no
+        pedido (campo "Data do cliente" na tela de editar), só não aparecia
+        na Listagem Geral."""
+        return self.pedido.data_cliente
+
+    @property
     def prioridade(self):
         return self.pedido.prioridade
 
@@ -1412,6 +1419,7 @@ SORT_KEYS_LISTAGEM_GERAL = {
     "cliente": lambda l: (l.cliente or "").upper() or None,
     "vendedor": lambda l: (l.vendedor or "").upper() or None,
     "data_inclusao": lambda l: l.data_inclusao_pedido,
+    "data_cliente": lambda l: l.data_cliente,
     "prioridade": lambda l: PRIORIDADE_OPCOES.index(l.prioridade) if l.prioridade in PRIORIDADE_OPCOES else None,
     "produto": lambda l: (l.descricao_produto or "").upper() or None,
     "quantidade": lambda l: l.quantidade,

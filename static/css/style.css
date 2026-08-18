@@ -78,7 +78,7 @@ body {
 .app-sidebar-brand-subtitulo {
   display: block;
   margin-top: 0.35rem;
-  font-size: 0.68rem;
+  font-size: 0.76rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -92,7 +92,7 @@ body {
 }
 
 .app-nav-section {
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: rgba(255, 255, 255, 0.45);
@@ -107,7 +107,7 @@ body {
   border-radius: 0.45rem;
   color: rgba(255, 255, 255, 0.82);
   text-decoration: none;
-  font-size: 0.92rem;
+  font-size: 1.05rem;
   margin-bottom: 0.15rem;
 }
 
@@ -140,6 +140,14 @@ body {
 .app-sidebar-user i {
   font-size: 1.6rem;
   color: rgba(255, 255, 255, 0.6);
+}
+
+.app-sidebar-user-info .fw-semibold {
+  font-size: 1.05rem;
+}
+
+.app-sidebar-user-info .small {
+  font-size: 0.85rem;
 }
 
 .app-main {

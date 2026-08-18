@@ -117,6 +117,7 @@
         {{ sort_th("Cliente", "cliente", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Vendedor", "vendedor", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Data inclusão", "data_inclusao", "dashboard", sort, dir_ordenacao, filtros) }}
+        {{ sort_th("Data solic. cliente", "data_cliente", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Prioridade", "prioridade", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Produto", "produto", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Qtd.", "quantidade", "dashboard", sort, dir_ordenacao, filtros) }}
@@ -141,6 +142,7 @@
         <td>{{ l.cliente }}</td>
         <td>{{ l.vendedor or "—" }}</td>
         <td>{{ l.data_inclusao_pedido.strftime("%d/%m/%Y") if l.data_inclusao_pedido else "—" }}</td>
+        <td>{{ l.data_cliente.strftime("%d/%m/%Y") if l.data_cliente else "—" }}</td>
         <td><span class="badge bg-{{ PRIORIDADE_CORES.get(l.prioridade, 'secondary') }}">{{ l.prioridade or "—" }}</span></td>
         <td class="text-truncate" style="max-width: 220px;" title="{{ l.descricao_produto }}">{{ l.descricao_produto }}</td>
         <td>{{ l.quantidade }}</td>
@@ -170,7 +172,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="19" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="20" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>
