@@ -192,6 +192,10 @@
               <input type="date" class="form-control" name="item_liberacao_prevista[]" value="{{ item.liberacao_prevista or '' }}">
             </div>
             <div class="col-md-3">
+              <label class="form-label small text-muted mb-1">Liberação real</label>
+              <input type="date" class="form-control" name="item_liberacao_real[]" value="{{ item.liberacao_real or '' }}">
+            </div>
+            <div class="col-md-3">
               <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
               <select class="form-select" name="item_planejamento_semanal[]">
                 <option value="">—</option>
@@ -336,6 +340,10 @@
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Liberação prevista</label>
           <input type="date" class="form-control" name="item_liberacao_prevista[]">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Liberação real</label>
+          <input type="date" class="form-control" name="item_liberacao_real[]">
         </div>
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>

@@ -56,6 +56,7 @@ CAMPOS_HISTORICO_ITEM = [
     "termino_inspecao",
     "liberacao_faturamento",
     "liberacao_prevista",
+    "liberacao_real",
     "planejamento_semanal",
     "rnc",
     "numero_nota_fiscal",
@@ -116,6 +117,7 @@ def create_app():
         _migrar_faturamento_itens(app)
         _migrar_logistica_itens(app)
         _migrar_planejamento_semanal_itens(app)
+        _migrar_liberacao_real_itens(app)
         _migrar_gestao_operacao_pedidos(app)
         _migrar_dados_go_para_pedidos_operacao(app)
         _seed_inicial(app)
@@ -357,6 +359,26 @@ def _migrar_planejamento_semanal_itens(app):
     with db.engine.begin() as conn:
         conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN planejamento_semanal VARCHAR(40)"))
     app.logger.info("Migração automática: campo de planejamento semanal adicionado aos itens.")
+
+
+def _migrar_liberacao_real_itens(app):
+    """Adiciona o campo de liberação real (preenchido manualmente, pra
+    comparar com a liberação prevista) nos itens criados antes dessa fase
+    existir.
+
+    Campo 100% novo — não deriva de nenhum dado existente — fica em branco
+    nos itens antigos e passa a ser preenchido dali pra frente."""
+    inspector = inspect(db.engine)
+    if "itens_pedido" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("itens_pedido")}
+    if "liberacao_real" in colunas:
+        return
+
+    with db.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN liberacao_real DATE"))
+    app.logger.info("Migração automática: campo de liberação real adicionado aos itens.")
 
 
 # Colunas novas da Fase 13 (Gestão Operação) e seu tipo SQL — todas opcionais,
@@ -1365,8 +1387,18 @@ class _LinhaListagemGeral:
         return self.item.liberacao_prevista
 
     @property
+    def liberacao_real(self):
+        return self.item.liberacao_real
+
+    @property
     def planejamento_semanal(self):
         return self.item.planejamento_semanal
+
+    @property
+    def venda_total_pedido(self):
+        """Soma o custo de TODOS os itens do pedido (não só deste produto) —
+        reaproveita Pedido.valor_total, que já faz exatamente essa soma."""
+        return self.pedido.valor_total
 
     @property
     def semaforo(self):
@@ -1425,15 +1457,16 @@ SORT_KEYS_LISTAGEM_GERAL = {
     "quantidade": lambda l: l.quantidade,
     "venda_unidade": lambda l: l.venda_unidade,
     "venda_total": lambda l: l.venda_total,
+    "venda_total_pedido": lambda l: l.venda_total_pedido,
     "estacao": lambda l: (l.estacao or "").upper() or None,
     "status": lambda l: STATUS_OPCOES.index(l.status_producao) if l.status_producao in STATUS_OPCOES else None,
     "liberacao_prevista": lambda l: l.liberacao_prevista,
+    "liberacao_real": lambda l: l.liberacao_real,
     "planejamento_semanal": lambda l: _chave_semana_pcp(l.planejamento_semanal),
     "frete": lambda l: (l.frete or "").upper() or None,
     "pais": lambda l: (l.pais or "").upper() or None,
     "estado": lambda l: (l.estado or "").upper() or None,
     "cidade": lambda l: (l.cidade or "").upper() or None,
-    "prazo": lambda l: l.semaforo[1],
 }
 
 SORT_PADRAO = "data_inclusao"
@@ -2059,6 +2092,7 @@ def register_routes(app):
             terminos_inspecao = f.getlist("item_termino_inspecao[]")
             liberacoes_faturamento = f.getlist("item_liberacao_faturamento[]")
             liberacoes_prevista = f.getlist("item_liberacao_prevista[]")
+            liberacoes_real = f.getlist("item_liberacao_real[]")
             planejamentos_semanais = f.getlist("item_planejamento_semanal[]")
             notas_fiscais = f.getlist("item_numero_nota_fiscal[]")
             valores_faturados = f.getlist("item_valor_faturado[]")
@@ -2074,11 +2108,11 @@ def register_routes(app):
             linhas = zip(
                 item_ids, descricoes, quantidades, custos, estacoes, status_itens, rncs,
                 inicios_producao, inicios_inspecao, terminos_inspecao,
-                liberacoes_faturamento, liberacoes_prevista, planejamentos_semanais, notas_fiscais, valores_faturados,
+                liberacoes_faturamento, liberacoes_prevista, liberacoes_real, planejamentos_semanais, notas_fiscais, valores_faturados,
                 transportadoras_ids, datas_envio,
             )
             for (item_id, desc, qtd, custo, estacao_item, status_item, rnc,
-                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev, planejamento_semanal, nf, valor_faturado,
+                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev, lib_real, planejamento_semanal, nf, valor_faturado,
                  transportadora_id, data_envio) in linhas:
                 desc = desc.strip()
 
@@ -2105,6 +2139,7 @@ def register_routes(app):
                 item.termino_inspecao = _parse_data_form(term_insp)
                 item.liberacao_faturamento = _parse_data_form(lib_fat)
                 item.liberacao_prevista = _parse_data_form(lib_prev)
+                item.liberacao_real = _parse_data_form(lib_real)
                 item.planejamento_semanal = planejamento_semanal.strip() or None
                 item.numero_nota_fiscal = nf.strip() or None
                 item.valor_faturado = _parse_float_form(valor_faturado, default=None) if valor_faturado.strip() else None
