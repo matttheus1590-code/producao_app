@@ -77,17 +77,12 @@ body {
 
 .app-sidebar-brand-subtitulo {
   display: block;
-  margin-top: 0.45rem;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.03em;
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: #c2410c;
-}
-
-.brand-destaque {
-  color: #c2410c;
-  font-weight: 800;
+  color: #6b7280;
 }
 
 .app-sidebar-nav {
