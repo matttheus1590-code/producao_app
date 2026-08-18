@@ -44,6 +44,9 @@
         <a class="app-nav-link {% if request.endpoint == 'logistica' %}active{% endif %}" href="{{ url_for('logistica') }}">
           <i class="bi bi-truck"></i> <span>Logística</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'alertas' %}active{% endif %}" href="{{ url_for('alertas') }}">
+          <i class="bi bi-bell"></i> <span>Alertas</span>
+        </a>
 
         {% if current_user.role in ('ADMIN', 'PCP') %}
         <div class="app-nav-section">Cadastros</div>

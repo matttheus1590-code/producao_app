@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Alertas · Controle de Produção{% endblock %}
+{% block content %}
+
+<h4 class="mb-3"><i class="bi bi-bell"></i> Alertas</h4>
+<p class="text-muted small mb-4">Painel consolidado com tudo que precisa de atenção agora: pedidos atrasados, vencendo, gargalos de fila e faturamento previsto que ainda não aconteceu.</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card text-center h-100 border-danger"><div class="card-body">
+      <div class="text-muted small">Pedidos atrasados</div>
+      <div class="fs-3 fw-semibold text-danger">{{ pedidos_atrasados | length }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center h-100 border-warning"><div class="card-body">
+      <div class="text-muted small">Pedidos vencendo</div>
+      <div class="fs-3 fw-semibold text-warning">{{ pedidos_vencendo | length }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Estações com gargalo</div>
+      <div class="fs-3 fw-semibold">{{ gargalos_criticos | length }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Faturamento previsto não realizado</div>
+      <div class="fs-3 fw-semibold">{{ faturamento_pendente | length }}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-exclamation-octagon text-danger"></i> Pedidos atrasados</h6>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Estação</th><th>Prazo</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for p in pedidos_atrasados %}
+          {% set cor, dias = p.semaforo %}
+          <tr>
+            <td>{{ p.pedido_venda or "—" }}</td>
+            <td>{{ p.cliente }}</td>
+            <td class="text-truncate" style="max-width: 220px;">{{ p.descricao_resumo }}</td>
+            <td>{{ p.estacao_resumo }}</td>
+            <td><span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">{% if dias is none %}—{% else %}{{ -dias }}d atrasado{% endif %}</span></td>
+            <td class="text-end">
+              <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-3">Nenhum pedido atrasado. 🎉</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-exclamation-triangle text-warning"></i> Pedidos vencendo (próximos {{ PRAZO_ALERTA_DIAS }} dias)</h6>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Estação</th><th>Prazo</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for p in pedidos_vencendo %}
+          {% set cor, dias = p.semaforo %}
+          <tr>
+            <td>{{ p.pedido_venda or "—" }}</td>
+            <td>{{ p.cliente }}</td>
+            <td class="text-truncate" style="max-width: 220px;">{{ p.descricao_resumo }}</td>
+            <td>{{ p.estacao_resumo }}</td>
+            <td><span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">{% if dias is none %}—{% else %}{{ dias }}d{% endif %}</span></td>
+            <td class="text-end">
+              <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-3">Nenhum pedido vencendo nos próximos dias.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-signpost-split"></i> Gargalos de fila</h6>
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Estação</th><th class="text-center">Fila</th><th class="text-center">Atrasados</th></tr>
+          </thead>
+          <tbody>
+            {% for g in gargalos_criticos %}
+            <tr>
+              <td>{{ g.estacao }}</td>
+              <td class="text-center"><span class="badge bg-{{ 'danger' if g.fila > 10 else 'warning' }}">{{ g.fila }}</span></td>
+              <td class="text-center">{% if g.atraso > 0 %}<span class="badge bg-danger">{{ g.atraso }}</span>{% else %}—{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">Nenhum gargalo relevante no momento.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="text-end mt-2">
+          <a href="{{ url_for('gargalos') }}" class="small">Ver ranking completo →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-cash-coin"></i> Faturamento previsto não realizado</h6>
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Pedido</th><th>Produto</th><th>Previsto para</th><th class="text-end">Valor</th></tr>
+          </thead>
+          <tbody>
+            {% for item in faturamento_pendente %}
+            <tr>
+              <td>{{ (item.pedido.pedido_venda or item.pedido.cliente) if item.pedido else "—" }}</td>
+              <td class="text-truncate" style="max-width: 160px;">{{ item.descricao_produto }}</td>
+              <td>{{ item.liberacao_prevista }}</td>
+              <td class="text-end">R$ {{ "{:,.2f}".format(item.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="text-center text-muted py-3">Sem pendências de faturamento previsto.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="text-end mt-2">
+          <a href="{{ url_for('faturamento') }}" class="small">Ver tela de Faturamento →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

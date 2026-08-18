@@ -714,6 +714,25 @@ def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
     }
 
 
+def _faturamento_previsto_nao_realizado():
+    """Itens cuja liberação PREVISTA já passou mas a liberação de FATURAMENTO
+    ainda não aconteceu — ou seja, o faturamento que era esperado até agora
+    ainda não se realizou (mesmo conceito de "previsto" usado na tela de
+    Faturamento, só que olhando pro atraso em vez de somar por mês)."""
+    hoje = date.today()
+    return (
+        ItemPedido.query.options(selectinload(ItemPedido.pedido))
+        .join(Pedido, ItemPedido.pedido_id == Pedido.id)
+        .filter(
+            ItemPedido.liberacao_prevista.isnot(None),
+            ItemPedido.liberacao_prevista < hoje,
+            ItemPedido.liberacao_faturamento.is_(None),
+        )
+        .order_by(ItemPedido.liberacao_prevista)
+        .all()
+    )
+
+
 def _construir_timeline(pedido):
     """Monta uma lista de eventos (data + descrição) a partir das datas já
     preenchidas no pedido e em cada item, para exibir como linha do tempo."""
@@ -963,6 +982,32 @@ def register_routes(app):
             return redirect(url_for("cadastros_transportadoras"))
 
         return render_template("cadastros_transportadoras_form.html", transportadora=transportadora, form={})
+
+    @app.route("/alertas")
+    @login_required
+    def alertas():
+        pedidos_atrasados = (
+            Pedido.query.options(selectinload(Pedido.itens))
+            .filter(_predicado_atrasado())
+            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+            .all()
+        )
+        pedidos_vencendo = (
+            Pedido.query.options(selectinload(Pedido.itens))
+            .filter(_predicado_vencendo())
+            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+            .all()
+        )
+        gargalos_criticos = [g for g in _gargalos_por_estacao() if g["fila"] > 0 or g["atraso"] > 0][:5]
+        faturamento_pendente = _faturamento_previsto_nao_realizado()
+
+        return render_template(
+            "alertas.html",
+            pedidos_atrasados=pedidos_atrasados,
+            pedidos_vencendo=pedidos_vencendo,
+            gargalos_criticos=gargalos_criticos,
+            faturamento_pendente=faturamento_pendente,
+        )
 
     @app.route("/")
     @login_required
