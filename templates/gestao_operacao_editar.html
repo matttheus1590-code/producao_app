@@ -6,9 +6,6 @@
   <div class="col-12 col-lg-11">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
       <h4 class="mb-0"><i class="bi bi-diagram-3"></i> Gestão Operação — Pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }} — {{ pedido.cliente }}</h4>
-      <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-box-seam"></i> Ver produção/itens deste pedido
-      </a>
     </div>
 
     <form method="post">
@@ -40,9 +37,9 @@
             <input type="text" class="form-control" name="go_status_pedido_info" value="{{ pedido.go_status_pedido_info or '' }}">
           </div>
           <div class="col-md-4">
-            <label class="form-label">Valor do pedido (Gestão Operação)</label>
+            <label class="form-label">Valor do pedido</label>
             <input type="text" class="form-control" name="go_valor_pedido_operacao" value="{{ pedido.go_valor_pedido_operacao if pedido.go_valor_pedido_operacao is not none else '' }}">
-            <div class="form-text">Valor informado na planilha de operação — pode divergir do valor calculado pelos itens ({{ "R$ %.2f"|format(pedido.valor_total) }}).</div>
+            <div class="form-text">Valor total do pedido comercial.</div>
           </div>
         </div>
       </div>

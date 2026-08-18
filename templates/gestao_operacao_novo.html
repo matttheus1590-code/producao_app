@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · Novo pedido · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-9">
+    <h4 class="mb-3"><i class="bi bi-plus-circle"></i> Novo pedido — Gestão Operação</h4>
+    <p class="text-muted">
+      Cadastre aqui o pedido comercial — é a partir dele que ele vai percorrer todo o
+      caminho: Comercial → PCP → Logística → Resultados. Depois de salvar você continua
+      preenchendo o resto (PCP, logística, resultados) na tela de edição, conforme o
+      pedido for avançando. Este cadastro é independente da Gestão Produção — não cria
+      nenhum pedido/item lá.
+    </p>
+
+    <form method="post" class="card p-4 shadow-sm go-bloco-comercial">
+      <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-briefcase"></i> Comercial</h6>
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label">Pedido de venda</label>
+          <input type="text" class="form-control" name="pedido_venda" value="{{ form.get('pedido_venda','') }}">
+        </div>
+        <div class="col-md-5">
+          <label class="form-label">Cliente *</label>
+          <input type="text" class="form-control" name="cliente" value="{{ form.get('cliente','') }}" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Vendedor</label>
+          <input type="text" class="form-control" name="vendedor" value="{{ form.get('vendedor','') }}">
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Data inclusão do pedido</label>
+          <input type="date" class="form-control" name="data_inclusao_pedido" value="{{ form.get('data_inclusao_pedido','') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Criticidade</label>
+          <select class="form-select" name="prioridade">
+            {% for p in PRIORIDADE_OPCOES %}
+              <option value="{{ p }}" {% if p == 'MÉDIA' %}selected{% endif %}>{{ p }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Frete</label>
+          <select class="form-select" name="frete">
+            <option value="">Selecione…</option>
+            {% for fr in FRETE_OPCOES %}
+              <option value="{{ fr }}" {% if form.get('frete') == fr %}selected{% endif %}>{{ fr }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">País</label>
+          <input type="text" class="form-control" name="pais" value="{{ form.get('pais','Brasil') }}">
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Estado (UF)</label>
+          <input type="text" class="form-control" name="estado" maxlength="2" style="text-transform: uppercase;" value="{{ form.get('estado','') }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Cidade</label>
+          <input type="text" class="form-control" name="cidade" value="{{ form.get('cidade','') }}">
+        </div>
+
+        <div class="col-12"><hr class="my-1"></div>
+
+        <div class="col-md-3">
+          <label class="form-label">Tipo de pedido</label>
+          <input type="text" class="form-control" name="go_tipo_pedido" value="{{ form.get('go_tipo_pedido','') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Contrato</label>
+          <input type="text" class="form-control" name="go_contrato" value="{{ form.get('go_contrato','') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Proposta</label>
+          <input type="text" class="form-control" name="go_proposta" value="{{ form.get('go_proposta','') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Pedido de compra do cliente</label>
+          <input type="text" class="form-control" name="go_pedido_compra_cliente" value="{{ form.get('go_pedido_compra_cliente','') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Data solicitada entrega</label>
+          <input type="date" class="form-control" name="go_data_solicitada_entrega" value="{{ form.get('go_data_solicitada_entrega','') }}">
+        </div>
+        <div class="col-md-5">
+          <label class="form-label">Status do pedido (informações)</label>
+          <input type="text" class="form-control" name="go_status_pedido_info" value="{{ form.get('go_status_pedido_info','') }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Valor do pedido</label>
+          <input type="text" class="form-control" name="go_valor_pedido_operacao" value="{{ form.get('go_valor_pedido_operacao','') }}">
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-end gap-2 mt-4">
+        <a href="{{ url_for('gestao_operacao_comercial') }}" class="btn btn-outline-secondary">Cancelar</a>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Incluir pedido</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

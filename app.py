@@ -32,6 +32,7 @@ from models import (
     HistoricoAlteracao,
     ItemPedido,
     Pedido,
+    PedidoOperacao,
     Programacao,
     Transportadora,
     Usuario,
@@ -114,6 +115,7 @@ def create_app():
         _migrar_faturamento_itens(app)
         _migrar_logistica_itens(app)
         _migrar_gestao_operacao_pedidos(app)
+        _migrar_dados_go_para_pedidos_operacao(app)
         _seed_inicial(app)
         _importar_gestao_operacao(app)
 
@@ -395,6 +397,70 @@ def _migrar_gestao_operacao_pedidos(app):
     app.logger.info("Migração automática: %d campos de Gestão Operação adicionados aos pedidos.", len(faltando))
 
 
+def _migrar_dados_go_para_pedidos_operacao(app):
+    """Backfill único: cria em `pedidos_operacao` (tabela nova, independente de
+    `pedidos`) uma linha por pedido comercial, a partir dos dados de Gestão
+    Operação que já existem nos `Pedido` legados (tabela de Gestão Produção).
+
+    Motivo: até agora Gestão Operação vivia dentro da tabela `pedidos`, com o
+    problema de que um mesmo pedido comercial podia corresponder a vários
+    registros Pedido legados (o import histórico original criava 1 Pedido por
+    LINHA de planilha, não por pedido comercial — por isso hoje existem 1146+
+    Pedido mas só ~385 pedido_venda únicos). A partir de agora Gestão Operação
+    e Gestão Produção são independentes: este backfill roda uma única vez
+    (protegido por `PedidoOperacao.query.count() == 0`) e agrupa os Pedido
+    legados por pedido_venda, usando o de menor id como representante — os
+    campos go_* já estavam sincronizados entre eles (ver
+    importar_gestao_operacao.py da Fase 13), então não há perda de dado.
+
+    Os campos go_* continuam fisicamente na tabela `pedidos` depois disso
+    (nada é apagado) — só o app para de lê-los/escrevê-los por ali."""
+    if PedidoOperacao.query.count() > 0:
+        return
+
+    pedidos_com_dado_go = (
+        Pedido.query.filter(
+            or_(*(getattr(Pedido, campo).isnot(None) for campo in _COLUNAS_GESTAO_OPERACAO))
+        )
+        .order_by(Pedido.id)
+        .all()
+    )
+    if not pedidos_com_dado_go:
+        return
+
+    representantes = {}
+    ordem = []
+    for p in pedidos_com_dado_go:
+        chave = p.pedido_venda.strip() if p.pedido_venda else f"__pedido_{p.id}"
+        if chave not in representantes:
+            representantes[chave] = p  # primeiro da lista (menor id) = representante
+            ordem.append(chave)
+
+    for chave in ordem:
+        rep = representantes[chave]
+        db.session.add(
+            PedidoOperacao(
+                pedido_venda=rep.pedido_venda,
+                cliente=rep.cliente,
+                vendedor=rep.vendedor,
+                data_inclusao_pedido=rep.data_inclusao_pedido,
+                prioridade=rep.prioridade,
+                frete=rep.frete,
+                pais=rep.pais,
+                estado=rep.estado,
+                cidade=rep.cidade,
+                **{campo: getattr(rep, campo) for campo in _COLUNAS_GESTAO_OPERACAO},
+            )
+        )
+
+    db.session.commit()
+    app.logger.info(
+        "Backfill Gestão Operação -> tabela própria (pedidos_operacao): %d pedidos "
+        "comerciais migrados (a partir de %d registros legados em `pedidos`).",
+        len(ordem), len(pedidos_com_dado_go),
+    )
+
+
 def _seed_inicial(app):
     """Cria o usuário admin padrão e importa a planilha na primeira execução."""
     if Usuario.query.count() == 0:
@@ -414,15 +480,16 @@ def _seed_inicial(app):
 
 
 def _importar_gestao_operacao(app):
-    """Importa (uma única vez) a planilha nova "Gestão de Fluxo Produtivo"
-    (Fase 13) por cima dos pedidos que já existem, casando por pedido_venda.
+    """Importa (uma única vez) a planilha "Gestão de Fluxo Produtivo" pra dentro
+    de `pedidos_operacao` (Gestão Operação — tabela própria, independente de
+    `pedidos`/Gestão Produção), casando por pedido_venda.
 
-    Diferente de _seed_inicial (que só roda em banco vazio), esta função roda
-    em cima de um banco JÁ POVOADO — por isso a proteção "já rodou antes" não
-    pode ser "Pedido.query.count() == 0"; usamos um campo novo (go_tipo_pedido)
-    como marcador: se algum pedido já tem esse campo preenchido, o import já
-    rodou e não faz nada."""
-    if Pedido.query.filter(Pedido.go_tipo_pedido.isnot(None)).first() is not None:
+    Roda DEPOIS de `_migrar_dados_go_para_pedidos_operacao` (o backfill a
+    partir dos dados legados) — na prática isso quase sempre já deixa
+    `go_tipo_pedido` preenchido em `pedidos_operacao`, então esta função só
+    chega a importar de verdade da planilha se o backfill não tiver rodado
+    (ex.: banco novo, sem nenhum pedido legado com dado de Gestão Operação)."""
+    if PedidoOperacao.query.filter(PedidoOperacao.go_tipo_pedido.isnot(None)).first() is not None:
         return
 
     xlsx_path = os.path.join(BASE_DIR, "data", "gestao_fluxo_2026.xlsx")
@@ -545,68 +612,6 @@ def _calcular_resumo():
     }
 
 
-class _LinhaGestaoOperacao:
-    """Uma linha consolidada de Gestão Operação — representa UM pedido
-    comercial (mesmo pedido_venda), mesmo que no banco existam vários
-    registros Pedido "legados" pra ele. Isso acontece porque o import
-    original (seed.py) criou 1 registro Pedido + 1 ItemPedido por LINHA da
-    planilha antiga, não por pedido comercial — então pedidos grandes (com
-    vários produtos) viraram vários registros Pedido separados, todos com o
-    mesmo pedido_venda. O import da Fase 13 grava os mesmos campos go_* em
-    TODOS esses registros (ver importar_gestao_operacao.py), então eles já
-    ficam idênticos entre si — esta classe só evita mostrar essa mesma
-    informação repetida em várias linhas na tela.
-
-    Delega os atributos "informativos" (datas, frete, região, campos go_*
-    etc.) pro registro de menor id do grupo, e só SOMA o que precisa ser
-    somado de verdade: o valor total (calculado a partir dos itens de cada
-    registro do grupo) e a quantidade."""
-
-    def __init__(self, membros):
-        self.membros = sorted(membros, key=lambda p: p.id)
-        self.representante = self.membros[0]
-        self.qtd_registros_legados = len(self.membros)
-
-    def __getattr__(self, nome):
-        return getattr(self.representante, nome)
-
-    @property
-    def valor_total(self):
-        return round(sum(m.valor_total for m in self.membros), 2)
-
-    @property
-    def quantidade_total(self):
-        return sum(m.quantidade_total for m in self.membros)
-
-    @property
-    def status_producao(self):
-        status_all = {m.status_producao for m in self.membros}
-        if "EM TRATATIVA" in status_all:
-            return "EM TRATATIVA"
-        if status_all == {"FINALIZADO"}:
-            return "FINALIZADO"
-        if status_all == {"PENDENTE"}:
-            return "PENDENTE"
-        return "ANDAMENTO"
-
-
-def _agrupar_por_pedido_venda(pedidos):
-    """Agrupa uma lista de Pedido (já filtrada) em linhas consolidadas — uma
-    por pedido_venda. Pedidos sem pedido_venda preenchido não têm uma chave
-    segura pra agrupar (não dá pra saber se são o mesmo pedido comercial ou
-    não) e cada um vira sua própria linha. Preserva a ordem original (pela
-    primeira ocorrência de cada chave)."""
-    grupos = {}
-    ordem = []
-    for p in pedidos:
-        chave = p.pedido_venda.strip() if p.pedido_venda else f"__pedido_{p.id}"
-        if chave not in grupos:
-            grupos[chave] = []
-            ordem.append(chave)
-        grupos[chave].append(p)
-    return [_LinhaGestaoOperacao(grupos[chave]) for chave in ordem]
-
-
 def _resumo_otd():
     """Estatísticas de OTD (On-Time Delivery) da Gestão Operação — usa o campo
     go_otd_realizado (SIM/NÃO preenchido manualmente na planilha/tela), bem
@@ -615,29 +620,23 @@ def _resumo_otd():
     quem ainda não tem essa informação fica de fora do percentual (não conta
     como "não cumpriu").
 
-    Agrupa por pedido_venda (_agrupar_por_pedido_venda) antes de contar —
-    senão um pedido comercial com vários registros Pedido legados (import
-    antigo, 1 por item) contaria várias vezes nas estatísticas."""
-    pedidos = (
-        Pedido.query.options(selectinload(Pedido.itens))
-        .filter(Pedido.go_otd_realizado.isnot(None))
-        .all()
-    )
-    linhas = _agrupar_por_pedido_venda(pedidos)
+    Gestão Operação tem tabela própria (PedidoOperacao) — cada linha já é um
+    pedido comercial, sem precisar agrupar nada em tempo de execução."""
+    pedidos = PedidoOperacao.query.filter(PedidoOperacao.go_otd_realizado.isnot(None)).all()
 
-    total = len(linhas)
-    no_prazo = sum(1 for l in linhas if l.go_otd_realizado == "SIM")
+    total = len(pedidos)
+    no_prazo = sum(1 for p in pedidos if p.go_otd_realizado == "SIM")
     percentual = round((no_prazo / total) * 100, 1) if total else None
 
     def _quebra_por(atributo):
         contagem = {}
-        for l in linhas:
-            chave = getattr(l, atributo)
+        for p in pedidos:
+            chave = getattr(p, atributo)
             if not chave:
                 continue
             c = contagem.setdefault(chave, {"total": 0, "no_prazo": 0})
             c["total"] += 1
-            if l.go_otd_realizado == "SIM":
+            if p.go_otd_realizado == "SIM":
                 c["no_prazo"] += 1
         top10 = sorted(contagem.items(), key=lambda kv: -kv[1]["total"])[:10]
         return [
@@ -674,25 +673,19 @@ def _semana_label_curto(semana):
 
 def _projecao_pcp():
     """Projeção de carga por semana de PCP (Painel) — quantos PEDIDOS
-    COMERCIAIS (agrupados por pedido_venda — ver _agrupar_por_pedido_venda)
-    estão marcados pra cada "Término Semanal PCP" (Gestão Operação), separando
-    o que já foi finalizado do que ainda está em aberto. Usa a mesma
-    lista/ordem cronológica de gerar_semanas_pcp() (1 mês atrás até 6 meses à
-    frente) — semanas sem nenhum pedido nas pontas são cortadas pra não
-    poluir o gráfico."""
+    COMERCIAIS estão marcados pra cada "Término Semanal PCP" (Gestão
+    Operação), separando o que já foi finalizado do que ainda está em aberto.
+    Usa a mesma lista/ordem cronológica de gerar_semanas_pcp() (1 mês atrás
+    até 6 meses à frente) — semanas sem nenhum pedido nas pontas são cortadas
+    pra não poluir o gráfico."""
     semanas = gerar_semanas_pcp()
 
-    pedidos = (
-        Pedido.query.options(selectinload(Pedido.itens))
-        .filter(Pedido.go_termino_semanal_pcp.in_(semanas))
-        .all()
-    )
-    linhas_agrupadas = _agrupar_por_pedido_venda(pedidos)
+    pedidos = PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas)).all()
 
     contagem = {}
-    for l in linhas_agrupadas:
-        c = contagem.setdefault(l.go_termino_semanal_pcp, {"finalizado": 0, "em_aberto": 0})
-        if l.status_producao == "FINALIZADO":
+    for p in pedidos:
+        c = contagem.setdefault(p.go_termino_semanal_pcp, {"finalizado": 0, "em_aberto": 0})
+        if p.status_producao == "FINALIZADO":
             c["finalizado"] += 1
         else:
             c["em_aberto"] += 1
@@ -771,28 +764,24 @@ def _parse_mes_ano_form(valor, default):
 def _projecao_pcp_mensal(mes_de, mes_ate):
     """Soma a projeção semanal de PCP por MÊS (soma de todas as semanas
     dentro do mês), separando o que já foi finalizado do que ainda está em
-    aberto — em quantidade de PEDIDOS COMERCIAIS (agrupados por pedido_venda)
-    e em valor (R$, somado a partir dos itens de cada registro do grupo).
+    aberto — em quantidade de PEDIDOS COMERCIAIS e em valor (R$, a partir de
+    go_valor_pedido_operacao — já é o total do pedido, não soma nenhum item).
     `mes_de`/`mes_ate` são tuplas (ano, mês), intervalo fechado."""
-    pedidos = (
-        Pedido.query.options(selectinload(Pedido.itens))
-        .filter(Pedido.go_termino_semanal_pcp.isnot(None))
-        .all()
-    )
-    linhas_agrupadas = _agrupar_por_pedido_venda(pedidos)
+    pedidos = PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.isnot(None)).all()
 
     baldes = {}
-    for l in linhas_agrupadas:
-        chave = _mes_ano_da_semana_pcp(l.go_termino_semanal_pcp)
+    for p in pedidos:
+        chave = _mes_ano_da_semana_pcp(p.go_termino_semanal_pcp)
         if chave is None or not (mes_de <= chave <= mes_ate):
             continue
         b = baldes.setdefault(chave, {"pedidos_fin": 0, "valor_fin": 0.0, "pedidos_aberto": 0, "valor_aberto": 0.0})
-        if l.status_producao == "FINALIZADO":
+        valor = p.go_valor_pedido_operacao or 0.0
+        if p.status_producao == "FINALIZADO":
             b["pedidos_fin"] += 1
-            b["valor_fin"] += l.valor_total
+            b["valor_fin"] += valor
         else:
             b["pedidos_aberto"] += 1
-            b["valor_aberto"] += l.valor_total
+            b["valor_aberto"] += valor
 
     linhas = []
     ano, mes = mes_de
@@ -1223,22 +1212,45 @@ def _filtrar_pedidos(args):
     return query, filtros
 
 
-def _linhas_gestao_operacao(args):
-    """Usado pelas 4 sub-abas de Gestão Operação: aplica os mesmos filtros de
-    _filtrar_pedidos, agrupa por pedido_venda (_agrupar_por_pedido_venda —
-    cada linha = 1 pedido comercial, não 1 registro Pedido legado) e só
-    depois pagina. O agrupamento acontece em Python porque a "mesma
-    identidade" (pedido_venda) é uma coluna de texto com duplicatas legadas —
-    não dá pra paginar direto no SQL sem já ter agrupado antes. O total de
-    pedidos no sistema (~1200) é pequeno o bastante pra isso ser seguro."""
-    page = args.get("page", 1, type=int)
-    query, filtros = _filtrar_pedidos(args)
-    pedidos = query.all()
-    linhas = _agrupar_por_pedido_venda(pedidos)
+def _filtrar_pedidos_operacao(args):
+    """Filtros das 4 sub-abas de Gestão Operação (Comercial/PCP/Logística/
+    Resultados). Independente de _filtrar_pedidos (Gestão Produção) — opera só
+    em PedidoOperacao, sem nenhum join com Pedido/ItemPedido/estação."""
+    query = PedidoOperacao.query
 
-    total_filtrado = len(linhas)
+    cliente = args.get("cliente", "").strip()
+    vendedor = args.get("vendedor", "").strip()
+    busca = args.get("busca", "").strip()
+
+    if cliente:
+        query = query.filter(PedidoOperacao.cliente.ilike(f"%{cliente}%"))
+    if vendedor:
+        query = query.filter(PedidoOperacao.vendedor.ilike(f"%{vendedor}%"))
+    if busca:
+        like = f"%{busca}%"
+        query = query.filter(
+            or_(
+                PedidoOperacao.pedido_venda.ilike(like),
+                PedidoOperacao.cliente.ilike(like),
+            )
+        )
+
+    query = query.order_by(PedidoOperacao.data_inclusao_pedido.desc().nullslast(), PedidoOperacao.id.desc())
+
+    filtros = dict(cliente=cliente, vendedor=vendedor, busca=busca)
+    return query, filtros
+
+
+def _linhas_gestao_operacao(args):
+    """Usado pelas 4 sub-abas de Gestão Operação: pagina o resultado de
+    _filtrar_pedidos_operacao. Cada linha já é 1 pedido comercial (tabela
+    própria PedidoOperacao) — sem duplicidade legada, sem precisar agrupar
+    nada em Python."""
+    page = args.get("page", 1, type=int)
+    query, filtros = _filtrar_pedidos_operacao(args)
+    total_filtrado = query.count()
     total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
-    pagina = linhas[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
+    pagina = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
     return pagina, page, total_paginas, total_filtrado, filtros
 
 
@@ -1975,10 +1987,53 @@ def register_routes(app):
             total_filtrado=total_filtrado, filtros=filtros, otd=otd,
         )
 
+    @app.route("/gestao-operacao/novo", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def gestao_operacao_novo():
+        """Cria um pedido novo DENTRO da Gestão Operação — 100% independente da
+        Gestão Produção (não cria Pedido/ItemPedido nenhum). Só o bloco
+        Comercial; depois de salvar, redireciona pra edição pra preencher PCP/
+        Logística/Resultados aos poucos, conforme o pedido avança."""
+        if request.method == "POST":
+            f = request.form
+            cliente = f.get("cliente", "").strip()
+            if not cliente:
+                flash("Cliente é obrigatório.", "danger")
+                return render_template("gestao_operacao_novo.html", form=f)
+
+            novo = PedidoOperacao(
+                cliente=cliente,
+                vendedor=f.get("vendedor", "").strip() or None,
+                pedido_venda=f.get("pedido_venda", "").strip() or None,
+                data_inclusao_pedido=_parse_data_form(f.get("data_inclusao_pedido")),
+                prioridade=f.get("prioridade") or "MÉDIA",
+                frete=f.get("frete") or None,
+                pais=f.get("pais", "").strip() or "Brasil",
+                estado=f.get("estado", "").strip() or None,
+                cidade=f.get("cidade", "").strip() or None,
+                go_tipo_pedido=f.get("go_tipo_pedido", "").strip() or None,
+                go_contrato=f.get("go_contrato", "").strip() or None,
+                go_pedido_compra_cliente=f.get("go_pedido_compra_cliente", "").strip() or None,
+                go_proposta=f.get("go_proposta", "").strip() or None,
+                go_data_solicitada_entrega=_parse_data_form(f.get("go_data_solicitada_entrega")),
+                go_status_pedido_info=f.get("go_status_pedido_info", "").strip() or None,
+                go_valor_pedido_operacao=(
+                    _parse_float_form(f.get("go_valor_pedido_operacao"), default=None)
+                    if f.get("go_valor_pedido_operacao", "").strip()
+                    else None
+                ),
+            )
+            db.session.add(novo)
+            db.session.commit()
+            flash(f"Pedido de {novo.cliente} incluído na Gestão Operação com sucesso.", "success")
+            return redirect(url_for("gestao_operacao_editar", pedido_id=novo.id))
+
+        return render_template("gestao_operacao_novo.html", form={})
+
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")
     def gestao_operacao_editar(pedido_id):
-        pedido = db.session.get(Pedido, pedido_id)
+        pedido = db.session.get(PedidoOperacao, pedido_id)
         if pedido is None:
             flash("Pedido não encontrado.", "danger")
             return redirect(url_for("gestao_operacao_comercial"))
@@ -1988,19 +2043,6 @@ def register_routes(app):
         if request.method == "POST":
             f = request.form
             antes = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
-
-            # Um pedido comercial pode ter vários registros Pedido "legados" (mesmo
-            # pedido_venda — ver _agrupar_por_pedido_venda). A tela de edição mostra
-            # UMA linha consolidada, então o que for salvo aqui precisa ser propagado
-            # pra todos os registros do grupo, senão a consolidação volta a mostrar
-            # dado desatualizado/divergente entre eles depois do próximo GET.
-            irmaos = []
-            if pedido.pedido_venda and pedido.pedido_venda.strip():
-                irmaos = Pedido.query.filter(
-                    Pedido.pedido_venda == pedido.pedido_venda,
-                    Pedido.id != pedido.id,
-                ).all()
-            alvos = [pedido] + irmaos
 
             transportadora_id = f.get("go_transportadora_id", "")
 
@@ -2039,21 +2081,18 @@ def register_routes(app):
                 "go_status_final_alinhamento": f.get("go_status_final_alinhamento", "").strip() or None,
             }
 
-            for alvo in alvos:
-                for campo, valor in valores.items():
-                    setattr(alvo, campo, valor)
+            for campo, valor in valores.items():
+                setattr(pedido, campo, valor)
 
             depois = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
-            _registrar_alteracoes("pedido", pedido.id, pedido.id, antes, depois, CAMPOS_HISTORICO_GESTAO_OPERACAO)
+            # pedido_id fica None de propósito: essa coluna tem FK de verdade pra
+            # `pedidos` (Gestão Produção) — PedidoOperacao é uma tabela totalmente
+            # separada, então gravar o id dela ali violaria a FK. entidade_id já
+            # guarda o id certo.
+            _registrar_alteracoes("pedido_operacao", pedido.id, None, antes, depois, CAMPOS_HISTORICO_GESTAO_OPERACAO)
 
             db.session.commit()
-            if irmaos:
-                flash(
-                    f"Gestão Operação do pedido atualizada com sucesso ({1 + len(irmaos)} registros sincronizados).",
-                    "success",
-                )
-            else:
-                flash("Gestão Operação do pedido atualizada com sucesso.", "success")
+            flash("Gestão Operação do pedido atualizada com sucesso.", "success")
             return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id))
 
         return render_template("gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras)

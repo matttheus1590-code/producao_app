@@ -12,7 +12,7 @@
 
 <form class="row g-2 align-items-end mb-3" method="get">
   <div class="col-md-3">
-    <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
+    <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
   </div>
   <div class="col-md-2">
@@ -57,7 +57,9 @@
         <td>{{ p.go_data_solicitada_entrega.strftime("%d/%m/%Y") if p.go_data_solicitada_entrega else "—" }}</td>
         <td>{{ p.go_status_pedido_info or "—" }}</td>
         <td>
-          R$ {{ "{:,.2f}".format(p.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}
+          {% if p.go_valor_pedido_operacao is not none %}
+            R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
+          {% else %}—{% endif %}
         </td>
         <td><span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade or "—" }}</span></td>
         <td class="text-end">

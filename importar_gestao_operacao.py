@@ -1,36 +1,28 @@
-"""Import único (Fase 13) da planilha "Gestão de Fluxo Produtivo" para dentro
-dos pedidos que já existem no banco.
+"""Import da planilha "Gestão de Fluxo Produtivo" para dentro da tabela
+`pedidos_operacao` (Gestão Operação — independente de `pedidos`/Gestão Produção).
 
-Roda por cima de um banco JÁ POVOADO (diferente de seed.py, que só roda em
-banco vazio) — por isso fica isolado neste módulo, chamado por
-`_importar_gestao_operacao(app)` em app.py, protegido por uma checagem de
-"já rodou antes" (ver comentário lá).
+Roda por cima de um banco JÁ POVOADO — por isso fica isolado neste módulo,
+chamado por `_importar_gestao_operacao(app)` em app.py, protegido por uma
+checagem de "já rodou antes" (ver comentário lá).
 
-Estratégia de casamento por `Nº PEDIDO TOTVS` (== Pedido.pedido_venda):
+Desde que Gestão Operação ganhou tabela própria (`PedidoOperacao`), cada
+`pedido_venda` corresponde a NO MÁXIMO UM registro — diferente da versão
+antiga (Fase 13), que gravava em cima de `Pedido` (Gestão Produção) e podia
+ter vários registros legados compartilhando o mesmo pedido_venda. Isso
+simplifica o casamento: não precisa mais propagar valores pra "registros
+irmãos".
+
+Estratégia de casamento por `Nº PEDIDO TOTVS` (== PedidoOperacao.pedido_venda):
   1. Igual exato.
-  2. Aproximado: um valor "contido" no outro (cobre casos como planilha
-     tendo "253" e o banco já tendo "253 (229)").
-  3. Sem nenhum match -> cria um Pedido novo só com os dados comerciais
-     (sem item de produção — aparece com "—" na Listagem Geral, igual
-     qualquer pedido sem item hoje).
+  2. Aproximado: um "número de pedido" dentro do valor da planilha bate
+     exatamente com um já indexado a partir dos pedido_venda já cadastrados
+     (cobre casos como planilha tendo "253" e o banco já tendo "253 (229)").
+  3. Sem nenhum match -> cria um PedidoOperacao novo com os dados comerciais.
 
-Quando VÁRIOS registros Pedido do banco compartilham o mesmo pedido_venda
-(o caso legado do import original: 1146 registros para 385 pedidos reais),
-os campos novos (go_*) são gravados em TODOS eles — assim a listagem/filtro
-funciona igual não importa qual registro você está vendo.
-
-Importante: nunca sobrescreve campos que já existiam antes desta fase
-(cliente, vendedor, pedido_venda, data_inclusao_pedido, prioridade, frete,
-país, estado, cidade) em pedidos que já casaram — só define esses campos
-quando o pedido é novo (sem nenhum match). Os campos go_* são sempre
-gravados/atualizados, pois são 100% novos.
-
-Limitação conhecida: ~4 das 420 linhas da planilha têm "Nº PEDIDO TOTVS"
+Limitação conhecida: algumas linhas da planilha têm "Nº PEDIDO TOTVS"
 inválido/placeholder ("-", "N/A") — sem um número real pra casar, viram
-sempre um Pedido novo. Em uso normal isso roda só UMA vez (protegido pelo
-guard em app.py), então não duplica; só duplicaria se alguém apagasse
-manualmente os campos go_* do banco pra forçar o import rodar de novo — um
-cenário que não acontece no fluxo normal do site.
+sempre um PedidoOperacao novo. Em uso normal isso roda só UMA vez (protegido
+pelo guard em app.py), então não duplica.
 """
 
 import re
@@ -40,7 +32,7 @@ from datetime import date, datetime
 import openpyxl
 
 from extensions import db
-from models import Pedido, Transportadora
+from models import PedidoOperacao, Transportadora
 
 SHEET_NAME = "GESTAO OPERACAO"
 
@@ -223,53 +215,47 @@ def _tokens_numericos(s):
 
 
 def _construir_indice_tokens(exatos):
-    """A partir do índice {pedido_venda_exato: [pedidos]} já existente, monta
-    um índice adicional {token_numerico: [pedidos]} pra casamento aproximado."""
+    """A partir do índice {pedido_venda_exato: PedidoOperacao} já existente,
+    monta um índice adicional {token_numerico: [PedidoOperacao, ...]} pra
+    casamento aproximado."""
     indice = {}
-    for pv, pedidos in exatos.items():
+    for pv, pedido in exatos.items():
         for tok in _tokens_numericos(pv):
-            indice.setdefault(tok, []).extend(pedidos)
+            indice.setdefault(tok, []).append(pedido)
     return indice
 
 
-def _match_pedidos(valor, exatos, indice_tokens):
-    """Devolve (lista_de_pedidos, tipo) onde tipo é 'exato', 'aproximado' ou None.
+def _match_pedido(valor, exatos, indice_tokens):
+    """Devolve (pedido_ou_None, tipo) onde tipo é 'exato', 'aproximado' ou None.
 
     Casamento aproximado exige que algum "número de pedido" dentro do valor da
     planilha seja EXATAMENTE igual a algum número de pedido já indexado a
-    partir dos pedido_venda do banco — nunca por "contém como substring"
-    (isso é o que evita casar "146" com "14")."""
+    partir dos pedido_venda cadastrados — nunca por "contém como substring"
+    (isso é o que evita casar "146" com "14"). Se mais de um PedidoOperacao
+    bater por token, fica com o primeiro (caso raro — normalmente só há um)."""
     valor = (valor or "").strip()
     if not valor or valor.upper() in _VALORES_INVALIDOS_PEDIDO_VENDA:
-        return [], None
+        return None, None
     if valor in exatos:
         return exatos[valor], "exato"
 
-    encontrados = []
     for tok in _tokens_numericos(valor):
-        if tok in indice_tokens:
-            encontrados.extend(indice_tokens[tok])
-    if encontrados:
-        vistos = set()
-        unicos = []
-        for p in encontrados:
-            if p.id not in vistos:
-                vistos.add(p.id)
-                unicos.append(p)
-        return unicos, "aproximado"
-    return [], None
+        candidatos = indice_tokens.get(tok)
+        if candidatos:
+            return candidatos[0], "aproximado"
+    return None, None
 
 
 def importar_gestao_operacao(xlsx_path):
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     ws = wb[SHEET_NAME]
 
-    # -- monta índice de pedido_venda existentes no banco --
+    # -- monta índice de pedido_venda já cadastrados em PedidoOperacao --
     exatos = {}
-    for p in Pedido.query.all():
+    for p in PedidoOperacao.query.all():
         pv = (p.pedido_venda or "").strip()
         if pv:
-            exatos.setdefault(pv, []).append(p)
+            exatos[pv] = p
     indice_tokens = _construir_indice_tokens(exatos)
 
     # -- coleta nomes brutos de transportadora e monta o mapa canônico --
@@ -292,13 +278,13 @@ def importar_gestao_operacao(xlsx_path):
         stats["total"] += 1
 
         pedido_venda_raw = _parse_texto(_cell(ws, row, "pedido_venda")) or ""
-        pedidos, tipo_match = _match_pedidos(pedido_venda_raw, exatos, indice_tokens)
+        pedido, tipo_match = _match_pedido(pedido_venda_raw, exatos, indice_tokens)
 
         if tipo_match == "exato":
             stats["exato"] += 1
         elif tipo_match == "aproximado":
             stats["aproximado"] += 1
-            linhas_aproximadas.append((row, pedido_venda_raw, [p.pedido_venda for p in pedidos]))
+            linhas_aproximadas.append((row, pedido_venda_raw, pedido.pedido_venda))
 
         transportadora_obj = None
         transp_raw = _cell(ws, row, "transportadora")
@@ -338,12 +324,12 @@ def importar_gestao_operacao(xlsx_path):
             go_status_final_alinhamento=_parse_texto(_cell(ws, row, "status_final_alinhamento"), 60),
         )
 
-        if pedidos:
-            # já existe(m) — só grava os campos novos (go_*), nunca mexe nos
-            # campos que já existiam antes desta fase.
-            for p in pedidos:
-                for campo, valor in campos_go.items():
-                    setattr(p, campo, valor)
+        if pedido is not None:
+            # já existe — só grava os campos go_*, nunca mexe nos campos de
+            # identidade (cliente, vendedor, pedido_venda etc.) de um pedido
+            # que já casou.
+            for campo, valor in campos_go.items():
+                setattr(pedido, campo, valor)
         else:
             stats["sem_match"] += 1
             linhas_sem_match.append((row, pedido_venda_raw, cliente))
@@ -361,7 +347,7 @@ def importar_gestao_operacao(xlsx_path):
             pedido_venda_valido = (
                 pedido_venda_raw if pedido_venda_raw.upper() not in _VALORES_INVALIDOS_PEDIDO_VENDA else None
             )
-            novo = Pedido(
+            novo = PedidoOperacao(
                 cliente=cliente,
                 vendedor=_parse_texto(_cell(ws, row, "vendedor")),
                 pedido_venda=pedido_venda_valido,
@@ -376,7 +362,7 @@ def importar_gestao_operacao(xlsx_path):
             db.session.add(novo)
             # registra nos índices pra eventuais linhas seguintes com o mesmo pedido_venda
             if pedido_venda_raw:
-                exatos.setdefault(pedido_venda_raw, []).append(novo)
+                exatos.setdefault(pedido_venda_raw, novo)
                 for tok in _tokens_numericos(pedido_venda_raw):
                     indice_tokens.setdefault(tok, []).append(novo)
 

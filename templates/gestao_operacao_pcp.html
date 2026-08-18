@@ -12,21 +12,12 @@
 
 <form class="row g-2 align-items-end mb-3" method="get">
   <div class="col-md-3">
-    <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
+    <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
   </div>
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Cliente</label>
     <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Estação</label>
-    <select class="form-select" name="estacao">
-      <option value="">Todas</option>
-      {% for e in ESTACOES %}
-        <option value="{{ e }}" {% if filtros.estacao == e %}selected{% endif %}>{{ e }}</option>
-      {% endfor %}
-    </select>
   </div>
   <div class="col-md-2 d-grid">
     <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>

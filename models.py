@@ -543,6 +543,127 @@ class Programacao(db.Model):
     criado_em = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class PedidoOperacao(db.Model):
+    """Gestão Operação — fluxo comercial completo de um pedido (Comercial -> PCP
+    -> Logística/NF -> Resultados/OTD). TOTALMENTE INDEPENDENTE de Pedido/ItemPedido
+    (Gestão Produção) — tabela própria, id próprio, sem FK nem relação nenhuma com
+    a tabela `pedidos`. Cada linha aqui é um pedido comercial, sem a duplicação por
+    linha-de-planilha que o histórico legado de Produção tinha.
+
+    Antes (Fase 13) esses mesmos campos viviam como colunas `go_*` dentro de
+    `Pedido` — a pedido do Bruno, os dois grupos do site passaram a ser
+    independentes um do outro. Essa tabela nasce vazia e é populada uma única vez
+    por um backfill a partir dos dados antigos (ver
+    _migrar_dados_go_para_pedidos_operacao em app.py); dali em diante, pelo
+    formulário "Novo pedido" da Gestão Operação e pelo importador de planilha
+    (importar_gestao_operacao.py). Mantém o prefixo "go_" dos campos (mesmo nome de
+    antes) só pra minimizar mudança nos templates — não tem mais nenhum significado
+    de "coluna extra dentro de Pedido".
+    """
+
+    __tablename__ = "pedidos_operacao"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # ---------------- Identidade do pedido (antes era reaproveitada de Pedido) ----------------
+    pedido_venda = db.Column(db.String(40), nullable=True)
+    cliente = db.Column(db.String(200), nullable=False)
+    vendedor = db.Column(db.String(120), nullable=True)
+    data_inclusao_pedido = db.Column(db.Date, nullable=True)
+    prioridade = db.Column(db.String(20), default="MÉDIA")  # Criticidade
+    frete = db.Column(db.String(30), nullable=True)
+    pais = db.Column(db.String(60), nullable=True, default="Brasil")
+    estado = db.Column(db.String(60), nullable=True)
+    cidade = db.Column(db.String(120), nullable=True)
+
+    # -- Comercial (azul) --
+    go_tipo_pedido = db.Column(db.String(60), nullable=True)
+    go_contrato = db.Column(db.String(60), nullable=True)
+    go_pedido_compra_cliente = db.Column(db.String(60), nullable=True)
+    go_proposta = db.Column(db.String(60), nullable=True)
+    go_data_solicitada_entrega = db.Column(db.Date, nullable=True)
+    go_status_pedido_info = db.Column(db.String(120), nullable=True)
+    go_valor_pedido_operacao = db.Column(db.Float, nullable=True)
+
+    # -- PCP (cinza) --
+    go_previsao_liberacao_pcp = db.Column(db.Date, nullable=True)
+    go_data_efetiva_liberacao_pcp = db.Column(db.Date, nullable=True)
+    go_data_solicitada_cliente_retira = db.Column(db.Date, nullable=True)
+    go_custo_producao_real = db.Column(db.Float, nullable=True)
+    go_termino_semanal_pcp = db.Column(db.String(40), nullable=True)
+
+    # -- Logística / NF (amarelo) --
+    go_data_emissao_nf = db.Column(db.Date, nullable=True)
+    go_valor_nf_emitida = db.Column(db.Float, nullable=True)
+    go_numero_nf = db.Column(db.String(30), nullable=True)
+    go_status_logistica = db.Column(db.String(60), nullable=True)
+    go_data_pedido_expedido = db.Column(db.Date, nullable=True)
+    # Mesmo padrão do ItemPedido.transportadora_id — sem FK de banco de verdade,
+    # validado na aplicação.
+    go_transportadora_id = db.Column(db.Integer, nullable=True)
+    go_custo_frete_previsto = db.Column(db.Float, nullable=True)
+    go_custo_frete_final = db.Column(db.Float, nullable=True)
+    go_custo_frete_sobre_nota = db.Column(db.Float, nullable=True)
+    go_data_prevista_entrega = db.Column(db.Date, nullable=True)
+    go_data_real_entrega = db.Column(db.Date, nullable=True)
+
+    # -- Resultados / OTD (verde) --
+    go_otd_realizado = db.Column(db.String(10), nullable=True)  # "SIM" / "NÃO"
+    go_data_solicitada_cliente_final = db.Column(db.Date, nullable=True)
+    go_data_entregue_cliente = db.Column(db.Date, nullable=True)
+    go_obs_operacao = db.Column(db.Text, nullable=True)
+    go_status_final_alinhamento = db.Column(db.String(60), nullable=True)
+
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # ---------------------------------------------------------------------
+    # Calculados — mesmo padrão de Pedido, nunca editados diretamente.
+    # ---------------------------------------------------------------------
+    @property
+    def go_transportadora(self):
+        if not self.go_transportadora_id:
+            return None
+        return db.session.get(Transportadora, self.go_transportadora_id)
+
+    @property
+    def go_lead_time_frete_dias(self):
+        """Saída (expedição) até chegada (entrega/coleta real)."""
+        if self.go_data_pedido_expedido and self.go_data_real_entrega:
+            return (self.go_data_real_entrega - self.go_data_pedido_expedido).days
+        return None
+
+    @property
+    def go_lead_time_operacao_dias(self):
+        """Inclusão do pedido até a entrega efetiva no cliente."""
+        if self.data_inclusao_pedido and self.go_data_entregue_cliente:
+            return (self.go_data_entregue_cliente - self.data_inclusao_pedido).days
+        return None
+
+    @property
+    def go_dias_atraso_antecipacao(self):
+        """Positivo = entregue depois do solicitado (atraso); negativo = antes (antecipação)."""
+        if self.go_data_solicitada_cliente_final and self.go_data_entregue_cliente:
+            return (self.go_data_entregue_cliente - self.go_data_solicitada_cliente_final).days
+        return None
+
+    @property
+    def status_producao(self):
+        """Status calculado só a partir de dados da própria Gestão Operação — sem
+        depender de ItemPedido/estação (isso é Gestão Produção, mundo à parte).
+
+        Regras:
+          - OTD já registrado (SIM ou NÃO)             -> "FINALIZADO"
+          - Já tem alguma data de PCP ou logística      -> "ANDAMENTO"
+          - Só tem dado comercial preenchido ainda      -> "PENDENTE"
+        """
+        if self.go_otd_realizado:
+            return "FINALIZADO"
+        if self.go_data_efetiva_liberacao_pcp or self.go_data_pedido_expedido or self.go_data_real_entrega:
+            return "ANDAMENTO"
+        return "PENDENTE"
+
+
 class HistoricoAlteracao(db.Model):
     """Registro de auditoria: quem mudou o quê, quando, e qual era o valor antes.
 
