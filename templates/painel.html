@@ -62,6 +62,18 @@
   </div>
 </div>
 
+{% if projecao_pcp %}
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h6 class="text-uppercase text-muted small mb-0">Projeção PCP por semana (Gestão Operação)</h6>
+      <a href="{{ url_for('gestao_operacao_pcp') }}" class="small">Ver PCP <i class="bi bi-arrow-right"></i></a>
+    </div>
+    <canvas id="graficoProjecaoPcp" height="90"></canvas>
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-body">
     <h6 class="text-uppercase text-muted small mb-3">🔴 Pedidos atrasados (mais recentes primeiro)</h6>
@@ -142,6 +154,25 @@
     },
     options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
   });
+
+  const projecaoPcp = {{ projecao_pcp | tojson }};
+  const elProjecaoPcp = document.getElementById("graficoProjecaoPcp");
+  if (elProjecaoPcp) {
+    new Chart(elProjecaoPcp, {
+      type: "bar",
+      data: {
+        labels: projecaoPcp.map(function (p) { return p.semana_curta; }),
+        datasets: [
+          { label: "Finalizado", data: projecaoPcp.map(function (p) { return p.finalizado; }), backgroundColor: "#198754" },
+          { label: "Em aberto", data: projecaoPcp.map(function (p) { return p.em_aberto; }), backgroundColor: "#6ea8fe" },
+        ],
+      },
+      options: {
+        plugins: { legend: { position: "bottom" } },
+        scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } },
+      },
+    });
+  }
 })();
 </script>
 {% endblock %}

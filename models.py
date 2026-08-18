@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date, datetime
 
 from flask_login import UserMixin
@@ -93,6 +94,36 @@ _SEMAFORO_PRIORIDADE = {"vermelho": 0, "amarelo": 1, "verde": 2, "cinza": 3}  # 
 # pelo Bruno. Ajuste este número se a meta mudar — todo o resto lê daqui.
 # ---------------------------------------------------------------------------
 GO_OTD_META_PERCENTUAL = 78
+
+_MESES_ABREV_PCP = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"]
+
+
+def gerar_semanas_pcp(meses_atras=1, meses_frente=6, hoje=None):
+    """Gera as opções de "semana" pro campo Término Semanal PCP, no mesmo
+    formato usado na planilha importada: "SEMANA NN / MÊS / ANO" — onde a
+    semana do mês é ceil(dia/7) (semana 1 = dias 1-7, semana 2 = 8-14, ...,
+    semana 5 = 29-31). Cobre de `meses_atras` meses atrás até `meses_frente`
+    meses à frente do mês atual, sempre em ordem cronológica (útil tanto pro
+    dropdown do formulário quanto pra ordenar o gráfico de projeção do Painel).
+    """
+    hoje = hoje or date.today()
+    ano, mes = hoje.year, hoje.month
+    mes -= meses_atras
+    while mes <= 0:
+        mes += 12
+        ano -= 1
+
+    opcoes = []
+    for _ in range(meses_atras + meses_frente + 1):
+        dias_no_mes = monthrange(ano, mes)[1]
+        n_semanas = -(-dias_no_mes // 7)  # ceil(dias_no_mes / 7)
+        for semana in range(1, n_semanas + 1):
+            opcoes.append(f"SEMANA {semana:02d} / {_MESES_ABREV_PCP[mes - 1]} / {ano}")
+        mes += 1
+        if mes > 12:
+            mes = 1
+            ano += 1
+    return opcoes
 
 
 def semaforo_prazo(liberacao_prevista, finalizado=False, hoje=None):

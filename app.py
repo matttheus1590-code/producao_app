@@ -1,6 +1,7 @@
 import csv
 import io
 import os
+import re
 from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
@@ -34,6 +35,7 @@ from models import (
     Programacao,
     Transportadora,
     Usuario,
+    gerar_semanas_pcp,
 )
 from permissoes import ROLES, ROLES_LABELS, pode_editar_estacao, requer_role
 
@@ -135,6 +137,7 @@ def create_app():
             STATUS_CHAO_LABELS=STATUS_CHAO_LABELS,
             STATUS_CHAO_CORES=STATUS_CHAO_CORES,
             GO_OTD_META_PERCENTUAL=GO_OTD_META_PERCENTUAL,
+            GO_SEMANAS_PCP=gerar_semanas_pcp(),
         )
 
     register_routes(app)
@@ -585,6 +588,57 @@ def _resumo_otd():
         "por_vendedor": _quebra_por(Pedido.vendedor),
         "por_cliente": _quebra_por(Pedido.cliente),
     }
+
+
+def _semana_label_curto(semana):
+    """Encurta "SEMANA 03 / AGO / 2026" pra "S03 AGO/26" (rótulo do eixo do
+    gráfico de projeção) — valores antigos que não seguem esse padrão (ex.:
+    "DEZEMBRO/2025", digitado à mão antes desta convenção existir) aparecem
+    como estão, sem tentar encurtar."""
+    m = re.match(r"SEMANA (\d{2}) / (\w{3}) / (\d{4})", semana or "")
+    if not m:
+        return semana
+    semana_num, mes, ano = m.groups()
+    return f"S{semana_num} {mes}/{ano[2:]}"
+
+
+def _projecao_pcp():
+    """Projeção de carga por semana de PCP (Painel) — quantos pedidos estão
+    marcados pra cada "Término Semanal PCP" (Gestão Operação), separando o que
+    já foi finalizado do que ainda está em aberto. Usa a mesma lista/ordem
+    cronológica de gerar_semanas_pcp() (1 mês atrás até 6 meses à frente) —
+    semanas sem nenhum pedido nas pontas são cortadas pra não poluir o gráfico."""
+    semanas = gerar_semanas_pcp()
+
+    finalizados = dict(
+        db.session.query(Pedido.go_termino_semanal_pcp, func.count(Pedido.id))
+        .filter(Pedido.go_termino_semanal_pcp.in_(semanas))
+        .filter(_predicado_status("FINALIZADO"))
+        .group_by(Pedido.go_termino_semanal_pcp)
+        .all()
+    )
+    em_aberto = dict(
+        db.session.query(Pedido.go_termino_semanal_pcp, func.count(Pedido.id))
+        .filter(Pedido.go_termino_semanal_pcp.in_(semanas))
+        .filter(~_predicado_status("FINALIZADO"))
+        .group_by(Pedido.go_termino_semanal_pcp)
+        .all()
+    )
+
+    linhas = [
+        {
+            "semana": s,
+            "semana_curta": _semana_label_curto(s),
+            "finalizado": finalizados.get(s, 0),
+            "em_aberto": em_aberto.get(s, 0),
+        }
+        for s in semanas
+    ]
+    while linhas and not linhas[0]["finalizado"] and not linhas[0]["em_aberto"]:
+        linhas.pop(0)
+    while linhas and not linhas[-1]["finalizado"] and not linhas[-1]["em_aberto"]:
+        linhas.pop()
+    return linhas
 
 
 def _predicado_vencendo():
@@ -1155,6 +1209,7 @@ def register_routes(app):
             tendencia_faturamento=_faturamento_tendencia(),
             backlog_estacao=_backlog_por_estacao(),
             pedidos_atrasados=pedidos_atrasados,
+            projecao_pcp=_projecao_pcp(),
         )
 
     @app.route("/kpis")

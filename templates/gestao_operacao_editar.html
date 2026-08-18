@@ -64,7 +64,15 @@
           </div>
           <div class="col-md-3">
             <label class="form-label">Término semanal (cenário real)</label>
-            <input type="text" class="form-control" name="go_termino_semanal_pcp" value="{{ pedido.go_termino_semanal_pcp or '' }}">
+            <select class="form-select" name="go_termino_semanal_pcp">
+              <option value="">—</option>
+              {% for s in GO_SEMANAS_PCP %}
+                <option value="{{ s }}" {% if pedido.go_termino_semanal_pcp == s %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+              {% if pedido.go_termino_semanal_pcp and pedido.go_termino_semanal_pcp not in GO_SEMANAS_PCP %}
+                <option value="{{ pedido.go_termino_semanal_pcp }}" selected>{{ pedido.go_termino_semanal_pcp }} (valor antigo)</option>
+              {% endif %}
+            </select>
           </div>
           <div class="col-md-4">
             <label class="form-label">Custo produção real (MP/serviços)</label>

@@ -23,6 +23,9 @@
         </a>
 
         <div class="app-nav-section">Gestão Operação</div>
+        <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
+          <i class="bi bi-plus-circle"></i> <span>Novo pedido</span>
+        </a>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_comercial' %}active{% endif %}" href="{{ url_for('gestao_operacao_comercial') }}">
           <i class="bi bi-briefcase"></i> <span>Comercial</span>
         </a>
