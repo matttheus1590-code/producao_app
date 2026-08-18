@@ -41,6 +41,29 @@ body {
   font-size: 0.78rem;
 }
 
+/* Cores alternadas por pedido: todos os itens de um mesmo pedido ficam
+   na mesma cor, e o pedido seguinte troca de cor — assim dá para
+   visualizar de relance onde termina um pedido e começa o outro. */
+.tabela-listagem-geral > tbody > tr.linha-pedido-a > * {
+  --bs-table-bg: #eaf1fd;
+  background-color: #eaf1fd;
+}
+
+.tabela-listagem-geral > tbody > tr.linha-pedido-b > * {
+  --bs-table-bg: #fdf3e0;
+  background-color: #fdf3e0;
+}
+
+.tabela-listagem-geral.table-hover > tbody > tr.linha-pedido-a:hover > * {
+  --bs-table-bg: #d8e6fb;
+  background-color: #d8e6fb;
+}
+
+.tabela-listagem-geral.table-hover > tbody > tr.linha-pedido-b:hover > * {
+  --bs-table-bg: #fbe9c6;
+  background-color: #fbe9c6;
+}
+
 .normal-case {
   text-transform: none;
 }

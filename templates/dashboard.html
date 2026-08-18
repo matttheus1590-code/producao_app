@@ -140,8 +140,13 @@
       </tr>
     </thead>
     <tbody>
+      {% set ns = namespace(pedido_anterior=None, cor_par=true) %}
       {% for l in linhas %}
-      <tr>
+      {% if l.pedido_id != ns.pedido_anterior %}
+        {% set ns.cor_par = not ns.cor_par %}
+        {% set ns.pedido_anterior = l.pedido_id %}
+      {% endif %}
+      <tr class="{{ 'linha-pedido-a' if ns.cor_par else 'linha-pedido-b' }}">
         <td class="text-nowrap">
           <a href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
             <i class="bi bi-eye"></i>
