@@ -2079,9 +2079,11 @@ def register_routes(app):
         linhas = _linhas_listagem_geral(pedidos, request.args)
         linhas = _ordenar_com_nulos_no_fim(linhas, SORT_KEYS_LISTAGEM_GERAL[sort], reverse=(dir_ordenacao == "desc"))
 
+        # A pedido de Bruno: a Listagem Geral mostra todos os itens filtrados
+        # numa página só, sem paginação (nada de "página 2, 3, 4...").
         total_filtrado = len(linhas)
-        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
-        linhas_pagina = linhas[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+        total_paginas = 1
+        linhas_pagina = linhas
 
         resumo = _calcular_resumo()
 
