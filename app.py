@@ -8,7 +8,7 @@ from flask import Flask, Response, flash, jsonify, redirect, render_template, re
 from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from sqlalchemy import and_, false, func, inspect, or_, text
+from sqlalchemy import and_, extract, false, func, inspect, or_, text
 from sqlalchemy.orm import selectinload
 
 from extensions import db, login_manager
@@ -1300,6 +1300,8 @@ def _filtrar_pedidos(args):
     atrasados = args.get("atrasados", "").strip()
     planejamento_semanal = args.get("planejamento_semanal", "").strip()
     planejamento_mensal = args.get("planejamento_mensal", "").strip()
+    mes_inclusao = args.get("mes_inclusao", "").strip()
+    mes_entrega_cliente = args.get("mes_entrega_cliente", "").strip()
 
     if cliente:
         query = query.filter(Pedido.cliente.ilike(f"%{cliente}%"))
@@ -1353,6 +1355,26 @@ def _filtrar_pedidos(args):
                 # Mês escolhido não tem nenhum planejamento semanal preenchido
                 # ainda — não deve mostrar nada (em vez de ignorar o filtro).
                 query = query.filter(false())
+    if mes_inclusao:
+        mes_ano = _parse_mes_ano_form(mes_inclusao, None)
+        if mes_ano:
+            ano, mes = mes_ano
+            query = query.filter(
+                extract("year", Pedido.data_inclusao_pedido) == ano,
+                extract("month", Pedido.data_inclusao_pedido) == mes,
+            )
+        else:
+            query = query.filter(false())
+    if mes_entrega_cliente:
+        mes_ano = _parse_mes_ano_form(mes_entrega_cliente, None)
+        if mes_ano:
+            ano, mes = mes_ano
+            query = query.filter(
+                extract("year", Pedido.data_cliente) == ano,
+                extract("month", Pedido.data_cliente) == mes,
+            )
+        else:
+            query = query.filter(false())
 
     query = query.order_by(Pedido.data_inclusao_pedido.desc().nullslast(), Pedido.id.desc())
 
@@ -1369,6 +1391,8 @@ def _filtrar_pedidos(args):
         atrasados=atrasados,
         planejamento_semanal=planejamento_semanal,
         planejamento_mensal=planejamento_mensal,
+        mes_inclusao=mes_inclusao,
+        mes_entrega_cliente=mes_entrega_cliente,
     )
     return query, filtros
 

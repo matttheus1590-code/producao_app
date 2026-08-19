@@ -101,6 +101,15 @@
     <label class="form-label small text-muted mb-1">Planejamento mensal (PCP)</label>
     <input type="month" class="form-control" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
   </div>
+
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Pedidos incluídos no mês</label>
+    <input type="month" class="form-control" name="mes_inclusao" value="{{ filtros.mes_inclusao }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Entrega solicitada no mês</label>
+    <input type="month" class="form-control" name="mes_entrega_cliente" value="{{ filtros.mes_entrega_cliente }}">
+  </div>
 </form>
 
 <div class="d-flex justify-content-end gap-2 mb-3">
