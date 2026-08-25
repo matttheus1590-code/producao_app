@@ -30,6 +30,20 @@
             Pedido {{ item.pedido.pedido_venda or ('#' + item.pedido.id|string) }} — {{ item.pedido.cliente }}
           </div>
           <div class="fw-semibold small mb-1">{{ item.descricao_produto }}</div>
+          <div class="kanban-card-datas small text-muted mb-1">
+            <div><i class="bi bi-box-seam"></i> {{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s)</div>
+            <div><i class="bi bi-calendar-plus"></i> Incluído {{ item.pedido.data_inclusao_pedido.strftime("%d/%m/%Y") if item.pedido.data_inclusao_pedido else "—" }}</div>
+            <div><i class="bi bi-calendar-event"></i> Solicitado {{ item.pedido.data_cliente.strftime("%d/%m/%Y") if item.pedido.data_cliente else "—" }}</div>
+            {% if etapa in ("EM_PRODUCAO", "FINALIZADO") %}
+            <div><i class="bi bi-play-circle"></i> Início produção {{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</div>
+            {% endif %}
+            {% if etapa == "FINALIZADO" %}
+            <div><i class="bi bi-check-circle"></i> Finalizado {{ item.termino_inspecao.strftime("%d/%m/%Y") if item.termino_inspecao else "—" }}</div>
+            {% if item.lt_producao_dias is not none %}
+            <div><i class="bi bi-stopwatch"></i> Levou {{ item.lt_producao_dias }} dia(s) na produção</div>
+            {% endif %}
+            {% endif %}
+          </div>
           <div class="d-flex justify-content-between align-items-center">
             <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
               {% if dias is none %}sem prazo{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
