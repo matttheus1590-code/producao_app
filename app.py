@@ -2151,11 +2151,12 @@ def register_routes(app):
             descricoes = f.getlist("item_descricao[]")
             quantidades = f.getlist("item_quantidade[]")
             custos = f.getlist("item_custo[]")
+            estacoes = f.getlist("item_estacao[]")
 
             itens = []
             itens_recarregados = []
-            for desc, qtd, custo in zip(descricoes, quantidades, custos):
-                itens_recarregados.append({"descricao": desc, "quantidade": qtd, "custo": custo})
+            for desc, qtd, custo, estacao_item in zip(descricoes, quantidades, custos, estacoes):
+                itens_recarregados.append({"descricao": desc, "quantidade": qtd, "custo": custo, "estacao": estacao_item})
                 desc = desc.strip()
                 if not desc:
                     continue
@@ -2164,6 +2165,7 @@ def register_routes(app):
                         descricao_produto=desc,
                         quantidade=_parse_float_form(qtd),
                         custo_unitario=_parse_float_form(custo),
+                        estacao=estacao_item or None,
                     )
                 )
 

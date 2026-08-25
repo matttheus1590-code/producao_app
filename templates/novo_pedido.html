@@ -78,13 +78,21 @@
           <div id="itensContainer">
             {% for item in itens %}
             <div class="row g-2 item-row mb-2 align-items-center">
-              <div class="col-md-6">
+              <div class="col-md-4">
                 <input type="text" class="form-control item-descricao" name="item_descricao[]" value="{{ item.descricao }}" placeholder="Descrição do produto">
+              </div>
+              <div class="col-md-3">
+                <select class="form-select item-estacao" name="item_estacao[]">
+                  <option value="">Estação…</option>
+                  {% for e in ESTACOES %}
+                    <option value="{{ e }}" {% if item.estacao == e %}selected{% endif %}>{{ e }}</option>
+                  {% endfor %}
+                </select>
               </div>
               <div class="col-md-2">
                 <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" value="{{ item.quantidade }}" placeholder="Qtd">
               </div>
-              <div class="col-md-3">
+              <div class="col-md-2">
                 <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" value="{{ item.custo }}" placeholder="Custo unitário (R$)">
               </div>
               <div class="col-md-1 d-grid">
@@ -93,13 +101,21 @@
             </div>
             {% else %}
             <div class="row g-2 item-row mb-2 align-items-center">
-              <div class="col-md-6">
+              <div class="col-md-4">
                 <input type="text" class="form-control item-descricao" name="item_descricao[]" placeholder="Descrição do produto">
+              </div>
+              <div class="col-md-3">
+                <select class="form-select item-estacao" name="item_estacao[]">
+                  <option value="">Estação…</option>
+                  {% for e in ESTACOES %}
+                    <option value="{{ e }}">{{ e }}</option>
+                  {% endfor %}
+                </select>
               </div>
               <div class="col-md-2">
                 <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
               </div>
-              <div class="col-md-3">
+              <div class="col-md-2">
                 <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
               </div>
               <div class="col-md-1 d-grid">
@@ -136,18 +152,28 @@
   const container = document.getElementById('itensContainer');
   const btnAdd = document.getElementById('btnAdicionarItem');
   const totalEl = document.getElementById('valorTotalPreview');
+  const ESTACOES = [{% for e in ESTACOES %}{{ e | tojson }},{% endfor %}];
+
+  function opcoesEstacao() {
+    let html = '<option value="">Estação…</option>';
+    ESTACOES.forEach(function(e) { html += '<option value="' + e + '">' + e + '</option>'; });
+    return html;
+  }
 
   function linhaTemplate() {
     const div = document.createElement('div');
     div.className = 'row g-2 item-row mb-2 align-items-center';
     div.innerHTML = `
-      <div class="col-md-6">
+      <div class="col-md-4">
         <input type="text" class="form-control item-descricao" name="item_descricao[]" placeholder="Descrição do produto">
+      </div>
+      <div class="col-md-3">
+        <select class="form-select item-estacao" name="item_estacao[]">${opcoesEstacao()}</select>
       </div>
       <div class="col-md-2">
         <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
       </div>
-      <div class="col-md-3">
+      <div class="col-md-2">
         <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
       </div>
       <div class="col-md-1 d-grid">
