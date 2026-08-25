@@ -24,25 +24,23 @@ ESTACOES = [
 
 STATUS_OPCOES = ["PENDENTE", "EM TRATATIVA", "ANDAMENTO", "FINALIZADO"]
 
-# Status de CHÃO DE FÁBRICA — mais granular que o STATUS_OPCOES "comercial" acima
-# (PENDENTE/EM TRATATIVA/ANDAMENTO/FINALIZADO). É só uma leitura mais detalhada
-# das MESMAS datas que já existem em cada item (não é um campo novo, não duplica
-# nada) — usado no Kanban da tela Estações.
-STATUS_CHAO_OPCOES = ["NAO_INICIADO", "PROGRAMADO", "EM_PRODUCAO", "INSPECAO", "EMBALAGEM", "FINALIZADO"]
+# Status de CHÃO DE FÁBRICA — usado só no Kanban da tela Estações. Pedido do
+# Bruno (25/08/2026): só 3 colunas, lidas DIRETO de status_producao (o mesmo
+# campo "confiável" que a Listagem Geral usa) — antes esse status era
+# calculado a partir de inicio_inspecao/termino_inspecao/liberacao_faturamento,
+# datas que na prática quase nunca são preenchidas (a planilha de referência
+# nem tem essas colunas), então itens já FINALIZADO na Listagem apareciam como
+# "Pendente" no Kanban. Ver ItemPedido.status_chao (abaixo) — não duplica
+# nenhum campo novo, só lê status_producao com um rótulo diferente.
+STATUS_CHAO_OPCOES = ["PENDENTE", "EM_PRODUCAO", "FINALIZADO"]
 STATUS_CHAO_LABELS = {
-    "NAO_INICIADO": "Pendente",
-    "PROGRAMADO": "Programado",
+    "PENDENTE": "Pendente",
     "EM_PRODUCAO": "Em produção",
-    "INSPECAO": "Inspeção",
-    "EMBALAGEM": "Embalagem",
     "FINALIZADO": "Finalizado",
 }
 STATUS_CHAO_CORES = {
-    "NAO_INICIADO": "secondary",
-    "PROGRAMADO": "info",
+    "PENDENTE": "secondary",
     "EM_PRODUCAO": "primary",
-    "INSPECAO": "warning",
-    "EMBALAGEM": "warning",
     "FINALIZADO": "success",
 }
 
@@ -483,21 +481,16 @@ class ItemPedido(db.Model):
 
     @property
     def status_chao(self):
-        """Status de chão de fábrica (mais granular), calculado a partir das
-        MESMAS datas que status_producao já usa — nenhum campo novo — mais a
-        existência de uma Programação ativa para decidir entre "Pendente" e
-        "Programado"."""
-        if self.termino_inspecao and self.liberacao_faturamento:
+        """Status de chão de fábrica pro Kanban da tela Estações — só 3
+        colunas, lidas direto de status_producao (mesmo campo que a Listagem
+        Geral usa, então os dois nunca mais divergem). "EM TRATATIVA" entra
+        junto com "ANDAMENTO" na coluna "Em produção" — não tem coluna própria
+        pra ele no Kanban."""
+        if self.status_producao == "FINALIZADO":
             return "FINALIZADO"
-        if self.termino_inspecao:
-            return "EMBALAGEM"
-        if self.inicio_inspecao:
-            return "INSPECAO"
-        if self.inicio_producao:
-            return "EM_PRODUCAO"
-        if any(p.status == "ATIVA" for p in self.programacoes):
-            return "PROGRAMADO"
-        return "NAO_INICIADO"
+        if self.status_producao == "PENDENTE":
+            return "PENDENTE"
+        return "EM_PRODUCAO"
 
     def atualizar_status_automatico(self):
         """Recalcula status_producao deste item a partir das datas preenchidas.

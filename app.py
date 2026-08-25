@@ -2708,14 +2708,14 @@ def register_routes(app):
         hoje = date.today()
         etapa_atual = item.status_chao
 
-        if etapa_atual in ("NAO_INICIADO", "PROGRAMADO"):
-            item.inicio_producao = hoje
+        # Kanban simplificado (3 colunas): "avançar" carimba a data que falta
+        # pra status_producao concluir sozinho a próxima etapa (mesma regra
+        # de atualizar_status_automatico, sem duplicar lógica aqui).
+        if etapa_atual == "PENDENTE":
+            item.inicio_producao = item.inicio_producao or hoje
         elif etapa_atual == "EM_PRODUCAO":
-            item.inicio_inspecao = hoje
-        elif etapa_atual == "INSPECAO":
-            item.termino_inspecao = hoje
-        elif etapa_atual == "EMBALAGEM":
-            item.liberacao_faturamento = hoje
+            item.termino_inspecao = item.termino_inspecao or hoje
+            item.liberacao_faturamento = item.liberacao_faturamento or hoje
         else:
             flash("Este item já está finalizado.", "info")
             return redirect(url_for("estacao_kanban", nome=nome))
