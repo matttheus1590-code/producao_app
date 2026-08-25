@@ -112,7 +112,10 @@
   </div>
 </form>
 
-<div class="d-flex justify-content-end gap-2 mb-3">
+<div class="d-flex justify-content-end align-items-center gap-2 mb-3">
+  <button type="button" id="btnResetLargurasColunas" class="btn btn-outline-secondary btn-sm" title="Redefinir a largura de todas as colunas para o padrão">
+    <i class="bi bi-arrows-angle-contract"></i> Redefinir colunas
+  </button>
   <a href="{{ url_for('relatorio_listagem_csv', **filtros) }}" class="btn btn-outline-secondary btn-sm">
     <i class="bi bi-filetype-csv"></i> Exportar CSV
   </a>
@@ -121,8 +124,35 @@
   </a>
 </div>
 
+<p class="text-muted small mb-2">
+  <i class="bi bi-arrows"></i> Dica: arraste a borda direita de qualquer coluna pra ajustar a largura — o site lembra do ajuste da próxima vez que você abrir esta tela. Passe o mouse em cima de um texto cortado (…) pra ver o conteúdo completo.
+</p>
+
 <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral">
+  <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral" id="tabelaListagemGeral">
+    <colgroup>
+      <col style="width:88px">
+      <col style="width:72px">
+      <col style="width:160px">
+      <col style="width:120px">
+      <col style="width:70px">
+      <col style="width:90px">
+      <col style="width:55px">
+      <col style="width:130px">
+      <col style="width:100px">
+      <col style="width:100px">
+      <col style="width:100px">
+      <col style="width:100px">
+      <col style="width:150px">
+      <col style="width:90px">
+      <col style="width:240px">
+      <col style="width:60px">
+      <col style="width:110px">
+      <col style="width:105px">
+      <col style="width:115px">
+      <col style="width:115px">
+      <col style="width:125px">
+    </colgroup>
     <thead class="table-light">
       <tr>
         <th></th>
@@ -165,19 +195,19 @@
           </a>
         </td>
         <td>{{ l.pedido_venda or "—" }}</td>
-        <td>{{ l.cliente }}</td>
-        <td>{{ l.vendedor or "—" }}</td>
+        <td class="text-truncate" title="{{ l.cliente }}">{{ l.cliente }}</td>
+        <td class="text-truncate" title="{{ l.vendedor or '' }}">{{ l.vendedor or "—" }}</td>
         <td>{{ l.frete or "—" }}</td>
-        <td>{{ l.pais or "—" }}</td>
+        <td class="text-truncate" title="{{ l.pais or '' }}">{{ l.pais or "—" }}</td>
         <td>{{ l.estado or "—" }}</td>
-        <td>{{ l.cidade or "—" }}</td>
+        <td class="text-truncate" title="{{ l.cidade or '' }}">{{ l.cidade or "—" }}</td>
         <td>{{ l.data_inclusao_pedido.strftime("%d/%m/%Y") if l.data_inclusao_pedido else "—" }}</td>
         <td>{{ l.data_cliente.strftime("%d/%m/%Y") if l.data_cliente else "—" }}</td>
         <td>{{ l.liberacao_prevista.strftime("%d/%m/%Y") if l.liberacao_prevista else "—" }}</td>
         <td>{{ l.liberacao_real.strftime("%d/%m/%Y") if l.liberacao_real else "—" }}</td>
-        <td>{{ l.planejamento_semanal or "—" }}</td>
+        <td class="text-truncate" title="{{ l.planejamento_semanal or '' }}">{{ l.planejamento_semanal or "—" }}</td>
         <td><span class="badge bg-{{ PRIORIDADE_CORES.get(l.prioridade, 'secondary') }}">{{ l.prioridade or "—" }}</span></td>
-        <td class="text-truncate" style="max-width: 220px;" title="{{ l.descricao_produto }}">{{ l.descricao_produto }}</td>
+        <td class="text-truncate" title="{{ l.descricao_produto }}">{{ l.descricao_produto }}</td>
         <td>{{ l.quantidade }}</td>
         <td>{{ l.estacao or "—" }}</td>
         <td><span class="badge bg-{{ STATUS_CORES.get(l.status_producao, 'secondary') }}">{{ l.status_producao }}</span></td>
@@ -204,4 +234,99 @@
 </nav>
 {% endif %}
 
+{% endblock %}
+{% block scripts %}
+<script>
+(function() {
+  // Larguras de coluna ajustáveis na Listagem Geral: arrasta a borda direita
+  // de qualquer <th>, e o navegador lembra do ajuste (localStorage, só
+  // nesse navegador/computador) da próxima vez que a tela abrir. Guardado
+  // por índice de coluna (não por nome) — se um dia mudar o conjunto de
+  // colunas, o botão "Redefinir colunas" resolve qualquer desalinhamento.
+  const CHAVE_LARGURAS = "4pipe_listagemGeral_colWidths_v1";
+  const LARGURA_MINIMA = 42;
+
+  const tabela = document.getElementById("tabelaListagemGeral");
+  if (!tabela) return;
+  const colgroup = tabela.querySelector("colgroup");
+  const cols = colgroup ? Array.from(colgroup.children) : [];
+  const thsCabecalho = Array.from(tabela.querySelectorAll("thead th"));
+  const largurasPadrao = cols.map(function(col) { return parseInt(col.style.width, 10) || 100; });
+
+  function carregarLargurasSalvas() {
+    try {
+      const salvo = JSON.parse(localStorage.getItem(CHAVE_LARGURAS) || "null");
+      if (Array.isArray(salvo) && salvo.length === cols.length) {
+        salvo.forEach(function(w, i) {
+          if (typeof w === "number" && w >= LARGURA_MINIMA) {
+            cols[i].style.width = w + "px";
+          }
+        });
+      }
+    } catch (e) {
+      // localStorage indisponível (ex.: modo privado) — segue com o padrão, sem quebrar a tela.
+    }
+  }
+
+  function salvarLargurasAtuais() {
+    try {
+      const larguras = cols.map(function(col) { return parseInt(col.style.width, 10) || 100; });
+      localStorage.setItem(CHAVE_LARGURAS, JSON.stringify(larguras));
+    } catch (e) {
+      // sem storage disponível — ajuste continua funcionando só nesta visita.
+    }
+  }
+
+  function redefinirLarguras() {
+    cols.forEach(function(col, i) { col.style.width = largurasPadrao[i] + "px"; });
+    try { localStorage.removeItem(CHAVE_LARGURAS); } catch (e) {}
+  }
+
+  carregarLargurasSalvas();
+
+  thsCabecalho.forEach(function(th, index) {
+    if (!cols[index]) return;
+    th.classList.add("th-redimensionavel");
+    const alca = document.createElement("div");
+    alca.className = "col-resize-handle";
+    th.appendChild(alca);
+
+    let arrastando = false;
+    let xInicial = 0;
+    let larguraInicial = 0;
+
+    alca.addEventListener("pointerdown", function(e) {
+      arrastando = true;
+      xInicial = e.clientX;
+      larguraInicial = cols[index].getBoundingClientRect().width;
+      alca.classList.add("resizing");
+      document.body.classList.add("col-resizing-ativo");
+      alca.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+
+    alca.addEventListener("pointermove", function(e) {
+      if (!arrastando) return;
+      const novaLargura = Math.max(LARGURA_MINIMA, larguraInicial + (e.clientX - xInicial));
+      cols[index].style.width = novaLargura + "px";
+    });
+
+    function finalizarArraste(e) {
+      if (!arrastando) return;
+      arrastando = false;
+      alca.classList.remove("resizing");
+      document.body.classList.remove("col-resizing-ativo");
+      salvarLargurasAtuais();
+    }
+
+    alca.addEventListener("pointerup", finalizarArraste);
+    alca.addEventListener("pointercancel", finalizarArraste);
+  });
+
+  const btnReset = document.getElementById("btnResetLargurasColunas");
+  if (btnReset) {
+    btnReset.addEventListener("click", redefinirLarguras);
+  }
+})();
+</script>
 {% endblock %}

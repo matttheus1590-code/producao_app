@@ -12,6 +12,14 @@ body {
 
 /* Listagem Geral (Gestão Produção): linhas mais compactas e nítidas,
    sem depender de zoom do navegador. */
+
+/* table-layout fixed é o que permite as colunas terem largura ajustável via
+   <colgroup> (ver dashboard.html) — sem isso o navegador ignora a largura
+   que a gente tenta forçar e recalcula tudo sozinho a partir do conteúdo. */
+.tabela-listagem-geral {
+  table-layout: fixed;
+}
+
 .tabela-listagem-geral td,
 .tabela-listagem-geral th {
   padding-top: 0.3rem;
@@ -19,6 +27,8 @@ body {
   font-size: 0.82rem;
   line-height: 1.15;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tabela-listagem-geral td.text-truncate {
@@ -29,6 +39,37 @@ body {
   font-size: 0.72rem;
   padding-top: 0.4rem;
   padding-bottom: 0.4rem;
+  position: relative;
+}
+
+/* Alça de redimensionar coluna: uma faixa fina na borda direita de cada
+   cabeçalho — arrasta pra ajustar a largura da coluna (JS no dashboard.html). */
+.tabela-listagem-geral th.th-redimensionavel {
+  padding-right: 0.6rem;
+}
+
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle.resizing {
+  background-color: rgba(13, 110, 253, 0.35);
+}
+
+/* Enquanto arrasta, força o cursor de redimensionar na tela toda — sem isso
+   o cursor "pisca" pro normal se o mouse passar por cima do texto do
+   cabeçalho durante o arraste rápido. */
+body.col-resizing-ativo {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 .tabela-listagem-geral .badge {

@@ -22,13 +22,13 @@
 
 {% macro sort_th(label, campo, endpoint, sort_atual, dir_atual, filtros) %}
 {% set nova_dir = 'desc' if (sort_atual == campo and dir_atual == 'asc') else 'asc' %}
-<th>
-  <a href="{{ url_for(endpoint, sort=campo, dir=nova_dir, **filtros) }}" class="text-decoration-none text-dark d-inline-flex align-items-center gap-1 text-nowrap">
-    {{ label }}
+<th title="{{ label }}">
+  <a href="{{ url_for(endpoint, sort=campo, dir=nova_dir, **filtros) }}" class="text-decoration-none text-dark d-flex align-items-center gap-1 w-100">
+    <span class="text-truncate">{{ label }}</span>
     {% if sort_atual == campo %}
-      <i class="bi bi-caret-{{ 'up' if dir_atual == 'asc' else 'down' }}-fill small"></i>
+      <i class="bi bi-caret-{{ 'up' if dir_atual == 'asc' else 'down' }}-fill small flex-shrink-0"></i>
     {% else %}
-      <i class="bi bi-arrow-down-up text-muted small" style="opacity:.35;"></i>
+      <i class="bi bi-arrow-down-up text-muted small flex-shrink-0" style="opacity:.35;"></i>
     {% endif %}
   </a>
 </th>
