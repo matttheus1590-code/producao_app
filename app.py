@@ -491,7 +491,10 @@ def _migrar_atualizado_em_itens(app):
         return
 
     with db.engine.begin() as conn:
-        conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN atualizado_em DATETIME"))
+        # TIMESTAMP, não DATETIME: "DATETIME" é aceito pelo SQLite (que ignora
+        # o nome do tipo) mas não existe no Postgres de produção — quebrou o
+        # primeiro deploy dessa migração (psycopg2.errors.UndefinedObject).
+        conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN atualizado_em TIMESTAMP"))
 
     itens = ItemPedido.query.options(selectinload(ItemPedido.pedido)).all()
     agora = datetime.utcnow()
