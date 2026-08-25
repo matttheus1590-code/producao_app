@@ -28,6 +28,7 @@ from models import (
     STATUS_CHAO_OPCOES,
     STATUS_CORES,
     STATUS_OPCOES,
+    ControleSistema,
     Estacao,
     HistoricoAlteracao,
     ItemPedido,
@@ -127,6 +128,10 @@ def create_app():
         _consolidar_pedidos_duplicados(app)
         _seed_inicial(app)
         _importar_gestao_operacao(app)
+        # Roda por último: depende de Pedido/ItemPedido já existirem com todas
+        # as colunas migradas, e de _consolidar_pedidos_duplicados já ter
+        # deixado (no máximo) 1 Pedido por pedido_venda.
+        _sincronizar_planilha_producao_25_08_2026(app)
 
     @app.context_processor
     def inject_globals():
@@ -632,6 +637,42 @@ def _importar_gestao_operacao(app):
         resultado["aproximado"],
         resultado["novos"],
         len(resultado["transportadoras_canonicas"]),
+    )
+
+
+_CHAVE_SINCRONIZACAO_25_08_2026 = "sincronizacao_planilha_producao_25_08_2026"
+
+
+def _sincronizar_planilha_producao_25_08_2026(app):
+    """Sincroniza Gestão Produção (Pedido/ItemPedido) com a aba "GERAL TESTE"
+    da planilha enviada pelo Bruno em 25/08/2026 — atualiza pedidos/itens que
+    já existem e cria os que estão na planilha mas ainda não existem no site.
+    Protegido por `ControleSistema` (chave abaixo) porque, ao contrário das
+    outras importações, roda por cima de dados que já existem — precisa
+    rodar exatamente uma vez, mesmo com o banco de produção já povoado. Ver
+    sincronizar_planilha_producao.py para as regras completas."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SINCRONIZACAO_25_08_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "sincronizacao_25_08_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from sincronizar_planilha_producao import sincronizar_planilha_producao
+
+    stats = sincronizar_planilha_producao(xlsx_path)
+    db.session.add(ControleSistema(chave=_CHAVE_SINCRONIZACAO_25_08_2026))
+    db.session.commit()
+    app.logger.info(
+        "Sincronização planilha 25/08/2026: %d linhas | %d pedidos atualizados | "
+        "%d pedidos criados | %d itens atualizados | %d itens criados | "
+        "%d pedidos sem cliente ignorados.",
+        stats["linhas_lidas"],
+        stats["pedidos_atualizados"],
+        stats["pedidos_criados"],
+        stats["itens_atualizados"],
+        stats["itens_criados"],
+        len(stats["pedidos_sem_cliente_ignorados"]),
     )
 
 

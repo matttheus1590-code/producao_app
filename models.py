@@ -672,6 +672,20 @@ class PedidoOperacao(db.Model):
         return "PENDENTE"
 
 
+class ControleSistema(db.Model):
+    """Tabela bem pequena, chave-valor, usada só como marcador de "isso já
+    rodou uma vez" para migrações/importações que não podem usar o padrão
+    "só roda se a tabela estiver vazia" (ex.: sincronizar uma planilha
+    específica por cima de dados que já existem em produção — precisa rodar
+    exatamente uma vez, mesmo com o banco já povoado)."""
+
+    __tablename__ = "controle_sistema"
+
+    id = db.Column(db.Integer, primary_key=True)
+    chave = db.Column(db.String(80), unique=True, nullable=False)
+    aplicado_em = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class HistoricoAlteracao(db.Model):
     """Registro de auditoria: quem mudou o quê, quando, e qual era o valor antes.
 
