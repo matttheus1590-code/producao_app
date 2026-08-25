@@ -439,6 +439,13 @@ class ItemPedido(db.Model):
     transportadora_id = db.Column(db.Integer, nullable=True)
     data_envio = db.Column(db.Date, nullable=True)
 
+    # Carimbo de "última alteração" — o SQLAlchemy atualiza sozinho
+    # (onupdate) toda vez que o item é salvo, seja editando o pedido ou
+    # clicando em "Avançar" no Kanban das Estações. Usado pra ordenar o
+    # Kanban sempre com os itens mais novos/recém movimentados no topo de
+    # cada coluna, sem precisar de nenhuma lógica extra no código de rota.
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
     @property
     def transportadora(self):
         if not self.transportadora_id:

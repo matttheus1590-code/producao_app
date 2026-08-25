@@ -119,6 +119,7 @@ def create_app():
         _migrar_logistica_itens(app)
         _migrar_planejamento_semanal_itens(app)
         _migrar_liberacao_real_itens(app)
+        _migrar_atualizado_em_itens(app)
         _migrar_gestao_operacao_pedidos(app)
         _migrar_dados_go_para_pedidos_operacao(app)
         # Só depois de TODAS as colunas de pedidos/itens existirem de verdade
@@ -465,6 +466,45 @@ def _migrar_liberacao_real_itens(app):
     with db.engine.begin() as conn:
         conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN liberacao_real DATE"))
     app.logger.info("Migração automática: campo de liberação real adicionado aos itens.")
+
+
+def _migrar_atualizado_em_itens(app):
+    """Adiciona um carimbo de "última alteração" (atualizado_em) em cada item
+    — o SQLAlchemy atualiza sozinho (onupdate) toda vez que o item é salvo,
+    seja editando o pedido ou clicando em "Avançar" no Kanban das Estações.
+    Usado pra ordenar o Kanban das Estações sempre com os itens mais
+    novos/recém movimentados no topo de cada coluna (pedido do Bruno,
+    25/08/2026).
+
+    Como o campo não existia antes, faz um backfill único pros itens já
+    existentes: usa a data mais avançada que o item já tem registrada
+    (término de produção > início de produção > inclusão do pedido) como
+    aproximação de "última atividade conhecida" — sem isso, todo item legado
+    nasceria com o mesmo timestamp (o momento do deploy) e a ordenação
+    ficaria arbitrária entre eles."""
+    inspector = inspect(db.engine)
+    if "itens_pedido" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("itens_pedido")}
+    if "atualizado_em" in colunas:
+        return
+
+    with db.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN atualizado_em DATETIME"))
+
+    itens = ItemPedido.query.options(selectinload(ItemPedido.pedido)).all()
+    agora = datetime.utcnow()
+    for item in itens:
+        melhor_data = (
+            item.termino_inspecao
+            or item.liberacao_faturamento
+            or item.inicio_producao
+            or (item.pedido.data_inclusao_pedido if item.pedido else None)
+        )
+        item.atualizado_em = datetime.combine(melhor_data, datetime.min.time()) if melhor_data else agora
+    db.session.commit()
+    app.logger.info("Migração automática: campo atualizado_em adicionado e preenchido em %d itens.", len(itens))
 
 
 # Colunas novas da Fase 13 (Gestão Operação) e seu tipo SQL — todas opcionais,
@@ -2679,8 +2719,12 @@ def register_routes(app):
             flash("Estação não encontrada.", "danger")
             return redirect(url_for("estacoes_lista"))
 
+        # Pedido do Bruno (25/08/2026): em toda coluna, o item mais novo/mais
+        # recém movimentado fica no topo. "atualizado_em" cobre os dois casos
+        # de uma vez só — item novo nasce com esse carimbo, e "Avançar" no
+        # Kanban (ou qualquer edição) atualiza sozinho (ver ItemPedido.atualizado_em).
         itens = ItemPedido.query.options(selectinload(ItemPedido.pedido)).filter(ItemPedido.estacao == nome).all()
-        itens.sort(key=lambda i: (i.pedido.data_inclusao_pedido or date.min, i.pedido_id))
+        itens.sort(key=lambda i: (i.atualizado_em or datetime.min, i.id), reverse=True)
 
         colunas = {chave: [] for chave in STATUS_CHAO_OPCOES}
         for item in itens:
