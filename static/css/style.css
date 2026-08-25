@@ -261,38 +261,77 @@ body {
 --------------------------------------------------------------------- */
 .kanban-board {
   display: flex;
-  gap: 0.75rem;
+  gap: 1.25rem;
   overflow-x: auto;
   padding-bottom: 0.5rem;
 }
 
 .kanban-coluna {
-  flex: 0 0 250px;
+  /* antes era largura fixa (250px) — com só 3 colunas isso deixava a tela
+     toda vazia à direita. Agora as colunas dividem igualmente o espaço
+     disponível (min-width garante que não fiquem espremidas demais em
+     telas estreitas — aí passa a rolar na horizontal). */
+  flex: 1 1 0;
+  min-width: 320px;
   background-color: #eef1f5;
-  border-radius: 0.5rem;
+  border-radius: 0.6rem;
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 220px);
+  max-height: calc(100vh - 200px);
 }
 
 .kanban-coluna-titulo {
-  padding: 0.6rem 0.75rem;
-  font-weight: 600;
-  font-size: 0.85rem;
-  border-radius: 0.5rem 0.5rem 0 0;
+  padding: 1rem 1.25rem;
+  font-weight: 700;
+  font-size: 1.35rem;
+  border-radius: 0.6rem 0.6rem 0 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
+.kanban-coluna-titulo .badge {
+  font-size: 1.05rem;
+  padding: 0.4em 0.75em;
+}
+
 .kanban-coluna-corpo {
-  padding: 0.5rem;
+  padding: 0.85rem;
   overflow-y: auto;
   flex: 1 1 auto;
 }
 
 .kanban-card {
   border-width: 2px;
+}
+
+.kanban-card .card-body {
+  padding: 1.1rem !important;
+}
+
+.kanban-card .text-muted.small {
+  font-size: 1rem !important;
+}
+
+.kanban-card .fw-semibold.small {
+  font-size: 1.15rem !important;
+  line-height: 1.3;
+}
+
+.kanban-card .badge {
+  font-size: 0.9rem;
+  padding: 0.4em 0.7em;
+}
+
+.kanban-card .btn-outline-secondary {
+  font-size: 1.05rem;
+  padding: 0.3rem 0.6rem !important;
+}
+
+.kanban-card .btn-primary {
+  font-size: 1.05rem;
+  padding: 0.55rem !important;
+  margin-top: 0.6rem;
 }
 
 @media (max-width: 991.98px) {
