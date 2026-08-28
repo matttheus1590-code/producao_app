@@ -9,6 +9,69 @@
   <h4 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Resultados / OTD</h4>
   <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
 </div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h5 class="mb-0"><i class="bi bi-cash-stack"></i> Faturamento por Semana — {{ mes_label }}</h5>
+      <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_resultados', ano=mes_anterior.ano, mes=mes_anterior.mes, **filtros) }}">
+          <i class="bi bi-chevron-left"></i> Mês anterior
+        </a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_resultados', ano=mes_seguinte.ano, mes=mes_seguinte.mes, **filtros) }}">
+          Próximo mês <i class="bi bi-chevron-right"></i>
+        </a>
+      </div>
+    </div>
+    <p class="text-muted small mb-3">
+      Com base no Planejamento Semanal de PCP (Término Semanal PCP). "Liberado" = pedidos com Data Efetiva de Liberação PCP preenchida naquela semana;
+      "Faturado" = Valor NF Emitida dos pedidos daquela semana.
+    </p>
+
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-lg-3">
+        {{ stat_card("Qtd. liberada no mês", faturamento_semanal.totais.qtd_liberada) }}
+      </div>
+      <div class="col-6 col-lg-3">
+        {{ stat_card("Valor liberado no mês", "R$ " ~ "{:,.2f}".format(faturamento_semanal.totais.valor_liberado).replace(",", "X").replace(".", ",").replace("X", "."), cor="primary") }}
+      </div>
+      <div class="col-6 col-lg-3">
+        {{ stat_card("Qtd. faturada no mês", faturamento_semanal.totais.qtd_faturada) }}
+      </div>
+      <div class="col-6 col-lg-3">
+        {{ stat_card("Valor faturado no mês", "R$ " ~ "{:,.2f}".format(faturamento_semanal.totais.valor_faturado).replace(",", "X").replace(".", ",").replace("X", "."), cor="success") }}
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Semana</th>
+            <th class="text-center">Qtd. liberada</th>
+            <th class="text-end">Valor liberado</th>
+            <th class="text-center">Qtd. faturada</th>
+            <th class="text-end">Valor faturado</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for l in faturamento_semanal.linhas %}
+          <tr>
+            <td>{{ l.semana_curta }}</td>
+            <td class="text-center">{{ l.qtd_liberada }}</td>
+            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_liberado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td class="text-center">{{ l.qtd_faturada }}</td>
+            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_faturado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-3">Nenhuma semana de PCP planejada nesse mês.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <p class="text-muted small mb-3">
   OTD (On-Time Delivery) — entregas dentro do prazo solicitado pelo cliente. Meta mínima: <strong>{{ GO_OTD_META_PERCENTUAL }}%</strong>.
   Considera só os pedidos com OTD já registrado ({{ otd.total }} de {{ total_filtrado }}).
@@ -138,7 +201,7 @@
   <ul class="pagination">
     {% for pg in range(1, total_paginas + 1) %}
       <li class="page-item {% if pg == page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('gestao_operacao_resultados', page=pg, **filtros) }}">{{ pg }}</a>
+        <a class="page-link" href="{{ url_for('gestao_operacao_resultados', page=pg, ano=ano, mes=mes, **filtros) }}">{{ pg }}</a>
       </li>
     {% endfor %}
   </ul>

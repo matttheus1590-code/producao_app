@@ -133,6 +133,10 @@ def create_app():
         # as colunas migradas, e de _consolidar_pedidos_duplicados já ter
         # deixado (no máximo) 1 Pedido por pedido_venda.
         _sincronizar_planilha_producao_25_08_2026(app)
+        # Idem para Gestão Operação: depende de _importar_gestao_operacao já
+        # ter rodado (banco com PedidoOperacao populado) antes de sincronizar
+        # por cima com a planilha mais nova.
+        _sincronizar_gestao_operacao_28_08_2026(app)
 
     @app.context_processor
     def inject_globals():
@@ -719,6 +723,42 @@ def _sincronizar_planilha_producao_25_08_2026(app):
     )
 
 
+_CHAVE_SINCRONIZACAO_GO_28_08_2026 = "sincronizacao_gestao_operacao_28_08_2026"
+
+
+def _sincronizar_gestao_operacao_28_08_2026(app):
+    """Sincroniza Gestão Operação (PedidoOperacao) com a planilha "28_08 Gestão
+    de Fluxo Produtivo 2026" enviada pelo Bruno — atualiza pedidos que já
+    existem e cria os que estão na planilha mas ainda não existem no site.
+    Protegido por `ControleSistema` (mesmo padrão de
+    `_sincronizar_planilha_producao_25_08_2026`) porque roda por cima de dados
+    que já existem — precisa rodar exatamente uma vez, mesmo com o banco de
+    produção já povoado. Ver sincronizar_gestao_operacao.py para as regras
+    completas."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SINCRONIZACAO_GO_28_08_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "sincronizacao_gestao_operacao_28_08_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from sincronizar_gestao_operacao import sincronizar_gestao_operacao
+
+    stats = sincronizar_gestao_operacao(xlsx_path)
+    db.session.add(ControleSistema(chave=_CHAVE_SINCRONIZACAO_GO_28_08_2026))
+    db.session.commit()
+    app.logger.info(
+        "Sincronização Gestão Operação 28/08/2026: %d linhas | %d pedidos atualizados | "
+        "%d pedidos criados | %d campos atualizados | %d casamentos exatos | %d aproximados.",
+        stats["linhas_lidas"],
+        stats["pedidos_atualizados"],
+        stats["pedidos_criados"],
+        stats["campos_atualizados"],
+        stats["exato"],
+        stats["aproximado"],
+    )
+
+
 def _parse_data_form(valor):
     if not valor:
         return None
@@ -1026,6 +1066,65 @@ def _projecao_pcp_mensal(mes_de, mes_ate):
         )
         ano, mes = _somar_meses(ano, mes, 1)
     return linhas
+
+
+def _faturamento_semanal_pcp(ano, mes):
+    """Faturamento de Agosto (ou qualquer mês) por semana de PCP — pedido do
+    Bruno em 28/08/2026, replicando a tabela "LIBERAÇÕES PCP POR SEMANA" que
+    ele mesmo mantém na aba DASHBOARD PRODUCAO da planilha (fórmulas
+    SUMPRODUCT/IFERROR lidas diretamente da planilha pra confirmar a regra
+    exata, célula a célula, antes de escrever esta função):
+
+      - Qtd/Valor liberado: pedidos cujo Término Semanal PCP
+        (go_termino_semanal_pcp) cai nessa semana E que já têm Data Efetiva
+        de Liberação PCP preenchida (go_data_efetiva_liberacao_pcp) — valor
+        é a soma de go_valor_pedido_operacao (valor total do pedido).
+      - Qtd/Valor faturado: pedidos cujo Término Semanal PCP cai nessa
+        semana, somando go_valor_nf_emitida — sem exigir liberação (mesmo
+        critério do SUMPRODUCT da planilha, que filtra só pela semana).
+
+    Diferença deliberada da planilha do Bruno: lá, valores de "VALOR NF
+    EMITIDA" digitados em formato brasileiro com vírgula decimal (texto, não
+    número) são silenciosamente zerados pelo IFERROR(...*1, 0) da fórmula
+    dele — aqui esses valores são interpretados corretamente como número
+    (mesmo parser usado no resto do site, ver _parse_numero em
+    importar_gestao_operacao.py), então o total pode ficar um pouco MAIOR
+    que o da planilha nesses meses com célula de texto — reportado ao Bruno
+    junto com a entrega."""
+    semanas = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, mes, 1))
+    pedidos = PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas)).all()
+
+    baldes = {
+        s: {"qtd_liberada": 0, "valor_liberado": 0.0, "qtd_faturada": 0, "valor_faturado": 0.0}
+        for s in semanas
+    }
+    for p in pedidos:
+        b = baldes[p.go_termino_semanal_pcp]
+        if p.go_data_efetiva_liberacao_pcp:
+            b["qtd_liberada"] += 1
+            b["valor_liberado"] += p.go_valor_pedido_operacao or 0.0
+        if p.go_valor_nf_emitida:
+            b["qtd_faturada"] += 1
+            b["valor_faturado"] += p.go_valor_nf_emitida
+
+    linhas = [
+        {
+            "semana": s,
+            "semana_curta": _semana_label_curto(s),
+            "qtd_liberada": baldes[s]["qtd_liberada"],
+            "valor_liberado": round(baldes[s]["valor_liberado"], 2),
+            "qtd_faturada": baldes[s]["qtd_faturada"],
+            "valor_faturado": round(baldes[s]["valor_faturado"], 2),
+        }
+        for s in semanas
+    ]
+    totais = {
+        "qtd_liberada": sum(l["qtd_liberada"] for l in linhas),
+        "valor_liberado": round(sum(l["valor_liberado"] for l in linhas), 2),
+        "qtd_faturada": sum(l["qtd_faturada"] for l in linhas),
+        "valor_faturado": round(sum(l["valor_faturado"] for l in linhas), 2),
+    }
+    return {"linhas": linhas, "totais": totais}
 
 
 def _predicado_vencendo():
@@ -2460,10 +2559,27 @@ def register_routes(app):
     def gestao_operacao_resultados():
         pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
         otd = _resumo_otd()
+
+        # Faturamento por Semana (pedido do Bruno, 28/08/2026) — mês
+        # selecionável, sem hardcode: default é o mês atual (mesmo padrão da
+        # tela de Faturamento de Gestão Produção).
+        hoje = date.today()
+        ano = request.args.get("ano", hoje.year, type=int)
+        mes = request.args.get("mes", hoje.month, type=int)
+        if not (1 <= mes <= 12):
+            mes = hoje.month
+        faturamento_semanal = _faturamento_semanal_pcp(ano, mes)
+        mes_anterior_ano, mes_anterior_mes = (ano, mes - 1) if mes > 1 else (ano - 1, 12)
+        mes_seguinte_ano, mes_seguinte_mes = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
+
         return render_template(
             "gestao_operacao_resultados.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros, otd=otd,
+            faturamento_semanal=faturamento_semanal,
+            ano=ano, mes=mes, mes_label=f"{MESES_PT[mes - 1]}/{ano}",
+            mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
+            mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
         )
 
     @app.route("/gestao-operacao/novo", methods=["GET", "POST"])
