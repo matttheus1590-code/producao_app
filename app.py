@@ -1070,18 +1070,25 @@ def _projecao_pcp_mensal(mes_de, mes_ate):
 
 def _faturamento_semanal_pcp(ano, mes):
     """Faturamento de Agosto (ou qualquer mês) por semana de PCP — pedido do
-    Bruno em 28/08/2026, replicando a tabela "LIBERAÇÕES PCP POR SEMANA" que
-    ele mesmo mantém na aba DASHBOARD PRODUCAO da planilha (fórmulas
-    SUMPRODUCT/IFERROR lidas diretamente da planilha pra confirmar a regra
-    exata, célula a célula, antes de escrever esta função):
+    Bruno em 28/08/2026.
 
-      - Qtd/Valor liberado: pedidos cujo Término Semanal PCP
-        (go_termino_semanal_pcp) cai nessa semana E que já têm Data Efetiva
-        de Liberação PCP preenchida (go_data_efetiva_liberacao_pcp) — valor
-        é a soma de go_valor_pedido_operacao (valor total do pedido).
+    Revisado em 28/08/2026 depois que o Bruno conferiu os números da semana
+    04/Ago manualmente: a versão original desta função exigia Data Efetiva de
+    Liberação PCP preenchida pra contar "Qtd/Valor liberado" (replicando a
+    fórmula SUMPRODUCT/IFERROR que eu tinha lido da planilha) — mas o Bruno
+    confirmou que quer TODO pedido cujo Término Semanal PCP cai naquela
+    semana, tenha ele já sido liberado ou não (ver AskUserQuestion — "Somar
+    todos os pedidos da semana, liberados ou não"). Ou seja, "liberado" aqui
+    não significa "já com Data Efetiva de Liberação preenchida", e sim
+    "planejado pro PCP encerrar naquela semana" — mesmo agrupamento por
+    Término Semanal PCP (coluna AA), só que sem o filtro extra que eu tinha
+    adicionado por conta própria.
+
+      - Qtd/Valor liberado: todo pedido cujo Término Semanal PCP
+        (go_termino_semanal_pcp) cai nessa semana — valor é a soma de
+        go_valor_pedido_operacao (valor total do pedido).
       - Qtd/Valor faturado: pedidos cujo Término Semanal PCP cai nessa
-        semana, somando go_valor_nf_emitida — sem exigir liberação (mesmo
-        critério do SUMPRODUCT da planilha, que filtra só pela semana).
+        semana, somando go_valor_nf_emitida.
 
     Diferença deliberada da planilha do Bruno: lá, valores de "VALOR NF
     EMITIDA" digitados em formato brasileiro com vírgula decimal (texto, não
@@ -1100,9 +1107,8 @@ def _faturamento_semanal_pcp(ano, mes):
     }
     for p in pedidos:
         b = baldes[p.go_termino_semanal_pcp]
-        if p.go_data_efetiva_liberacao_pcp:
-            b["qtd_liberada"] += 1
-            b["valor_liberado"] += p.go_valor_pedido_operacao or 0.0
+        b["qtd_liberada"] += 1
+        b["valor_liberado"] += p.go_valor_pedido_operacao or 0.0
         if p.go_valor_nf_emitida:
             b["qtd_faturada"] += 1
             b["valor_faturado"] += p.go_valor_nf_emitida
