@@ -137,6 +137,10 @@ def create_app():
         # ter rodado (banco com PedidoOperacao populado) antes de sincronizar
         # por cima com a planilha mais nova.
         _sincronizar_gestao_operacao_28_08_2026(app)
+        # Correção pontual pedida pelo Bruno depois de conferir os números da
+        # semana 04/Ago manualmente — precisa rodar depois da sincronização
+        # acima (que é quem trouxe o pedido 835 com a semana errada).
+        _corrigir_semana_pcp_morken_835(app)
 
     @app.context_processor
     def inject_globals():
@@ -757,6 +761,40 @@ def _sincronizar_gestao_operacao_28_08_2026(app):
         stats["exato"],
         stats["aproximado"],
     )
+
+
+_CHAVE_CORRECAO_SEMANA_MORKEN_835 = "correcao_semana_pcp_morken_835_28_08_2026"
+
+
+def _corrigir_semana_pcp_morken_835(app):
+    """Correção pontual pedida pelo Bruno em 28/08/2026: o pedido 835 (Morken)
+    veio da planilha com Término Semanal PCP "SEMANA 04 / AGO / 2026", mas a
+    Previsão de Liberação PCP dele é 04/09/2026 (entrega solicitada 24/09) —
+    ele não é um pedido de agosto. O Bruno confirmou que é pra mover pra
+    setembro, então troco pra "SEMANA 01 / SET / 2026" (semana que contém o
+    dia 4, mesmo critério de gerar_semanas_pcp). Com isso ele some do
+    Faturamento por Semana de agosto e passa a aparecer em setembro.
+
+    Guardado por ControleSistema — correção pontual, roda só uma vez, mesmo
+    padrão das outras correções/sincronizações desta leva."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_CORRECAO_SEMANA_MORKEN_835).first() is not None:
+        return
+
+    pedido = PedidoOperacao.query.filter_by(pedido_venda="835").first()
+    if pedido is not None and pedido.cliente and "MORKEN" in pedido.cliente.upper():
+        pedido.go_termino_semanal_pcp = "SEMANA 01 / SET / 2026"
+        app.logger.info(
+            "Correção pontual: pedido 835 (Morken) movido de Semana 04/Ago para Semana 01/Set/2026."
+        )
+    else:
+        # Não achou o pedido esperado (ou o cliente não bate) — não mexe em
+        # nada pra não arriscar corrigir o pedido errado, só registra que já
+        # tentou (pra não ficar reavaliando isso a cada boot).
+        app.logger.warning(
+            "Correção pontual pedido 835 (Morken): pedido não encontrado ou cliente não confere — nada foi alterado."
+        )
+    db.session.add(ControleSistema(chave=_CHAVE_CORRECAO_SEMANA_MORKEN_835))
+    db.session.commit()
 
 
 def _parse_data_form(valor):
