@@ -3199,7 +3199,13 @@ def register_routes(app):
         )
 
         for semana in semanas:
-            semana["dias"] = [[] for _ in range(7)]  # 0=domingo ... 6=sábado
+            # cada dia guarda um GRUPO por pedido, não por item — desde que
+            # Liberação prevista/real virou campo único do pedido (cascateia
+            # pra todos os itens ao salvar, pedido do Bruno 31/08/2026), todo
+            # item do mesmo pedido cai sempre no mesmo dia, então o quadrante
+            # mostra 1 card por pedido (resumo), com os itens dentro do
+            # hover/clique — em vez de 1 card por item repetindo cliente/frete/etc.
+            semana["dias"] = [{} for _ in range(7)]  # 0=domingo ... 6=sábado, cada um {pedido_id: grupo}
             semana["dias_datas"] = [semana["inicio"] + timedelta(days=i) for i in range(7)]
 
         for item in itens:
@@ -3207,16 +3213,24 @@ def register_routes(app):
             for semana in semanas:
                 if semana["inicio"] <= data_efetiva <= semana["fim"]:
                     coluna = (data_efetiva.weekday() + 1) % 7  # weekday(): segunda=0 -> domingo vira 0
-                    semana["dias"][coluna].append({
-                        "item": item,
-                        "data": data_efetiva,
-                        "confirmado": item.liberacao_real is not None,
-                    })
+                    grupos = semana["dias"][coluna]
+                    grupo = grupos.get(item.pedido_id)
+                    if grupo is None:
+                        grupo = {"pedido": item.pedido, "itens": [], "data": data_efetiva}
+                        grupos[item.pedido_id] = grupo
+                    grupo["itens"].append(item)
                     break
 
         for semana in semanas:
-            for cartoes in semana["dias"]:
-                cartoes.sort(key=lambda c: ((c["item"].pedido.cliente or ""), c["item"].descricao_produto or ""))
+            for coluna_idx, grupos in enumerate(semana["dias"]):
+                lista = sorted(grupos.values(), key=lambda g: ((g["pedido"].cliente or ""), g["pedido"].pedido_venda or ""))
+                for g in lista:
+                    # se os itens desse pedido não estiverem 100% sincronizados
+                    # (dado antigo, de antes do campo virar único por pedido), o
+                    # card só fica verde quando TODOS já tiverem liberação real —
+                    # senão fica azul (mais conservador).
+                    g["confirmado"] = all(it.liberacao_real is not None for it in g["itens"])
+                semana["dias"][coluna_idx] = lista
 
         total_sem_liberacao_prevista = (
             ItemPedido.query

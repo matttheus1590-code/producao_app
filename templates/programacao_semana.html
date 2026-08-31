@@ -45,16 +45,37 @@
         </div>
         <div class="pcp-dia-col-corpo">
           {% for cartao in semana.dias[coluna] %}
-          <a class="pcp-item-card {{ 'pcp-item-real' if cartao.confirmado else 'pcp-item-prevista' }}"
-             href="{{ url_for('editar_pedido', pedido_id=cartao.item.pedido_id) }}"
-             title="{{ cartao.item.descricao_produto }}">
-            <div class="pcp-item-pedido">{{ cartao.item.pedido.pedido_venda or ('#' + cartao.item.pedido.id|string) }} — {{ cartao.item.pedido.cliente }}</div>
-            <div class="pcp-item-produto">{{ cartao.item.descricao_produto }}</div>
-            <div class="pcp-item-data">
-              <i class="bi bi-{{ 'check-circle-fill' if cartao.confirmado else 'clock-history' }}"></i>
-              {{ 'Real' if cartao.confirmado else 'Prevista' }}: {{ cartao.data.strftime('%d/%m') }}
+          {% set pedido = cartao.pedido %}
+          <div class="pcp-pedido-card {{ 'pcp-item-real' if cartao.confirmado else 'pcp-item-prevista' }}">
+            <div class="pcp-pedido-resumo">
+              <div class="pcp-item-pedido">{{ pedido.pedido_venda or ('#' + pedido.id|string) }} — {{ pedido.cliente }}</div>
+              <div class="pcp-pedido-linha"><i class="bi bi-truck"></i> {{ pedido.frete or "—" }}</div>
+              <div class="pcp-pedido-linha"><i class="bi bi-geo-alt"></i> {{ pedido.estado or "—" }}</div>
+              <div class="pcp-pedido-linha"><i class="bi bi-calendar-check"></i> Solicitado: {{ pedido.data_cliente.strftime('%d/%m/%Y') if pedido.data_cliente else "—" }}</div>
+              {% if cartao.itens|length > 1 %}
+              <div class="pcp-pedido-qtd-itens">{{ cartao.itens|length }} produtos <i class="bi bi-chevron-down"></i></div>
+              {% endif %}
             </div>
-          </a>
+            <div class="pcp-pedido-detalhe">
+              <div class="pcp-pedido-detalhe-titulo">
+                <i class="bi bi-{{ 'check-circle-fill' if cartao.confirmado else 'clock-history' }}"></i>
+                {{ 'Liberação real' if cartao.confirmado else 'Liberação prevista' }}: {{ cartao.data.strftime('%d/%m/%Y') }}
+              </div>
+              {% for item in cartao.itens %}
+              <div class="pcp-pedido-detalhe-item">
+                <div class="fw-semibold">{{ item.descricao_produto }}</div>
+                <div class="text-muted">
+                  Qtd: {{ item.quantidade }}
+                  {% if item.estacao %} · {{ item.estacao }}{% endif %}
+                  · <span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span>
+                </div>
+              </div>
+              {% endfor %}
+              <a class="pcp-pedido-editar-link" href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}">
+                <i class="bi bi-pencil-square"></i> Editar pedido
+              </a>
+            </div>
+          </div>
           {% endfor %}
         </div>
       </div>
@@ -64,4 +85,22 @@
   {% endfor %}
 </div>
 
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  // Card do quadrante mostra só o resumo do pedido; passar o mouse OU clicar
+  // abre o painel com todos os itens. Clique fica "preso" aberto (útil em
+  // touch/mobile, onde não existe hover) até clicar em outro lugar da página.
+  document.addEventListener('click', function (e) {
+    const card = e.target.closest('.pcp-pedido-card');
+    document.querySelectorAll('.pcp-pedido-card.pcp-pedido-aberto').forEach(function (aberto) {
+      if (aberto !== card) aberto.classList.remove('pcp-pedido-aberto');
+    });
+    if (card && !e.target.closest('.pcp-pedido-editar-link')) {
+      card.classList.toggle('pcp-pedido-aberto');
+    }
+  });
+})();
+</script>
 {% endblock %}

@@ -460,6 +460,11 @@ body.col-resizing-ativo {
 --------------------------------------------------------------------- */
 .pcp-calendario-wrap {
   overflow-x: auto;
+  /* explícito: sem isso, overflow-x:auto sozinho faz o navegador tratar
+     overflow-y como "auto" também (em vez de "visible"), e o painel de
+     detalhe (position:absolute) do último card de uma semana ficaria
+     cortado embaixo em vez de flutuar por cima do resto da tela. */
+  overflow-y: visible;
   padding-bottom: 0.5rem;
 }
 
@@ -523,49 +528,117 @@ body.col-resizing-ativo {
   gap: 0.35rem;
 }
 
-.pcp-item-card {
-  display: block;
+/* Card do quadrante = 1 PEDIDO (resumo compacto); passar o mouse ou clicar
+   abre o painel com todos os itens (.pcp-pedido-detalhe), sem sair da tela. */
+.pcp-pedido-card {
+  position: relative;
   background-color: #fff;
   border-radius: 0.4rem;
   padding: 0.4rem 0.5rem;
   font-size: 0.78rem;
   line-height: 1.3;
-  text-decoration: none;
   color: inherit;
   border-left: 4px solid #6c757d;
+  cursor: pointer;
 }
 
-.pcp-item-card:hover {
+.pcp-pedido-card:hover {
   filter: brightness(0.97);
-  color: inherit;
 }
 
-.pcp-item-card.pcp-item-prevista {
+.pcp-pedido-card.pcp-item-prevista {
   border-left-color: #0d6efd;
   background-color: #e7f1ff;
 }
 
-.pcp-item-card.pcp-item-real {
+.pcp-pedido-card.pcp-item-real {
   border-left-color: #198754;
   background-color: #e6f6ec;
 }
 
-.pcp-item-card .pcp-item-pedido {
+.pcp-pedido-card .pcp-item-pedido {
   font-weight: 700;
   color: #212529;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.pcp-item-card .pcp-item-produto {
+.pcp-pedido-linha {
   color: #495057;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.pcp-item-card .pcp-item-data {
-  font-weight: 600;
-  margin-top: 0.15rem;
+.pcp-pedido-linha i {
+  width: 1rem;
+  text-align: center;
+  color: #9aa4b2;
 }
 
-.pcp-item-card.pcp-item-prevista .pcp-item-data { color: #0d6efd; }
-.pcp-item-card.pcp-item-real .pcp-item-data { color: #198754; }
+.pcp-pedido-qtd-itens {
+  margin-top: 0.15rem;
+  font-weight: 600;
+  font-size: 0.72rem;
+  color: #6c757d;
+}
+
+.pcp-pedido-card.pcp-item-prevista .pcp-pedido-qtd-itens,
+.pcp-pedido-card.pcp-item-prevista .pcp-pedido-detalhe-titulo { color: #0d6efd; }
+.pcp-pedido-card.pcp-item-real .pcp-pedido-qtd-itens,
+.pcp-pedido-card.pcp-item-real .pcp-pedido-detalhe-titulo { color: #198754; }
+
+/* painel de detalhe — some por padrão, aparece no hover do card inteiro
+   (inclusive quando o mouse já está sobre o próprio painel) ou quando o
+   JS marca o card como "aberto" via clique. */
+.pcp-pedido-detalhe {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 240px;
+  max-width: 320px;
+  background-color: #fff;
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.18);
+  padding: 0.65rem 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: #212529;
+  white-space: normal;
+}
+
+.pcp-pedido-card:hover .pcp-pedido-detalhe,
+.pcp-pedido-card.pcp-pedido-aberto .pcp-pedido-detalhe {
+  display: block;
+}
+
+.pcp-pedido-detalhe-titulo {
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+}
+
+.pcp-pedido-detalhe-item {
+  padding: 0.3rem 0;
+  border-top: 1px solid #eef1f5;
+}
+
+.pcp-pedido-detalhe-item:first-of-type {
+  border-top: none;
+}
+
+.pcp-pedido-editar-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+  font-weight: 600;
+  color: #0d6efd;
+  text-decoration: none;
+}
+
+.pcp-pedido-editar-link:hover {
+  text-decoration: underline;
+}
