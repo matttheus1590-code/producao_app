@@ -3,157 +3,65 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h4 class="mb-0"><i class="bi bi-calendar-week"></i> Programação semanal</h4>
+  <h4 class="mb-0"><i class="bi bi-calendar-week"></i> Programação — calendário PCP</h4>
   <div class="d-flex align-items-center gap-2">
-    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('programacao_semana', semana=semana_anterior.isoformat()) }}">
-      <i class="bi bi-chevron-left"></i> Semana anterior
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('programacao_semana', **mes_anterior) }}">
+      <i class="bi bi-chevron-left"></i> Mês anterior
     </a>
-    <span class="fw-semibold">{{ segunda.strftime('%d/%m') }} — {{ dias[-1].strftime('%d/%m/%Y') }}</span>
-    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('programacao_semana', semana=semana_seguinte.isoformat()) }}">
-      Próxima semana <i class="bi bi-chevron-right"></i>
+    <span class="fw-semibold text-capitalize">{{ mes_label }}</span>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('programacao_semana', **mes_seguinte) }}">
+      Próximo mês <i class="bi bi-chevron-right"></i>
     </a>
   </div>
 </div>
 
-<div class="kanban-board">
-  {% for dia in dias %}
-  <div class="kanban-coluna">
-    <div class="kanban-coluna-titulo bg-primary bg-opacity-10">
-      <span>{{ ["Segunda","Terça","Quarta","Quinta","Sexta"][loop.index0] }} — {{ dia.strftime('%d/%m') }}</span>
-      {% if pode_editar %}
-      <button type="button" class="btn btn-sm btn-primary py-0 px-1" data-bs-toggle="modal" data-bs-target="#modalNovaProgramacao"
-        onclick="document.getElementById('campoDataProgramada').value = '{{ dia.isoformat() }}'">
-        <i class="bi bi-plus"></i>
-      </button>
-      {% endif %}
+<div class="d-flex flex-wrap align-items-center gap-3 mb-3 small text-muted">
+  <span><span class="badge" style="background-color:#0d6efd;">&nbsp;</span> Liberação prevista</span>
+  <span><span class="badge" style="background-color:#198754;">&nbsp;</span> Liberação real (confirmada)</span>
+  {% if total_sem_liberacao_prevista %}
+  <span class="text-warning-emphasis">
+    <i class="bi bi-exclamation-triangle"></i>
+    {{ total_sem_liberacao_prevista }} item(ns) em produção ainda sem liberação prevista definida
+    (não aparecem no calendário — defina a data na tela de editar pedido).
+  </span>
+  {% endif %}
+</div>
+
+<div class="pcp-calendario-wrap">
+  {% for semana in semanas %}
+  <div class="pcp-semana">
+    <div class="pcp-semana-titulo">
+      <i class="bi bi-calendar3"></i>
+      Semana {{ "%02d"|format(semana.numero) }}
+      <span class="text-muted fw-normal">— {{ semana.inicio.strftime('%d/%m') }} a {{ semana.fim.strftime('%d/%m') }}</span>
     </div>
-    <div class="kanban-coluna-corpo">
-      {% for p in por_dia[dia] %}
-      <div class="card kanban-card mb-2">
-        <div class="card-body p-2">
-          <div class="small text-muted">
-            {{ p.item.pedido.pedido_venda or ('#' + p.item.pedido.id|string) }} — {{ p.item.pedido.cliente }}
-          </div>
-          <div class="fw-semibold small mb-1">{{ p.item.descricao_produto }}</div>
-          <div class="d-flex flex-wrap gap-1 mb-1">
-            <span class="badge bg-secondary">{{ p.estacao }}</span>
-            {% if p.prioridade_producao %}
-            <span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade_producao, 'secondary') }}">{{ p.prioridade_producao }}</span>
-            {% endif %}
-          </div>
-          {% if p.responsavel %}
-          <div class="small text-muted"><i class="bi bi-person"></i> {{ p.responsavel.nome }}</div>
-          {% endif %}
-          {% if p.observacao %}
-          <div class="small text-muted normal-case">{{ p.observacao }}</div>
-          {% endif %}
-          {% if pode_editar %}
-          <div class="d-flex gap-1 mt-2">
-            <button type="button" class="btn btn-sm btn-outline-primary flex-fill py-0" data-bs-toggle="modal" data-bs-target="#modalReprogramar"
-              onclick="document.getElementById('formReprogramar').action = '{{ url_for('programacao_reprogramar', programacao_id=p.id) }}'">
-              <i class="bi bi-calendar-event"></i> Reprogramar
-            </button>
-            <form method="post" action="{{ url_for('programacao_cancelar', programacao_id=p.id) }}"
-              onsubmit="return confirm('Cancelar esta programação?')">
-              <button type="submit" class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-x-lg"></i></button>
-            </form>
-          </div>
-          {% endif %}
+    <div class="pcp-semana-dias">
+      {% for coluna in range(7) %}
+      {% set dia_data = semana.dias_datas[coluna] %}
+      <div class="pcp-dia-col {% if dia_data == hoje %}pcp-dia-hoje{% endif %} {% if dia_data.month != mes %}pcp-dia-fora-do-mes{% endif %}">
+        <div class="pcp-dia-col-titulo">
+          <span>{{ DIAS_SEMANA_LABELS[coluna][:3] }}</span>
+          <span>{{ dia_data.strftime('%d/%m') }}</span>
+        </div>
+        <div class="pcp-dia-col-corpo">
+          {% for cartao in semana.dias[coluna] %}
+          <a class="pcp-item-card {{ 'pcp-item-real' if cartao.confirmado else 'pcp-item-prevista' }}"
+             href="{{ url_for('editar_pedido', pedido_id=cartao.item.pedido_id) }}"
+             title="{{ cartao.item.descricao_produto }}">
+            <div class="pcp-item-pedido">{{ cartao.item.pedido.pedido_venda or ('#' + cartao.item.pedido.id|string) }} — {{ cartao.item.pedido.cliente }}</div>
+            <div class="pcp-item-produto">{{ cartao.item.descricao_produto }}</div>
+            <div class="pcp-item-data">
+              <i class="bi bi-{{ 'check-circle-fill' if cartao.confirmado else 'clock-history' }}"></i>
+              {{ 'Real' if cartao.confirmado else 'Prevista' }}: {{ cartao.data.strftime('%d/%m') }}
+            </div>
+          </a>
+          {% endfor %}
         </div>
       </div>
-      {% else %}
-      <div class="text-muted small text-center py-3">Nada programado</div>
       {% endfor %}
     </div>
   </div>
   {% endfor %}
 </div>
-
-{% if pode_editar %}
-<!-- Modal: nova programação -->
-<div class="modal fade" id="modalNovaProgramacao" tabindex="-1">
-  <div class="modal-dialog">
-    <form method="post" action="{{ url_for('programacao_novo') }}">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">Programar produção</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <input type="hidden" name="data_programada" id="campoDataProgramada">
-          <div class="mb-3">
-            <label class="form-label small text-muted mb-1">Item do pedido</label>
-            <select class="form-select" name="item_pedido_id" required>
-              <option value="">Selecione…</option>
-              {% for i in itens_disponiveis %}
-                <option value="{{ i.id }}">{{ i.pedido.cliente }} — {{ i.descricao_produto }} ({{ i.pedido.pedido_venda or ('#' + i.pedido.id|string) }})</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="row g-2">
-            <div class="col-6">
-              <label class="form-label small text-muted mb-1">Estação</label>
-              <select class="form-select" name="estacao">
-                <option value="">—</option>
-                {% for e in ESTACOES %}
-                  <option value="{{ e }}">{{ e }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-6">
-              <label class="form-label small text-muted mb-1">Prioridade de produção</label>
-              <select class="form-select" name="prioridade_producao">
-                <option value="">—</option>
-                {% for p in PRIORIDADE_OPCOES %}
-                  <option value="{{ p }}">{{ p }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12">
-              <label class="form-label small text-muted mb-1">Responsável</label>
-              <select class="form-select" name="responsavel_id">
-                <option value="">—</option>
-                {% for r in responsaveis %}
-                  <option value="{{ r.id }}">{{ r.nome }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12">
-              <label class="form-label small text-muted mb-1">Observação</label>
-              <textarea class="form-control" name="observacao" rows="2"></textarea>
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button type="submit" class="btn btn-primary">Programar</button>
-        </div>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- Modal: reprogramar -->
-<div class="modal fade" id="modalReprogramar" tabindex="-1">
-  <div class="modal-dialog">
-    <form method="post" id="formReprogramar">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">Reprogramar</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <label class="form-label small text-muted mb-1">Nova data</label>
-          <input type="date" class="form-control" name="data_programada" required>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button type="submit" class="btn btn-primary">Confirmar</button>
-        </div>
-      </div>
-    </form>
-  </div>
-</div>
-{% endif %}
 
 {% endblock %}

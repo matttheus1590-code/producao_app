@@ -452,3 +452,120 @@ body.col-resizing-ativo {
     z-index: 1025;
   }
 }
+
+/* ---------------------------------------------------------------------
+   Calendário PCP da tela de Programação — 1 linha por semana (domingo a
+   sábado), item entra sozinho no dia certo pela liberação prevista (azul)
+   ou liberação real (verde).
+--------------------------------------------------------------------- */
+.pcp-calendario-wrap {
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.pcp-semana {
+  min-width: 1050px;
+}
+
+.pcp-semana + .pcp-semana {
+  margin-top: 1.1rem;
+}
+
+.pcp-semana-titulo {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #495057;
+  margin-bottom: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pcp-semana-dias {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+}
+
+.pcp-dia-col {
+  background-color: #eef1f5;
+  border-radius: 0.5rem;
+  min-height: 90px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pcp-dia-col.pcp-dia-hoje {
+  background-color: #fff3cd;
+  outline: 2px solid #ffc107;
+  outline-offset: -2px;
+}
+
+.pcp-dia-col.pcp-dia-fora-do-mes {
+  opacity: 0.6;
+}
+
+.pcp-dia-col-titulo {
+  padding: 0.4rem 0.55rem 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6c757d;
+  display: flex;
+  justify-content: space-between;
+}
+
+.pcp-dia-col-corpo {
+  padding: 0 0.4rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.pcp-item-card {
+  display: block;
+  background-color: #fff;
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  text-decoration: none;
+  color: inherit;
+  border-left: 4px solid #6c757d;
+}
+
+.pcp-item-card:hover {
+  filter: brightness(0.97);
+  color: inherit;
+}
+
+.pcp-item-card.pcp-item-prevista {
+  border-left-color: #0d6efd;
+  background-color: #e7f1ff;
+}
+
+.pcp-item-card.pcp-item-real {
+  border-left-color: #198754;
+  background-color: #e6f6ec;
+}
+
+.pcp-item-card .pcp-item-pedido {
+  font-weight: 700;
+  color: #212529;
+}
+
+.pcp-item-card .pcp-item-produto {
+  color: #495057;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pcp-item-card .pcp-item-data {
+  font-weight: 600;
+  margin-top: 0.15rem;
+}
+
+.pcp-item-card.pcp-item-prevista .pcp-item-data { color: #0d6efd; }
+.pcp-item-card.pcp-item-real .pcp-item-data { color: #198754; }

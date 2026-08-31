@@ -1061,6 +1061,33 @@ def _somar_meses(ano, mes, delta):
     return (total // 12, total % 12 + 1)
 
 
+# ---------------------------------------------------------------------------
+# Calendário PCP da tela de Programação (pedido do Bruno, 31/08/2026) — semana
+# de verdade (domingo a sábado), só pra esta tela. NÃO usa nem mexe no padrão
+# "SEMANA NN / MÊS / ANO" (dia 1-7, 8-14...) usado em Gestão Operação,
+# Faturamento por Semana e no Planejamento Semanal da Listagem Geral — esses
+# três continuam exatamente como estão, comparando pelo texto já gravado nos
+# pedidos importados da planilha. Misturar as duas convenções faria pedido
+# sumir de semana sem ninguém perceber (testado: quase metade dos meses tem
+# número de semanas diferente entre os dois padrões), por isso são
+# propositalmente independentes.
+def _semanas_calendario_pcp(ano, mes):
+    """Devolve as semanas (domingo a sábado) cujo domingo de início cai no
+    mês/ano dado, cada uma como {"numero", "inicio", "fim"}. Uma semana pode
+    terminar no mês seguinte (ex.: semana 5 de agosto/2026 vai até 05/09) —
+    isso é esperado, é só o card ficando "encostado" no mês seguinte."""
+    primeiro_dia = date(ano, mes, 1)
+    dias_ate_domingo = (6 - primeiro_dia.weekday()) % 7  # weekday(): segunda=0 ... domingo=6
+    domingo = primeiro_dia + timedelta(days=dias_ate_domingo)
+    semanas = []
+    numero = 1
+    while domingo.year == ano and domingo.month == mes:
+        semanas.append({"numero": numero, "inicio": domingo, "fim": domingo + timedelta(days=6)})
+        numero += 1
+        domingo += timedelta(days=7)
+    return semanas
+
+
 def _parse_mes_ano_form(valor, default):
     """Lê um <input type=month> (formato "YYYY-MM") — devolve `default` se
     vier vazio ou num formato que não reconhece."""
@@ -3132,50 +3159,79 @@ def register_routes(app):
         return render_template("cadastros_estacoes_form.html", estacao=estacao, form={})
 
     # ------------------------------------------------------------------
-    # Programação semanal (segunda a sexta) — PCP programa/reprograma
+    # Programação — calendário mensal do PCP (pedido do Bruno, 31/08/2026):
+    # 1 linha por semana (domingo a sábado) do mês, item já entra no dia certo
+    # sozinho pela liberação prevista (azul) ou liberação real (verde), sem
+    # precisar programar nada manualmente. Substitui o board antigo de
+    # segunda-sexta com "+"/modal (ver _semanas_calendario_pcp acima).
     # ------------------------------------------------------------------
     @app.route("/programacao")
     @login_required
     def programacao_semana():
-        semana_param = request.args.get("semana", "").strip()
-        referencia = _parse_data_form(semana_param) if semana_param else date.today()
-        referencia = referencia or date.today()
-        segunda = referencia - timedelta(days=referencia.weekday())
-        dias = [segunda + timedelta(days=i) for i in range(5)]
+        hoje = date.today()
+        ano = request.args.get("ano", hoje.year, type=int)
+        mes = request.args.get("mes", hoje.month, type=int)
+        if not (1 <= mes <= 12):
+            ano, mes = hoje.year, hoje.month
 
-        programacoes = (
-            Programacao.query.options(
-                selectinload(Programacao.item).selectinload(ItemPedido.pedido),
-                selectinload(Programacao.responsavel),
-            )
-            .filter(Programacao.data_programada.in_(dias), Programacao.status == "ATIVA")
-            .all()
-        )
-        por_dia = {d: [] for d in dias}
-        for p in programacoes:
-            por_dia[p.data_programada].append(p)
+        semanas = _semanas_calendario_pcp(ano, mes)
+        inicio_range = semanas[0]["inicio"]
+        fim_range = semanas[-1]["fim"]
 
-        ja_programados = {p.item_pedido_id for p in Programacao.query.filter_by(status="ATIVA").all()}
-        itens_disponiveis = (
+        itens = (
             ItemPedido.query.options(selectinload(ItemPedido.pedido))
-            .filter(ItemPedido.status_producao != "FINALIZADO")
+            .filter(
+                or_(
+                    ItemPedido.liberacao_real.between(inicio_range, fim_range),
+                    and_(
+                        ItemPedido.liberacao_real.is_(None),
+                        ItemPedido.liberacao_prevista.between(inicio_range, fim_range),
+                    ),
+                )
+            )
             .all()
         )
-        itens_disponiveis = [i for i in itens_disponiveis if i.id not in ja_programados]
-        itens_disponiveis.sort(key=lambda i: (i.pedido.cliente or "", i.descricao_produto))
 
-        responsaveis = Usuario.query.filter_by(ativo=True).order_by(Usuario.nome).all()
+        for semana in semanas:
+            semana["dias"] = [[] for _ in range(7)]  # 0=domingo ... 6=sábado
+            semana["dias_datas"] = [semana["inicio"] + timedelta(days=i) for i in range(7)]
+
+        for item in itens:
+            data_efetiva = item.liberacao_real or item.liberacao_prevista
+            for semana in semanas:
+                if semana["inicio"] <= data_efetiva <= semana["fim"]:
+                    coluna = (data_efetiva.weekday() + 1) % 7  # weekday(): segunda=0 -> domingo vira 0
+                    semana["dias"][coluna].append({
+                        "item": item,
+                        "data": data_efetiva,
+                        "confirmado": item.liberacao_real is not None,
+                    })
+                    break
+
+        for semana in semanas:
+            for cartoes in semana["dias"]:
+                cartoes.sort(key=lambda c: ((c["item"].pedido.cliente or ""), c["item"].descricao_produto or ""))
+
+        total_sem_liberacao_prevista = (
+            ItemPedido.query
+            .filter(ItemPedido.liberacao_prevista.is_(None), ItemPedido.liberacao_real.is_(None))
+            .filter(ItemPedido.status_producao != "FINALIZADO")
+            .count()
+        )
+
+        mes_anterior_ano, mes_anterior_mes = _somar_meses(ano, mes, -1)
+        mes_seguinte_ano, mes_seguinte_mes = _somar_meses(ano, mes, 1)
 
         return render_template(
             "programacao_semana.html",
-            dias=dias,
-            por_dia=por_dia,
-            segunda=segunda,
-            semana_anterior=segunda - timedelta(days=7),
-            semana_seguinte=segunda + timedelta(days=7),
-            itens_disponiveis=itens_disponiveis,
-            responsaveis=responsaveis,
-            pode_editar=(current_user.role in ("ADMIN", "PCP")),
+            semanas=semanas,
+            ano=ano, mes=mes,
+            mes_label=f"{MESES_PT[mes - 1]} / {ano}",
+            mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
+            mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
+            hoje=hoje,
+            total_sem_liberacao_prevista=total_sem_liberacao_prevista,
+            DIAS_SEMANA_LABELS=["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"],
         )
 
     @app.route("/programacao/novo", methods=["POST"])
