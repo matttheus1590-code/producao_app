@@ -105,6 +105,36 @@
             <label class="form-label">Observações do pedido</label>
             <textarea class="form-control" name="obs" rows="2">{{ pedido.obs or '' }}</textarea>
           </div>
+
+          <div class="col-12"><hr class="my-1"></div>
+          <div class="col-12">
+            <div class="small text-muted mb-1">
+              <i class="bi bi-info-circle"></i>
+              Planejamento semanal, liberação prevista e liberação real do pedido inteiro — ao salvar, esses 3 campos
+              são aplicados automaticamente em todos os produtos deste pedido (não dá mais pra editar cada produto
+              separado; pra mudar, edite aqui em cima).
+            </div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Liberação prevista</label>
+            <input type="date" class="form-control" name="liberacao_prevista"
+                   value="{{ (pedido.itens[0].liberacao_prevista or '') if pedido.itens else '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Liberação real</label>
+            <input type="date" class="form-control" name="liberacao_real"
+                   value="{{ (pedido.itens[0].liberacao_real or '') if pedido.itens else '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Planejamento semanal (PCP)</label>
+            <select class="form-select" name="planejamento_semanal">
+              <option value="">—</option>
+              {% set semana_atual = pedido.itens[0].planejamento_semanal if pedido.itens else '' %}
+              {% for semana in GO_SEMANAS_PCP %}
+                <option value="{{ semana }}" {% if semana_atual == semana %}selected{% endif %}>{{ semana }}</option>
+              {% endfor %}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -187,23 +217,6 @@
               <label class="form-label small text-muted mb-1">Liberação de faturamento</label>
               <input type="date" class="form-control" name="item_liberacao_faturamento[]" value="{{ item.liberacao_faturamento or '' }}">
             </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Liberação prevista</label>
-              <input type="date" class="form-control" name="item_liberacao_prevista[]" value="{{ item.liberacao_prevista or '' }}">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Liberação real</label>
-              <input type="date" class="form-control" name="item_liberacao_real[]" value="{{ item.liberacao_real or '' }}">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
-              <select class="form-select" name="item_planejamento_semanal[]">
-                <option value="">—</option>
-                {% for semana in GO_SEMANAS_PCP %}
-                  <option value="{{ semana }}" {% if item.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
-                {% endfor %}
-              </select>
-            </div>
 
             <div class="col-md-3">
               <label class="form-label small text-muted mb-1">Nº nota fiscal</label>
@@ -263,7 +276,6 @@
   const totalEl = document.getElementById('valorTotalPreview');
   const ESTACOES = [{% for e in ESTACOES %}{{ e | tojson }},{% endfor %}];
   const STATUS_OPCOES = [{% for s in STATUS_OPCOES %}{{ s | tojson }},{% endfor %}];
-  const GO_SEMANAS_PCP = [{% for s in GO_SEMANAS_PCP %}{{ s | tojson }},{% endfor %}];
   const TRANSPORTADORAS = [{% for t in transportadoras %}{id: {{ t.id }}, nome: {{ t.nome | tojson }}},{% endfor %}];
 
   function opcoes(lista, comVazio) {
@@ -336,18 +348,6 @@
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Liberação de faturamento</label>
           <input type="date" class="form-control" name="item_liberacao_faturamento[]">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Liberação prevista</label>
-          <input type="date" class="form-control" name="item_liberacao_prevista[]">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Liberação real</label>
-          <input type="date" class="form-control" name="item_liberacao_real[]">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
-          <select class="form-select" name="item_planejamento_semanal[]">${opcoes(GO_SEMANAS_PCP, true)}</select>
         </div>
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Nº nota fiscal</label>

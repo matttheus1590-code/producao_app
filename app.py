@@ -2489,7 +2489,16 @@ def register_routes(app):
             pedido_depois = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_PEDIDO}
             _registrar_alteracoes("pedido", pedido.id, pedido.id, pedido_antes, pedido_depois, CAMPOS_HISTORICO_PEDIDO)
 
-            # ---- itens do pedido (vários produtos, cada um com sua própria produção) ----
+            # Planejamento semanal / liberação prevista / liberação real (pedido do
+            # Bruno, 31/08/2026): deixaram de ser editáveis por item — agora só
+            # existe um campo de cada no topo do pedido, e o valor é replicado pra
+            # TODOS os itens ao salvar (por isso lidos uma vez só, fora do loop de
+            # itens, em vez de via getlist("item_...[]") como os campos por item).
+            lib_prevista_pedido = _parse_data_form(f.get("liberacao_prevista"))
+            lib_real_pedido = _parse_data_form(f.get("liberacao_real"))
+            planejamento_semanal_pedido = f.get("planejamento_semanal", "").strip() or None
+
+            # ---- itens do pedido (vários produtos, cada um com sua própria estação/status/produção) ----
             item_ids = f.getlist("item_id[]")
             descricoes = f.getlist("item_descricao[]")
             quantidades = f.getlist("item_quantidade[]")
@@ -2501,9 +2510,6 @@ def register_routes(app):
             inicios_inspecao = f.getlist("item_inicio_inspecao[]")
             terminos_inspecao = f.getlist("item_termino_inspecao[]")
             liberacoes_faturamento = f.getlist("item_liberacao_faturamento[]")
-            liberacoes_prevista = f.getlist("item_liberacao_prevista[]")
-            liberacoes_real = f.getlist("item_liberacao_real[]")
-            planejamentos_semanais = f.getlist("item_planejamento_semanal[]")
             notas_fiscais = f.getlist("item_numero_nota_fiscal[]")
             valores_faturados = f.getlist("item_valor_faturado[]")
             transportadoras_ids = f.getlist("item_transportadora_id[]")
@@ -2518,11 +2524,11 @@ def register_routes(app):
             linhas = zip(
                 item_ids, descricoes, quantidades, custos, estacoes, status_itens, rncs,
                 inicios_producao, inicios_inspecao, terminos_inspecao,
-                liberacoes_faturamento, liberacoes_prevista, liberacoes_real, planejamentos_semanais, notas_fiscais, valores_faturados,
+                liberacoes_faturamento, notas_fiscais, valores_faturados,
                 transportadoras_ids, datas_envio,
             )
             for (item_id, desc, qtd, custo, estacao_item, status_item, rnc,
-                 ini_prod, ini_insp, term_insp, lib_fat, lib_prev, lib_real, planejamento_semanal, nf, valor_faturado,
+                 ini_prod, ini_insp, term_insp, lib_fat, nf, valor_faturado,
                  transportadora_id, data_envio) in linhas:
                 desc = desc.strip()
 
@@ -2548,9 +2554,9 @@ def register_routes(app):
                 item.inicio_inspecao = _parse_data_form(ini_insp)
                 item.termino_inspecao = _parse_data_form(term_insp)
                 item.liberacao_faturamento = _parse_data_form(lib_fat)
-                item.liberacao_prevista = _parse_data_form(lib_prev)
-                item.liberacao_real = _parse_data_form(lib_real)
-                item.planejamento_semanal = planejamento_semanal.strip() or None
+                item.liberacao_prevista = lib_prevista_pedido
+                item.liberacao_real = lib_real_pedido
+                item.planejamento_semanal = planejamento_semanal_pedido
                 item.numero_nota_fiscal = nf.strip() or None
                 item.valor_faturado = _parse_float_form(valor_faturado, default=None) if valor_faturado.strip() else None
                 item.transportadora_id = int(transportadora_id) if transportadora_id.strip().isdigit() else None
