@@ -1,0 +1,218 @@
+{# Campos do formulário de RNC — reaproveitado por qualidade_novo.html e
+   qualidade_editar.html. Espera uma variável `valores` (dict ou MultiDict,
+   ambos suportam .get) com os campos já formatados como string pronta pra
+   <input>/<select> (ver _rnc_para_form_dict em app.py para a tela de edição). #}
+
+{# Campo de texto livre com sugestões (<datalist>), não um <select> travado.
+   Usado nos campos que vieram da aba "Listas" da planilha do Bruno mas que,
+   na prática, têm RNCs reais com valor fora da lista (ex.: "Documental (OP)"
+   em Tipo de NC) — um <select> rígido apagaria esse valor assim que o RNC
+   fosse salvo de novo, mesmo sem ninguém mexer nesse campo. Com datalist o
+   usuário digita/escolhe livremente e o valor já salvo nunca é perdido. #}
+{% macro campo_sugestao(label, nome, opcoes, valores) %}
+<label class="form-label">{{ label }}</label>
+<input type="text" class="form-control" name="{{ nome }}" list="dl_{{ nome }}" value="{{ valores.get(nome,'') }}" autocomplete="off">
+<datalist id="dl_{{ nome }}">
+  {% for op in opcoes %}<option value="{{ op }}">{% endfor %}
+</datalist>
+{% endmacro %}
+
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-card-heading"></i> Identificação</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-2">
+    <label class="form-label">Nº RNC</label>
+    <input type="text" class="form-control" name="numero_rnc" value="{{ valores.get('numero_rnc','') }}" placeholder="ex.: 11/26">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label">Revisão</label>
+    <input type="number" class="form-control" name="revisao" value="{{ valores.get('revisao','0') }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label">Data emissão</label>
+    <input type="date" class="form-control" name="data_emissao" value="{{ valores.get('data_emissao','') }}">
+  </div>
+  <div class="col-md-3">
+    {{ campo_sugestao("Emitente", "emitente", RNC_EMITENTE_OPCOES, valores) }}
+  </div>
+  <div class="col-md-3">
+    {{ campo_sugestao("Setor", "setor", RNC_SETOR_OPCOES, valores) }}
+  </div>
+  <div class="col-md-4">
+    {{ campo_sugestao("Origem", "origem", RNC_ORIGEM_OPCOES, valores) }}
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Cliente / Projeto *</label>
+    <input type="text" class="form-control" name="cliente_projeto" value="{{ valores.get('cliente_projeto','') }}" required>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Nº Pedido / Contrato</label>
+    <input type="text" class="form-control" name="numero_pedido_contrato" value="{{ valores.get('numero_pedido_contrato','') }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Produto / Equipamento</label>
+    <input type="text" class="form-control" name="produto_equipamento" value="{{ valores.get('produto_equipamento','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Nº da OP</label>
+    <input type="text" class="form-control" name="numero_op" value="{{ valores.get('numero_op','') }}">
+  </div>
+  <div class="col-md-3">
+    {{ campo_sugestao("Local / Setor", "local_setor", RNC_LOCAL_SETOR_OPCOES, valores) }}
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Data identificação</label>
+    <input type="date" class="form-control" name="data_identificacao" value="{{ valores.get('data_identificacao','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Responsável identificação</label>
+    <input type="text" class="form-control" name="responsavel_identificacao" value="{{ valores.get('responsavel_identificacao','') }}">
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-exclamation-diamond"></i> Descrição da não conformidade</h6>
+<div class="row g-3 mb-2">
+  <div class="col-12">
+    <label class="form-label">Descrição da Não Conformidade *</label>
+    <textarea class="form-control" name="descricao_nc" rows="2" required>{{ valores.get('descricao_nc','') }}</textarea>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Qtd. não conforme</label>
+    <input type="number" class="form-control" name="qtd_nao_conforme" value="{{ valores.get('qtd_nao_conforme','') }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Requisito não atendido</label>
+    <input type="text" class="form-control" name="requisito_nao_atendido" value="{{ valores.get('requisito_nao_atendido','') }}">
+  </div>
+  <div class="col-md-3">
+    {{ campo_sugestao("Tipo de não conformidade", "tipo_nc", RNC_TIPO_NC_OPCOES, valores) }}
+  </div>
+  <div class="col-md-2">
+    {{ campo_sugestao("Severidade", "severidade", RNC_SEVERIDADE_OPCOES, valores) }}
+  </div>
+  <div class="col-12">
+    <label class="form-label">Ação de contenção imediata</label>
+    <textarea class="form-control" name="acao_contencao_imediata" rows="2">{{ valores.get('acao_contencao_imediata','') }}</textarea>
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-search"></i> Análise de causa raiz</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-6">
+    <label class="form-label">1º Por quê?</label>
+    <textarea class="form-control" name="porque_1" rows="2">{{ valores.get('porque_1','') }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">2º Por quê?</label>
+    <textarea class="form-control" name="porque_2" rows="2">{{ valores.get('porque_2','') }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">3º Por quê?</label>
+    <textarea class="form-control" name="porque_3" rows="2">{{ valores.get('porque_3','') }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">4º Por quê?</label>
+    <textarea class="form-control" name="porque_4" rows="2">{{ valores.get('porque_4','') }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">5º Por quê?</label>
+    <textarea class="form-control" name="porque_5" rows="2">{{ valores.get('porque_5','') }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Causa raiz identificada</label>
+    <textarea class="form-control" name="causa_raiz" rows="2">{{ valores.get('causa_raiz','') }}</textarea>
+  </div>
+  <div class="col-md-6">
+    {{ campo_sugestao("Ferramenta de análise usada", "ferramenta_analise", RNC_FERRAMENTA_ANALISE_OPCOES, valores) }}
+  </div>
+  <div class="col-md-6">
+    {{ campo_sugestao("Disposição do produto", "disposicao_produto", RNC_DISPOSICAO_OPCOES, valores) }}
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-tools"></i> Ação corretiva</h6>
+<div class="row g-3 mb-2">
+  <div class="col-12">
+    <label class="form-label">Ação corretiva — descrição</label>
+    <textarea class="form-control" name="acao_corretiva_descricao" rows="2">{{ valores.get('acao_corretiva_descricao','') }}</textarea>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Responsável ação corretiva</label>
+    <input type="text" class="form-control" name="responsavel_acao_corretiva" value="{{ valores.get('responsavel_acao_corretiva','') }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Prazo ação corretiva</label>
+    <input type="date" class="form-control" name="prazo_acao_corretiva" value="{{ valores.get('prazo_acao_corretiva','') }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Data realização</label>
+    <input type="date" class="form-control" name="data_realizacao" value="{{ valores.get('data_realizacao','') }}">
+  </div>
+  <div class="col-md-4">
+    {{ campo_sugestao("Status da ação corretiva", "status_acao_corretiva", RNC_STATUS_ACAO_OPCOES, valores) }}
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-patch-check"></i> Verificação de eficácia</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-3">
+    <label class="form-label">Data verificação eficácia</label>
+    <input type="date" class="form-control" name="data_verificacao_eficacia" value="{{ valores.get('data_verificacao_eficacia','') }}">
+  </div>
+  <div class="col-md-3">
+    {{ campo_sugestao("Eficácia da ação", "eficacia_acao", RNC_EFICACIA_OPCOES, valores) }}
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Reincidência?</label>
+    <select class="form-select" name="reincidencia">
+      <option value="">Selecione…</option>
+      {% for op in RNC_SIM_NAO_OPCOES %}
+        <option value="{{ op }}" {% if valores.get('reincidencia') == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Nº RNC relacionada</label>
+    <input type="text" class="form-control" name="numero_rnc_relacionada" value="{{ valores.get('numero_rnc_relacionada','') }}">
+  </div>
+  <div class="col-12">
+    <label class="form-label">Observações / resultados da verificação</label>
+    <textarea class="form-control" name="obs_verificacao" rows="2">{{ valores.get('obs_verificacao','') }}</textarea>
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-flag"></i> Encerramento</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-3">
+    <label class="form-label">Custo estimado NC (R$)</label>
+    <input type="text" class="form-control" name="custo_estimado" value="{{ valores.get('custo_estimado','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Status geral do RNC</label>
+    <select class="form-select" name="status_geral">
+      {% for op in RNC_STATUS_GERAL_OPCOES %}
+        <option value="{{ op }}" {% if valores.get('status_geral', 'Aberto') == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Responsável Qualidade</label>
+    <input type="text" class="form-control" name="responsavel_qualidade" value="{{ valores.get('responsavel_qualidade','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Data fechamento</label>
+    <input type="date" class="form-control" name="data_fechamento" value="{{ valores.get('data_fechamento','') }}">
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Evidências / anexos</label>
+    <input type="text" class="form-control" name="evidencias_anexos" value="{{ valores.get('evidencias_anexos','') }}" placeholder="link ou referência do arquivo">
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Observações gerais</label>
+    <textarea class="form-control" name="observacoes_gerais" rows="2">{{ valores.get('observacoes_gerais','') }}</textarea>
+  </div>
+</div>

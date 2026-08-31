@@ -93,6 +93,66 @@ _SEMAFORO_PRIORIDADE = {"vermelho": 0, "amarelo": 1, "verde": 2, "cinza": 3}  # 
 # ---------------------------------------------------------------------------
 GO_OTD_META_PERCENTUAL = 78
 
+# ---------------------------------------------------------------------------
+# Qualidade — RNC (Relatório de Não Conformidade). Vieram da planilha
+# "Controle RNC" que o Bruno enviou (aba "Listas"), servem só como sugestão
+# nos <select> dos formulários — o campo no banco é texto livre (String), não
+# um Enum, porque a própria planilha original do Bruno já tinha valores fora
+# dessas listas em alguns RNCs reais (ex.: "Documental (OP)" no Tipo de NC).
+# Controle 100% manual, então o sistema nunca deve travar/rejeitar um valor
+# digitado que não esteja aqui — só oferecer como atalho.
+# ---------------------------------------------------------------------------
+RNC_EMITENTE_OPCOES = ["Qualidade", "Engenharia", "Produção"]
+RNC_SETOR_OPCOES = ["Qualidade", "Engenharia", "Produção", "Metrologia", "Almoxarifado"]
+RNC_ORIGEM_OPCOES = [
+    "Inspeção Interna",
+    "Reclamação de Cliente",
+    "Auditoria Interna",
+    "Auditoria Externa",
+    "Reunião Análise Crítica da Direção",
+]
+RNC_LOCAL_SETOR_OPCOES = [
+    "PU", "Usinagem", "Montagem", "Solda", "Pintura", "Almoxarifado",
+    "Expedição", "Recebimento", "Metrologia", "Injeção", "PCP", "Mecânica", "Espumagem",
+]
+RNC_TIPO_NC_OPCOES = [
+    "Dimensional",
+    "Dureza / Material",
+    "Visual / Estética",
+    "Funcional",
+    "Documentação",
+    "Embalagem",
+    "Identificação / Rastreabilidade",
+    "Processo",
+    "Fornecedor",
+    "Outro",
+]
+RNC_SEVERIDADE_OPCOES = ["Crítica", "Maior", "Menor"]
+RNC_FERRAMENTA_ANALISE_OPCOES = [
+    "5 Porquês", "Ishikawa (Espinha de Peixe)", "Pareto", "FMEA", "Diagrama de Dispersão", "Outro",
+]
+RNC_DISPOSICAO_OPCOES = [
+    "Retrabalhar", "Reparar", "Uso sob Concessão", "Devolução ao Fornecedor", "Sucatear", "Reciclar",
+]
+RNC_STATUS_ACAO_OPCOES = ["Não Iniciada", "Em Andamento", "Concluída", "Atrasada"]
+RNC_EFICACIA_OPCOES = ["Eficaz", "Não Eficaz", "Pendente"]
+RNC_SIM_NAO_OPCOES = ["Sim", "Não"]
+RNC_STATUS_GERAL_OPCOES = [
+    "Aberto", "Em Análise", "Em Ação Corretiva", "Aguardando Verificação", "Fechado", "Cancelado",
+]
+RNC_STATUS_GERAL_ABERTOS = ["Aberto", "Em Análise", "Em Ação Corretiva", "Aguardando Verificação"]
+
+RNC_SEVERIDADE_CORES = {"Crítica": "danger", "Maior": "warning", "Menor": "secondary"}
+RNC_STATUS_GERAL_CORES = {
+    "Aberto": "danger",
+    "Em Análise": "warning",
+    "Em Ação Corretiva": "info",
+    "Aguardando Verificação": "primary",
+    "Fechado": "success",
+    "Cancelado": "secondary",
+}
+RNC_EFICACIA_CORES = {"Eficaz": "success", "Não Eficaz": "danger", "Pendente": "secondary"}
+
 _MESES_ABREV_PCP = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"]
 
 
@@ -670,6 +730,102 @@ class PedidoOperacao(db.Model):
         if self.go_data_efetiva_liberacao_pcp or self.go_data_pedido_expedido or self.go_data_real_entrega:
             return "ANDAMENTO"
         return "PENDENTE"
+
+
+class RncQualidade(db.Model):
+    """Qualidade — RNC (Relatório de Não Conformidade). Réplica da planilha
+    "Controle RNC" do Bruno (aba "Controle RNC - Agosto" + aba "Dashboard",
+    calculada aqui a partir destas linhas). TOTALMENTE INDEPENDENTE de
+    Pedido/ItemPedido e de PedidoOperacao — tabela própria, id próprio, sem
+    FK com nenhuma outra tabela, mesmo padrão de PedidoOperacao. Controle
+    100% manual (Bruno: "controle manual com entrada de números e textos") —
+    nenhum campo aqui é calculado a partir de Gestão Produção/Operação.
+
+    `numero_rnc` é texto (não sequencial automático) porque a planilha usa um
+    formato "NN/AA" (ex.: "07/26") escolhido por quem abre o RNC, e o Bruno
+    pode querer manter essa numeração ao migrar RNCs futuros.
+    """
+
+    __tablename__ = "rnc_qualidade"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # ---------------- Identificação ----------------
+    numero_rnc = db.Column(db.String(20), nullable=True)
+    revisao = db.Column(db.Integer, nullable=True, default=0)
+    data_emissao = db.Column(db.Date, nullable=True)
+    emitente = db.Column(db.String(60), nullable=True)
+    setor = db.Column(db.String(60), nullable=True)
+    origem = db.Column(db.String(80), nullable=True)
+
+    # ---------------- Origem da não conformidade ----------------
+    cliente_projeto = db.Column(db.String(200), nullable=True)
+    numero_pedido_contrato = db.Column(db.String(60), nullable=True)
+    produto_equipamento = db.Column(db.String(200), nullable=True)
+    numero_op = db.Column(db.String(30), nullable=True)
+    local_setor = db.Column(db.String(60), nullable=True)
+    data_identificacao = db.Column(db.Date, nullable=True)
+    responsavel_identificacao = db.Column(db.String(120), nullable=True)
+
+    # ---------------- Descrição da não conformidade ----------------
+    descricao_nc = db.Column(db.Text, nullable=True)
+    qtd_nao_conforme = db.Column(db.Integer, nullable=True)
+    requisito_nao_atendido = db.Column(db.String(200), nullable=True)
+    tipo_nc = db.Column(db.String(60), nullable=True)
+    severidade = db.Column(db.String(20), nullable=True)
+    acao_contencao_imediata = db.Column(db.Text, nullable=True)
+
+    # ---------------- Análise de causa raiz (5 Porquês) ----------------
+    porque_1 = db.Column(db.Text, nullable=True)
+    porque_2 = db.Column(db.Text, nullable=True)
+    porque_3 = db.Column(db.Text, nullable=True)
+    porque_4 = db.Column(db.Text, nullable=True)
+    porque_5 = db.Column(db.Text, nullable=True)
+    causa_raiz = db.Column(db.Text, nullable=True)
+    ferramenta_analise = db.Column(db.String(60), nullable=True)
+    disposicao_produto = db.Column(db.String(60), nullable=True)
+
+    # ---------------- Ação corretiva ----------------
+    acao_corretiva_descricao = db.Column(db.Text, nullable=True)
+    responsavel_acao_corretiva = db.Column(db.String(120), nullable=True)
+    prazo_acao_corretiva = db.Column(db.Date, nullable=True)
+    data_realizacao = db.Column(db.Date, nullable=True)
+    status_acao_corretiva = db.Column(db.String(30), nullable=True)
+
+    # ---------------- Verificação de eficácia ----------------
+    data_verificacao_eficacia = db.Column(db.Date, nullable=True)
+    eficacia_acao = db.Column(db.String(20), nullable=True)
+    obs_verificacao = db.Column(db.Text, nullable=True)
+    reincidencia = db.Column(db.String(10), nullable=True)  # "Sim" / "Não"
+    numero_rnc_relacionada = db.Column(db.String(20), nullable=True)
+
+    # ---------------- Encerramento ----------------
+    custo_estimado = db.Column(db.Float, nullable=True)
+    status_geral = db.Column(db.String(30), nullable=True, default="Aberto")
+    responsavel_qualidade = db.Column(db.String(120), nullable=True)
+    data_fechamento = db.Column(db.Date, nullable=True)
+    evidencias_anexos = db.Column(db.Text, nullable=True)
+    observacoes_gerais = db.Column(db.Text, nullable=True)
+
+    criado_por_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    criado_por = db.relationship("Usuario", foreign_keys=[criado_por_id])
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def dias_em_aberto(self):
+        """Dias desde a identificação até o fechamento — ou até hoje, se ainda
+        aberto. Calculado (não guardado) para nunca ficar desatualizado
+        enquanto o RNC segue em aberto, ao contrário da planilha original
+        (coluna "Dias em Aberto" fixa, congelada no dia da exportação)."""
+        if not self.data_identificacao:
+            return None
+        fim = self.data_fechamento or date.today()
+        return (fim - self.data_identificacao).days
+
+    @property
+    def esta_aberto(self):
+        return (self.status_geral or "Aberto") in RNC_STATUS_GERAL_ABERTOS
 
 
 class ControleSistema(db.Model):

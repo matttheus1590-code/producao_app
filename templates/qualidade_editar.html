@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Qualidade · Editar RNC {{ rnc.numero_rnc or ("#" ~ rnc.id) }} · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0">
+    <i class="bi bi-clipboard2-data"></i> RNC {{ rnc.numero_rnc or ("#" ~ rnc.id) }}
+    {% if rnc.cliente_projeto %}<span class="text-muted fw-normal">— {{ rnc.cliente_projeto }}</span>{% endif %}
+  </h4>
+  <span class="badge bg-{{ RNC_STATUS_GERAL_CORES.get(rnc.status_geral, 'secondary') }} fs-6">{{ rnc.status_geral or "Aberto" }}</span>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Severidade</div>
+        <div class="fs-5 fw-semibold">
+          {% if rnc.severidade %}
+          <span class="badge bg-{{ RNC_SEVERIDADE_CORES.get(rnc.severidade, 'secondary') }}">{{ rnc.severidade }}</span>
+          {% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Dias em aberto</div>
+        <div class="fs-5 fw-semibold">{{ rnc.dias_em_aberto if rnc.dias_em_aberto is not none else "—" }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Eficácia da ação</div>
+        <div class="fs-5 fw-semibold">
+          {% if rnc.eficacia_acao %}
+          <span class="badge bg-{{ RNC_EFICACIA_CORES.get(rnc.eficacia_acao, 'secondary') }}">{{ rnc.eficacia_acao }}</span>
+          {% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Custo estimado</div>
+        <div class="fs-5 fw-semibold">{{ "R$ %.2f"|format(rnc.custo_estimado) if rnc.custo_estimado else "—" }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xl-8">
+    <form method="post" class="card p-4 shadow-sm">
+      {% include "_qualidade_form_campos.html" %}
+
+      <div class="d-flex justify-content-end gap-2 mt-4">
+        <a href="{{ url_for('qualidade_lista') }}" class="btn btn-outline-secondary">Voltar</a>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Salvar alterações</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-12 col-xl-4">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Histórico de alterações</h6>
+        {% if historico %}
+        <ul class="list-unstyled mb-0" style="max-height: 640px; overflow-y: auto;">
+          {% for h in historico %}
+          <li class="mb-3 pb-2 border-bottom">
+            <div class="small text-muted">
+              {{ h.criado_em.strftime('%d/%m/%Y %H:%M') }} · {{ h.usuario_nome or "sistema" }}
+            </div>
+            <div>
+              <strong class="normal-case">{{ h.campo }}</strong>:
+              <span class="text-muted normal-case">{{ h.valor_anterior or "—" }}</span>
+              <i class="bi bi-arrow-right mx-1"></i>
+              <span class="normal-case">{{ h.valor_novo or "—" }}</span>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted mb-0">Nenhuma alteração registrada ainda para este RNC.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat_card %}
+{% block title %}Qualidade · Dashboard · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-clipboard2-pulse"></i> Dashboard da Qualidade — Indicadores de RNC</h4>
+  <a href="{{ url_for('qualidade_lista') }}" class="btn btn-outline-primary btn-sm">
+    <i class="bi bi-list-ul"></i> Ver controle RNC
+  </a>
+</div>
+<p class="text-muted small mb-4">Calculado ao vivo a partir de todos os RNCs cadastrados no Controle RNC.</p>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Total de RNCs", dados.total, link=url_for('qualidade_lista')) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("RNCs abertas", dados.abertas, cor="danger", link=url_for('qualidade_lista', apenas_abertas='1')) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("RNCs fechadas", dados.fechadas, cor="success", link=url_for('qualidade_lista', status_geral='Fechado')) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("% Reincidência", dados.pct_reincidencia ~ "%") }}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Ações não eficazes", dados.acoes_nao_eficazes, cor=("danger" if dados.acoes_nao_eficazes else None)) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("RNCs críticas abertas", dados.criticas_abertas, cor=("danger" if dados.criticas_abertas else None), link=url_for('qualidade_lista', severidade='Crítica', apenas_abertas='1')) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Tempo médio aberto (dias)", dados.tempo_medio_aberto) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Custo total estimado", "R$ " ~ "{:,.2f}".format(dados.custo_total).replace(",", "X").replace(".", ",").replace("X", ".")) }}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">RNCs por origem</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_origem %}
+            <tr><td>{{ l.chave }}</td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem RNCs ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">RNCs por tipo de NC</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_tipo_nc %}
+            <tr><td>{{ l.chave }}</td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem RNCs ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">RNCs por severidade</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_severidade %}
+            <tr><td><span class="badge bg-{{ RNC_SEVERIDADE_CORES.get(l.chave, 'secondary') }}">{{ l.chave }}</span></td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem RNCs ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">RNCs por status geral</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_status_geral %}
+            <tr><td><span class="badge bg-{{ RNC_STATUS_GERAL_CORES.get(l.chave, 'secondary') }}">{{ l.chave }}</span></td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem RNCs ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Eficácia das ações corretivas</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_eficacia %}
+            <tr><td><span class="badge bg-{{ RNC_EFICACIA_CORES.get(l.chave, 'secondary') }}">{{ l.chave }}</span></td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem RNCs ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Status da ação corretiva</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_status_acao %}
+            <tr><td>{{ l.chave }}</td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem RNCs ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

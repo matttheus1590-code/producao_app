@@ -21,6 +21,22 @@ from models import (
     PRIORIDADE_OPCOES,
     REGIAO_POR_UF,
     REGIOES_OPCOES,
+    RNC_DISPOSICAO_OPCOES,
+    RNC_EFICACIA_CORES,
+    RNC_EFICACIA_OPCOES,
+    RNC_EMITENTE_OPCOES,
+    RNC_FERRAMENTA_ANALISE_OPCOES,
+    RNC_LOCAL_SETOR_OPCOES,
+    RNC_ORIGEM_OPCOES,
+    RNC_SETOR_OPCOES,
+    RNC_SEVERIDADE_CORES,
+    RNC_SEVERIDADE_OPCOES,
+    RNC_SIM_NAO_OPCOES,
+    RNC_STATUS_ACAO_OPCOES,
+    RNC_STATUS_GERAL_ABERTOS,
+    RNC_STATUS_GERAL_CORES,
+    RNC_STATUS_GERAL_OPCOES,
+    RNC_TIPO_NC_OPCOES,
     SEMAFORO_CORES,
     SEMAFORO_LABELS,
     STATUS_CHAO_CORES,
@@ -35,6 +51,7 @@ from models import (
     Pedido,
     PedidoOperacao,
     Programacao,
+    RncQualidade,
     Transportadora,
     Usuario,
     gerar_semanas_pcp,
@@ -141,6 +158,7 @@ def create_app():
         # semana 04/Ago manualmente — precisa rodar depois da sincronização
         # acima (que é quem trouxe o pedido 835 com a semana errada).
         _corrigir_semana_pcp_morken_835(app)
+        _seed_rnc_qualidade(app)
 
     @app.context_processor
     def inject_globals():
@@ -163,6 +181,21 @@ def create_app():
             STATUS_CHAO_CORES=STATUS_CHAO_CORES,
             GO_OTD_META_PERCENTUAL=GO_OTD_META_PERCENTUAL,
             GO_SEMANAS_PCP=gerar_semanas_pcp(),
+            RNC_EMITENTE_OPCOES=RNC_EMITENTE_OPCOES,
+            RNC_SETOR_OPCOES=RNC_SETOR_OPCOES,
+            RNC_ORIGEM_OPCOES=RNC_ORIGEM_OPCOES,
+            RNC_LOCAL_SETOR_OPCOES=RNC_LOCAL_SETOR_OPCOES,
+            RNC_TIPO_NC_OPCOES=RNC_TIPO_NC_OPCOES,
+            RNC_SEVERIDADE_OPCOES=RNC_SEVERIDADE_OPCOES,
+            RNC_FERRAMENTA_ANALISE_OPCOES=RNC_FERRAMENTA_ANALISE_OPCOES,
+            RNC_DISPOSICAO_OPCOES=RNC_DISPOSICAO_OPCOES,
+            RNC_STATUS_ACAO_OPCOES=RNC_STATUS_ACAO_OPCOES,
+            RNC_EFICACIA_OPCOES=RNC_EFICACIA_OPCOES,
+            RNC_SIM_NAO_OPCOES=RNC_SIM_NAO_OPCOES,
+            RNC_STATUS_GERAL_OPCOES=RNC_STATUS_GERAL_OPCOES,
+            RNC_SEVERIDADE_CORES=RNC_SEVERIDADE_CORES,
+            RNC_STATUS_GERAL_CORES=RNC_STATUS_GERAL_CORES,
+            RNC_EFICACIA_CORES=RNC_EFICACIA_CORES,
         )
 
     register_routes(app)
@@ -808,6 +841,34 @@ def _corrigir_semana_pcp_morken_835(app):
         )
     db.session.add(ControleSistema(chave=_CHAVE_CORRECAO_SEMANA_MORKEN_835))
     db.session.commit()
+
+
+_CHAVE_SEED_RNC_QUALIDADE_31_08_2026 = "seed_rnc_qualidade_31_08_2026"
+
+
+def _seed_rnc_qualidade(app):
+    """Importa (uma única vez) a planilha "Controle RNC - Qualidade" que o
+    Bruno enviou em 31/08/2026 pra dentro da tabela `rnc_qualidade`, nova
+    (nasce vazia — `db.create_all()` já criou a tabela nesta mesma execução
+    do boot, antes desta função rodar).
+
+    Guardado por `ControleSistema` (mesmo padrão das outras importações/
+    sincronizações pontuais) em vez de só checar "tabela vazia": assim, se o
+    Bruno apagar algum RNC de teste depois, o próximo boot não reimporta os
+    10 RNCs de agosto por cima — roda exatamente uma vez, para sempre."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_RNC_QUALIDADE_31_08_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "rnc_qualidade_31_08_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from seed_rnc_qualidade import importar_rnc_qualidade
+
+    total = importar_rnc_qualidade(xlsx_path)
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_RNC_QUALIDADE_31_08_2026))
+    db.session.commit()
+    app.logger.info("Importação Qualidade/RNC: %d RNCs importados da planilha 31/08/2026.", total)
 
 
 def _parse_data_form(valor):
@@ -1888,6 +1949,221 @@ def _linhas_gestao_operacao(args):
 
 
 # ----------------------------------------------------------------------
+# Qualidade — RNC (Relatório de Não Conformidade). Área nova, independente
+# de Gestão Produção/Operação (RncQualidade não tem FK com nada). Mesmo
+# padrão de filtro/paginação de _filtrar_pedidos_operacao/_linhas_gestao_operacao.
+# ----------------------------------------------------------------------
+CAMPOS_HISTORICO_RNC = [
+    "descricao_nc", "tipo_nc", "severidade", "causa_raiz", "disposicao_produto",
+    "acao_corretiva_descricao", "responsavel_acao_corretiva", "prazo_acao_corretiva",
+    "status_acao_corretiva", "eficacia_acao", "status_geral", "data_fechamento",
+]
+
+
+def _filtrar_rnc_qualidade(args):
+    query = RncQualidade.query
+
+    busca = args.get("busca", "").strip()
+    status_geral = args.get("status_geral", "").strip()
+    severidade = args.get("severidade", "").strip()
+    origem = args.get("origem", "").strip()
+    tipo_nc = args.get("tipo_nc", "").strip()
+    apenas_abertas = args.get("apenas_abertas", "").strip()
+
+    if busca:
+        like = f"%{busca}%"
+        query = query.filter(
+            or_(
+                RncQualidade.numero_rnc.ilike(like),
+                RncQualidade.cliente_projeto.ilike(like),
+                RncQualidade.produto_equipamento.ilike(like),
+                RncQualidade.numero_pedido_contrato.ilike(like),
+            )
+        )
+    if status_geral:
+        query = query.filter(RncQualidade.status_geral == status_geral)
+    if severidade:
+        query = query.filter(RncQualidade.severidade == severidade)
+    if origem:
+        query = query.filter(RncQualidade.origem == origem)
+    if tipo_nc:
+        query = query.filter(RncQualidade.tipo_nc == tipo_nc)
+    if apenas_abertas == "1":
+        query = query.filter(RncQualidade.status_geral.in_(RNC_STATUS_GERAL_ABERTOS))
+
+    query = query.order_by(RncQualidade.data_emissao.desc().nullslast(), RncQualidade.id.desc())
+
+    filtros = dict(
+        busca=busca, status_geral=status_geral, severidade=severidade,
+        origem=origem, tipo_nc=tipo_nc, apenas_abertas=apenas_abertas,
+    )
+    return query, filtros
+
+
+def _linhas_rnc_qualidade(args):
+    page = args.get("page", 1, type=int)
+    query, filtros = _filtrar_rnc_qualidade(args)
+    total_filtrado = query.count()
+    total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+    pagina = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+    return pagina, page, total_paginas, total_filtrado, filtros
+
+
+def _dashboard_rnc_qualidade():
+    """Recalcula ao vivo os mesmos KPIs/quebras da aba "Dashboard" da planilha
+    do Bruno, direto de RncQualidade — nada é guardado pré-calculado, então
+    fica sempre em dia com o que estiver cadastrado (diferente da planilha
+    original, que só atualizava quando alguém reabria o arquivo)."""
+    rncs = RncQualidade.query.all()
+    total = len(rncs)
+    abertas = [r for r in rncs if r.esta_aberto]
+    fechadas = [r for r in rncs if not r.esta_aberto]
+
+    com_reincidencia = [r for r in rncs if (r.reincidencia or "").strip().lower() == "sim"]
+    pct_reincidencia = round((len(com_reincidencia) / total) * 100, 1) if total else 0
+
+    acoes_nao_eficazes = sum(1 for r in rncs if r.eficacia_acao == "Não Eficaz")
+    criticas_abertas = sum(1 for r in rncs if r.severidade == "Crítica" and r.esta_aberto)
+
+    dias_abertos = [r.dias_em_aberto for r in rncs if r.dias_em_aberto is not None]
+    tempo_medio_aberto = round(sum(dias_abertos) / len(dias_abertos), 1) if dias_abertos else 0
+
+    custo_total = sum(r.custo_estimado or 0 for r in rncs)
+
+    def _quebra_por(atributo, opcoes_ordem=None):
+        contagem = {}
+        for r in rncs:
+            chave = getattr(r, atributo) or "—"
+            contagem[chave] = contagem.get(chave, 0) + 1
+        if opcoes_ordem:
+            chaves = list(opcoes_ordem) + sorted(k for k in contagem if k not in opcoes_ordem and k != "—")
+            if "—" in contagem:
+                chaves.append("—")
+            return [{"chave": k, "total": contagem.get(k, 0)} for k in chaves if k in contagem or k in opcoes_ordem]
+        return sorted(({"chave": k, "total": v} for k, v in contagem.items()), key=lambda d: -d["total"])
+
+    return {
+        "total": total,
+        "abertas": len(abertas),
+        "fechadas": len(fechadas),
+        "pct_reincidencia": pct_reincidencia,
+        "acoes_nao_eficazes": acoes_nao_eficazes,
+        "criticas_abertas": criticas_abertas,
+        "tempo_medio_aberto": tempo_medio_aberto,
+        "custo_total": custo_total,
+        "por_origem": _quebra_por("origem", RNC_ORIGEM_OPCOES),
+        "por_tipo_nc": _quebra_por("tipo_nc", RNC_TIPO_NC_OPCOES),
+        "por_severidade": _quebra_por("severidade", RNC_SEVERIDADE_OPCOES),
+        "por_status_geral": _quebra_por("status_geral", RNC_STATUS_GERAL_OPCOES),
+        "por_eficacia": _quebra_por("eficacia_acao", RNC_EFICACIA_OPCOES),
+        "por_status_acao": _quebra_por("status_acao_corretiva", RNC_STATUS_ACAO_OPCOES),
+    }
+
+
+def _campos_form_rnc(f):
+    """Lê e converte todos os campos do formulário de RNC (novo/editar) — uma
+    função só, reaproveitada pelas duas rotas, pra não duplicar a conversão
+    de cada um dos ~35 campos editáveis."""
+    def _txt(nome):
+        return f.get(nome, "").strip() or None
+
+    def _num_int(nome):
+        valor = f.get(nome, "").strip()
+        try:
+            return int(valor) if valor else None
+        except ValueError:
+            return None
+
+    def _num_float(nome):
+        valor = f.get(nome, "").strip().replace(",", ".")
+        try:
+            return float(valor) if valor else None
+        except ValueError:
+            return None
+
+    return dict(
+        numero_rnc=_txt("numero_rnc"),
+        revisao=_num_int("revisao") or 0,
+        data_emissao=_parse_data_form(f.get("data_emissao")),
+        emitente=_txt("emitente"),
+        setor=_txt("setor"),
+        origem=_txt("origem"),
+        cliente_projeto=_txt("cliente_projeto"),
+        numero_pedido_contrato=_txt("numero_pedido_contrato"),
+        produto_equipamento=_txt("produto_equipamento"),
+        numero_op=_txt("numero_op"),
+        local_setor=_txt("local_setor"),
+        data_identificacao=_parse_data_form(f.get("data_identificacao")),
+        responsavel_identificacao=_txt("responsavel_identificacao"),
+        descricao_nc=_txt("descricao_nc"),
+        qtd_nao_conforme=_num_int("qtd_nao_conforme"),
+        requisito_nao_atendido=_txt("requisito_nao_atendido"),
+        tipo_nc=_txt("tipo_nc"),
+        severidade=_txt("severidade"),
+        acao_contencao_imediata=_txt("acao_contencao_imediata"),
+        porque_1=_txt("porque_1"),
+        porque_2=_txt("porque_2"),
+        porque_3=_txt("porque_3"),
+        porque_4=_txt("porque_4"),
+        porque_5=_txt("porque_5"),
+        causa_raiz=_txt("causa_raiz"),
+        ferramenta_analise=_txt("ferramenta_analise"),
+        disposicao_produto=_txt("disposicao_produto"),
+        acao_corretiva_descricao=_txt("acao_corretiva_descricao"),
+        responsavel_acao_corretiva=_txt("responsavel_acao_corretiva"),
+        prazo_acao_corretiva=_parse_data_form(f.get("prazo_acao_corretiva")),
+        data_realizacao=_parse_data_form(f.get("data_realizacao")),
+        status_acao_corretiva=_txt("status_acao_corretiva"),
+        data_verificacao_eficacia=_parse_data_form(f.get("data_verificacao_eficacia")),
+        eficacia_acao=_txt("eficacia_acao"),
+        obs_verificacao=_txt("obs_verificacao"),
+        reincidencia=_txt("reincidencia"),
+        numero_rnc_relacionada=_txt("numero_rnc_relacionada"),
+        custo_estimado=_num_float("custo_estimado"),
+        status_geral=_txt("status_geral") or "Aberto",
+        responsavel_qualidade=_txt("responsavel_qualidade"),
+        data_fechamento=_parse_data_form(f.get("data_fechamento")),
+        evidencias_anexos=_txt("evidencias_anexos"),
+        observacoes_gerais=_txt("observacoes_gerais"),
+    )
+
+
+_CAMPOS_DATA_RNC = [
+    "data_emissao", "data_identificacao", "prazo_acao_corretiva", "data_realizacao",
+    "data_verificacao_eficacia", "data_fechamento",
+]
+
+
+def _rnc_para_form_dict(rnc):
+    """Converte um RncQualidade em dict de strings prontas pra repopular o
+    formulário HTML (mesmo formato que os <input> mandam de volta) — usado
+    na tela de edição (GET). Datas em ISO (yyyy-mm-dd, o que <input type=date>
+    espera); os demais campos, string direta ou vazio."""
+    campos = [
+        "numero_rnc", "revisao", "data_emissao", "emitente", "setor", "origem",
+        "cliente_projeto", "numero_pedido_contrato", "produto_equipamento", "numero_op",
+        "local_setor", "data_identificacao", "responsavel_identificacao", "descricao_nc",
+        "qtd_nao_conforme", "requisito_nao_atendido", "tipo_nc", "severidade",
+        "acao_contencao_imediata", "porque_1", "porque_2", "porque_3", "porque_4", "porque_5",
+        "causa_raiz", "ferramenta_analise", "disposicao_produto", "acao_corretiva_descricao",
+        "responsavel_acao_corretiva", "prazo_acao_corretiva", "data_realizacao",
+        "status_acao_corretiva", "data_verificacao_eficacia", "eficacia_acao", "obs_verificacao",
+        "reincidencia", "numero_rnc_relacionada", "custo_estimado", "status_geral",
+        "responsavel_qualidade", "data_fechamento", "evidencias_anexos", "observacoes_gerais",
+    ]
+    valores = {}
+    for campo in campos:
+        v = getattr(rnc, campo)
+        if v is None:
+            valores[campo] = ""
+        elif campo in _CAMPOS_DATA_RNC:
+            valores[campo] = v.isoformat()
+        else:
+            valores[campo] = str(v)
+    return valores
+
+
+# ----------------------------------------------------------------------
 # Relatórios (fase 12) — exportações CSV/Excel sob demanda, sem agendamento
 # automático (geradas na hora, a partir dos mesmos dados já calculados
 # pelas telas de Listagem, Faturamento e Gargalos).
@@ -2815,6 +3091,84 @@ def register_routes(app):
             return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id))
 
         return render_template("gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras)
+
+    # ------------------------------------------------------------------
+    # Qualidade — RNC (Relatório de Não Conformidade). Área nova (31/08/2026),
+    # independente de Gestão Produção/Operação. Pedido do Bruno: controle
+    # totalmente manual e intuitivo, aberto a todos os usuários autenticados
+    # (view + edição) — sem role dedicado, confirmado com ele antes de
+    # implementar (ver decisão em AskUserQuestion).
+    # ------------------------------------------------------------------
+    @app.route("/qualidade/dashboard")
+    @login_required
+    def qualidade_dashboard():
+        dados = _dashboard_rnc_qualidade()
+        return render_template("qualidade_dashboard.html", dados=dados)
+
+    @app.route("/qualidade")
+    @login_required
+    def qualidade_lista():
+        rncs, page, total_paginas, total_filtrado, filtros = _linhas_rnc_qualidade(request.args)
+        return render_template(
+            "qualidade_lista.html",
+            rncs=rncs, page=page, total_paginas=total_paginas,
+            total_filtrado=total_filtrado, filtros=filtros,
+        )
+
+    @app.route("/qualidade/novo", methods=["GET", "POST"])
+    @login_required
+    def qualidade_novo():
+        if request.method == "POST":
+            f = request.form
+            cliente_projeto = f.get("cliente_projeto", "").strip()
+            descricao_nc = f.get("descricao_nc", "").strip()
+            if not cliente_projeto or not descricao_nc:
+                flash("Cliente/Projeto e Descrição da Não Conformidade são obrigatórios.", "danger")
+                return render_template("qualidade_novo.html", valores=f)
+
+            valores = _campos_form_rnc(f)
+            novo = RncQualidade(criado_por_id=current_user.id, **valores)
+            db.session.add(novo)
+            db.session.commit()
+            flash(f"RNC {novo.numero_rnc or ('#' + str(novo.id))} cadastrado com sucesso.", "success")
+            return redirect(url_for("qualidade_editar", rnc_id=novo.id))
+
+        return render_template("qualidade_novo.html", valores={})
+
+    @app.route("/qualidade/<int:rnc_id>/editar", methods=["GET", "POST"])
+    @login_required
+    def qualidade_editar(rnc_id):
+        rnc = db.session.get(RncQualidade, rnc_id)
+        if rnc is None:
+            flash("RNC não encontrado.", "danger")
+            return redirect(url_for("qualidade_lista"))
+
+        if request.method == "POST":
+            f = request.form
+            cliente_projeto = f.get("cliente_projeto", "").strip()
+            descricao_nc = f.get("descricao_nc", "").strip()
+            if not cliente_projeto or not descricao_nc:
+                flash("Cliente/Projeto e Descrição da Não Conformidade são obrigatórios.", "danger")
+                return render_template("qualidade_editar.html", rnc=rnc, valores=f, historico=[])
+
+            antes = {c: getattr(rnc, c) for c in CAMPOS_HISTORICO_RNC}
+            valores = _campos_form_rnc(f)
+            for campo, valor in valores.items():
+                setattr(rnc, campo, valor)
+            depois = {c: getattr(rnc, c) for c in CAMPOS_HISTORICO_RNC}
+            _registrar_alteracoes("rnc_qualidade", rnc.id, None, antes, depois, CAMPOS_HISTORICO_RNC)
+
+            db.session.commit()
+            flash("RNC atualizado com sucesso.", "success")
+            return redirect(url_for("qualidade_editar", rnc_id=rnc.id))
+
+        historico = (
+            HistoricoAlteracao.query
+            .filter_by(entidade_tipo="rnc_qualidade", entidade_id=rnc.id)
+            .order_by(HistoricoAlteracao.criado_em.desc())
+            .all()
+        )
+        return render_template("qualidade_editar.html", rnc=rnc, valores=_rnc_para_form_dict(rnc), historico=historico)
 
     # ------------------------------------------------------------------
     # Usuários (papéis de acesso) — só ADMIN cadastra/edita usuários

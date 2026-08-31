@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Qualidade · Controle RNC · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-clipboard2-x"></i> Controle RNC — Relatório de Não Conformidade</h4>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">{{ total_filtrado }} RNC(s)</span>
+    <a href="{{ url_for('qualidade_novo') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-circle"></i> Novo RNC
+    </a>
+  </div>
+</div>
+<p class="text-muted small mb-3">
+  Controle manual de não conformidades — abra um RNC assim que identificar o desvio e complete a análise
+  (causa raiz, ação corretiva, verificação de eficácia) conforme for avançando.
+  Veja os indicadores consolidados no <a href="{{ url_for('qualidade_dashboard') }}">Dashboard</a>.
+</p>
+
+<form class="row g-2 align-items-end mb-3" method="get">
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Buscar (nº RNC, cliente, produto, pedido)</label>
+    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Status geral</label>
+    <select class="form-select" name="status_geral">
+      <option value="">Todos</option>
+      {% for op in RNC_STATUS_GERAL_OPCOES %}
+        <option value="{{ op }}" {% if filtros.status_geral == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Severidade</label>
+    <select class="form-select" name="severidade">
+      <option value="">Todas</option>
+      {% for op in RNC_SEVERIDADE_OPCOES %}
+        <option value="{{ op }}" {% if filtros.severidade == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Origem</label>
+    <select class="form-select" name="origem">
+      <option value="">Todas</option>
+      {% for op in RNC_ORIGEM_OPCOES %}
+        <option value="{{ op }}" {% if filtros.origem == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Tipo de NC</label>
+    <select class="form-select" name="tipo_nc">
+      <option value="">Todos</option>
+      {% for op in RNC_TIPO_NC_OPCOES %}
+        <option value="{{ op }}" {% if filtros.tipo_nc == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-1 d-grid">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
+  </div>
+  <div class="col-12">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="apenas_abertas" value="1" id="apenasAbertas" {% if filtros.apenas_abertas == '1' %}checked{% endif %} onchange="this.form.submit()">
+      <label class="form-check-label small" for="apenasAbertas">Mostrar só RNCs em aberto</label>
+    </div>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-primary">
+      <tr>
+        <th>Nº RNC</th>
+        <th>Data emissão</th>
+        <th>Cliente / Projeto</th>
+        <th>Produto / Equipamento</th>
+        <th>Tipo de NC</th>
+        <th>Severidade</th>
+        <th>Status geral</th>
+        <th>Dias em aberto</th>
+        <th>Responsável Qualidade</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rncs %}
+      <tr>
+        <td>{{ r.numero_rnc or ("#" ~ r.id) }}</td>
+        <td>{{ r.data_emissao.strftime("%d/%m/%Y") if r.data_emissao else "—" }}</td>
+        <td>{{ r.cliente_projeto or "—" }}</td>
+        <td class="text-truncate" style="max-width: 220px;" title="{{ r.produto_equipamento or '' }}">{{ r.produto_equipamento or "—" }}</td>
+        <td>{{ r.tipo_nc or "—" }}</td>
+        <td>{% if r.severidade %}<span class="badge bg-{{ RNC_SEVERIDADE_CORES.get(r.severidade, 'secondary') }}">{{ r.severidade }}</span>{% else %}—{% endif %}</td>
+        <td><span class="badge bg-{{ RNC_STATUS_GERAL_CORES.get(r.status_geral, 'secondary') }}">{{ r.status_geral or "Aberto" }}</span></td>
+        <td>{{ r.dias_em_aberto if r.dias_em_aberto is not none else "—" }}</td>
+        <td>{{ r.responsavel_qualidade or "—" }}</td>
+        <td class="text-end">
+          <a href="{{ url_for('qualidade_editar', rnc_id=r.id) }}" class="btn btn-sm btn-outline-primary" title="Editar RNC">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum RNC encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('qualidade_lista', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}
