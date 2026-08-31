@@ -70,11 +70,14 @@
         </a>
 
         <div class="app-nav-section">Qualidade</div>
+        <a class="app-nav-link {% if request.endpoint == 'qualidade_novo' %}active{% endif %}" href="{{ url_for('qualidade_novo') }}">
+          <i class="bi bi-clipboard2-plus"></i> <span>Criar RNC</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint in ('qualidade_lista', 'qualidade_editar') %}active{% endif %}" href="{{ url_for('qualidade_lista') }}">
+          <i class="bi bi-clipboard2-x"></i> <span>Controle de RNC</span>
+        </a>
         <a class="app-nav-link {% if request.endpoint == 'qualidade_dashboard' %}active{% endif %}" href="{{ url_for('qualidade_dashboard') }}">
           <i class="bi bi-clipboard2-pulse"></i> <span>Dashboard</span>
-        </a>
-        <a class="app-nav-link {% if request.endpoint in ('qualidade_lista', 'qualidade_novo', 'qualidade_editar') %}active{% endif %}" href="{{ url_for('qualidade_lista') }}">
-          <i class="bi bi-clipboard2-x"></i> <span>Controle RNC</span>
         </a>
 
         {% if current_user.role in ('ADMIN', 'PCP') %}
