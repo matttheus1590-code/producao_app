@@ -642,6 +642,14 @@ def _migrar_dados_go_para_pedidos_operacao(app):
     )
 
 
+# Marcador de "o Bruno zerou os dados de propósito, pra testar manualmente" —
+# ver rota /admin/zerar-dados. Sem isso, tanto _seed_inicial (Pedido vazio)
+# quanto _importar_gestao_operacao (PedidoOperacao sem go_tipo_pedido) veriam
+# a tabela vazia depois do zerar e reimportariam a planilha antiga sozinhos no
+# deploy seguinte — desfazendo a limpeza sem o Bruno pedir de novo.
+_CHAVE_DADOS_ZERADOS_MANUALMENTE = "dados_pedidos_zerados_manualmente_28_08_2026"
+
+
 def _seed_inicial(app):
     """Cria o usuário admin padrão e importa a planilha na primeira execução."""
     if Usuario.query.count() == 0:
@@ -651,7 +659,10 @@ def _seed_inicial(app):
         db.session.commit()
         app.logger.info("Usuário admin criado (login: admin / senha: admin123 — troque depois!)")
 
-    if Pedido.query.count() == 0:
+    zerado_manualmente = (
+        ControleSistema.query.filter_by(chave=_CHAVE_DADOS_ZERADOS_MANUALMENTE).first() is not None
+    )
+    if Pedido.query.count() == 0 and not zerado_manualmente:
         xlsx_path = os.path.join(BASE_DIR, "data", "controle_producao_base.xlsx")
         if os.path.exists(xlsx_path):
             from seed import importar_planilha
@@ -671,6 +682,8 @@ def _importar_gestao_operacao(app):
     chega a importar de verdade da planilha se o backfill não tiver rodado
     (ex.: banco novo, sem nenhum pedido legado com dado de Gestão Operação)."""
     if PedidoOperacao.query.filter(PedidoOperacao.go_tipo_pedido.isnot(None)).first() is not None:
+        return
+    if ControleSistema.query.filter_by(chave=_CHAVE_DADOS_ZERADOS_MANUALMENTE).first() is not None:
         return
 
     xlsx_path = os.path.join(BASE_DIR, "data", "gestao_fluxo_2026.xlsx")
@@ -1951,6 +1964,40 @@ def _responder_xlsx(nome_arquivo, cabecalho, linhas, titulo="Relatório"):
     return resposta
 
 
+def _construir_backup_pedidos_wb():
+    """Monta um Workbook com TODAS as colunas de Pedido, ItemPedido e
+    PedidoOperacao (uma aba cada), lendo as colunas direto do mapeamento do
+    SQLAlchemy (não uma lista escrita à mão) — assim não corre o risco de
+    esquecer um campo novo que apareça no futuro. Usado como rede de
+    segurança antes de "/admin/zerar-dados" apagar tudo de verdade."""
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    def _add_sheet(nome, modelo, linhas):
+        ws = wb.create_sheet(nome[:31])
+        colunas = [c.name for c in modelo.__table__.columns]
+        ws.append(colunas)
+        for celula in ws[1]:
+            celula.font = Font(bold=True)
+        for obj in linhas:
+            linha = []
+            for nome_col in colunas:
+                valor = getattr(obj, nome_col)
+                if isinstance(valor, (datetime, date)):
+                    valor = valor.isoformat()
+                linha.append(valor)
+            ws.append(linha)
+        for coluna in ws.columns:
+            valores = [len(str(c.value)) for c in coluna if c.value is not None]
+            largura = max(valores) if valores else 10
+            ws.column_dimensions[coluna[0].column_letter].width = min(largura + 2, 40)
+
+    _add_sheet("Pedidos", Pedido, Pedido.query.order_by(Pedido.id).all())
+    _add_sheet("Itens", ItemPedido, ItemPedido.query.order_by(ItemPedido.id).all())
+    _add_sheet("Gestao Operacao", PedidoOperacao, PedidoOperacao.query.order_by(PedidoOperacao.id).all())
+    return wb
+
+
 def register_routes(app):
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -2841,6 +2888,82 @@ def register_routes(app):
                 "info",
             )
         return redirect(url_for("usuarios_lista"))
+
+    # ------------------------------------------------------------------
+    # Zerar dados de teste (pedido do Bruno, 28/08/2026) — apaga TODOS os
+    # Pedido/ItemPedido (Gestão Produção) e PedidoOperacao (Gestão Operação)
+    # de uma vez, pra ele testar manualmente a inclusão de itens do zero. Só
+    # ADMIN, com confirmação por texto digitado — e sempre com um backup
+    # (.xlsx) disponível antes, já que é uma exclusão permanente.
+    # ------------------------------------------------------------------
+    _FRASE_CONFIRMACAO_ZERAR = "ZERAR TUDO"
+
+    @app.route("/admin/zerar-dados")
+    @requer_role("ADMIN")
+    def admin_zerar_dados():
+        return render_template(
+            "admin_zerar_dados.html",
+            total_pedidos=Pedido.query.count(),
+            total_itens=ItemPedido.query.count(),
+            total_pedidos_operacao=PedidoOperacao.query.count(),
+            frase_confirmacao=_FRASE_CONFIRMACAO_ZERAR,
+        )
+
+    @app.route("/admin/zerar-dados/backup.xlsx")
+    @requer_role("ADMIN")
+    def admin_zerar_dados_backup():
+        """Só gera e baixa o backup — não apaga nada. Pode ser clicado quantas
+        vezes quiser antes (ou até sem intenção de zerar depois)."""
+        wb = _construir_backup_pedidos_wb()
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        nome = f"backup_pedidos_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        resposta = Response(
+            buffer.getvalue(),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resposta.headers["Content-Disposition"] = f"attachment; filename={nome}"
+        return resposta
+
+    @app.route("/admin/zerar-dados", methods=["POST"])
+    @requer_role("ADMIN")
+    def admin_zerar_dados_confirmar():
+        confirmacao = request.form.get("confirmacao", "").strip()
+        if confirmacao != _FRASE_CONFIRMACAO_ZERAR:
+            flash(f'Digite exatamente "{_FRASE_CONFIRMACAO_ZERAR}" pra confirmar. Nada foi apagado.', "danger")
+            return redirect(url_for("admin_zerar_dados"))
+
+        total_pedidos = Pedido.query.count()
+        total_itens = ItemPedido.query.count()
+        total_pedidos_operacao = PedidoOperacao.query.count()
+
+        # Ordem importa: filhos antes dos pais, por causa das foreign keys
+        # (Programacao -> ItemPedido; HistoricoAlteracao -> Pedido).
+        Programacao.query.delete(synchronize_session=False)
+        HistoricoAlteracao.query.delete(synchronize_session=False)
+        ItemPedido.query.delete(synchronize_session=False)
+        Pedido.query.delete(synchronize_session=False)
+        PedidoOperacao.query.delete(synchronize_session=False)
+
+        # Marca que foi de propósito — sem isso, _seed_inicial e
+        # _importar_gestao_operacao reimportariam a planilha antiga sozinhos
+        # no próximo deploy, assim que virem as tabelas vazias.
+        if ControleSistema.query.filter_by(chave=_CHAVE_DADOS_ZERADOS_MANUALMENTE).first() is None:
+            db.session.add(ControleSistema(chave=_CHAVE_DADOS_ZERADOS_MANUALMENTE))
+
+        db.session.commit()
+        app.logger.warning(
+            "ZERAR DADOS: %s executou a limpeza manual — %d pedidos, %d itens e %d pedidos de "
+            "Gestão Operação apagados.",
+            current_user.nome, total_pedidos, total_itens, total_pedidos_operacao,
+        )
+        flash(
+            f"Pronto: {total_pedidos} pedido(s), {total_itens} item(ns) e {total_pedidos_operacao} "
+            "pedido(s) de Gestão Operação foram apagados. Pode começar a testar do zero.",
+            "success",
+        )
+        return redirect(url_for("admin_zerar_dados"))
 
     # ------------------------------------------------------------------
     # Estações — visão geral por setor + Kanban de produção

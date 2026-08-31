@@ -87,6 +87,9 @@
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('usuarios_') %}active{% endif %}" href="{{ url_for('usuarios_lista') }}">
           <i class="bi bi-people"></i> <span>Usuários</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('admin_zerar_dados') %}active{% endif %}" href="{{ url_for('admin_zerar_dados') }}">
+          <i class="bi bi-eraser"></i> <span>Zerar dados de teste</span>
+        </a>
         {% endif %}
       </nav>
 
