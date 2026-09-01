@@ -642,3 +642,81 @@ body.col-resizing-ativo {
 .pcp-pedido-editar-link:hover {
   text-decoration: underline;
 }
+
+/* ---------------------------------------------------------------------
+   Listagem Geral de Gestão Operação — 1 linha por pedido, com um badge
+   "Itens" por linha que revela (hover ou clique) os produtos/quantidades
+   já preenchidos em Gestão Produção pelo PCP. Mesmo padrão de hover/clique
+   do calendário PCP (.pcp-pedido-card/.pcp-pedido-detalhe), só que ancorado
+   numa célula de tabela em vez de um card.
+--------------------------------------------------------------------- */
+.go-listagem-wrap {
+  overflow-x: auto;
+  /* explícito, mesmo motivo do .pcp-calendario-wrap: sem isso o navegador
+     trata overflow-y como "auto" também, e o painel da última linha da
+     tabela ficaria cortado embaixo em vez de flutuar por cima do resto. */
+  overflow-y: visible;
+}
+
+.go-itens-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.go-itens-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 1rem;
+  background-color: #e7f1ff;
+  color: #0d6efd;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.go-itens-badge.go-itens-badge-vazio {
+  background-color: #f1f3f5;
+  color: #868e96;
+  cursor: default;
+}
+
+.go-itens-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 260px;
+  max-width: 340px;
+  background-color: #fff;
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.18);
+  padding: 0.65rem 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: #212529;
+  white-space: normal;
+}
+
+.go-itens-wrap:hover .go-itens-popover,
+.go-itens-wrap.go-itens-aberto .go-itens-popover {
+  display: block;
+}
+
+.go-itens-popover-titulo {
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+  color: #0d6efd;
+}
+
+.go-itens-popover-item {
+  padding: 0.3rem 0;
+  border-top: 1px solid #eef1f5;
+}
+
+.go-itens-popover-item:first-of-type {
+  border-top: none;
+}

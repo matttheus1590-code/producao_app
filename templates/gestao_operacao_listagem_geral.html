@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · Listagem Geral · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+{% include "_gestao_operacao_subnav.html" with context %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-list-ul"></i> Listagem Geral</h4>
+  <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
+</div>
+<p class="text-muted small mb-3">
+  Visão geral, 1 linha por pedido. Passe o mouse (ou toque, no celular) em cima de "Itens" pra ver os produtos e
+  quantidades já preenchidos em Gestão Produção pelo PCP — a lista casa pelo nº de pedido de venda; se o pedido
+  ainda não foi lançado em Gestão Produção (ou o número não bate), aparece "Sem itens em Gestão Produção".
+</p>
+
+<form class="row g-2 align-items-end mb-3" method="get">
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
+    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Cliente</label>
+    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Vendedor</label>
+    <input type="text" class="form-control" name="vendedor" value="{{ filtros.vendedor }}">
+  </div>
+  <div class="col-md-2 d-grid">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+  </div>
+</form>
+
+<div class="table-responsive go-listagem-wrap">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Pedido</th>
+        <th>Cliente</th>
+        <th>Valor total pedido</th>
+        <th>Data inclusão</th>
+        <th>Data solic. cliente</th>
+        <th>Prazo total (dias corridos)</th>
+        <th>Frete</th>
+        <th>País</th>
+        <th>UF</th>
+        <th>Cidade</th>
+        <th>Proposta comercial</th>
+        <th>Itens</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pedidos %}
+      {% set chave_pv = (p.pedido_venda or "").strip() %}
+      {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
+      <tr>
+        <td>{{ p.pedido_venda or "—" }}</td>
+        <td class="text-truncate" style="max-width: 200px;" title="{{ p.cliente }}">{{ p.cliente }}</td>
+        <td>
+          {% if p.go_valor_pedido_operacao is not none %}
+            R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
+        <td>{{ p.go_data_solicitada_entrega.strftime("%d/%m/%Y") if p.go_data_solicitada_entrega else "—" }}</td>
+        <td>
+          {% if p.prazo_total_dias_corridos is not none %}
+            {{ p.prazo_total_dias_corridos }}d
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ p.frete or "—" }}</td>
+        <td>{{ p.pais or "—" }}</td>
+        <td>{{ p.estado or "—" }}</td>
+        <td class="text-truncate" style="max-width: 160px;" title="{{ p.cidade or '' }}">{{ p.cidade or "—" }}</td>
+        <td>{{ p.go_proposta or "—" }}</td>
+        <td>
+          <div class="go-itens-wrap">
+            <span class="go-itens-badge {% if not itens %}go-itens-badge-vazio{% endif %}">
+              {% if itens %}
+                <i class="bi bi-box-seam"></i> {{ itens|length }} item(ns)
+              {% else %}
+                <i class="bi bi-dash-circle"></i> Sem itens
+              {% endif %}
+            </span>
+            <div class="go-itens-popover">
+              <div class="go-itens-popover-titulo">
+                <i class="bi bi-box-seam"></i> Itens em Gestão Produção
+              </div>
+              {% for item in itens %}
+              <div class="go-itens-popover-item">
+                <div class="fw-semibold">{{ item.descricao_produto }}</div>
+                <div class="text-muted">
+                  Qtd: {{ item.quantidade }}
+                  {% if item.estacao %} · {{ item.estacao }}{% endif %}
+                  · <span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span>
+                </div>
+              </div>
+              {% else %}
+              <div class="text-muted small">Sem itens em Gestão Produção (nº de pedido de venda não bate com nenhum pedido lançado lá, ou o pedido ainda não foi lançado).</div>
+              {% endfor %}
+            </div>
+          </div>
+        </td>
+        <td class="text-end">
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary" title="Editar">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="13" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('gestao_operacao_listagem_geral', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  // Mesmo padrão já usado no calendário de Programação: passar o mouse abre
+  // o painel (CSS puro); clicar "prende" aberto (útil em touch, onde não
+  // existe hover) até clicar em outro lugar da página.
+  document.addEventListener('click', function (e) {
+    const wrap = e.target.closest('.go-itens-wrap');
+    document.querySelectorAll('.go-itens-wrap.go-itens-aberto').forEach(function (aberto) {
+      if (aberto !== wrap) aberto.classList.remove('go-itens-aberto');
+    });
+    if (wrap) {
+      wrap.classList.toggle('go-itens-aberto');
+    }
+  });
+})();
+</script>
+{% endblock %}

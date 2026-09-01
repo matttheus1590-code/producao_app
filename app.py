@@ -2012,6 +2012,37 @@ def _linhas_gestao_operacao(args):
     return pagina, page, total_paginas, total_filtrado, filtros
 
 
+def _itens_producao_por_pedido_venda(pedidos_venda):
+    """Pra tela "Listagem Geral" de Gestão Operação (pedido do Bruno: passar o
+    mouse num pedido mostra os itens/quantidades já preenchidos no PCP, em
+    Gestão Produção). PedidoOperacao e Pedido/ItemPedido são tabelas
+    INDEPENDENTES (sem FK) — o único jeito de ligar um ao outro é o texto do
+    "nº pedido de venda" que aparece nos dois. Casa só por igualdade exata
+    (já normalizado/tirado espaço), NUNCA por aproximação — é só pra exibir
+    numa dica visual, e uma correspondência errada mostraria os itens do
+    pedido errado. Uma única query com IN (nunca N+1) — recebe a lista de
+    pedido_venda já normalizada da página atual."""
+    valores = sorted({v.strip() for v in pedidos_venda if v and v.strip()})
+    if not valores:
+        return {}
+    pedidos = (
+        Pedido.query.options(selectinload(Pedido.itens))
+        # func.trim() nos dois lados: o texto salvo em Pedido.pedido_venda às
+        # vezes tem espaço a mais (import antigo de planilha) — sem isso, a
+        # igualdade exata falharia por causa só do espaço, escondendo itens
+        # que na prática são do mesmo pedido.
+        .filter(func.trim(Pedido.pedido_venda).in_(valores))
+        .all()
+    )
+    mapa = {}
+    for pedido in pedidos:
+        chave = (pedido.pedido_venda or "").strip()
+        if not chave:
+            continue
+        mapa.setdefault(chave, []).extend(pedido.itens)
+    return mapa
+
+
 # ----------------------------------------------------------------------
 # Qualidade — RNC (Relatório de Não Conformidade). Área nova, independente
 # de Gestão Produção/Operação (RncQualidade não tem FK com nada). Mesmo
@@ -3077,6 +3108,24 @@ def register_routes(app):
             ano=ano, mes=mes, mes_label=f"{MESES_PT[mes - 1]}/{ano}",
             mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
             mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
+        )
+
+    @app.route("/gestao-operacao/listagem-geral")
+    @login_required
+    def gestao_operacao_listagem_geral():
+        """"Listagem Geral" de Gestão Operação (pedido do Bruno) — 1 linha por
+        PEDIDO (não por produto, diferente da Listagem Geral de Gestão
+        Produção), com as colunas comerciais principais; passar o mouse (ou
+        clicar, no touch) sobre "Itens" mostra os produtos/quantidades já
+        preenchidos em Gestão Produção pelo PCP, casando pelo nº de pedido de
+        venda — sem criar nenhum vínculo real entre as duas tabelas."""
+        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
+        itens_por_pedido_venda = _itens_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
+        return render_template(
+            "gestao_operacao_listagem_geral.html",
+            pedidos=pedidos, page=page, total_paginas=total_paginas,
+            total_filtrado=total_filtrado, filtros=filtros,
+            itens_por_pedido_venda=itens_por_pedido_venda,
         )
 
     @app.route("/gestao-operacao/novo", methods=["GET", "POST"])

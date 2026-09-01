@@ -1,5 +1,10 @@
 <ul class="nav nav-pills go-subnav mb-3">
   <li class="nav-item">
+    <a class="nav-link go-subnav-listagem-geral {% if request.endpoint == 'gestao_operacao_listagem_geral' %}active{% endif %}" href="{{ url_for('gestao_operacao_listagem_geral') }}">
+      <i class="bi bi-list-ul"></i> Listagem Geral
+    </a>
+  </li>
+  <li class="nav-item">
     <a class="nav-link go-subnav-comercial {% if request.endpoint == 'gestao_operacao_comercial' %}active{% endif %}" href="{{ url_for('gestao_operacao_comercial') }}">
       <i class="bi bi-briefcase"></i> Comercial
     </a>

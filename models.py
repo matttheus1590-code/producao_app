@@ -716,6 +716,17 @@ class PedidoOperacao(db.Model):
         return None
 
     @property
+    def prazo_total_dias_corridos(self):
+        """Prazo total combinado com o cliente, em dias corridos: da inclusão
+        do pedido até a data solicitada de entrega (bloco Comercial) — usado
+        na tela "Listagem Geral" de Gestão Operação. Não é o mesmo que
+        go_dias_atraso_antecipacao (que compara solicitado x entregue de
+        verdade, lá em Resultados) — este é só o prazo combinado em si."""
+        if self.data_inclusao_pedido and self.go_data_solicitada_entrega:
+            return (self.go_data_solicitada_entrega - self.data_inclusao_pedido).days
+        return None
+
+    @property
     def status_producao(self):
         """Status calculado só a partir de dados da própria Gestão Operação — sem
         depender de ItemPedido/estação (isso é Gestão Produção, mundo à parte).
