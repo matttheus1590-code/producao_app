@@ -93,7 +93,10 @@
             <input type="text" class="form-control" name="go_custo_producao_real" value="{{ pedido.go_custo_producao_real if pedido.go_custo_producao_real is not none else '' }}">
           </div>
           <div class="col-md-8 d-flex align-items-end">
-            <div class="text-muted small">Status de produção (calculado): <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }}">{{ pedido.status_producao }}</span></div>
+            <div class="text-muted small">
+              Status de produção ({{ "direto da estação em Gestão Produção" if status_real else "calculado só pelos dados da Operação — pedido ainda não lançado em Gestão Produção" }}):
+              <span class="badge bg-{{ STATUS_CORES.get(status_real or pedido.status_producao, 'secondary') }}">{{ status_real or pedido.status_producao }}</span>
+            </div>
           </div>
         </div>
       </div>

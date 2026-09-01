@@ -41,10 +41,13 @@
     </thead>
     <tbody>
       {% for p in pedidos %}
+      {% set status_exibido = status_real_por_pedido_venda.get((p.pedido_venda or "").strip(), p.status_producao) %}
       <tr>
         <td>{{ p.pedido_venda or "—" }}</td>
         <td>{{ p.cliente }}</td>
-        <td><span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span></td>
+        <td>
+          <span class="badge bg-{{ STATUS_CORES.get(status_exibido, 'secondary') }}" title="{{ 'Status real, direto da estação em Gestão Produção' if (p.pedido_venda or '').strip() in status_real_por_pedido_venda else 'Pedido ainda não lançado em Gestão Produção — status calculado só pelos dados da Operação' }}">{{ status_exibido }}</span>
+        </td>
         <td>{{ p.go_previsao_liberacao_pcp.strftime("%d/%m/%Y") if p.go_previsao_liberacao_pcp else "—" }}</td>
         <td>{{ p.go_data_efetiva_liberacao_pcp.strftime("%d/%m/%Y") if p.go_data_efetiva_liberacao_pcp else "—" }}</td>
         <td>{{ p.go_data_solicitada_cliente_retira.strftime("%d/%m/%Y") if p.go_data_solicitada_cliente_retira else "—" }}</td>

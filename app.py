@@ -227,6 +227,7 @@ def create_app():
         # acima (que é quem trouxe o pedido 835 com a semana errada).
         _corrigir_semana_pcp_morken_835(app)
         _seed_rnc_qualidade(app)
+        _backfill_go_data_solicitada_cliente_retira(app)
 
     @app.context_processor
     def inject_globals():
@@ -875,6 +876,36 @@ def _sincronizar_gestao_operacao_28_08_2026(app):
         stats["exato"],
         stats["aproximado"],
     )
+
+
+_CHAVE_BACKFILL_SOLICITADA_CLIENTE_RETIRA_01_09_2026 = "backfill_go_data_solicitada_cliente_retira_01_09_2026"
+
+
+def _backfill_go_data_solicitada_cliente_retira(app):
+    """Correção pontual pedida pelo Bruno em 01/09/2026: "Solicitada cliente/
+    retira" (PCP) tem que acompanhar a mesma data que "Data solicitada
+    entrega" (Comercial) — ambas vêm de Pedido.data_cliente na criação
+    automática (ver _criar_pedido_operacao_a_partir_de_producao), mas essa
+    ligação só foi adicionada agora; os pedidos criados pelo fluxo automático
+    ANTES desta correção ficaram com "Solicitada cliente/retira" em branco.
+    Preenche só isso — nunca sobrescreve um valor que já tenha sido digitado
+    manualmente em PCP (só mexe onde está None)."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_BACKFILL_SOLICITADA_CLIENTE_RETIRA_01_09_2026).first() is not None:
+        return
+
+    pedidos = PedidoOperacao.query.filter(
+        PedidoOperacao.go_data_solicitada_cliente_retira.is_(None),
+        PedidoOperacao.go_data_solicitada_entrega.isnot(None),
+    ).all()
+    for pedido in pedidos:
+        pedido.go_data_solicitada_cliente_retira = pedido.go_data_solicitada_entrega
+
+    app.logger.info(
+        "Backfill pontual: 'Solicitada cliente/retira' preenchida em %d pedido(s) de Gestão Operação.",
+        len(pedidos),
+    )
+    db.session.add(ControleSistema(chave=_CHAVE_BACKFILL_SOLICITADA_CLIENTE_RETIRA_01_09_2026))
+    db.session.commit()
 
 
 _CHAVE_CORRECAO_SEMANA_MORKEN_835 = "correcao_semana_pcp_morken_835_28_08_2026"
@@ -2047,6 +2078,34 @@ def _itens_producao_por_pedido_venda(pedidos_venda):
     return mapa
 
 
+def _status_producao_por_pedido_venda(pedidos_venda):
+    """Pedido do Bruno (01/09/2026): a coluna "Status produção" das telas de
+    Gestão Operação (PCP e a tela de editar) tem que refletir o andamento
+    REAL na fábrica — mesmo casamento por pedido_venda (trim, sem FK, nunca
+    aproximado) já usado pra mostrar os itens na Listagem Geral — em vez do
+    status calculado só a partir dos próprios dados da Operação (que
+    continua existindo como fallback em PedidoOperacao.status_producao, pra
+    quando o pedido ainda não foi lançado em Gestão Produção). Reaproveita a
+    mesma regra de agregação de Pedido.status_producao (EM TRATATIVA vence
+    tudo; só FINALIZADO se todos os itens estiverem; só PENDENTE se todos
+    estiverem; senão ANDAMENTO)."""
+    itens_por_pedido = _itens_producao_por_pedido_venda(pedidos_venda)
+    status_por_pedido = {}
+    for chave, itens in itens_por_pedido.items():
+        if not itens:
+            continue
+        status_itens = {item.status_producao for item in itens}
+        if "EM TRATATIVA" in status_itens:
+            status_por_pedido[chave] = "EM TRATATIVA"
+        elif status_itens == {"FINALIZADO"}:
+            status_por_pedido[chave] = "FINALIZADO"
+        elif status_itens == {"PENDENTE"}:
+            status_por_pedido[chave] = "PENDENTE"
+        else:
+            status_por_pedido[chave] = "ANDAMENTO"
+    return status_por_pedido
+
+
 # Campos "comercial" que só existem em PedidoOperacao (não têm equivalente em
 # Pedido) — pedido do Bruno, 01/09/2026: quem inclui um pedido novo em Gestão
 # Produção (PCP) passa a preencher também essas informações do pedido como um
@@ -2067,10 +2126,13 @@ def _criar_pedido_operacao_a_partir_de_producao(pedido, f):
     sua própria tela, sem sincronização automática nenhuma (é o próprio
     Bruno quem vai "manusear manualmente entre PCP/Logística/Resultados").
 
-    "Data solicitada entrega" de Gestão Operação é o mesmo dado que "Data do
-    cliente" de Gestão Produção (já documentado em _LinhaListagemGeral) — por
-    isso não existe um campo novo pra ela no formulário de Produção, só
-    reaproveita pedido.data_cliente."""
+    "Data solicitada entrega" (Comercial) E "Solicitada cliente/retira" (PCP)
+    de Gestão Operação são o mesmo dado que "Data do cliente" de Gestão
+    Produção (já documentado em _LinhaListagemGeral) — pedido do Bruno
+    (01/09/2026): "Solicitada cliente/retira" também tem que acompanhar essa
+    data desde a inclusão do pedido, não é um campo novo — por isso não
+    existe um campo novo pra ela no formulário de Produção, só reaproveita
+    pedido.data_cliente pros dois."""
     novo = PedidoOperacao(
         cliente=pedido.cliente,
         vendedor=pedido.vendedor,
@@ -2082,6 +2144,7 @@ def _criar_pedido_operacao_a_partir_de_producao(pedido, f):
         estado=pedido.estado,
         cidade=pedido.cidade,
         go_data_solicitada_entrega=pedido.data_cliente,
+        go_data_solicitada_cliente_retira=pedido.data_cliente,
         go_tipo_pedido=f.get("go_tipo_pedido", "").strip() or None,
         go_contrato=f.get("go_contrato", "").strip() or None,
         go_proposta=f.get("go_proposta", "").strip() or None,
@@ -3124,10 +3187,12 @@ def register_routes(app):
     @login_required
     def gestao_operacao_pcp():
         pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
+        status_real_por_pedido_venda = _status_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
         return render_template(
             "gestao_operacao_pcp.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
+            status_real_por_pedido_venda=status_real_por_pedido_venda,
         )
 
     @app.route("/gestao-operacao/logistica")
@@ -3224,9 +3289,12 @@ def register_routes(app):
             flash(f"Gestão Operação ({GO_SECAO_LABEL[secao]}) do pedido atualizada com sucesso.", "success")
             return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id, secao=secao))
 
+        status_real = _status_producao_por_pedido_venda([pedido.pedido_venda]).get((pedido.pedido_venda or "").strip())
+
         return render_template(
             "gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras,
             secao=secao, GO_SECOES=GO_SECOES, GO_SECAO_ENDPOINT=GO_SECAO_ENDPOINT, GO_SECAO_LABEL=GO_SECAO_LABEL,
+            status_real=status_real,
         )
 
     # ------------------------------------------------------------------
