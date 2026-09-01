@@ -9,9 +9,10 @@
   <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
 </div>
 <p class="text-muted small mb-3">
-  Visão geral, 1 linha por pedido. Passe o mouse (ou toque, no celular) em cima de "Itens" pra ver os produtos e
-  quantidades já preenchidos em Gestão Produção pelo PCP — a lista casa pelo nº de pedido de venda; se o pedido
-  ainda não foi lançado em Gestão Produção (ou o número não bate), aparece "Sem itens em Gestão Produção".
+  Visão geral, 1 linha por pedido. Passe o mouse (ou toque, no celular) em cima do <strong>nome do cliente</strong>
+  pra ver os produtos e quantidades já preenchidos em Gestão Produção pelo PCP — a lista casa pelo nº de pedido de
+  venda; se o pedido ainda não foi lançado em Gestão Produção (ou o número não bate), aparece "Sem itens em Gestão
+  Produção".
 </p>
 
 <form class="row g-2 align-items-end mb-3" method="get">
@@ -47,7 +48,6 @@
         <th>UF</th>
         <th>Cidade</th>
         <th>Proposta comercial</th>
-        <th>Itens</th>
         <th></th>
       </tr>
     </thead>
@@ -57,31 +57,14 @@
       {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
       <tr>
         <td>{{ p.pedido_venda or "—" }}</td>
-        <td class="text-truncate" style="max-width: 200px;" title="{{ p.cliente }}">{{ p.cliente }}</td>
-        <td>
-          {% if p.go_valor_pedido_operacao is not none %}
-            R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
-          {% else %}—{% endif %}
-        </td>
-        <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
-        <td>{{ p.go_data_solicitada_entrega.strftime("%d/%m/%Y") if p.go_data_solicitada_entrega else "—" }}</td>
-        <td>
-          {% if p.prazo_total_dias_corridos is not none %}
-            {{ p.prazo_total_dias_corridos }}d
-          {% else %}—{% endif %}
-        </td>
-        <td>{{ p.frete or "—" }}</td>
-        <td>{{ p.pais or "—" }}</td>
-        <td>{{ p.estado or "—" }}</td>
-        <td class="text-truncate" style="max-width: 160px;" title="{{ p.cidade or '' }}">{{ p.cidade or "—" }}</td>
-        <td>{{ p.go_proposta or "—" }}</td>
         <td>
           <div class="go-itens-wrap">
-            <span class="go-itens-badge {% if not itens %}go-itens-badge-vazio{% endif %}">
+            <span class="go-itens-badge {% if not itens %}go-itens-badge-vazio{% endif %}" title="{{ p.cliente }}">
+              {{ p.cliente }}
               {% if itens %}
-                <i class="bi bi-box-seam"></i> {{ itens|length }} item(ns)
+                <i class="bi bi-box-seam"></i>
               {% else %}
-                <i class="bi bi-dash-circle"></i> Sem itens
+                <i class="bi bi-dash-circle"></i>
               {% endif %}
             </span>
             <div class="go-itens-popover">
@@ -103,6 +86,23 @@
             </div>
           </div>
         </td>
+        <td>
+          {% if p.go_valor_pedido_operacao is not none %}
+            R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
+        <td>{{ p.go_data_solicitada_entrega.strftime("%d/%m/%Y") if p.go_data_solicitada_entrega else "—" }}</td>
+        <td>
+          {% if p.prazo_total_dias_corridos is not none %}
+            {{ p.prazo_total_dias_corridos }}d
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ p.frete or "—" }}</td>
+        <td>{{ p.pais or "—" }}</td>
+        <td>{{ p.estado or "—" }}</td>
+        <td class="text-truncate" style="max-width: 160px;" title="{{ p.cidade or '' }}">{{ p.cidade or "—" }}</td>
+        <td>{{ p.go_proposta or "—" }}</td>
         <td class="text-end">
           <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary" title="Editar">
             <i class="bi bi-pencil-square"></i>
@@ -110,7 +110,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="13" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="12" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -132,18 +132,96 @@
 {% block scripts %}
 <script>
 (function () {
-  // Mesmo padrão já usado no calendário de Programação: passar o mouse abre
-  // o painel (CSS puro); clicar "prende" aberto (útil em touch, onde não
-  // existe hover) até clicar em outro lugar da página.
+  // O popover não pode ficar só no CSS (:hover) porque mora dentro de um
+  // contêiner com rolagem horizontal (.go-listagem-wrap) — na prática, todo
+  // navegador ignora "overflow-y: visible" quando overflow-x já é "auto" no
+  // mesmo elemento, cortando o popover das últimas linhas da tabela. Por
+  // isso o JS calcula a posição em coordenadas de TELA (getBoundingClientRect)
+  // e usa position:fixed, o que escapa desse recorte.
+  const MARGEM = 8;
+
+  function posicionarEExibir(wrap) {
+    const gatilho = wrap.querySelector('.go-itens-badge');
+    const pop = wrap.querySelector('.go-itens-popover');
+    if (!gatilho || !pop) return;
+    const rectGatilho = gatilho.getBoundingClientRect();
+    pop.style.display = 'block';
+    const rectPop = pop.getBoundingClientRect();
+
+    let left = rectGatilho.left;
+    if (left + rectPop.width > window.innerWidth - MARGEM) {
+      left = Math.max(MARGEM, window.innerWidth - rectPop.width - MARGEM);
+    }
+    let top = rectGatilho.bottom + 4;
+    if (top + rectPop.height > window.innerHeight - MARGEM) {
+      // não cabe embaixo do gatilho -- mostra em cima dele
+      top = Math.max(MARGEM, rectGatilho.top - rectPop.height - 4);
+    }
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+  }
+
+  // Pequeno atraso pra esconder: sem isso, o mouse "sair" do gatilho (uma
+  // faixa de texto pequena) pra entrar no próprio popover (renderizado um
+  // pouco abaixo) contaria como mouseleave e fecharia antes da pessoa
+  // conseguir ler ou mover o mouse até o painel.
+  function agendarEsconder(wrap) {
+    if (wrap.classList.contains('go-itens-aberto')) return; // clicado, fica preso aberto
+    clearTimeout(wrap._goItensTimer);
+    wrap._goItensTimer = setTimeout(function () {
+      const pop = wrap.querySelector('.go-itens-popover');
+      if (pop) pop.style.display = 'none';
+    }, 150);
+  }
+
+  function cancelarEsconder(wrap) {
+    clearTimeout(wrap._goItensTimer);
+  }
+
+  function esconderTudoAberto() {
+    document.querySelectorAll('.go-itens-wrap.go-itens-aberto').forEach(function (wrap) {
+      wrap.classList.remove('go-itens-aberto');
+      const pop = wrap.querySelector('.go-itens-popover');
+      if (pop) pop.style.display = 'none';
+    });
+  }
+
+  document.querySelectorAll('.go-itens-wrap').forEach(function (wrap) {
+    const pop = wrap.querySelector('.go-itens-popover');
+    wrap.addEventListener('mouseenter', function () { cancelarEsconder(wrap); posicionarEExibir(wrap); });
+    wrap.addEventListener('mouseleave', function () { agendarEsconder(wrap); });
+    if (pop) {
+      pop.addEventListener('mouseenter', function () { cancelarEsconder(wrap); });
+      pop.addEventListener('mouseleave', function () { agendarEsconder(wrap); });
+    }
+  });
+
+  // Clique "prende" aberto (útil em touch/mobile, onde não existe hover) até
+  // clicar em outro lugar da página.
   document.addEventListener('click', function (e) {
     const wrap = e.target.closest('.go-itens-wrap');
     document.querySelectorAll('.go-itens-wrap.go-itens-aberto').forEach(function (aberto) {
-      if (aberto !== wrap) aberto.classList.remove('go-itens-aberto');
+      if (aberto !== wrap) {
+        aberto.classList.remove('go-itens-aberto');
+        const pop = aberto.querySelector('.go-itens-popover');
+        if (pop) pop.style.display = 'none';
+      }
     });
     if (wrap) {
       wrap.classList.toggle('go-itens-aberto');
+      if (wrap.classList.contains('go-itens-aberto')) {
+        posicionarEExibir(wrap);
+      } else {
+        const pop = wrap.querySelector('.go-itens-popover');
+        if (pop) pop.style.display = 'none';
+      }
     }
   });
+
+  // Popover é position:fixed (coordenadas de tela) — se a página rolar
+  // enquanto ele está aberto, ele ficaria "flutuando" longe do gatilho, então
+  // fecha nesse caso.
+  window.addEventListener('scroll', esconderTudoAberto, true);
 })();
 </script>
 {% endblock %}

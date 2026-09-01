@@ -644,10 +644,14 @@ body.col-resizing-ativo {
 }
 
 /* ---------------------------------------------------------------------
-   Listagem Geral de Gestão Operação — 1 linha por pedido, com um badge
-   "Itens" por linha que revela (hover ou clique) os produtos/quantidades
-   já preenchidos em Gestão Produção pelo PCP. Mesmo padrão de hover/clique
-   do calendário PCP (.pcp-pedido-card/.pcp-pedido-detalhe), só que ancorado
+   Listagem Geral de Gestão Operação — 1 linha por pedido; passar o mouse
+   (ou clicar) em cima do NOME DO CLIENTE revela os produtos/quantidades já
+   preenchidos em Gestão Produção pelo PCP (pedido do Bruno, 01/09/2026: o
+   gatilho ficava numa coluna "Itens" lá no fim de uma tabela larga — perto
+   da borda direita da tela, o painel podia nascer fora da área visível e
+   parecer que "não abria"; no nome do cliente, perto da borda esquerda, tem
+   sempre espaço de sobra à direita). Mesmo padrão de hover/clique do
+   calendário PCP (.pcp-pedido-card/.pcp-pedido-detalhe), só que ancorado
    numa célula de tabela em vez de um card.
 --------------------------------------------------------------------- */
 .go-listagem-wrap {
@@ -661,34 +665,50 @@ body.col-resizing-ativo {
 .go-itens-wrap {
   position: relative;
   display: inline-block;
+  max-width: 100%;
 }
 
 .go-itens-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.55rem;
-  border-radius: 1rem;
-  background-color: #e7f1ff;
-  color: #0d6efd;
-  font-size: 0.76rem;
+  gap: 0.35rem;
   font-weight: 600;
+  color: #212529;
+  border-bottom: 1px dashed #74a8f7;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.go-itens-badge i {
+  color: #0d6efd;
+  font-size: 0.85em;
+  flex-shrink: 0;
 }
 
 .go-itens-badge.go-itens-badge-vazio {
-  background-color: #f1f3f5;
-  color: #868e96;
+  color: #495057;
+  border-bottom-color: transparent;
   cursor: default;
 }
 
+.go-itens-badge.go-itens-badge-vazio i {
+  color: #adb5bd;
+}
+
 .go-itens-popover {
+  /* position:fixed + display/top/left calculados via JS (ver script no fim
+     de gestao_operacao_listagem_geral.html) — NÃO controlado só por CSS
+     :hover. Motivo: esse popover mora dentro de um contêiner com
+     overflow-x:auto (.go-listagem-wrap, pra rolagem horizontal da tabela
+     larga) e, na prática, todo navegador testado ignora "overflow-y:
+     visible" quando overflow-x já é "auto" no mesmo elemento — o eixo Y
+     acaba clipando (virando "auto") mesmo assim, cortando o popover das
+     últimas linhas da tabela. position:fixed com coordenadas calculadas via
+     getBoundingClientRect() escapa desse recorte (o popover deixa de fazer
+     parte do fluxo/roláve do contêiner). */
   display: none;
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 40;
+  position: fixed;
+  z-index: 2000;
   min-width: 260px;
   max-width: 340px;
   background-color: #fff;
@@ -699,11 +719,6 @@ body.col-resizing-ativo {
   line-height: 1.35;
   color: #212529;
   white-space: normal;
-}
-
-.go-itens-wrap:hover .go-itens-popover,
-.go-itens-wrap.go-itens-aberto .go-itens-popover {
-  display: block;
 }
 
 .go-itens-popover-titulo {
