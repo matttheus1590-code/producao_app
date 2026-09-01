@@ -2047,6 +2047,56 @@ def _itens_producao_por_pedido_venda(pedidos_venda):
     return mapa
 
 
+# Campos "comercial" que só existem em PedidoOperacao (não têm equivalente em
+# Pedido) — pedido do Bruno, 01/09/2026: quem inclui um pedido novo em Gestão
+# Produção (PCP) passa a preencher também essas informações do pedido como um
+# todo (não só do produto), e ao salvar isso alimenta automaticamente a
+# Listagem Geral de Gestão Operação.
+CAMPOS_GO_COMERCIAL_NOVO_PEDIDO = [
+    "go_tipo_pedido", "go_contrato", "go_proposta", "go_pedido_compra_cliente",
+    "go_status_pedido_info", "go_valor_pedido_operacao",
+]
+
+
+def _criar_pedido_operacao_a_partir_de_producao(pedido, f):
+    """Cria automaticamente 1 PedidoOperacao a partir de um Pedido recém-
+    incluído em Gestão Produção (pedido do Bruno, 01/09/2026) — SÓ na
+    inclusão (não em edição futura), e SÓ isso: um cópia inicial dos campos,
+    não um vínculo permanente. PedidoOperacao continua sendo uma tabela
+    INDEPENDENTE (sem FK) — dali em diante os dois são editados cada um na
+    sua própria tela, sem sincronização automática nenhuma (é o próprio
+    Bruno quem vai "manusear manualmente entre PCP/Logística/Resultados").
+
+    "Data solicitada entrega" de Gestão Operação é o mesmo dado que "Data do
+    cliente" de Gestão Produção (já documentado em _LinhaListagemGeral) — por
+    isso não existe um campo novo pra ela no formulário de Produção, só
+    reaproveita pedido.data_cliente."""
+    novo = PedidoOperacao(
+        cliente=pedido.cliente,
+        vendedor=pedido.vendedor,
+        pedido_venda=pedido.pedido_venda,
+        data_inclusao_pedido=pedido.data_inclusao_pedido,
+        prioridade=pedido.prioridade,
+        frete=pedido.frete,
+        pais=pedido.pais,
+        estado=pedido.estado,
+        cidade=pedido.cidade,
+        go_data_solicitada_entrega=pedido.data_cliente,
+        go_tipo_pedido=f.get("go_tipo_pedido", "").strip() or None,
+        go_contrato=f.get("go_contrato", "").strip() or None,
+        go_proposta=f.get("go_proposta", "").strip() or None,
+        go_pedido_compra_cliente=f.get("go_pedido_compra_cliente", "").strip() or None,
+        go_status_pedido_info=f.get("go_status_pedido_info", "").strip() or None,
+        go_valor_pedido_operacao=(
+            _parse_float_form(f.get("go_valor_pedido_operacao"), default=None)
+            if f.get("go_valor_pedido_operacao", "").strip()
+            else None
+        ),
+    )
+    db.session.add(novo)
+    return novo
+
+
 # ----------------------------------------------------------------------
 # Qualidade — RNC (Relatório de Não Conformidade). Área nova, independente
 # de Gestão Produção/Operação (RncQualidade não tem FK com nada). Mesmo
@@ -2859,8 +2909,18 @@ def register_routes(app):
             for item in itens:
                 item.atualizar_status_automatico()
             db.session.add(pedido)
+            # Alimenta automaticamente a Listagem Geral de Gestão Operação
+            # (pedido do Bruno, 01/09/2026) — 1 PedidoOperacao criado junto,
+            # cópia inicial dos dados; dali em diante cada um é editado
+            # independente na sua própria tela (ver
+            # _criar_pedido_operacao_a_partir_de_producao).
+            _criar_pedido_operacao_a_partir_de_producao(pedido, f)
             db.session.commit()
-            flash(f"Pedido de {pedido.cliente} incluído com sucesso ({len(itens)} item(ns)).", "success")
+            flash(
+                f"Pedido de {pedido.cliente} incluído com sucesso ({len(itens)} item(ns)) "
+                "— também já apareceu na Listagem Geral de Gestão Operação.",
+                "success",
+            )
             return redirect(url_for("editar_pedido", pedido_id=pedido.id))
 
         return render_template("novo_pedido.html", form={}, itens=[])

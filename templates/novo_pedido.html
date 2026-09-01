@@ -6,7 +6,11 @@
   <div class="col-12 col-lg-9">
     <h4 class="mb-3"><i class="bi bi-plus-circle"></i> Incluir novo pedido</h4>
     <p class="text-muted">
-      Preencha aqui apenas os dados base do pedido. As informações de produção
+      Preencha aqui os dados base do pedido, os produtos e também as informações
+      comerciais (frete, proposta, contrato, etc.). Ao salvar, esse pedido também
+      aparece automaticamente na <strong>Listagem Geral de Gestão Operação</strong> —
+      dali em diante PCP, Logística e Resultados são preenchidos manualmente, cada
+      um na sua própria aba de Gestão Operação. As informações de produção
       (estação, status, datas, lead time) você inclui depois, na tela de edição,
       e ficam calculadas automaticamente.
     </p>
@@ -69,6 +73,38 @@
               <option value="{{ fr }}" {% if form.get('frete') == fr %}selected{% endif %}>{{ fr }}</option>
             {% endfor %}
           </select>
+        </div>
+
+        <div class="col-12"><hr class="my-1"></div>
+
+        <div class="col-12">
+          <h6 class="text-uppercase small text-muted mb-1"><i class="bi bi-briefcase"></i> Informações comerciais (Gestão Operação)</h6>
+          <p class="text-muted small mb-2">Alimentam automaticamente a Listagem Geral de Gestão Operação.</p>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Tipo de pedido</label>
+          <input type="text" class="form-control" name="go_tipo_pedido" value="{{ form.get('go_tipo_pedido','') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Contrato</label>
+          <input type="text" class="form-control" name="go_contrato" value="{{ form.get('go_contrato','') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Proposta</label>
+          <input type="text" class="form-control" name="go_proposta" value="{{ form.get('go_proposta','') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Pedido de compra do cliente</label>
+          <input type="text" class="form-control" name="go_pedido_compra_cliente" value="{{ form.get('go_pedido_compra_cliente','') }}">
+        </div>
+        <div class="col-md-5">
+          <label class="form-label">Status do pedido (informações)</label>
+          <input type="text" class="form-control" name="go_status_pedido_info" value="{{ form.get('go_status_pedido_info','') }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Valor do pedido (comercial)</label>
+          <input type="text" class="form-control" name="go_valor_pedido_operacao" value="{{ form.get('go_valor_pedido_operacao','') }}">
+          <div class="form-text">Valor comercial do pedido — pode ser diferente do valor calculado a partir dos itens abaixo.</div>
         </div>
 
         <div class="col-12"><hr class="my-1"></div>
