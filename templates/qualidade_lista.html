@@ -17,49 +17,62 @@
   Veja os indicadores consolidados no <a href="{{ url_for('qualidade_dashboard') }}">Dashboard</a>.
 </p>
 
-<form class="row g-2 align-items-end mb-3" method="get">
+<form class="row g-2 align-items-start mb-3" method="get">
+  <div class="col-12">
+    <p class="text-muted small mb-1">
+      <i class="bi bi-info-circle"></i> Nos filtros de lista, segure <kbd>Ctrl</kbd> (ou <kbd>Cmd</kbd> no Mac) e clique
+      pra marcar mais de uma opção ao mesmo tempo (ex.: Espumagem + PU, ou Dureza + Dimensional).
+    </p>
+  </div>
   <div class="col-md-3">
     <label class="form-label small text-muted mb-1">Buscar (nº RNC, cliente, produto, pedido)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+    <label class="form-label small text-muted mb-1 mt-2">Mês (emissão)</label>
+    <input type="month" class="form-control" name="mes_emissao" value="{{ filtros.mes_emissao }}">
   </div>
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Status geral</label>
-    <select class="form-select" name="status_geral">
-      <option value="">Todos</option>
-      {% for op in RNC_STATUS_GERAL_OPCOES %}
-        <option value="{{ op }}" {% if filtros.status_geral == op %}selected{% endif %}>{{ op }}</option>
+    <select class="form-select" name="status_geral" multiple size="6">
+      {% for op in opcoes_filtro.status_geral %}
+        <option value="{{ op }}" {% if op in filtros.status_geral %}selected{% endif %}>{{ op }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Severidade</label>
-    <select class="form-select" name="severidade">
-      <option value="">Todas</option>
-      {% for op in RNC_SEVERIDADE_OPCOES %}
-        <option value="{{ op }}" {% if filtros.severidade == op %}selected{% endif %}>{{ op }}</option>
+    <select class="form-select" name="severidade" multiple size="6">
+      {% for op in opcoes_filtro.severidade %}
+        <option value="{{ op }}" {% if op in filtros.severidade %}selected{% endif %}>{{ op }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Origem</label>
-    <select class="form-select" name="origem">
-      <option value="">Todas</option>
-      {% for op in RNC_ORIGEM_OPCOES %}
-        <option value="{{ op }}" {% if filtros.origem == op %}selected{% endif %}>{{ op }}</option>
+    <select class="form-select" name="origem" multiple size="6">
+      {% for op in opcoes_filtro.origem %}
+        <option value="{{ op }}" {% if op in filtros.origem %}selected{% endif %}>{{ op }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Tipo de NC</label>
-    <select class="form-select" name="tipo_nc">
-      <option value="">Todos</option>
-      {% for op in RNC_TIPO_NC_OPCOES %}
-        <option value="{{ op }}" {% if filtros.tipo_nc == op %}selected{% endif %}>{{ op }}</option>
+    <select class="form-select" name="tipo_nc" multiple size="6">
+      {% for op in opcoes_filtro.tipo_nc %}
+        <option value="{{ op }}" {% if op in filtros.tipo_nc %}selected{% endif %}>{{ op }}</option>
       {% endfor %}
     </select>
   </div>
-  <div class="col-md-1 d-grid">
-    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Setor</label>
+    <select class="form-select" name="setor" multiple size="6">
+      {% for op in opcoes_filtro.setor %}
+        <option value="{{ op }}" {% if op in filtros.setor %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-1 d-flex flex-column gap-2">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+    <a href="{{ url_for('qualidade_lista') }}" class="btn btn-outline-secondary btn-sm">Limpar</a>
   </div>
   <div class="col-12">
     <div class="form-check">
@@ -75,6 +88,8 @@
       <tr>
         <th>Nº RNC</th>
         <th>Data emissão</th>
+        <th>Mês</th>
+        <th>Setor</th>
         <th>Cliente / Projeto</th>
         <th>Produto / Equipamento</th>
         <th>Tipo de NC</th>
@@ -90,6 +105,8 @@
       <tr>
         <td>{{ r.numero_rnc or ("#" ~ r.id) }}</td>
         <td>{{ r.data_emissao.strftime("%d/%m/%Y") if r.data_emissao else "—" }}</td>
+        <td>{{ r.data_emissao.strftime("%m/%Y") if r.data_emissao else "—" }}</td>
+        <td>{{ r.setor or "—" }}</td>
         <td>{{ r.cliente_projeto or "—" }}</td>
         <td class="text-truncate" style="max-width: 220px;" title="{{ r.produto_equipamento or '' }}">{{ r.produto_equipamento or "—" }}</td>
         <td>{{ r.tipo_nc or "—" }}</td>
@@ -104,7 +121,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum RNC encontrado.</td></tr>
+      <tr><td colspan="12" class="text-center text-muted py-4">Nenhum RNC encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

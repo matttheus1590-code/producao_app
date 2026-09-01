@@ -2,6 +2,7 @@ import csv
 import io
 import os
 import re
+from calendar import monthrange
 from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
@@ -1961,13 +1962,20 @@ CAMPOS_HISTORICO_RNC = [
 
 
 def _filtrar_rnc_qualidade(args):
+    """`args` é sempre `request.args` (MultiDict) — os 5 filtros de "múltiplas
+    opções" (status geral, severidade, origem, tipo de NC, setor) usam
+    `getlist`, porque um <select multiple> manda um par nome=valor repetido
+    pra cada opção marcada (pedido do Bruno: poder marcar mais de uma opção
+    no mesmo filtro, ex.: Espumagem + PU, ou Dureza + Dimensional)."""
     query = RncQualidade.query
 
     busca = args.get("busca", "").strip()
-    status_geral = args.get("status_geral", "").strip()
-    severidade = args.get("severidade", "").strip()
-    origem = args.get("origem", "").strip()
-    tipo_nc = args.get("tipo_nc", "").strip()
+    status_geral = [v for v in args.getlist("status_geral") if v]
+    severidade = [v for v in args.getlist("severidade") if v]
+    origem = [v for v in args.getlist("origem") if v]
+    tipo_nc = [v for v in args.getlist("tipo_nc") if v]
+    setor = [v for v in args.getlist("setor") if v]
+    mes_emissao = args.get("mes_emissao", "").strip()  # "AAAA-MM", do <input type="month">
     apenas_abertas = args.get("apenas_abertas", "").strip()
 
     if busca:
@@ -1981,13 +1989,23 @@ def _filtrar_rnc_qualidade(args):
             )
         )
     if status_geral:
-        query = query.filter(RncQualidade.status_geral == status_geral)
+        query = query.filter(RncQualidade.status_geral.in_(status_geral))
     if severidade:
-        query = query.filter(RncQualidade.severidade == severidade)
+        query = query.filter(RncQualidade.severidade.in_(severidade))
     if origem:
-        query = query.filter(RncQualidade.origem == origem)
+        query = query.filter(RncQualidade.origem.in_(origem))
     if tipo_nc:
-        query = query.filter(RncQualidade.tipo_nc == tipo_nc)
+        query = query.filter(RncQualidade.tipo_nc.in_(tipo_nc))
+    if setor:
+        query = query.filter(RncQualidade.setor.in_(setor))
+    if mes_emissao:
+        try:
+            ano_m, mes_m = (int(p) for p in mes_emissao.split("-"))
+            inicio = date(ano_m, mes_m, 1)
+            fim = date(ano_m, mes_m, monthrange(ano_m, mes_m)[1])
+            query = query.filter(RncQualidade.data_emissao.between(inicio, fim))
+        except (ValueError, TypeError):
+            mes_emissao = ""  # valor incompreensível — ignora o filtro em vez de quebrar a busca
     if apenas_abertas == "1":
         query = query.filter(RncQualidade.status_geral.in_(RNC_STATUS_GERAL_ABERTOS))
 
@@ -1995,9 +2013,25 @@ def _filtrar_rnc_qualidade(args):
 
     filtros = dict(
         busca=busca, status_geral=status_geral, severidade=severidade,
-        origem=origem, tipo_nc=tipo_nc, apenas_abertas=apenas_abertas,
+        origem=origem, tipo_nc=tipo_nc, setor=setor, mes_emissao=mes_emissao,
+        apenas_abertas=apenas_abertas,
     )
     return query, filtros
+
+
+def _rnc_opcoes_filtro(campo, opcoes_curadas):
+    """Opções de um filtro de RNC (multi-seleção) — combina os valores REAIS
+    já cadastrados nesse campo (que podem não bater com a lista de sugestão,
+    já que todo campo de "lista" do RNC é texto livre — ver RNC_*_OPCOES em
+    models.py) com a lista de sugestão, pra sempre dar pra filtrar por
+    qualquer valor que já apareça em algum RNC, mesmo com grafia diferente
+    da lista padrão (ex.: "Dureza" na planilha do Bruno vs. "Dureza /
+    Material" na lista de sugestão)."""
+    coluna = getattr(RncQualidade, campo)
+    existentes = [v for (v,) in db.session.query(coluna).filter(coluna.isnot(None)).distinct()]
+    existentes_lower = {v.lower() for v in existentes}
+    extras = [op for op in opcoes_curadas if op.lower() not in existentes_lower]
+    return sorted(existentes + extras, key=lambda s: s.lower())
 
 
 def _linhas_rnc_qualidade(args):
@@ -3109,10 +3143,18 @@ def register_routes(app):
     @login_required
     def qualidade_lista():
         rncs, page, total_paginas, total_filtrado, filtros = _linhas_rnc_qualidade(request.args)
+        opcoes_filtro = dict(
+            status_geral=_rnc_opcoes_filtro("status_geral", RNC_STATUS_GERAL_OPCOES),
+            severidade=_rnc_opcoes_filtro("severidade", RNC_SEVERIDADE_OPCOES),
+            origem=_rnc_opcoes_filtro("origem", RNC_ORIGEM_OPCOES),
+            tipo_nc=_rnc_opcoes_filtro("tipo_nc", RNC_TIPO_NC_OPCOES),
+            setor=_rnc_opcoes_filtro("setor", RNC_SETOR_OPCOES),
+        )
         return render_template(
             "qualidade_lista.html",
             rncs=rncs, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
+            opcoes_filtro=opcoes_filtro,
         )
 
     @app.route("/qualidade/novo", methods=["GET", "POST"])
