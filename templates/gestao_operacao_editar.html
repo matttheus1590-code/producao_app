@@ -66,11 +66,21 @@
         <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">Previsão de liberação (PCP)</label>
-            <input type="date" class="form-control" name="go_previsao_liberacao_pcp" value="{{ pedido.go_previsao_liberacao_pcp or '' }}">
+            {% if liberacao_real.previsao %}
+              <input type="text" class="form-control-plaintext" value="{{ liberacao_real.previsao.strftime('%d/%m/%Y') }}" readonly tabindex="-1">
+              <div class="form-text">Automático — direto da "Liberação prevista" em Gestão Produção.</div>
+            {% else %}
+              <input type="date" class="form-control" name="go_previsao_liberacao_pcp" value="{{ pedido.go_previsao_liberacao_pcp or '' }}">
+            {% endif %}
           </div>
           <div class="col-md-3">
             <label class="form-label">Data efetiva de liberação (PCP)</label>
-            <input type="date" class="form-control" name="go_data_efetiva_liberacao_pcp" value="{{ pedido.go_data_efetiva_liberacao_pcp or '' }}">
+            {% if liberacao_real.efetiva %}
+              <input type="text" class="form-control-plaintext" value="{{ liberacao_real.efetiva.strftime('%d/%m/%Y') }}" readonly tabindex="-1">
+              <div class="form-text">Automático — direto da "Liberação real" em Gestão Produção.</div>
+            {% else %}
+              <input type="date" class="form-control" name="go_data_efetiva_liberacao_pcp" value="{{ pedido.go_data_efetiva_liberacao_pcp or '' }}">
+            {% endif %}
           </div>
           <div class="col-md-3">
             <label class="form-label">Data solicitada no cliente / retira</label>

@@ -2106,6 +2106,38 @@ def _status_producao_por_pedido_venda(pedidos_venda):
     return status_por_pedido
 
 
+def _liberacao_pcp_por_pedido_venda(pedidos_venda):
+    """Pedido do Bruno (01/09/2026): as colunas "Previsão liberação PCP" e
+    "Data efetiva liberação" da tela PCP de Gestão Operação têm que
+    acompanhar automaticamente as mesmas datas "Liberação prevista"/
+    "Liberação real" já preenchidas em Gestão Produção — mesmo casamento por
+    pedido_venda (trim, sem FK, nunca aproximado) já usado pra Status
+    produção/itens da Listagem Geral. Enquanto o pedido não tiver sido
+    lançado em Gestão Produção (sem match), os campos próprios de
+    PedidoOperacao (go_previsao_liberacao_pcp/go_data_efetiva_liberacao_pcp)
+    continuam valendo como fallback editável manualmente — mesmo espírito de
+    status_producao/_status_producao_por_pedido_venda.
+
+    Essas duas datas são preenchidas em Produção por um único bloco no topo
+    do formulário de edição que aplica o MESMO valor a todos os itens do
+    pedido de uma vez (decisão de 31/08/2026) — então, quando por algum
+    motivo os itens de um mesmo pedido têm valores diferentes entre si (dado
+    legado, de antes dessa decisão existir), usamos a data mais recente
+    entre eles."""
+    itens_por_pedido = _itens_producao_por_pedido_venda(pedidos_venda)
+    liberacao_por_pedido = {}
+    for chave, itens in itens_por_pedido.items():
+        previstas = [i.liberacao_prevista for i in itens if i.liberacao_prevista]
+        reais = [i.liberacao_real for i in itens if i.liberacao_real]
+        if not previstas and not reais:
+            continue
+        liberacao_por_pedido[chave] = {
+            "previsao": max(previstas) if previstas else None,
+            "efetiva": max(reais) if reais else None,
+        }
+    return liberacao_por_pedido
+
+
 # Campos "comercial" que só existem em PedidoOperacao (não têm equivalente em
 # Pedido) — pedido do Bruno, 01/09/2026: quem inclui um pedido novo em Gestão
 # Produção (PCP) passa a preencher também essas informações do pedido como um
@@ -3182,11 +3214,13 @@ def register_routes(app):
     def gestao_operacao_pcp():
         pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
         status_real_por_pedido_venda = _status_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
+        liberacao_pcp_por_pedido_venda = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
         return render_template(
             "gestao_operacao_pcp.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
             status_real_por_pedido_venda=status_real_por_pedido_venda,
+            liberacao_pcp_por_pedido_venda=liberacao_pcp_por_pedido_venda,
         )
 
     @app.route("/gestao-operacao/logistica")
@@ -3266,6 +3300,24 @@ def register_routes(app):
 
         if request.method == "POST":
             f = request.form
+            if secao == "pcp":
+                # Pedido do Bruno (01/09/2026): quando já existe a data
+                # automática vinda de Gestão Produção pra "Previsão liberação
+                # PCP"/"Data efetiva liberação", essas duas colunas viram só
+                # leitura aqui — não sobrescreve (nem zera) o campo antigo de
+                # PedidoOperacao ao salvar o resto da aba PCP, senão o valor
+                # manual histórico se perderia à toa mesmo sem o usuário ter
+                # mexido nele (o formulário nem mostra mais um <input> pra
+                # esses dois campos nesse caso — ver gestao_operacao_editar.html).
+                liberacao_real_pcp = (
+                    _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get((pedido.pedido_venda or "").strip())
+                    or {}
+                )
+                campos_secao = [
+                    c for c in campos_secao
+                    if not (c == "go_previsao_liberacao_pcp" and liberacao_real_pcp.get("previsao"))
+                    and not (c == "go_data_efetiva_liberacao_pcp" and liberacao_real_pcp.get("efetiva"))
+                ]
             campos_historico = [c for c in campos_secao if c in CAMPOS_HISTORICO_GESTAO_OPERACAO]
             antes = {c: getattr(pedido, c) for c in campos_historico}
 
@@ -3284,11 +3336,14 @@ def register_routes(app):
             return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id, secao=secao))
 
         status_real = _status_producao_por_pedido_venda([pedido.pedido_venda]).get((pedido.pedido_venda or "").strip())
+        liberacao_real = (
+            _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get((pedido.pedido_venda or "").strip()) or {}
+        )
 
         return render_template(
             "gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras,
             secao=secao, GO_SECOES=GO_SECOES, GO_SECAO_ENDPOINT=GO_SECAO_ENDPOINT, GO_SECAO_LABEL=GO_SECAO_LABEL,
-            status_real=status_real,
+            status_real=status_real, liberacao_real=liberacao_real,
         )
 
     # ------------------------------------------------------------------
