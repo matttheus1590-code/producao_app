@@ -2259,6 +2259,84 @@ def _situacao_entrega_go(go, pedido=None):
     return {"texto": "Ainda não expedido.", "cor": "secondary", "icone": "bi-hourglass"}
 
 
+# "Acompanhamento do pedido" — trilha de 5 etapas (recebido -> produção ->
+# inspeção/expedição -> transporte -> entrega) no painel de status de um
+# pedido. Pedido do Bruno (01/09/2026), a partir de uma imagem de referência
+# que ele anexou (infográfico com o mesmo formato/rótulos), além do resumo
+# em uma frase que já existia (_situacao_entrega_go) — este aqui é o
+# complemento visual "em que pé exatamente está".
+_ETAPAS_ACOMPANHAMENTO_PEDIDO = [
+    {
+        "label": "Pedido recebido",
+        "descricao": "Pedido de venda recebido e registrado no sistema.",
+        "icone": "bi-receipt",
+        "cor": "#0d6efd",
+        "cor_fraca": "rgba(13, 110, 253, .18)",
+    },
+    {
+        "label": "Produção",
+        "descricao": "Pedido em produção. Materiais separados e processos em execução.",
+        "icone": "bi-gear-wide-connected",
+        "cor": "#12b886",
+        "cor_fraca": "rgba(18, 184, 134, .18)",
+    },
+    {
+        "label": "Inspeção / Expedição",
+        "descricao": "Pedido finalizado. Inspeção realizada e liberado para expedição.",
+        "icone": "bi-clipboard2-check",
+        "cor": "#f59f00",
+        "cor_fraca": "rgba(245, 159, 0, .18)",
+    },
+    {
+        "label": "Em transporte",
+        "descricao": "Pedido coletado e em transporte até o destino final.",
+        "icone": "bi-truck",
+        "cor": "#7048e8",
+        "cor_fraca": "rgba(112, 72, 232, .18)",
+    },
+    {
+        "label": "Entrega realizada",
+        "descricao": "Pedido entregue ao cliente com sucesso.",
+        "icone": "bi-box-seam",
+        "cor": "#198754",
+        "cor_fraca": "rgba(25, 135, 84, .18)",
+    },
+]
+
+
+def _indice_etapa_pedido(pedido, go):
+    """Em que das 5 etapas do "Acompanhamento do pedido" ele está agora.
+    Mesmos sinais já usados em _situacao_entrega_go, só que granulares em 5
+    passos em vez de só "expedido/entregue" — chamada só quando pedido ou go
+    existem (nunca os dois None), por isso sempre devolve pelo menos 1
+    ("Pedido recebido")."""
+    if go is not None and (go.go_data_entregue_cliente or go.go_data_real_entrega):
+        return 5
+    if go is not None and go.go_data_pedido_expedido:
+        return 4
+    producao_finalizada = pedido is not None and pedido.status_producao == "FINALIZADO"
+    if producao_finalizada or (go is not None and go.go_data_efetiva_liberacao_pcp):
+        return 3
+    em_producao = pedido is not None and any(item.inicio_producao for item in pedido.itens)
+    if em_producao:
+        return 2
+    return 1
+
+
+def _etapas_acompanhamento_pedido(pedido, go):
+    etapa_atual = _indice_etapa_pedido(pedido, go)
+    etapas = []
+    for i, base in enumerate(_ETAPAS_ACOMPANHAMENTO_PEDIDO, start=1):
+        if i < etapa_atual:
+            estado = "concluida"
+        elif i == etapa_atual:
+            estado = "atual"
+        else:
+            estado = "pendente"
+        etapas.append({**base, "numero": i, "estado": estado, "linha_concluida": i <= etapa_atual})
+    return etapas
+
+
 # Campos "comercial" que só existem em PedidoOperacao (não têm equivalente em
 # Pedido) — pedido do Bruno, 01/09/2026: quem inclui um pedido novo em Gestão
 # Produção (PCP) passa a preencher também essas informações do pedido como um
@@ -2756,12 +2834,13 @@ def register_routes(app):
 
         liberacao_pcp = _liberacao_pcp_por_pedido_venda([chave]).get(chave, {})
         situacao_entrega = _situacao_entrega_go(go, pedido)
+        etapas = _etapas_acompanhamento_pedido(pedido, go)
 
         return render_template(
             "_painel_busca_detalhe.html",
             pedido=pedido, go=go, pedido_venda=chave,
             liberacao_pcp=liberacao_pcp, situacao_entrega=situacao_entrega,
-            nao_encontrado=False,
+            etapas=etapas, nao_encontrado=False,
         )
 
     @app.route("/painel")

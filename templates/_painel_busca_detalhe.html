@@ -48,6 +48,25 @@
       </div>
     </div>
 
+    <h6 class="text-uppercase small text-muted mb-1"><i class="bi bi-signpost-split"></i> Acompanhamento do pedido</h6>
+    <div class="busca-pedido-etapas-wrap">
+      <div class="busca-pedido-etapas">
+        {% for etapa in etapas %}
+          {% if not loop.first %}
+            <div class="busca-pedido-etapa-linha {{ 'concluida' if etapa.linha_concluida else '' }}" style="--etapa-cor: {{ etapa.cor }};"></div>
+          {% endif %}
+          <div class="busca-pedido-etapa {{ etapa.estado }}" style="--etapa-cor: {{ etapa.cor }}; --etapa-cor-fraca: {{ etapa.cor_fraca }};">
+            <div class="busca-pedido-etapa-circulo">
+              <i class="bi {{ etapa.icone }}"></i>
+              <span class="busca-pedido-etapa-numero">{{ etapa.numero }}</span>
+            </div>
+            <div class="busca-pedido-etapa-label">{{ etapa.label }}</div>
+            <div class="busca-pedido-etapa-desc">{{ etapa.descricao }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
     <div class="row g-3 mb-3">
       <div class="col-6 col-md-3">
         <div class="text-muted small">Valor total</div>
