@@ -29,9 +29,6 @@
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_listagem_geral' %}active{% endif %}" href="{{ url_for('gestao_operacao_listagem_geral') }}">
           <i class="bi bi-list-ul"></i> <span>Listagem Geral</span>
         </a>
-        <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_comercial' %}active{% endif %}" href="{{ url_for('gestao_operacao_comercial') }}">
-          <i class="bi bi-briefcase"></i> <span>Comercial</span>
-        </a>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_pcp' %}active{% endif %}" href="{{ url_for('gestao_operacao_pcp') }}">
           <i class="bi bi-gear"></i> <span>PCP</span>
         </a>

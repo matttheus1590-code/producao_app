@@ -130,7 +130,11 @@ GO_CAMPOS_POR_SECAO = {
     ],
 }
 GO_SECAO_ENDPOINT = {
-    "comercial": "gestao_operacao_comercial",
+    # "comercial" aponta pra Listagem Geral (pedido do Bruno, 01/09/2026: a
+    # aba/lista "Comercial" separada foi apagada porque a Listagem Geral já
+    # mostra as mesmas informações — só o FORMULÁRIO de edição da seção
+    # Comercial continua existindo, dentro de gestao_operacao_editar).
+    "comercial": "gestao_operacao_listagem_geral",
     "pcp": "gestao_operacao_pcp",
     "logistica": "gestao_operacao_logistica",
     "resultados": "gestao_operacao_resultados",
@@ -3047,21 +3051,15 @@ def register_routes(app):
         )
 
     # ------------------------------------------------------------------
-    # Gestão Operação (Fase 13) — 4 sub-abas coloridas (Comercial/PCP/
-    # Logística/Resultados), uma linha por PEDIDO, reaproveitando os mesmos
-    # filtros e paginação da Listagem Geral (_filtrar_pedidos) — só muda o
-    # conjunto de colunas mostrado em cada template.
+    # Gestão Operação (Fase 13) — sub-abas coloridas (PCP/Logística/
+    # Resultados), uma linha por PEDIDO, reaproveitando os mesmos filtros e
+    # paginação da Listagem Geral (_filtrar_pedidos) — só muda o conjunto de
+    # colunas mostrado em cada template. A sub-aba "Comercial" (lista) foi
+    # removida (pedido do Bruno, 01/09/2026): a Listagem Geral já mostra as
+    # mesmas informações comerciais, então a lista separada virou
+    # redundante — o FORMULÁRIO de edição da seção Comercial continua
+    # existindo normalmente em gestao_operacao_editar (ver GO_SECAO_ENDPOINT).
     # ------------------------------------------------------------------
-    @app.route("/gestao-operacao/comercial")
-    @login_required
-    def gestao_operacao_comercial():
-        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
-        return render_template(
-            "gestao_operacao_comercial.html",
-            pedidos=pedidos, page=page, total_paginas=total_paginas,
-            total_filtrado=total_filtrado, filtros=filtros,
-        )
-
     @app.route("/gestao-operacao/pcp")
     @login_required
     def gestao_operacao_pcp():
@@ -3177,7 +3175,7 @@ def register_routes(app):
         pedido = db.session.get(PedidoOperacao, pedido_id)
         if pedido is None:
             flash("Pedido não encontrado.", "danger")
-            return redirect(url_for("gestao_operacao_comercial"))
+            return redirect(url_for("gestao_operacao_listagem_geral"))
 
         # Pedido do Bruno (31/08/2026): cada aba só edita os campos da
         # própria área (PCP só mostra/edita campos de PCP, Logística só os
