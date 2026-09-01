@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}P&D · Projetos · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-clipboard-data"></i> Projetos de P&D</h4>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">{{ total_filtrado }} projeto(s)</span>
+    <a href="{{ url_for('pd_novo') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-circle"></i> Novo Projeto
+    </a>
+  </div>
+</div>
+<p class="text-muted small mb-3">
+  Veja os indicadores consolidados no <a href="{{ url_for('pd_dashboard') }}">Dashboard de P&D</a>.
+</p>
+
+<form class="row g-2 align-items-start mb-3" method="get">
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Buscar (código, nome, cliente, produto, fornecedor)</label>
+    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+    <label class="form-label small text-muted mb-1 mt-2">Responsável</label>
+    <input type="text" class="form-control" name="responsavel" value="{{ filtros.responsavel }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Etapa</label>
+    <select class="form-select" name="etapa" multiple size="6">
+      {% for op in opcoes_filtro.etapa %}
+        <option value="{{ op }}" {% if op in filtros.etapa %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Categoria</label>
+    <select class="form-select" name="categoria" multiple size="6">
+      {% for op in opcoes_filtro.categoria %}
+        <option value="{{ op }}" {% if op in filtros.categoria %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Prioridade</label>
+    <select class="form-select" name="prioridade" multiple size="6">
+      {% for op in opcoes_filtro.prioridade %}
+        <option value="{{ op }}" {% if op in filtros.prioridade %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Cliente</label>
+    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
+    <label class="form-label small text-muted mb-1 mt-2">Produto</label>
+    <input type="text" class="form-control" name="produto" value="{{ filtros.produto }}">
+    <label class="form-label small text-muted mb-1 mt-2">Fornecedor</label>
+    <input type="text" class="form-control" name="fornecedor" value="{{ filtros.fornecedor }}">
+  </div>
+  <div class="col-md-1 d-flex flex-column gap-2">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+    <a href="{{ url_for('pd_lista') }}" class="btn btn-outline-secondary btn-sm">Limpar</a>
+  </div>
+  <div class="col-12 d-flex gap-3">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="apenas_atrasados" value="1" id="apenasAtrasados" {% if filtros.apenas_atrasados == '1' %}checked{% endif %} onchange="this.form.submit()">
+      <label class="form-check-label small" for="apenasAtrasados">🔴 Só atrasados</label>
+    </div>
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="apenas_criticos" value="1" id="apenasCriticos" {% if filtros.apenas_criticos == '1' %}checked{% endif %} onchange="this.form.submit()">
+      <label class="form-check-label small" for="apenasCriticos">Só críticos (alta prioridade + atrasado)</label>
+    </div>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-primary">
+      <tr>
+        <th>Código</th>
+        <th>Nome</th>
+        <th>Categoria</th>
+        <th>Responsável</th>
+        <th>Prioridade</th>
+        <th>Etapa atual</th>
+        <th>% Conclusão</th>
+        <th>Prevista conclusão</th>
+        <th>Próxima entrega</th>
+        <th>Prazo</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in projetos %}
+      <tr>
+        <td>{{ p.codigo or ("#" ~ p.id) }}</td>
+        <td class="text-truncate" style="max-width: 220px;" title="{{ p.nome }}">{{ p.nome }}</td>
+        <td>{{ p.categoria or "—" }}</td>
+        <td>{{ p.responsavel or "—" }}</td>
+        <td>{% if p.prioridade %}<span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade }}</span>{% else %}—{% endif %}</td>
+        <td><span class="badge bg-{{ PD_ETAPA_CORES.get(p.etapa_atual, 'secondary') }}">{{ p.etapa_atual }}</span></td>
+        <td>{{ p.percentual_conclusao or 0 }}%</td>
+        <td>{{ p.data_prevista_conclusao.strftime("%d/%m/%Y") if p.data_prevista_conclusao else "—" }}</td>
+        <td class="text-truncate" style="max-width: 180px;" title="{{ p.proxima_entrega or '' }}">{{ p.proxima_entrega or "—" }}</td>
+        <td>
+          {% if p.concluido %}
+            <span class="badge bg-success">Concluído</span>
+          {% elif p.atrasado %}
+            <span class="badge bg-danger">🔴 Atrasado</span>
+          {% elif p.prazo_proximo %}
+            <span class="badge bg-warning text-dark">🟡 Próximo</span>
+          {% else %}
+            <span class="badge bg-success">No prazo</span>
+          {% endif %}
+        </td>
+        <td class="text-end">
+          <a href="{{ url_for('pd_editar', projeto_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Ver/editar projeto">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="text-center text-muted py-4">Nenhum projeto encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('pd_lista', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}

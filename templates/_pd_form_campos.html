@@ -1,0 +1,179 @@
+{# Campos do formulário de Projeto de P&D — reaproveitado por pd_novo.html e
+   pd_editar.html. Espera uma variável `valores` (dict) com os campos já
+   formatados como string pronta pra <input>/<select> (ver _pd_para_form_dict
+   em app.py para a tela de edição). Mesmo padrão de _qualidade_form_campos.html. #}
+
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-card-heading"></i> Informações gerais</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-2">
+    <label class="form-label">Código</label>
+    <input type="text" class="form-control" name="codigo" value="{{ valores.get('codigo','') }}" placeholder="ex.: PD-01/26">
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Nome do projeto *</label>
+    <input type="text" class="form-control" name="nome" value="{{ valores.get('nome','') }}" required>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Categoria</label>
+    <select class="form-select" name="categoria">
+      <option value="">Selecione…</option>
+      {% for op in PD_CATEGORIA_OPCOES %}
+        <option value="{{ op }}" {% if valores.get('categoria') == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12">
+    <label class="form-label">Descrição</label>
+    <textarea class="form-control" name="descricao" rows="2">{{ valores.get('descricao','') }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Objetivo</label>
+    <textarea class="form-control" name="objetivo" rows="2">{{ valores.get('objetivo','') }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Justificativa</label>
+    <textarea class="form-control" name="justificativa" rows="2">{{ valores.get('justificativa','') }}</textarea>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Prioridade</label>
+    <select class="form-select" name="prioridade">
+      <option value="">Selecione…</option>
+      {% for op in PRIORIDADE_OPCOES %}
+        <option value="{{ op }}" {% if valores.get('prioridade') == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Responsável</label>
+    <input type="text" class="form-control" name="responsavel" value="{{ valores.get('responsavel','') }}">
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Participantes</label>
+    <input type="text" class="form-control" name="participantes" value="{{ valores.get('participantes','') }}" placeholder="separe por vírgula">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Cliente</label>
+    <input type="text" class="form-control" name="cliente" value="{{ valores.get('cliente','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Produto</label>
+    <input type="text" class="form-control" name="produto" value="{{ valores.get('produto','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Fornecedor</label>
+    <input type="text" class="form-control" name="fornecedor" value="{{ valores.get('fornecedor','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Área envolvida</label>
+    <input type="text" class="form-control" name="area_envolvida" value="{{ valores.get('area_envolvida','') }}">
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-calendar-week"></i> Cronograma</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-3">
+    <label class="form-label">Etapa atual</label>
+    <select class="form-select" name="etapa_atual">
+      {% for op in PD_ETAPA_OPCOES %}
+        <option value="{{ op }}" {% if valores.get('etapa_atual', 'Ideia') == op %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">% Conclusão</label>
+    <input type="number" min="0" max="100" class="form-control" name="percentual_conclusao" value="{{ valores.get('percentual_conclusao','0') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Data início</label>
+    <input type="date" class="form-control" name="data_inicio" value="{{ valores.get('data_inicio','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Data prevista conclusão</label>
+    <input type="date" class="form-control" name="data_prevista_conclusao" value="{{ valores.get('data_prevista_conclusao','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Data real conclusão</label>
+    <input type="date" class="form-control" name="data_real_conclusao" value="{{ valores.get('data_real_conclusao','') }}">
+  </div>
+  <div class="col-md-5">
+    <label class="form-label">Próxima entrega</label>
+    <input type="text" class="form-control" name="proxima_entrega" value="{{ valores.get('proxima_entrega','') }}" placeholder="o que precisa acontecer a seguir">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label">Data próxima entrega</label>
+    <input type="date" class="form-control" name="data_proxima_entrega" value="{{ valores.get('data_proxima_entrega','') }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label">Responsável próxima entrega</label>
+    <input type="text" class="form-control" name="responsavel_proxima_entrega" value="{{ valores.get('responsavel_proxima_entrega','') }}">
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-cash-coin"></i> Financeiro</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-3">
+    <label class="form-label">Custo previsto (R$)</label>
+    <input type="text" class="form-control" name="custo_previsto" value="{{ valores.get('custo_previsto','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Custo realizado (R$)</label>
+    <input type="text" class="form-control" name="custo_realizado" value="{{ valores.get('custo_realizado','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Investimento previsto (R$)</label>
+    <input type="text" class="form-control" name="investimento_previsto" value="{{ valores.get('investimento_previsto','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Investimento realizado (R$)</label>
+    <input type="text" class="form-control" name="investimento_realizado" value="{{ valores.get('investimento_realizado','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Economia prevista (R$)</label>
+    <input type="text" class="form-control" name="economia_prevista" value="{{ valores.get('economia_prevista','') }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Economia realizada (R$)</label>
+    <input type="text" class="form-control" name="economia_realizada" value="{{ valores.get('economia_realizada','') }}">
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-flag"></i> Resultado esperado / obtido</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-5">
+    <label class="form-label">Resultado esperado</label>
+    <select class="form-select" name="resultado_esperado" multiple size="6">
+      {% for op in PD_RESULTADO_ESPERADO_OPCOES %}
+        <option value="{{ op }}" {% if op in valores.get('resultado_esperado', []) %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+    <p class="text-muted small mb-0 mt-1"><i class="bi bi-info-circle"></i> Segure <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> pra marcar mais de um.</p>
+  </div>
+  <div class="col-md-7">
+    <label class="form-label">Resultado obtido</label>
+    <textarea class="form-control" name="resultado_obtido" rows="4">{{ valores.get('resultado_obtido','') }}</textarea>
+  </div>
+</div>
+
+<hr class="my-3">
+<h6 class="text-uppercase small text-muted mb-3"><i class="bi bi-journal-bookmark"></i> Base de conhecimento (preencher ao concluir)</h6>
+<div class="row g-3 mb-2">
+  <div class="col-md-4">
+    <label class="form-label">Problema</label>
+    <textarea class="form-control" name="problema" rows="2">{{ valores.get('problema','') }}</textarea>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Solução</label>
+    <textarea class="form-control" name="solucao" rows="2">{{ valores.get('solucao','') }}</textarea>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Lições aprendidas</label>
+    <textarea class="form-control" name="licoes_aprendidas" rows="2">{{ valores.get('licoes_aprendidas','') }}</textarea>
+  </div>
+  <div class="col-12">
+    <label class="form-label">Observações gerais</label>
+    <textarea class="form-control" name="observacoes_gerais" rows="2">{{ valores.get('observacoes_gerais','') }}</textarea>
+  </div>
+</div>

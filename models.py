@@ -168,6 +168,80 @@ RNC_STATUS_GERAL_CORES = {
 }
 RNC_EFICACIA_CORES = {"Eficaz": "success", "Não Eficaz": "danger", "Pendente": "secondary"}
 
+# ---------------------------------------------------------------------------
+# P&D — Pesquisa e Desenvolvimento (Fase 14, 01/09/2026). Nova área pedida
+# pelo Bruno: "Central de Gestão de Projetos de Desenvolvimento, Inovação e
+# Melhoria", usada principalmente por ele (Coordenador de Operações
+# Industriais) e por Gustavo Fugita (Líder de P&D/Desenvolvimento).
+# ---------------------------------------------------------------------------
+PD_CATEGORIA_OPCOES = [
+    "Inovação",
+    "Redução de custos",
+    "Desenvolvimento de matéria-prima",
+    "Desenvolvimento de produto",
+    "Desenvolvimento tecnológico",
+    "Desenvolvimento de fornecedor",
+    "Melhoria de processo",
+    "Melhoria de qualidade",
+    "Novas soluções",
+    "Projetos específicos para clientes",
+]
+
+# Ciclo de vida padrão pedido pelo Bruno — pode "andar pra trás" (ex.: Teste
+# reprovado -> volta pra Desenvolvimento -> novo Teste), o que é permitido
+# livremente (etapa_atual é só um texto de lista, não uma máquina de estados
+# travada) — cada mudança de etapa gera uma linha em HistoricoAlteracao.
+PD_ETAPA_OPCOES = [
+    "Ideia", "Planejamento", "Desenvolvimento", "Teste",
+    "Validação", "Homologação", "Implementação", "Concluído",
+]
+PD_ETAPA_CORES = {
+    "Ideia": "secondary",
+    "Planejamento": "info",
+    "Desenvolvimento": "primary",
+    "Teste": "warning",
+    "Validação": "warning",
+    "Homologação": "info",
+    "Implementação": "primary",
+    "Concluído": "success",
+}
+
+# "Resultado esperado" é multi-seleção (o Bruno listou várias opções que um
+# projeto pode combinar ao mesmo tempo) — guardado como texto único (lista
+# separada por "; "), no mesmo espírito dos campos de texto livre do resto
+# do app: simples de somar/buscar, sem precisar de tabela auxiliar nova.
+PD_RESULTADO_ESPERADO_OPCOES = [
+    "Redução de custo",
+    "Aumento de produtividade",
+    "Melhoria de qualidade",
+    "Redução de desperdício",
+    "Redução de lead time",
+    "Ganho tecnológico",
+    "Novo produto",
+    "Substituição de matéria-prima",
+    "Desenvolvimento de fornecedor",
+    "Outros",
+]
+
+PD_TIPO_EVENTO_OPCOES = [
+    "Visita a fornecedor", "Visita a cliente", "Reunião técnica",
+    "Reunião interna", "Validação", "Homologação",
+]
+
+# Status de cada Teste — cores e emoji seguem exatamente o que o Bruno pediu
+# (🟡🔵🟣🟢🔴🟠), usados juntos (emoji + badge) nos templates.
+PD_TESTE_RESULTADO_OPCOES = [
+    "Planejado", "Agendado", "Realizado", "Aprovado", "Reprovado", "Novo teste necessário",
+]
+PD_TESTE_RESULTADO_INFO = {
+    "Planejado": {"emoji": "🟡", "cor": "warning"},
+    "Agendado": {"emoji": "🔵", "cor": "info"},
+    "Realizado": {"emoji": "🟣", "cor": "primary"},
+    "Aprovado": {"emoji": "🟢", "cor": "success"},
+    "Reprovado": {"emoji": "🔴", "cor": "danger"},
+    "Novo teste necessário": {"emoji": "🟠", "cor": "warning"},
+}
+
 _MESES_ABREV_PCP = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"]
 
 
@@ -852,6 +926,172 @@ class RncQualidade(db.Model):
     @property
     def esta_aberto(self):
         return (self.status_geral or "Aberto") in RNC_STATUS_GERAL_ABERTOS
+
+
+class ProjetoPD(db.Model):
+    """P&D — Central de Gestão de Projetos de Desenvolvimento, Inovação e
+    Melhoria (Fase 14, pedido do Bruno em 01/09/2026). TOTALMENTE
+    INDEPENDENTE de Pedido/ItemPedido/PedidoOperacao/RncQualidade — tabela
+    própria, sem FK com nenhuma outra área do sistema, mesmo espírito de
+    RncQualidade (controle manual, campos de texto livre onde a planilha do
+    Bruno usava texto livre, sem inventar cadastros de Cliente/Produto/
+    Fornecedor que não existem em nenhum outro lugar do app).
+
+    "código" não é sequencial automático (mesma lógica do numero_rnc do
+    RNC): texto livre, pra deixar o Bruno/Gustavo escolherem o formato deles.
+    """
+
+    __tablename__ = "projetos_pd"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # ---------------- Informações gerais ----------------
+    codigo = db.Column(db.String(30), nullable=True)
+    nome = db.Column(db.String(200), nullable=False)
+    descricao = db.Column(db.Text, nullable=True)
+    objetivo = db.Column(db.Text, nullable=True)
+    justificativa = db.Column(db.Text, nullable=True)
+    categoria = db.Column(db.String(60), nullable=True)
+    prioridade = db.Column(db.String(10), nullable=True)  # BAIXA/MÉDIA/ALTA — mesma lista de Pedido
+    responsavel = db.Column(db.String(120), nullable=True)
+    participantes = db.Column(db.Text, nullable=True)
+    cliente = db.Column(db.String(200), nullable=True)
+    produto = db.Column(db.String(200), nullable=True)
+    fornecedor = db.Column(db.String(200), nullable=True)
+    area_envolvida = db.Column(db.String(120), nullable=True)
+
+    # ---------------- Cronograma ----------------
+    etapa_atual = db.Column(db.String(30), nullable=False, default="Ideia")
+    percentual_conclusao = db.Column(db.Integer, nullable=True, default=0)
+    data_inicio = db.Column(db.Date, nullable=True)
+    data_prevista_conclusao = db.Column(db.Date, nullable=True)
+    data_real_conclusao = db.Column(db.Date, nullable=True)
+    proxima_entrega = db.Column(db.String(200), nullable=True)
+    data_proxima_entrega = db.Column(db.Date, nullable=True)
+    responsavel_proxima_entrega = db.Column(db.String(120), nullable=True)
+
+    # ---------------- Financeiro ----------------
+    custo_previsto = db.Column(db.Float, nullable=True)
+    custo_realizado = db.Column(db.Float, nullable=True)
+    investimento_previsto = db.Column(db.Float, nullable=True)
+    investimento_realizado = db.Column(db.Float, nullable=True)
+    economia_prevista = db.Column(db.Float, nullable=True)
+    economia_realizada = db.Column(db.Float, nullable=True)
+
+    # ---------------- Resultado esperado / obtido ----------------
+    resultado_esperado = db.Column(db.Text, nullable=True)  # lista separada por "; "
+    resultado_obtido = db.Column(db.Text, nullable=True)
+
+    # ---------------- Base de conhecimento (preenchido ao concluir) ----------------
+    problema = db.Column(db.Text, nullable=True)
+    solucao = db.Column(db.Text, nullable=True)
+    licoes_aprendidas = db.Column(db.Text, nullable=True)
+
+    observacoes_gerais = db.Column(db.Text, nullable=True)
+
+    criado_por_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    criado_por = db.relationship("Usuario", foreign_keys=[criado_por_id])
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    testes = db.relationship(
+        "TesteProjetoPD", backref="projeto", order_by="TesteProjetoPD.id", cascade="all, delete-orphan",
+    )
+    eventos = db.relationship(
+        "VisitaReuniaoPD", backref="projeto", order_by="VisitaReuniaoPD.data.desc()", cascade="all, delete-orphan",
+    )
+
+    @property
+    def concluido(self):
+        return self.etapa_atual == "Concluído"
+
+    @property
+    def dias_restantes(self):
+        if not self.data_prevista_conclusao or self.concluido:
+            return None
+        return (self.data_prevista_conclusao - date.today()).days
+
+    @property
+    def atrasado(self):
+        """Mesma regra usada em todo o resto do sistema: só "atrasado" se
+        tiver data prevista, ainda não tiver concluído, e a data já tiver
+        passado."""
+        dias = self.dias_restantes
+        return dias is not None and dias < 0
+
+    @property
+    def prazo_proximo(self):
+        dias = self.dias_restantes
+        return dias is not None and 0 <= dias <= PRAZO_ALERTA_DIAS
+
+    @property
+    def critico(self):
+        return self.atrasado and self.prioridade == "ALTA"
+
+    @property
+    def roi_percentual(self):
+        """(economia - investimento) / investimento, em %. None se não der
+        pra calcular (sem investimento realizado lançado ainda)."""
+        if not self.investimento_realizado:
+            return None
+        economia = self.economia_realizada or 0
+        return round(((economia - self.investimento_realizado) / self.investimento_realizado) * 100, 1)
+
+    @property
+    def resultado_esperado_lista(self):
+        return [r.strip() for r in (self.resultado_esperado or "").split(";") if r.strip()]
+
+
+class TesteProjetoPD(db.Model):
+    """Um projeto de P&D pode ter vários testes/validações (ex.: "Teste
+    reprovado -> novo teste"). Cada linha é um teste independente — o
+    histórico de tentativas fica visível listando todas as linhas do
+    projeto, sem sobrescrever nada."""
+
+    __tablename__ = "testes_projeto_pd"
+
+    id = db.Column(db.Integer, primary_key=True)
+    projeto_id = db.Column(db.Integer, db.ForeignKey("projetos_pd.id"), nullable=False)
+
+    numero = db.Column(db.String(30), nullable=True)
+    data_planejada = db.Column(db.Date, nullable=True)
+    data_realizada = db.Column(db.Date, nullable=True)
+    responsavel = db.Column(db.String(120), nullable=True)
+    material_utilizado = db.Column(db.String(200), nullable=True)
+    lote = db.Column(db.String(60), nullable=True)
+    fornecedor = db.Column(db.String(200), nullable=True)
+    condicoes = db.Column(db.Text, nullable=True)
+    resultado = db.Column(db.String(30), nullable=True, default="Planejado")
+    observacoes = db.Column(db.Text, nullable=True)
+    # Sem infraestrutura de upload de arquivo no sistema ainda (nenhuma área
+    # do app tem hoje) — igual a RncQualidade.evidencias_anexos, fica como
+    # referência/link em texto por enquanto; upload real de foto/documento
+    # fica pra um próximo incremento.
+    anexos = db.Column(db.Text, nullable=True)
+
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class VisitaReuniaoPD(db.Model):
+    """Visitas a fornecedores/clientes e reuniões técnicas/internas/
+    validações/homologações ligadas a um projeto de P&D."""
+
+    __tablename__ = "visitas_reunioes_pd"
+
+    id = db.Column(db.Integer, primary_key=True)
+    projeto_id = db.Column(db.Integer, db.ForeignKey("projetos_pd.id"), nullable=False)
+
+    data = db.Column(db.Date, nullable=True)
+    tipo = db.Column(db.String(40), nullable=True)
+    participantes = db.Column(db.Text, nullable=True)
+    local = db.Column(db.String(200), nullable=True)
+    objetivo = db.Column(db.Text, nullable=True)
+    resultado = db.Column(db.Text, nullable=True)
+    proximas_acoes = db.Column(db.Text, nullable=True)
+    responsavel = db.Column(db.String(120), nullable=True)
+    anexos = db.Column(db.Text, nullable=True)
+
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class ControleSistema(db.Model):

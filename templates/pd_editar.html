@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}P&D · {{ projeto.nome }} · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1">
+      <i class="bi bi-flask"></i> {{ projeto.codigo or ("#" ~ projeto.id) }}
+      <span class="text-muted fw-normal">— {{ projeto.nome }}</span>
+    </h4>
+    {% if projeto.categoria %}<span class="text-muted small">{{ projeto.categoria }}</span>{% endif %}
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    {% if projeto.prioridade %}
+      <span class="badge bg-{{ PRIORIDADE_CORES.get(projeto.prioridade, 'secondary') }}">{{ projeto.prioridade }}</span>
+    {% endif %}
+    <span class="badge bg-{{ PD_ETAPA_CORES.get(projeto.etapa_atual, 'secondary') }} fs-6">{{ projeto.etapa_atual }}</span>
+  </div>
+</div>
+
+{# ---- Resumo (Projeto 360°) ---- #}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">% Conclusão</div>
+        <div class="fs-5 fw-semibold">{{ projeto.percentual_conclusao or 0 }}%</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Responsável</div>
+        <div class="fs-6 fw-semibold text-truncate" title="{{ projeto.responsavel or '' }}">{{ projeto.responsavel or "—" }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Data início</div>
+        <div class="fs-6 fw-semibold">{{ projeto.data_inicio.strftime("%d/%m/%Y") if projeto.data_inicio else "—" }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Prevista conclusão</div>
+        <div class="fs-6 fw-semibold">{{ projeto.data_prevista_conclusao.strftime("%d/%m/%Y") if projeto.data_prevista_conclusao else "—" }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Dias restantes</div>
+        <div class="fs-5 fw-semibold {% if projeto.atrasado %}text-danger{% elif projeto.prazo_proximo %}text-warning{% endif %}">
+          {{ projeto.dias_restantes if projeto.dias_restantes is not none else "—" }}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Status do prazo</div>
+        <div class="fs-6 fw-semibold">
+          {% if projeto.concluido %}
+            <span class="badge bg-success">Concluído</span>
+          {% elif projeto.atrasado %}
+            <span class="badge bg-danger">🔴 Atrasado</span>
+          {% elif projeto.prazo_proximo %}
+            <span class="badge bg-warning text-dark">🟡 Prazo próximo</span>
+          {% else %}
+            <span class="badge bg-success">No prazo</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if projeto.proxima_entrega %}
+<div class="alert alert-info d-flex align-items-center gap-2 mb-3">
+  <i class="bi bi-signpost-split fs-4"></i>
+  <div>
+    <div class="fw-semibold small text-uppercase">Próxima entrega</div>
+    <div>
+      {{ projeto.proxima_entrega }}
+      {% if projeto.data_proxima_entrega %} — {{ projeto.data_proxima_entrega.strftime("%d/%m/%Y") }}{% endif %}
+      {% if projeto.responsavel_proxima_entrega %} · Responsável: {{ projeto.responsavel_proxima_entrega }}{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#dados">Dados do projeto</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#testes">🧪 Testes & Validações ({{ projeto.testes|length }})</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#eventos">Visitas & Reuniões ({{ projeto.eventos|length }})</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#historico">Histórico</a></li>
+</ul>
+
+<div class="tab-content">
+
+  {# ---- Aba: dados do projeto ---- #}
+  <div class="tab-pane fade show active" id="dados">
+    <form method="post" class="card p-4 shadow-sm">
+      {% include "_pd_form_campos.html" %}
+      <div class="d-flex justify-content-end gap-2 mt-4">
+        <a href="{{ url_for('pd_lista') }}" class="btn btn-outline-secondary">Voltar</a>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Salvar alterações</button>
+      </div>
+    </form>
+  </div>
+
+  {# ---- Aba: testes ---- #}
+  <div class="tab-pane fade" id="testes">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h6 class="text-uppercase small text-muted mb-3">Registrar novo teste</h6>
+        <form method="post" action="{{ url_for('pd_teste_novo', projeto_id=projeto.id) }}">
+          <div class="row g-2">
+            <div class="col-md-2"><input type="text" class="form-control" name="numero" placeholder="Nº teste"></div>
+            <div class="col-md-2"><input type="date" class="form-control" name="data_planejada" title="Data planejada"></div>
+            <div class="col-md-2"><input type="date" class="form-control" name="data_realizada" title="Data realizada"></div>
+            <div class="col-md-2"><input type="text" class="form-control" name="responsavel" placeholder="Responsável"></div>
+            <div class="col-md-2">
+              <select class="form-select" name="resultado">
+                {% for op in PD_TESTE_RESULTADO_OPCOES %}
+                  <option value="{{ op }}">{{ PD_TESTE_RESULTADO_INFO.get(op, {}).get('emoji','') }} {{ op }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2"><input type="text" class="form-control" name="material_utilizado" placeholder="Material utilizado"></div>
+            <div class="col-md-2"><input type="text" class="form-control" name="lote" placeholder="Lote"></div>
+            <div class="col-md-2"><input type="text" class="form-control" name="fornecedor" placeholder="Fornecedor"></div>
+            <div class="col-md-4"><input type="text" class="form-control" name="condicoes" placeholder="Condições do teste"></div>
+            <div class="col-md-6"><input type="text" class="form-control" name="observacoes" placeholder="Observações"></div>
+            <div class="col-md-6"><input type="text" class="form-control" name="anexos" placeholder="Link/referência de fotos ou documentos (opcional)"></div>
+          </div>
+          <div class="text-end mt-2">
+            <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-plus-circle"></i> Adicionar teste</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle bg-white">
+        <thead class="table-light">
+          <tr>
+            <th>Nº</th><th>Planejado</th><th>Realizado</th><th>Responsável</th><th>Material</th>
+            <th>Lote</th><th>Fornecedor</th><th>Resultado</th><th>Observações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in projeto.testes|sort(attribute="id", reverse=True) %}
+          <tr>
+            <td>{{ t.numero or ("#" ~ t.id) }}</td>
+            <td>{{ t.data_planejada.strftime("%d/%m/%Y") if t.data_planejada else "—" }}</td>
+            <td>{{ t.data_realizada.strftime("%d/%m/%Y") if t.data_realizada else "—" }}</td>
+            <td>{{ t.responsavel or "—" }}</td>
+            <td>{{ t.material_utilizado or "—" }}</td>
+            <td>{{ t.lote or "—" }}</td>
+            <td>{{ t.fornecedor or "—" }}</td>
+            <td>
+              {% set info = PD_TESTE_RESULTADO_INFO.get(t.resultado, {}) %}
+              <span class="badge bg-{{ info.get('cor','secondary') }}">{{ info.get('emoji','') }} {{ t.resultado or "—" }}</span>
+            </td>
+            <td class="text-truncate" style="max-width: 220px;" title="{{ t.observacoes or '' }}">{{ t.observacoes or "—" }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="9" class="text-center text-muted py-3">Nenhum teste registrado ainda.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ---- Aba: visitas/reuniões ---- #}
+  <div class="tab-pane fade" id="eventos">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h6 class="text-uppercase small text-muted mb-3">Registrar visita/reunião</h6>
+        <form method="post" action="{{ url_for('pd_evento_novo', projeto_id=projeto.id) }}">
+          <div class="row g-2">
+            <div class="col-md-2"><input type="date" class="form-control" name="data" title="Data"></div>
+            <div class="col-md-3">
+              <select class="form-select" name="tipo">
+                <option value="">Tipo…</option>
+                {% for op in PD_TIPO_EVENTO_OPCOES %}<option value="{{ op }}">{{ op }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3"><input type="text" class="form-control" name="local" placeholder="Local"></div>
+            <div class="col-md-4"><input type="text" class="form-control" name="participantes" placeholder="Participantes"></div>
+            <div class="col-md-6"><input type="text" class="form-control" name="objetivo" placeholder="Objetivo"></div>
+            <div class="col-md-6"><input type="text" class="form-control" name="resultado" placeholder="Resultado"></div>
+            <div class="col-md-6"><input type="text" class="form-control" name="proximas_acoes" placeholder="Próximas ações"></div>
+            <div class="col-md-3"><input type="text" class="form-control" name="responsavel" placeholder="Responsável"></div>
+            <div class="col-md-3"><input type="text" class="form-control" name="anexos" placeholder="Link/referência (opcional)"></div>
+          </div>
+          <div class="text-end mt-2">
+            <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-plus-circle"></i> Adicionar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle bg-white">
+        <thead class="table-light">
+          <tr><th>Data</th><th>Tipo</th><th>Local</th><th>Participantes</th><th>Objetivo</th><th>Resultado</th><th>Próximas ações</th><th>Responsável</th></tr>
+        </thead>
+        <tbody>
+          {% for e in projeto.eventos %}
+          <tr>
+            <td>{{ e.data.strftime("%d/%m/%Y") if e.data else "—" }}</td>
+            <td>{{ e.tipo or "—" }}</td>
+            <td>{{ e.local or "—" }}</td>
+            <td class="text-truncate" style="max-width: 160px;" title="{{ e.participantes or '' }}">{{ e.participantes or "—" }}</td>
+            <td class="text-truncate" style="max-width: 180px;" title="{{ e.objetivo or '' }}">{{ e.objetivo or "—" }}</td>
+            <td class="text-truncate" style="max-width: 180px;" title="{{ e.resultado or '' }}">{{ e.resultado or "—" }}</td>
+            <td class="text-truncate" style="max-width: 180px;" title="{{ e.proximas_acoes or '' }}">{{ e.proximas_acoes or "—" }}</td>
+            <td>{{ e.responsavel or "—" }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-3">Nenhuma visita/reunião registrada ainda.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ---- Aba: histórico ---- #}
+  <div class="tab-pane fade" id="historico">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Histórico de alterações</h6>
+        {% if historico %}
+        <ul class="list-unstyled mb-0" style="max-height: 640px; overflow-y: auto;">
+          {% for h in historico %}
+          <li class="mb-3 pb-2 border-bottom">
+            <div class="small text-muted">
+              {{ h.criado_em.strftime('%d/%m/%Y %H:%M') }} · {{ h.usuario_nome or "sistema" }}
+            </div>
+            <div>
+              <strong class="normal-case">{{ h.campo }}</strong>:
+              <span class="text-muted normal-case">{{ h.valor_anterior or "—" }}</span>
+              <i class="bi bi-arrow-right mx-1"></i>
+              <span class="normal-case">{{ h.valor_novo or "—" }}</span>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted mb-0">Nenhuma alteração registrada ainda para este projeto.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Reabre a aba certa depois de um redirect com #testes/#eventos (ex.: após
+  // adicionar um teste ou visita/reunião), já que Bootstrap não faz isso sozinho.
+  (function () {
+    var hash = window.location.hash;
+    if (hash === '#testes' || hash === '#eventos') {
+      var link = document.querySelector('a[href="' + hash + '"]');
+      if (link && window.bootstrap) { new bootstrap.Tab(link).show(); }
+    }
+  })();
+</script>
+{% endblock %}

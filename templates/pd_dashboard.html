@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat_card %}
+{% block title %}P&D · Dashboard · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-clipboard2-pulse"></i> Dashboard de P&D — Projetos de Desenvolvimento, Inovação e Melhoria</h4>
+  <a href="{{ url_for('pd_lista') }}" class="btn btn-outline-primary btn-sm">
+    <i class="bi bi-clipboard-data"></i> Ver projetos
+  </a>
+</div>
+<p class="text-muted small mb-4">Calculado ao vivo a partir de todos os projetos cadastrados.</p>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Total de projetos", dados.total, link=url_for('pd_lista')) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Ativos", dados.ativos, link=url_for('pd_lista')) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Em desenvolvimento", dados.em_desenvolvimento, cor="primary", link=url_for('pd_lista', etapa=['Desenvolvimento'])) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Em teste", dados.em_teste, cor="warning", link=url_for('pd_lista', etapa=['Teste'])) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Em validação", dados.em_validacao, cor="warning", link=url_for('pd_lista', etapa=['Validação'])) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Em homologação", dados.em_homologacao, cor="info", link=url_for('pd_lista', etapa=['Homologação'])) }}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Concluídos", dados.concluidos, cor="success", link=url_for('pd_lista', etapa=['Concluído'])) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Atrasados", dados.atrasados, cor=("danger" if dados.atrasados else None), link=url_for('pd_lista', apenas_atrasados='1')) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Críticos", dados.criticos, cor=("danger" if dados.criticos else None), link=url_for('pd_lista', apenas_criticos='1')) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Taxa de homologação", dados.taxa_homologacao ~ "%") }}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    {{ stat_card("% No prazo", dados.pct_no_prazo ~ "%", cor="success") }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("% Atrasados", dados.pct_atrasados ~ "%", cor=("danger" if dados.pct_atrasados else None)) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Lead time médio (dias)", dados.lead_time_medio) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Taxa de aprovação de testes", dados.taxa_aprovacao_testes ~ "%") }}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Investimento previsto", "R$ " ~ "{:,.2f}".format(dados.investimento_previsto).replace(",", "X").replace(".", ",").replace("X", ".")) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Investimento realizado", "R$ " ~ "{:,.2f}".format(dados.investimento_realizado).replace(",", "X").replace(".", ",").replace("X", ".")) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Economia prevista", "R$ " ~ "{:,.2f}".format(dados.economia_prevista).replace(",", "X").replace(".", ",").replace("X", ".")) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ stat_card("Economia realizada", "R$ " ~ "{:,.2f}".format(dados.economia_realizada).replace(",", "X").replace(".", ",").replace("X", "."), cor="success") }}
+  </div>
+</div>
+
+{% if dados.roi_geral is not none %}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    {{ stat_card("ROI geral", dados.roi_geral ~ "%", cor=("success" if dados.roi_geral >= 0 else "danger")) }}
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Projetos por etapa</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_etapa %}
+            <tr><td><span class="badge bg-{{ PD_ETAPA_CORES.get(l.chave, 'secondary') }}">{{ l.chave }}</span></td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem projetos ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Projetos por categoria</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_categoria %}
+            <tr><td>{{ l.chave }}</td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem projetos ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Projetos por prioridade</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_prioridade %}
+            <tr><td><span class="badge bg-{{ PRIORIDADE_CORES.get(l.chave, 'secondary') }}">{{ l.chave }}</span></td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem projetos ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Projetos por responsável</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_responsavel %}
+            <tr><td>{{ l.chave }}</td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem projetos ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">🔴 Projetos atrasados (top 10 mais urgentes)</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for p in dados.projetos_atrasados %}
+            <tr>
+              <td><a href="{{ url_for('pd_editar', projeto_id=p.id) }}">{{ p.codigo or ("#" ~ p.id) }} — {{ p.nome }}</a></td>
+              <td class="text-end text-danger fw-semibold">{{ p.dias_restantes }}d</td>
+            </tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Nenhum projeto atrasado. 🎉</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

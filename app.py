@@ -20,6 +20,13 @@ from models import (
     GO_STATUS_PEDIDO_INFO_CORES,
     GO_STATUS_PEDIDO_INFO_OPCOES,
     GO_TIPO_PEDIDO_OPCOES,
+    PD_CATEGORIA_OPCOES,
+    PD_ETAPA_CORES,
+    PD_ETAPA_OPCOES,
+    PD_RESULTADO_ESPERADO_OPCOES,
+    PD_TESTE_RESULTADO_INFO,
+    PD_TESTE_RESULTADO_OPCOES,
+    PD_TIPO_EVENTO_OPCOES,
     PRAZO_ALERTA_DIAS,
     PRIORIDADE_CORES,
     PRIORIDADE_OPCOES,
@@ -55,9 +62,12 @@ from models import (
     Pedido,
     PedidoOperacao,
     Programacao,
+    ProjetoPD,
     RncQualidade,
+    TesteProjetoPD,
     Transportadora,
     Usuario,
+    VisitaReuniaoPD,
     gerar_semanas_pcp,
 )
 from permissoes import ROLES, ROLES_LABELS, pode_editar_estacao, requer_role
@@ -102,6 +112,21 @@ CAMPOS_HISTORICO_GESTAO_OPERACAO = [
     "go_otd_realizado",
     "go_data_entregue_cliente",
     "go_status_final_alinhamento",
+]
+
+# Campos de P&D (Fase 14) que geram histórico de alteração — em especial
+# etapa_atual, pra que toda troca de etapa (inclusive "andar pra trás", ex.:
+# Teste -> Reprovado -> Desenvolvimento) fique registrada, como o Bruno pediu.
+CAMPOS_HISTORICO_PD = [
+    "etapa_atual",
+    "percentual_conclusao",
+    "prioridade",
+    "responsavel",
+    "data_prevista_conclusao",
+    "data_real_conclusao",
+    "custo_realizado",
+    "investimento_realizado",
+    "economia_realizada",
 ]
 
 # Pedido do Bruno (31/08/2026): a tela de edição de Gestão Operação deixa de
@@ -271,6 +296,13 @@ def create_app():
             RNC_SEVERIDADE_CORES=RNC_SEVERIDADE_CORES,
             RNC_STATUS_GERAL_CORES=RNC_STATUS_GERAL_CORES,
             RNC_EFICACIA_CORES=RNC_EFICACIA_CORES,
+            PD_CATEGORIA_OPCOES=PD_CATEGORIA_OPCOES,
+            PD_ETAPA_OPCOES=PD_ETAPA_OPCOES,
+            PD_ETAPA_CORES=PD_ETAPA_CORES,
+            PD_RESULTADO_ESPERADO_OPCOES=PD_RESULTADO_ESPERADO_OPCOES,
+            PD_TIPO_EVENTO_OPCOES=PD_TIPO_EVENTO_OPCOES,
+            PD_TESTE_RESULTADO_OPCOES=PD_TESTE_RESULTADO_OPCOES,
+            PD_TESTE_RESULTADO_INFO=PD_TESTE_RESULTADO_INFO,
         )
 
     register_routes(app)
@@ -2640,6 +2672,268 @@ def _rnc_para_form_dict(rnc):
 
 
 # ----------------------------------------------------------------------
+# P&D — Pesquisa e Desenvolvimento (Fase 14). Segue o mesmo padrão de
+# Qualidade/RNC acima: tabela própria, controle manual, funções auxiliares
+# separadas de filtro/listagem/dashboard/form pra não misturar com nenhuma
+# outra área do sistema.
+# ----------------------------------------------------------------------
+def _campos_form_pd(f):
+    """Lê e converte todos os campos do formulário de Projeto de P&D (novo/
+    editar) — mesma estrutura de _campos_form_rnc."""
+    def _txt(nome):
+        return f.get(nome, "").strip() or None
+
+    def _num_int(nome):
+        valor = f.get(nome, "").strip()
+        try:
+            return int(valor) if valor else None
+        except ValueError:
+            return None
+
+    def _num_float(nome):
+        valor = f.get(nome, "").strip().replace(",", ".")
+        try:
+            return float(valor) if valor else None
+        except ValueError:
+            return None
+
+    resultado_esperado = "; ".join(f.getlist("resultado_esperado")) or None
+
+    return dict(
+        codigo=_txt("codigo"),
+        nome=_txt("nome"),
+        descricao=_txt("descricao"),
+        objetivo=_txt("objetivo"),
+        justificativa=_txt("justificativa"),
+        categoria=_txt("categoria"),
+        prioridade=_txt("prioridade"),
+        responsavel=_txt("responsavel"),
+        participantes=_txt("participantes"),
+        cliente=_txt("cliente"),
+        produto=_txt("produto"),
+        fornecedor=_txt("fornecedor"),
+        area_envolvida=_txt("area_envolvida"),
+        etapa_atual=_txt("etapa_atual") or "Ideia",
+        percentual_conclusao=_num_int("percentual_conclusao") or 0,
+        data_inicio=_parse_data_form(f.get("data_inicio")),
+        data_prevista_conclusao=_parse_data_form(f.get("data_prevista_conclusao")),
+        data_real_conclusao=_parse_data_form(f.get("data_real_conclusao")),
+        proxima_entrega=_txt("proxima_entrega"),
+        data_proxima_entrega=_parse_data_form(f.get("data_proxima_entrega")),
+        responsavel_proxima_entrega=_txt("responsavel_proxima_entrega"),
+        custo_previsto=_num_float("custo_previsto"),
+        custo_realizado=_num_float("custo_realizado"),
+        investimento_previsto=_num_float("investimento_previsto"),
+        investimento_realizado=_num_float("investimento_realizado"),
+        economia_prevista=_num_float("economia_prevista"),
+        economia_realizada=_num_float("economia_realizada"),
+        resultado_esperado=resultado_esperado,
+        resultado_obtido=_txt("resultado_obtido"),
+        problema=_txt("problema"),
+        solucao=_txt("solucao"),
+        licoes_aprendidas=_txt("licoes_aprendidas"),
+        observacoes_gerais=_txt("observacoes_gerais"),
+    )
+
+
+_CAMPOS_DATA_PD = [
+    "data_inicio", "data_prevista_conclusao", "data_real_conclusao", "data_proxima_entrega",
+]
+
+
+def _pd_para_form_dict(projeto):
+    """Converte um ProjetoPD em dict de strings prontas pra repopular o
+    formulário HTML — usado na tela de edição (GET), igual a _rnc_para_form_dict."""
+    campos = [
+        "codigo", "nome", "descricao", "objetivo", "justificativa", "categoria", "prioridade",
+        "responsavel", "participantes", "cliente", "produto", "fornecedor", "area_envolvida",
+        "etapa_atual", "percentual_conclusao", "data_inicio", "data_prevista_conclusao",
+        "data_real_conclusao", "proxima_entrega", "data_proxima_entrega", "responsavel_proxima_entrega",
+        "custo_previsto", "custo_realizado", "investimento_previsto", "investimento_realizado",
+        "economia_prevista", "economia_realizada", "resultado_obtido", "problema", "solucao",
+        "licoes_aprendidas", "observacoes_gerais",
+    ]
+    valores = {}
+    for campo in campos:
+        v = getattr(projeto, campo)
+        if v is None:
+            valores[campo] = ""
+        elif campo in _CAMPOS_DATA_PD:
+            valores[campo] = v.isoformat()
+        else:
+            valores[campo] = str(v)
+    valores["resultado_esperado"] = projeto.resultado_esperado_lista
+    return valores
+
+
+def _filtrar_projetos_pd(args):
+    busca = args.get("busca", "").strip()
+    etapa = args.getlist("etapa")
+    categoria = args.getlist("categoria")
+    responsavel = args.get("responsavel", "").strip()
+    prioridade = args.getlist("prioridade")
+    cliente = args.get("cliente", "").strip()
+    produto = args.get("produto", "").strip()
+    fornecedor = args.get("fornecedor", "").strip()
+    area_envolvida = args.get("area_envolvida", "").strip()
+    apenas_atrasados = args.get("apenas_atrasados", "").strip()
+    apenas_criticos = args.get("apenas_criticos", "").strip()
+
+    query = ProjetoPD.query
+    if busca:
+        termo = f"%{busca}%"
+        query = query.filter(
+            or_(
+                ProjetoPD.nome.ilike(termo),
+                ProjetoPD.codigo.ilike(termo),
+                ProjetoPD.cliente.ilike(termo),
+                ProjetoPD.produto.ilike(termo),
+                ProjetoPD.fornecedor.ilike(termo),
+                ProjetoPD.descricao.ilike(termo),
+            )
+        )
+    if etapa:
+        query = query.filter(ProjetoPD.etapa_atual.in_(etapa))
+    if categoria:
+        query = query.filter(ProjetoPD.categoria.in_(categoria))
+    if responsavel:
+        query = query.filter(ProjetoPD.responsavel.ilike(f"%{responsavel}%"))
+    if prioridade:
+        query = query.filter(ProjetoPD.prioridade.in_(prioridade))
+    if cliente:
+        query = query.filter(ProjetoPD.cliente.ilike(f"%{cliente}%"))
+    if produto:
+        query = query.filter(ProjetoPD.produto.ilike(f"%{produto}%"))
+    if fornecedor:
+        query = query.filter(ProjetoPD.fornecedor.ilike(f"%{fornecedor}%"))
+    if area_envolvida:
+        query = query.filter(ProjetoPD.area_envolvida.ilike(f"%{area_envolvida}%"))
+    if apenas_atrasados == "1":
+        query = query.filter(
+            ProjetoPD.data_prevista_conclusao.isnot(None),
+            ProjetoPD.data_prevista_conclusao < date.today(),
+            ProjetoPD.etapa_atual != "Concluído",
+        )
+    if apenas_criticos == "1":
+        query = query.filter(
+            ProjetoPD.prioridade == "ALTA",
+            ProjetoPD.data_prevista_conclusao.isnot(None),
+            ProjetoPD.data_prevista_conclusao < date.today(),
+            ProjetoPD.etapa_atual != "Concluído",
+        )
+
+    query = query.order_by(ProjetoPD.data_prevista_conclusao.asc().nullslast(), ProjetoPD.id.desc())
+
+    filtros = dict(
+        busca=busca, etapa=etapa, categoria=categoria, responsavel=responsavel,
+        prioridade=prioridade, cliente=cliente, produto=produto, fornecedor=fornecedor,
+        area_envolvida=area_envolvida, apenas_atrasados=apenas_atrasados, apenas_criticos=apenas_criticos,
+    )
+    return query, filtros
+
+
+def _pd_opcoes_filtro(campo, opcoes_curadas):
+    """Mesmo espírito de _rnc_opcoes_filtro: combina valores já cadastrados
+    (texto livre) com a lista de sugestão curada, pra nenhum valor real ficar
+    de fora do filtro."""
+    coluna = getattr(ProjetoPD, campo)
+    existentes = [v for (v,) in db.session.query(coluna).filter(coluna.isnot(None)).distinct()]
+    existentes_lower = {v.lower() for v in existentes}
+    extras = [op for op in opcoes_curadas if op.lower() not in existentes_lower]
+    return sorted(existentes + extras, key=lambda s: s.lower())
+
+
+def _linhas_projetos_pd(args):
+    page = args.get("page", 1, type=int)
+    query, filtros = _filtrar_projetos_pd(args)
+    total_filtrado = query.count()
+    total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+    pagina = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+    return pagina, page, total_paginas, total_filtrado, filtros
+
+
+def _dashboard_pd():
+    """Recalcula ao vivo os indicadores do Dashboard de P&D — nada fica
+    pré-calculado/guardado, sempre em dia com o que estiver cadastrado
+    (mesmo espírito de _dashboard_rnc_qualidade)."""
+    projetos = ProjetoPD.query.all()
+    total = len(projetos)
+    ativos = [p for p in projetos if not p.concluido]
+    atrasados = [p for p in projetos if p.atrasado]
+    criticos = [p for p in projetos if p.critico]
+    concluidos = [p for p in projetos if p.concluido]
+
+    no_prazo = [p for p in ativos if not p.atrasado]
+    pct_no_prazo = round((len(no_prazo) / len(ativos)) * 100, 1) if ativos else 0
+    pct_atrasados = round((len(atrasados) / len(ativos)) * 100, 1) if ativos else 0
+
+    duracoes = [
+        (p.data_real_conclusao - p.data_inicio).days
+        for p in concluidos if p.data_inicio and p.data_real_conclusao
+    ]
+    lead_time_medio = round(sum(duracoes) / len(duracoes), 1) if duracoes else 0
+
+    todos_testes = TesteProjetoPD.query.all()
+    testes_com_resultado = [t for t in todos_testes if t.resultado in ("Aprovado", "Reprovado")]
+    testes_aprovados = [t for t in todos_testes if t.resultado == "Aprovado"]
+    taxa_aprovacao_testes = round((len(testes_aprovados) / len(testes_com_resultado)) * 100, 1) if testes_com_resultado else 0
+
+    projetos_homologados_ou_alem = [
+        p for p in projetos if PD_ETAPA_OPCOES.index(p.etapa_atual) >= PD_ETAPA_OPCOES.index("Homologação")
+    ]
+    taxa_homologacao = round((len(projetos_homologados_ou_alem) / total) * 100, 1) if total else 0
+
+    investimento_previsto = sum(p.investimento_previsto or 0 for p in projetos)
+    investimento_realizado = sum(p.investimento_realizado or 0 for p in projetos)
+    economia_prevista = sum(p.economia_prevista or 0 for p in projetos)
+    economia_realizada = sum(p.economia_realizada or 0 for p in projetos)
+    roi_geral = (
+        round(((economia_realizada - investimento_realizado) / investimento_realizado) * 100, 1)
+        if investimento_realizado else None
+    )
+
+    def _quebra_por(atributo, opcoes_ordem=None):
+        contagem = {}
+        for p in projetos:
+            chave = getattr(p, atributo) or "—"
+            contagem[chave] = contagem.get(chave, 0) + 1
+        if opcoes_ordem:
+            chaves = list(opcoes_ordem) + sorted(k for k in contagem if k not in opcoes_ordem and k != "—")
+            if "—" in contagem:
+                chaves.append("—")
+            return [{"chave": k, "total": contagem.get(k, 0)} for k in chaves if k in contagem or k in opcoes_ordem]
+        return sorted(({"chave": k, "total": v} for k, v in contagem.items()), key=lambda d: -d["total"])
+
+    return {
+        "total": total,
+        "ativos": len(ativos),
+        "em_desenvolvimento": sum(1 for p in projetos if p.etapa_atual == "Desenvolvimento"),
+        "em_teste": sum(1 for p in projetos if p.etapa_atual == "Teste"),
+        "em_validacao": sum(1 for p in projetos if p.etapa_atual == "Validação"),
+        "em_homologacao": sum(1 for p in projetos if p.etapa_atual == "Homologação"),
+        "concluidos": len(concluidos),
+        "atrasados": len(atrasados),
+        "criticos": len(criticos),
+        "pct_no_prazo": pct_no_prazo,
+        "pct_atrasados": pct_atrasados,
+        "lead_time_medio": lead_time_medio,
+        "taxa_aprovacao_testes": taxa_aprovacao_testes,
+        "taxa_homologacao": taxa_homologacao,
+        "investimento_previsto": investimento_previsto,
+        "investimento_realizado": investimento_realizado,
+        "economia_prevista": economia_prevista,
+        "economia_realizada": economia_realizada,
+        "roi_geral": roi_geral,
+        "por_etapa": _quebra_por("etapa_atual", PD_ETAPA_OPCOES),
+        "por_categoria": _quebra_por("categoria", PD_CATEGORIA_OPCOES),
+        "por_responsavel": _quebra_por("responsavel"),
+        "por_prioridade": _quebra_por("prioridade", PRIORIDADE_OPCOES),
+        "projetos_atrasados": sorted(atrasados, key=lambda p: p.data_prevista_conclusao)[:10],
+        "projetos_criticos": criticos[:10],
+    }
+
+
+# ----------------------------------------------------------------------
 # Relatórios (fase 12) — exportações CSV/Excel sob demanda, sem agendamento
 # automático (geradas na hora, a partir dos mesmos dados já calculados
 # pelas telas de Listagem, Faturamento e Gargalos).
@@ -3672,6 +3966,145 @@ def register_routes(app):
             .all()
         )
         return render_template("qualidade_editar.html", rnc=rnc, valores=_rnc_para_form_dict(rnc), historico=historico)
+
+    # ------------------------------------------------------------------
+    # P&D — Pesquisa e Desenvolvimento (Fase 14, 01/09/2026). Área nova,
+    # independente de PCP/Produção/Operação/Qualidade. Mesmo critério de
+    # acesso já adotado em Qualidade (aberto a todo usuário autenticado,
+    # sem role dedicado) — usada principalmente por Bruno e Gustavo Fugita,
+    # mas sem restringir os outros papéis já existentes no sistema.
+    # ------------------------------------------------------------------
+    @app.route("/pd/dashboard")
+    @login_required
+    def pd_dashboard():
+        dados = _dashboard_pd()
+        return render_template("pd_dashboard.html", dados=dados)
+
+    @app.route("/pd")
+    @login_required
+    def pd_lista():
+        projetos, page, total_paginas, total_filtrado, filtros = _linhas_projetos_pd(request.args)
+        opcoes_filtro = dict(
+            etapa=PD_ETAPA_OPCOES,
+            categoria=_pd_opcoes_filtro("categoria", PD_CATEGORIA_OPCOES),
+            prioridade=PRIORIDADE_OPCOES,
+        )
+        return render_template(
+            "pd_lista.html",
+            projetos=projetos, page=page, total_paginas=total_paginas,
+            total_filtrado=total_filtrado, filtros=filtros, opcoes_filtro=opcoes_filtro,
+        )
+
+    @app.route("/pd/novo", methods=["GET", "POST"])
+    @login_required
+    def pd_novo():
+        if request.method == "POST":
+            f = request.form
+            nome = f.get("nome", "").strip()
+            if not nome:
+                flash("Nome do projeto é obrigatório.", "danger")
+                valores_repopular = {k: f.get(k, "") for k in f.keys()}
+                valores_repopular["resultado_esperado"] = f.getlist("resultado_esperado")
+                return render_template("pd_novo.html", valores=valores_repopular)
+
+            valores = _campos_form_pd(f)
+            novo = ProjetoPD(criado_por_id=current_user.id, **valores)
+            db.session.add(novo)
+            db.session.commit()
+            flash(f"Projeto {novo.codigo or ('#' + str(novo.id))} cadastrado com sucesso.", "success")
+            return redirect(url_for("pd_editar", projeto_id=novo.id))
+
+        return render_template("pd_novo.html", valores={})
+
+    @app.route("/pd/<int:projeto_id>/editar", methods=["GET", "POST"])
+    @login_required
+    def pd_editar(projeto_id):
+        projeto = db.session.get(ProjetoPD, projeto_id)
+        if projeto is None:
+            flash("Projeto de P&D não encontrado.", "danger")
+            return redirect(url_for("pd_lista"))
+
+        if request.method == "POST":
+            f = request.form
+            nome = f.get("nome", "").strip()
+            if not nome:
+                flash("Nome do projeto é obrigatório.", "danger")
+                return redirect(url_for("pd_editar", projeto_id=projeto.id))
+
+            antes = {c: getattr(projeto, c) for c in CAMPOS_HISTORICO_PD}
+            valores = _campos_form_pd(f)
+            for campo, valor in valores.items():
+                setattr(projeto, campo, valor)
+            depois = {c: getattr(projeto, c) for c in CAMPOS_HISTORICO_PD}
+            _registrar_alteracoes("projeto_pd", projeto.id, None, antes, depois, CAMPOS_HISTORICO_PD)
+
+            db.session.commit()
+            flash("Projeto atualizado com sucesso.", "success")
+            return redirect(url_for("pd_editar", projeto_id=projeto.id))
+
+        historico = (
+            HistoricoAlteracao.query
+            .filter_by(entidade_tipo="projeto_pd", entidade_id=projeto.id)
+            .order_by(HistoricoAlteracao.criado_em.desc())
+            .all()
+        )
+        return render_template(
+            "pd_editar.html", projeto=projeto, valores=_pd_para_form_dict(projeto), historico=historico,
+        )
+
+    @app.route("/pd/<int:projeto_id>/testes/novo", methods=["POST"])
+    @login_required
+    def pd_teste_novo(projeto_id):
+        projeto = db.session.get(ProjetoPD, projeto_id)
+        if projeto is None:
+            flash("Projeto de P&D não encontrado.", "danger")
+            return redirect(url_for("pd_lista"))
+
+        f = request.form
+        teste = TesteProjetoPD(
+            projeto_id=projeto.id,
+            numero=f.get("numero", "").strip() or None,
+            data_planejada=_parse_data_form(f.get("data_planejada")),
+            data_realizada=_parse_data_form(f.get("data_realizada")),
+            responsavel=f.get("responsavel", "").strip() or None,
+            material_utilizado=f.get("material_utilizado", "").strip() or None,
+            lote=f.get("lote", "").strip() or None,
+            fornecedor=f.get("fornecedor", "").strip() or None,
+            condicoes=f.get("condicoes", "").strip() or None,
+            resultado=f.get("resultado", "").strip() or "Planejado",
+            observacoes=f.get("observacoes", "").strip() or None,
+            anexos=f.get("anexos", "").strip() or None,
+        )
+        db.session.add(teste)
+        db.session.commit()
+        flash("Teste registrado com sucesso.", "success")
+        return redirect(url_for("pd_editar", projeto_id=projeto.id) + "#testes")
+
+    @app.route("/pd/<int:projeto_id>/eventos/novo", methods=["POST"])
+    @login_required
+    def pd_evento_novo(projeto_id):
+        projeto = db.session.get(ProjetoPD, projeto_id)
+        if projeto is None:
+            flash("Projeto de P&D não encontrado.", "danger")
+            return redirect(url_for("pd_lista"))
+
+        f = request.form
+        evento = VisitaReuniaoPD(
+            projeto_id=projeto.id,
+            data=_parse_data_form(f.get("data")),
+            tipo=f.get("tipo", "").strip() or None,
+            participantes=f.get("participantes", "").strip() or None,
+            local=f.get("local", "").strip() or None,
+            objetivo=f.get("objetivo", "").strip() or None,
+            resultado=f.get("resultado", "").strip() or None,
+            proximas_acoes=f.get("proximas_acoes", "").strip() or None,
+            responsavel=f.get("responsavel", "").strip() or None,
+            anexos=f.get("anexos", "").strip() or None,
+        )
+        db.session.add(evento)
+        db.session.commit()
+        flash("Visita/reunião registrada com sucesso.", "success")
+        return redirect(url_for("pd_editar", projeto_id=projeto.id) + "#eventos")
 
     # ------------------------------------------------------------------
     # Usuários (papéis de acesso) — só ADMIN cadastra/edita usuários
