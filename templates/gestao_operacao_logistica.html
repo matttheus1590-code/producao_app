@@ -55,7 +55,7 @@
         <td>{{ p.go_data_real_entrega.strftime("%d/%m/%Y") if p.go_data_real_entrega else "—" }}</td>
         <td>{{ p.go_lead_time_frete_dias ~ "d" if p.go_lead_time_frete_dias is not none else "—" }}</td>
         <td class="text-end">
-          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar Gestão Operação">
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='logistica') }}" class="btn btn-sm btn-outline-primary" title="Editar Logística">
             <i class="bi bi-pencil-square"></i>
           </a>
         </td>

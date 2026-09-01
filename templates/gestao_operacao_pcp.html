@@ -55,7 +55,7 @@
         </td>
         <td>{{ p.go_termino_semanal_pcp or "—" }}</td>
         <td class="text-end">
-          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar Gestão Operação">
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='pcp') }}" class="btn btn-sm btn-outline-primary" title="Editar PCP">
             <i class="bi bi-pencil-square"></i>
           </a>
         </td>

@@ -184,7 +184,7 @@
         <td>{{ p.go_status_final_alinhamento or "—" }}</td>
         <td class="text-truncate" style="max-width: 200px;" title="{{ p.go_obs_operacao or '' }}">{{ p.go_obs_operacao or "—" }}</td>
         <td class="text-end">
-          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id) }}" class="btn btn-sm btn-outline-primary" title="Editar Gestão Operação">
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='resultados') }}" class="btn btn-sm btn-outline-primary" title="Editar Resultados">
             <i class="bi bi-pencil-square"></i>
           </a>
         </td>
