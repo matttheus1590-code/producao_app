@@ -1,14 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Gestão Operação · Pedido #{{ pedido.id }} · Gestão da Produção e Operação{% endblock %}
+{% block title %}Gestão Operação · {{ GO_SECAO_LABEL[secao] }} · Pedido #{{ pedido.id }} · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
 <div class="row justify-content-center">
-  <div class="col-12 col-lg-11">
+  <div class="col-12 col-lg-9">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
       <h4 class="mb-0"><i class="bi bi-diagram-3"></i> Gestão Operação — Pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }} — {{ pedido.cliente }}</h4>
     </div>
+    <p class="text-muted small mb-3">
+      Editando só a área <strong>{{ GO_SECAO_LABEL[secao] }}</strong> deste pedido — os campos das outras áreas
+      não aparecem aqui e não são alterados ao salvar. Troque de área a qualquer momento pelas abas abaixo.
+    </p>
+
+    <ul class="nav nav-pills go-subnav mb-3">
+      {% for s in GO_SECOES %}
+      <li class="nav-item">
+        <a class="nav-link {% if s == secao %}active{% endif %}" href="{{ url_for('gestao_operacao_editar', pedido_id=pedido.id, secao=s) }}">
+          {{ GO_SECAO_LABEL[s] }}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
 
     <form method="post">
+      {% if secao == 'comercial' %}
       <div class="card p-4 shadow-sm mb-4 go-bloco-comercial">
         <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-briefcase"></i> Comercial</h6>
         <div class="row g-3">
@@ -43,7 +58,9 @@
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if secao == 'pcp' %}
       <div class="card p-4 shadow-sm mb-4 go-bloco-pcp">
         <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-gear"></i> PCP</h6>
         <div class="row g-3">
@@ -80,7 +97,9 @@
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if secao == 'logistica' %}
       <div class="card p-4 shadow-sm mb-4 go-bloco-logistica">
         <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-truck"></i> Logística / Nota Fiscal</h6>
         <div class="row g-3">
@@ -135,7 +154,9 @@
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if secao == 'resultados' %}
       <div class="card p-4 shadow-sm mb-4 go-bloco-resultados">
         <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-graph-up-arrow"></i> Resultados / OTD</h6>
         <div class="row g-3">
@@ -166,9 +187,10 @@
           </div>
         </div>
       </div>
+      {% endif %}
 
       <div class="d-flex justify-content-end gap-2">
-        <a href="{{ url_for('gestao_operacao_comercial') }}" class="btn btn-outline-secondary">Cancelar</a>
+        <a href="{{ url_for(GO_SECAO_ENDPOINT[secao]) }}" class="btn btn-outline-secondary">Cancelar</a>
         <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle"></i> Salvar</button>
       </div>
     </form>
