@@ -3186,49 +3186,6 @@ def register_routes(app):
             itens_por_pedido_venda=itens_por_pedido_venda,
         )
 
-    @app.route("/gestao-operacao/novo", methods=["GET", "POST"])
-    @requer_role("ADMIN", "PCP")
-    def gestao_operacao_novo():
-        """Cria um pedido novo DENTRO da Gestão Operação — 100% independente da
-        Gestão Produção (não cria Pedido/ItemPedido nenhum). Só o bloco
-        Comercial; depois de salvar, redireciona pra edição pra preencher PCP/
-        Logística/Resultados aos poucos, conforme o pedido avança."""
-        if request.method == "POST":
-            f = request.form
-            cliente = f.get("cliente", "").strip()
-            if not cliente:
-                flash("Cliente é obrigatório.", "danger")
-                return render_template("gestao_operacao_novo.html", form=f)
-
-            novo = PedidoOperacao(
-                cliente=cliente,
-                vendedor=f.get("vendedor", "").strip() or None,
-                pedido_venda=f.get("pedido_venda", "").strip() or None,
-                data_inclusao_pedido=_parse_data_form(f.get("data_inclusao_pedido")),
-                prioridade=f.get("prioridade") or "MÉDIA",
-                frete=f.get("frete") or None,
-                pais=f.get("pais", "").strip() or "Brasil",
-                estado=f.get("estado", "").strip() or None,
-                cidade=f.get("cidade", "").strip() or None,
-                go_tipo_pedido=f.get("go_tipo_pedido", "").strip() or None,
-                go_contrato=f.get("go_contrato", "").strip() or None,
-                go_pedido_compra_cliente=f.get("go_pedido_compra_cliente", "").strip() or None,
-                go_proposta=f.get("go_proposta", "").strip() or None,
-                go_data_solicitada_entrega=_parse_data_form(f.get("go_data_solicitada_entrega")),
-                go_status_pedido_info=f.get("go_status_pedido_info", "").strip() or None,
-                go_valor_pedido_operacao=(
-                    _parse_float_form(f.get("go_valor_pedido_operacao"), default=None)
-                    if f.get("go_valor_pedido_operacao", "").strip()
-                    else None
-                ),
-            )
-            db.session.add(novo)
-            db.session.commit()
-            flash(f"Pedido de {novo.cliente} incluído na Gestão Operação com sucesso.", "success")
-            return redirect(url_for("gestao_operacao_editar", pedido_id=novo.id))
-
-        return render_template("gestao_operacao_novo.html", form={})
-
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")
     def gestao_operacao_editar(pedido_id):
