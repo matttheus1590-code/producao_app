@@ -101,6 +101,69 @@ CAMPOS_HISTORICO_GESTAO_OPERACAO = [
     "go_status_final_alinhamento",
 ]
 
+# Pedido do Bruno (31/08/2026): a tela de edição de Gestão Operação deixa de
+# mostrar TODOS os blocos (Comercial/PCP/Logística/Resultados) de uma vez —
+# cada aba só edita os campos da própria área. GO_CAMPOS_POR_SECAO é a única
+# fonte de verdade de "quais campos pertencem a cada aba", usada tanto pra
+# decidir o que o template desenha quanto pra decidir o que a rota lê do
+# formulário — assim um campo fora da seção atual nunca é tocado (nem lido,
+# nem zerado) ao salvar.
+GO_SECOES = ("comercial", "pcp", "logistica", "resultados")
+GO_CAMPOS_POR_SECAO = {
+    "comercial": [
+        "go_tipo_pedido", "go_contrato", "go_pedido_compra_cliente", "go_proposta",
+        "go_data_solicitada_entrega", "go_status_pedido_info", "go_valor_pedido_operacao",
+    ],
+    "pcp": [
+        "go_previsao_liberacao_pcp", "go_data_efetiva_liberacao_pcp",
+        "go_data_solicitada_cliente_retira", "go_custo_producao_real", "go_termino_semanal_pcp",
+    ],
+    "logistica": [
+        "go_data_emissao_nf", "go_valor_nf_emitida", "go_numero_nf", "go_status_logistica",
+        "go_data_pedido_expedido", "go_transportadora_id", "go_custo_frete_previsto",
+        "go_custo_frete_final", "go_custo_frete_sobre_nota", "go_data_prevista_entrega",
+        "go_data_real_entrega",
+    ],
+    "resultados": [
+        "go_otd_realizado", "go_data_solicitada_cliente_final", "go_data_entregue_cliente",
+        "go_obs_operacao", "go_status_final_alinhamento",
+    ],
+}
+GO_SECAO_ENDPOINT = {
+    "comercial": "gestao_operacao_comercial",
+    "pcp": "gestao_operacao_pcp",
+    "logistica": "gestao_operacao_logistica",
+    "resultados": "gestao_operacao_resultados",
+}
+GO_SECAO_LABEL = {
+    "comercial": "Comercial", "pcp": "PCP", "logistica": "Logística / NF", "resultados": "Resultados / OTD",
+}
+_GO_CAMPOS_DATA = {
+    "go_data_solicitada_entrega", "go_previsao_liberacao_pcp", "go_data_efetiva_liberacao_pcp",
+    "go_data_solicitada_cliente_retira", "go_data_emissao_nf", "go_data_pedido_expedido",
+    "go_data_prevista_entrega", "go_data_real_entrega", "go_data_solicitada_cliente_final",
+    "go_data_entregue_cliente",
+}
+_GO_CAMPOS_FLOAT = {
+    "go_valor_pedido_operacao", "go_custo_producao_real", "go_valor_nf_emitida",
+    "go_custo_frete_previsto", "go_custo_frete_final", "go_custo_frete_sobre_nota",
+}
+
+
+def _parse_campo_go(campo, f):
+    """Lê e converte UM campo go_* do formulário — usado pela edição
+    seccionada de Gestão Operação, campo por campo, só para os campos da
+    seção que está sendo salva."""
+    if campo == "go_transportadora_id":
+        valor = f.get("go_transportadora_id", "")
+        return int(valor) if valor.strip().isdigit() else None
+    if campo in _GO_CAMPOS_DATA:
+        return _parse_data_form(f.get(campo))
+    if campo in _GO_CAMPOS_FLOAT:
+        valor = f.get(campo, "")
+        return _parse_float_form(valor, default=None) if valor.strip() else None
+    return f.get(campo, "").strip() or None
+
 
 def _resolve_database_uri():
     """Usa DATABASE_URL (Postgres do Render) quando existir; senão, SQLite local."""
@@ -3067,64 +3130,40 @@ def register_routes(app):
             flash("Pedido não encontrado.", "danger")
             return redirect(url_for("gestao_operacao_comercial"))
 
+        # Pedido do Bruno (31/08/2026): cada aba só edita os campos da
+        # própria área (PCP só mostra/edita campos de PCP, Logística só os
+        # de Logística...) — nunca lê nem sobrescreve campos de outra seção,
+        # mesmo que o form de outra aba tivesse ficado aberto em outra guia.
+        secao = request.args.get("secao", "comercial")
+        if secao not in GO_SECOES:
+            secao = "comercial"
+        campos_secao = GO_CAMPOS_POR_SECAO[secao]
+
         transportadoras = Transportadora.query.filter_by(ativo=True).order_by(Transportadora.nome).all()
 
         if request.method == "POST":
             f = request.form
-            antes = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
+            campos_historico = [c for c in campos_secao if c in CAMPOS_HISTORICO_GESTAO_OPERACAO]
+            antes = {c: getattr(pedido, c) for c in campos_historico}
 
-            transportadora_id = f.get("go_transportadora_id", "")
+            for campo in campos_secao:
+                setattr(pedido, campo, _parse_campo_go(campo, f))
 
-            valores = {
-                # -- Comercial --
-                "go_tipo_pedido": f.get("go_tipo_pedido", "").strip() or None,
-                "go_contrato": f.get("go_contrato", "").strip() or None,
-                "go_pedido_compra_cliente": f.get("go_pedido_compra_cliente", "").strip() or None,
-                "go_proposta": f.get("go_proposta", "").strip() or None,
-                "go_data_solicitada_entrega": _parse_data_form(f.get("go_data_solicitada_entrega")),
-                "go_status_pedido_info": f.get("go_status_pedido_info", "").strip() or None,
-                "go_valor_pedido_operacao": _parse_float_form(f.get("go_valor_pedido_operacao"), default=None) if f.get("go_valor_pedido_operacao", "").strip() else None,
-                # -- PCP --
-                "go_previsao_liberacao_pcp": _parse_data_form(f.get("go_previsao_liberacao_pcp")),
-                "go_data_efetiva_liberacao_pcp": _parse_data_form(f.get("go_data_efetiva_liberacao_pcp")),
-                "go_data_solicitada_cliente_retira": _parse_data_form(f.get("go_data_solicitada_cliente_retira")),
-                "go_custo_producao_real": _parse_float_form(f.get("go_custo_producao_real"), default=None) if f.get("go_custo_producao_real", "").strip() else None,
-                "go_termino_semanal_pcp": f.get("go_termino_semanal_pcp", "").strip() or None,
-                # -- Logística / NF --
-                "go_data_emissao_nf": _parse_data_form(f.get("go_data_emissao_nf")),
-                "go_valor_nf_emitida": _parse_float_form(f.get("go_valor_nf_emitida"), default=None) if f.get("go_valor_nf_emitida", "").strip() else None,
-                "go_numero_nf": f.get("go_numero_nf", "").strip() or None,
-                "go_status_logistica": f.get("go_status_logistica", "").strip() or None,
-                "go_data_pedido_expedido": _parse_data_form(f.get("go_data_pedido_expedido")),
-                "go_transportadora_id": int(transportadora_id) if transportadora_id.strip().isdigit() else None,
-                "go_custo_frete_previsto": _parse_float_form(f.get("go_custo_frete_previsto"), default=None) if f.get("go_custo_frete_previsto", "").strip() else None,
-                "go_custo_frete_final": _parse_float_form(f.get("go_custo_frete_final"), default=None) if f.get("go_custo_frete_final", "").strip() else None,
-                "go_custo_frete_sobre_nota": _parse_float_form(f.get("go_custo_frete_sobre_nota"), default=None) if f.get("go_custo_frete_sobre_nota", "").strip() else None,
-                "go_data_prevista_entrega": _parse_data_form(f.get("go_data_prevista_entrega")),
-                "go_data_real_entrega": _parse_data_form(f.get("go_data_real_entrega")),
-                # -- Resultados / OTD --
-                "go_otd_realizado": f.get("go_otd_realizado", "").strip() or None,
-                "go_data_solicitada_cliente_final": _parse_data_form(f.get("go_data_solicitada_cliente_final")),
-                "go_data_entregue_cliente": _parse_data_form(f.get("go_data_entregue_cliente")),
-                "go_obs_operacao": f.get("go_obs_operacao", "").strip() or None,
-                "go_status_final_alinhamento": f.get("go_status_final_alinhamento", "").strip() or None,
-            }
-
-            for campo, valor in valores.items():
-                setattr(pedido, campo, valor)
-
-            depois = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
+            depois = {c: getattr(pedido, c) for c in campos_historico}
             # pedido_id fica None de propósito: essa coluna tem FK de verdade pra
             # `pedidos` (Gestão Produção) — PedidoOperacao é uma tabela totalmente
             # separada, então gravar o id dela ali violaria a FK. entidade_id já
             # guarda o id certo.
-            _registrar_alteracoes("pedido_operacao", pedido.id, None, antes, depois, CAMPOS_HISTORICO_GESTAO_OPERACAO)
+            _registrar_alteracoes("pedido_operacao", pedido.id, None, antes, depois, campos_historico)
 
             db.session.commit()
-            flash("Gestão Operação do pedido atualizada com sucesso.", "success")
-            return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id))
+            flash(f"Gestão Operação ({GO_SECAO_LABEL[secao]}) do pedido atualizada com sucesso.", "success")
+            return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id, secao=secao))
 
-        return render_template("gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras)
+        return render_template(
+            "gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras,
+            secao=secao, GO_SECOES=GO_SECOES, GO_SECAO_ENDPOINT=GO_SECAO_ENDPOINT, GO_SECAO_LABEL=GO_SECAO_LABEL,
+        )
 
     # ------------------------------------------------------------------
     # Qualidade — RNC (Relatório de Não Conformidade). Área nova (31/08/2026),
