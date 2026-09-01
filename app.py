@@ -2144,6 +2144,121 @@ def _liberacao_pcp_por_pedido_venda(pedidos_venda):
     return liberacao_por_pedido
 
 
+def _buscar_pedidos_para_status(termo, limite=12):
+    """Pedido do Bruno (01/09/2026): canal único de busca no topo do Painel —
+    "sou o PCP, comercial me cobrou de um pedido" — digita o nº do pedido de
+    venda OU o cliente e recebe sugestões pra abrir o status completo
+    (produção + operação) daquele pedido específico.
+
+    Casa em Pedido (Gestão Produção) e em PedidoOperacao (Gestão Operação)
+    separadamente — cada tabela pode ter pedidos que a outra não tem — e
+    devolve no máximo 1 sugestão por pedido_venda (nunca duplicada), usando
+    o próprio pedido_venda como identificador da busca de detalhe. Por isso
+    só considera pedidos com pedido_venda preenchido: sem esse número não dá
+    pra cruzar as duas tabelas de forma confiável — mesma regra de "match
+    exato, nunca aproximado" já usada em toda outra cross-referência do
+    sistema (ver _itens_producao_por_pedido_venda)."""
+    termo = (termo or "").strip()
+    if not termo:
+        return []
+    padrao = f"%{termo}%"
+
+    candidatos = {}  # pedido_venda (trim) -> dict de exibição
+
+    pedidos = (
+        Pedido.query.filter(
+            Pedido.pedido_venda.isnot(None),
+            func.trim(Pedido.pedido_venda) != "",
+            or_(Pedido.pedido_venda.ilike(padrao), Pedido.cliente.ilike(padrao)),
+        )
+        .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+        .limit(limite * 3)
+        .all()
+    )
+    for p in pedidos:
+        chave = (p.pedido_venda or "").strip()
+        if not chave or chave in candidatos:
+            continue
+        candidatos[chave] = {"pedido_venda": chave, "cliente": p.cliente, "tem_producao": True}
+
+    if len(candidatos) < limite:
+        pedidos_operacao = (
+            PedidoOperacao.query.filter(
+                PedidoOperacao.pedido_venda.isnot(None),
+                func.trim(PedidoOperacao.pedido_venda) != "",
+                or_(PedidoOperacao.pedido_venda.ilike(padrao), PedidoOperacao.cliente.ilike(padrao)),
+            )
+            .order_by(PedidoOperacao.data_inclusao_pedido.desc().nullslast())
+            .limit(limite * 3)
+            .all()
+        )
+        for go in pedidos_operacao:
+            chave = (go.pedido_venda or "").strip()
+            if not chave or chave in candidatos:
+                continue
+            candidatos[chave] = {"pedido_venda": chave, "cliente": go.cliente, "tem_producao": False}
+
+    termo_upper = termo.upper()
+
+    def _relevancia(c):
+        pv = c["pedido_venda"].upper()
+        cli = (c["cliente"] or "").upper()
+        if pv == termo_upper:
+            return (0, pv)
+        if pv.startswith(termo_upper):
+            return (1, pv)
+        if termo_upper in pv:
+            return (2, pv)
+        if cli.startswith(termo_upper):
+            return (3, cli)
+        return (4, cli)
+
+    return sorted(candidatos.values(), key=_relevancia)[:limite]
+
+
+def _situacao_entrega_go(go, pedido=None):
+    """Resumo em UMA frase só do que mais se pergunta pro PCP/Comercial: "cadê
+    esse pedido? já foi expedido? já chegou no cliente?" — a informação
+    "principal" que o Bruno pediu (pedido de 01/09/2026), consultando a aba
+    Expedição/Logística de Gestão Operação. Prioriza a data de entrega mais
+    confiável entre as duas que a Operação guarda (Logística x
+    Resultados/OTD — historicamente nem sempre as duas são preenchidas
+    juntas)."""
+    if go is None:
+        if pedido is not None and pedido.status_producao == "FINALIZADO":
+            return {
+                "texto": "Produção finalizada, mas o pedido ainda não foi lançado em Gestão Operação — sem dado de expedição.",
+                "cor": "warning",
+                "icone": "bi-exclamation-triangle",
+            }
+        return {
+            "texto": "Pedido ainda não lançado em Gestão Operação — sem dados de expedição/logística.",
+            "cor": "secondary",
+            "icone": "bi-question-circle",
+        }
+
+    data_entrega = go.go_data_entregue_cliente or go.go_data_real_entrega
+    if data_entrega:
+        return {
+            "texto": f"Entregue ao cliente em {data_entrega.strftime('%d/%m/%Y')}",
+            "cor": "success",
+            "icone": "bi-check-circle-fill",
+        }
+    if go.go_data_pedido_expedido:
+        return {
+            "texto": f"Expedido em {go.go_data_pedido_expedido.strftime('%d/%m/%Y')} — aguardando confirmação de entrega/coleta",
+            "cor": "info",
+            "icone": "bi-truck",
+        }
+    if go.go_data_efetiva_liberacao_pcp:
+        return {
+            "texto": f"Liberado pelo PCP em {go.go_data_efetiva_liberacao_pcp.strftime('%d/%m/%Y')} — ainda não expedido",
+            "cor": "warning",
+            "icone": "bi-hourglass-split",
+        }
+    return {"texto": "Ainda não expedido.", "cor": "secondary", "icone": "bi-hourglass"}
+
+
 # Campos "comercial" que só existem em PedidoOperacao (não têm equivalente em
 # Pedido) — pedido do Bruno, 01/09/2026: quem inclui um pedido novo em Gestão
 # Produção (PCP) passa a preencher também essas informações do pedido como um
@@ -2607,6 +2722,47 @@ def register_routes(app):
     def logout():
         logout_user()
         return redirect(url_for("login"))
+
+    @app.route("/painel/busca-sugestoes")
+    @login_required
+    def painel_busca_sugestoes():
+        """Pedido do Bruno (01/09/2026): sugestões dinâmicas (digitando) pro
+        canal de busca de status do topo do Painel — devolve um fragmento
+        HTML pronto (mesmo padrão do resto do sistema, que é 100%
+        server-rendered) pra ser injetado direto na página via fetch()."""
+        termo = request.args.get("q", "")
+        sugestoes = _buscar_pedidos_para_status(termo)
+        return render_template("_painel_busca_sugestoes.html", sugestoes=sugestoes, termo=termo.strip())
+
+    @app.route("/painel/busca-detalhe")
+    @login_required
+    def painel_busca_detalhe():
+        """Status completo de UM pedido (Produção + Operação, cruzados por
+        pedido_venda) — devolve o fragmento HTML do painel de detalhe,
+        aberto ao clicar numa sugestão do canal de busca do Painel."""
+        chave = (request.args.get("pedido_venda", "") or "").strip()
+        if not chave:
+            return "", 204
+
+        pedido = (
+            Pedido.query.options(selectinload(Pedido.itens))
+            .filter(func.trim(Pedido.pedido_venda) == chave)
+            .first()
+        )
+        go = PedidoOperacao.query.filter(func.trim(PedidoOperacao.pedido_venda) == chave).first()
+
+        if pedido is None and go is None:
+            return render_template("_painel_busca_detalhe.html", nao_encontrado=True, pedido_venda=chave)
+
+        liberacao_pcp = _liberacao_pcp_por_pedido_venda([chave]).get(chave, {})
+        situacao_entrega = _situacao_entrega_go(go, pedido)
+
+        return render_template(
+            "_painel_busca_detalhe.html",
+            pedido=pedido, go=go, pedido_venda=chave,
+            liberacao_pcp=liberacao_pcp, situacao_entrega=situacao_entrega,
+            nao_encontrado=False,
+        )
 
     @app.route("/painel")
     @login_required

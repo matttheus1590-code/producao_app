@@ -5,6 +5,22 @@
 
 <h4 class="mb-3"><i class="bi bi-speedometer2"></i> Painel</h4>
 
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h6 class="text-uppercase small text-muted mb-2"><i class="bi bi-search"></i> Consultar status de um pedido</h6>
+    <p class="text-muted small mb-2">
+      Digite o nº do pedido de venda ou o nome do cliente — mostra produção, PCP, logística e, principalmente,
+      se o material já foi expedido ou entregue ao cliente.
+    </p>
+    <div class="position-relative" style="max-width: 560px;">
+      <input type="text" class="form-control" id="buscaPedidoInput" placeholder="Nº do pedido de venda ou cliente…" autocomplete="off">
+      <div id="buscaPedidoSugestoes" class="list-group position-absolute w-100 shadow-sm d-none" style="z-index: 1050; max-height: 320px; overflow-y: auto;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="buscaPedidoDetalhe" class="mb-4"></div>
+
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-2">
     {{ stat_card("Backlog (não finalizado)", backlog) }}
@@ -186,6 +202,64 @@
 <script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
 <script>
 (function () {
+  // Pedido do Bruno (01/09/2026): canal de busca de status de pedido no
+  // topo do Painel — digita (dinâmico, com debounce) e recebe sugestões;
+  // clicar numa sugestão abre o status completo (Produção + Operação)
+  // daquele pedido. Os dois endpoints devolvem HTML pronto (mesmo padrão
+  // 100% server-rendered do resto do sistema) — só injeta via fetch().
+  const buscaInput = document.getElementById("buscaPedidoInput");
+  const buscaSugestoes = document.getElementById("buscaPedidoSugestoes");
+  const buscaDetalhe = document.getElementById("buscaPedidoDetalhe");
+  let buscaDebounce = null;
+  let buscaReqAtual = 0;
+
+  function esconderSugestoes() {
+    buscaSugestoes.innerHTML = "";
+    buscaSugestoes.classList.add("d-none");
+  }
+
+  if (buscaInput) {
+    buscaInput.addEventListener("input", function () {
+      const termo = buscaInput.value.trim();
+      clearTimeout(buscaDebounce);
+      if (termo.length < 2) {
+        esconderSugestoes();
+        return;
+      }
+      buscaDebounce = setTimeout(function () {
+        const minhaReq = ++buscaReqAtual;
+        fetch("/painel/busca-sugestoes?q=" + encodeURIComponent(termo))
+          .then(function (r) { return r.text(); })
+          .then(function (html) {
+            if (minhaReq !== buscaReqAtual) return; // resposta antiga (usuário já digitou mais) — ignora
+            buscaSugestoes.innerHTML = html;
+            buscaSugestoes.classList.remove("d-none");
+          });
+      }, 300);
+    });
+
+    buscaSugestoes.addEventListener("click", function (e) {
+      const item = e.target.closest(".busca-pedido-sugestao");
+      if (!item) return;
+      const pedidoVenda = item.getAttribute("data-pedido-venda");
+      buscaInput.value = pedidoVenda;
+      esconderSugestoes();
+      buscaDetalhe.innerHTML = '<div class="text-muted small"><i class="bi bi-hourglass-split"></i> Carregando…</div>';
+      fetch("/painel/busca-detalhe?pedido_venda=" + encodeURIComponent(pedidoVenda))
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          buscaDetalhe.innerHTML = html;
+          buscaDetalhe.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+    });
+
+    document.addEventListener("click", function (e) {
+      if (!e.target.closest("#buscaPedidoInput") && !e.target.closest("#buscaPedidoSugestoes")) {
+        esconderSugestoes();
+      }
+    });
+  }
+
   const corTexto = "#495057";
   Chart.defaults.color = corTexto;
   Chart.defaults.font.size = 12;

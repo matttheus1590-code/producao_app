@@ -1,0 +1,199 @@
+{# Pedido do Bruno (01/09/2026): fragmento HTML do status completo de UM
+   pedido (Produção + Operação, cruzados por pedido_venda) — devolvido via
+   fetch() e injetado no Painel ao clicar numa sugestão do canal de busca. #}
+{% if nao_encontrado %}
+<div class="alert alert-warning">
+  <i class="bi bi-exclamation-triangle"></i>
+  Nenhum pedido encontrado com o número <strong>{{ pedido_venda }}</strong> (nem em Gestão Produção, nem em Gestão Operação).
+</div>
+{% else %}
+{% set cliente_exibido = pedido.cliente if pedido else go.cliente %}
+{% set prioridade_exibida = pedido.prioridade if pedido else go.prioridade %}
+{% set frete_exibido = pedido.frete if pedido else go.frete %}
+{% set pais_exibido = pedido.pais if pedido else go.pais %}
+{% set estado_exibido = pedido.estado if pedido else go.estado %}
+{% set cidade_exibida = pedido.cidade if pedido else go.cidade %}
+{% set data_inclusao_exibida = pedido.data_inclusao_pedido if pedido else go.data_inclusao_pedido %}
+{% set status_exibido = pedido.status_producao if pedido else (go.status_producao if go else None) %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+      <div>
+        <h5 class="mb-1"><i class="bi bi-search"></i> Pedido {{ pedido_venda }} — {{ cliente_exibido }}</h5>
+        <div class="d-flex gap-2">
+          {% if prioridade_exibida %}
+            <span class="badge bg-{{ PRIORIDADE_CORES.get(prioridade_exibida, 'secondary') }}">{{ prioridade_exibida }}</span>
+          {% endif %}
+          {% if status_exibido %}
+            <span class="badge bg-{{ STATUS_CORES.get(status_exibido, 'secondary') }}" title="Status de produção">{{ status_exibido }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="d-flex gap-2">
+        {% if pedido and current_user.role in ('ADMIN', 'PCP', 'LIDER') %}
+          <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil-square"></i> Ver em Produção</a>
+        {% endif %}
+        {% if go and current_user.role in ('ADMIN', 'PCP') %}
+          <a href="{{ url_for('gestao_operacao_editar', pedido_id=go.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-diagram-3"></i> Ver em Operação</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="alert alert-{{ situacao_entrega.cor }} d-flex align-items-center gap-2 my-3">
+      <i class="bi {{ situacao_entrega.icone }} fs-4"></i>
+      <div>
+        <div class="fw-semibold small text-uppercase">Situação de entrega</div>
+        <div>{{ situacao_entrega.texto }}</div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Valor total</div>
+        <div class="fw-semibold">
+          {% if pedido %}R$ {{ "{:,.2f}".format(pedido.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}{% else %}—{% endif %}
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Frete</div>
+        <div class="fw-semibold">{{ frete_exibido or "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Local</div>
+        {% set local_partes = [cidade_exibida, estado_exibido] | select | list %}
+        {% set local_cidade_estado = local_partes | join("/") %}
+        <div class="fw-semibold">
+          {%- if local_cidade_estado and pais_exibido -%}
+            {{ local_cidade_estado }} — {{ pais_exibido }}
+          {%- elif local_cidade_estado -%}
+            {{ local_cidade_estado }}
+          {%- elif pais_exibido -%}
+            {{ pais_exibido }}
+          {%- else -%}
+            —
+          {%- endif -%}
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Data inclusão do pedido</div>
+        <div class="fw-semibold">{{ data_inclusao_exibida.strftime("%d/%m/%Y") if data_inclusao_exibida else "—" }}</div>
+      </div>
+    </div>
+
+    {% if pedido %}
+    <h6 class="text-uppercase small text-muted mt-4 mb-2"><i class="bi bi-box-seam"></i> Itens do pedido (Gestão Produção)</h6>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle bg-white">
+        <thead class="table-light">
+          <tr>
+            <th>Produto</th><th>Qtd</th><th>Estação</th><th>Status</th>
+            <th>Início produção</th><th>Conclusão produção</th><th>Lead time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in pedido.itens %}
+          <tr>
+            <td>{{ item.descricao_produto }}</td>
+            <td>{{ item.quantidade }}</td>
+            <td>{{ item.estacao or "—" }}</td>
+            <td><span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span></td>
+            <td>{{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</td>
+            <td>{{ item.termino_inspecao.strftime("%d/%m/%Y") if item.termino_inspecao else "—" }}</td>
+            <td>{{ (item.lt_producao_dias|string + "d") if item.lt_producao_dias is not none else "—" }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="text-center text-muted py-3">Nenhum item cadastrado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="alert alert-light border small text-muted">
+      <i class="bi bi-info-circle"></i> Pedido ainda não lançado em Gestão Produção — sem itens/estação disponíveis. Mostrando só os dados comerciais/operacionais abaixo.
+    </div>
+    {% endif %}
+
+    {% if go %}
+    <h6 class="text-uppercase small text-muted mt-4 mb-2"><i class="bi bi-diagram-3"></i> Gestão Operação</h6>
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Tipo de pedido</div>
+        <div class="fw-semibold">{{ go.go_tipo_pedido or "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Status do pedido (info)</div>
+        <div>
+          {% if go.go_status_pedido_info %}
+            <span class="badge bg-{{ GO_STATUS_PEDIDO_INFO_CORES.get(go.go_status_pedido_info, 'secondary') }}">{{ go.go_status_pedido_info }}</span>
+          {% else %}—{% endif %}
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Contrato / Proposta</div>
+        <div class="fw-semibold">{{ go.go_contrato or "—" }} / {{ go.go_proposta or "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Valor do pedido (comercial)</div>
+        <div class="fw-semibold">
+          {% if go.go_valor_pedido_operacao is not none %}R$ {{ "{:,.2f}".format(go.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}{% else %}—{% endif %}
+        </div>
+      </div>
+
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Previsão liberação PCP</div>
+        {% set prev = liberacao_pcp.get("previsao") or go.go_previsao_liberacao_pcp %}
+        <div class="fw-semibold">{{ prev.strftime("%d/%m/%Y") if prev else "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Data efetiva liberação</div>
+        {% set efet = liberacao_pcp.get("efetiva") or go.go_data_efetiva_liberacao_pcp %}
+        <div class="fw-semibold">{{ efet.strftime("%d/%m/%Y") if efet else "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Solicitada cliente/retira</div>
+        <div class="fw-semibold">{{ go.go_data_solicitada_cliente_retira.strftime("%d/%m/%Y") if go.go_data_solicitada_cliente_retira else "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Término semanal (PCP)</div>
+        <div class="fw-semibold">{{ go.go_termino_semanal_pcp or "—" }}</div>
+      </div>
+
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Status logística</div>
+        <div class="fw-semibold">{{ go.go_status_logistica or "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Transportadora</div>
+        <div class="fw-semibold">{{ go.go_transportadora.nome if go.go_transportadora else "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Data pedido expedido</div>
+        <div class="fw-semibold">{{ go.go_data_pedido_expedido.strftime("%d/%m/%Y") if go.go_data_pedido_expedido else "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Data real entrega/coleta</div>
+        <div class="fw-semibold">{{ go.go_data_real_entrega.strftime("%d/%m/%Y") if go.go_data_real_entrega else "—" }}</div>
+      </div>
+
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">OTD (no prazo?)</div>
+        <div class="fw-semibold">{{ go.go_otd_realizado or "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Data entregue cliente</div>
+        <div class="fw-semibold">{{ go.go_data_entregue_cliente.strftime("%d/%m/%Y") if go.go_data_entregue_cliente else "—" }}</div>
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="text-muted small">Status final (alinhamento)</div>
+        <div class="fw-semibold">{{ go.go_status_final_alinhamento or "—" }}</div>
+      </div>
+    </div>
+    {% else %}
+    <div class="alert alert-light border small text-muted mt-3">
+      <i class="bi bi-info-circle"></i> Pedido ainda não lançado em Gestão Operação — sem dados comerciais/logísticos além dos de Gestão Produção acima.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
