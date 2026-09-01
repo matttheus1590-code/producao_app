@@ -74,6 +74,21 @@ PRIORIDADE_CORES = {
     "ALTA": "danger",
 }
 
+# Pedido do Bruno (01/09/2026): na tela de Novo Pedido (Gestão Produção),
+# "Tipo de pedido" e "Status do pedido (informações)" — dois campos
+# comerciais de Gestão Operação preenchidos já na inclusão — deixam de ser
+# texto livre e viram listas fechadas, pra padronizar o que é digitado (e,
+# no caso do status, colorir igual às outras badges de status do sistema).
+GO_TIPO_PEDIDO_OPCOES = ["Pedido Padrão", "Reforma", "Serviço", "Emergencial"]
+
+GO_STATUS_PEDIDO_INFO_OPCOES = ["OK", "EM TRATATIVA", "PENDENTE"]
+
+GO_STATUS_PEDIDO_INFO_CORES = {
+    "OK": "success",
+    "EM TRATATIVA": "warning",
+    "PENDENTE": "danger",
+}
+
 # ---------------------------------------------------------------------------
 # Semáforo de prazo: compara a liberação prevista com hoje.
 #   verde    -> ainda falta bastante tempo

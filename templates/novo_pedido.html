@@ -83,7 +83,12 @@
         </div>
         <div class="col-md-3">
           <label class="form-label">Tipo de pedido</label>
-          <input type="text" class="form-control" name="go_tipo_pedido" value="{{ form.get('go_tipo_pedido','') }}">
+          <select class="form-select" name="go_tipo_pedido">
+            <option value="">Selecione…</option>
+            {% for t in GO_TIPO_PEDIDO_OPCOES %}
+              <option value="{{ t }}" {% if form.get('go_tipo_pedido') == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
         </div>
         <div class="col-md-3">
           <label class="form-label">Contrato</label>
@@ -99,7 +104,12 @@
         </div>
         <div class="col-md-5">
           <label class="form-label">Status do pedido (informações)</label>
-          <input type="text" class="form-control" name="go_status_pedido_info" value="{{ form.get('go_status_pedido_info','') }}">
+          <select class="form-select" id="goStatusPedidoInfo" name="go_status_pedido_info">
+            <option value="">Selecione…</option>
+            {% for s in GO_STATUS_PEDIDO_INFO_OPCOES %}
+              <option value="{{ s }}" {% if form.get('go_status_pedido_info') == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
         </div>
         <div class="col-md-4">
           <label class="form-label">Valor do pedido (comercial)</label>
@@ -189,6 +199,22 @@
   const btnAdd = document.getElementById('btnAdicionarItem');
   const totalEl = document.getElementById('valorTotalPreview');
   const ESTACOES = [{% for e in ESTACOES %}{{ e | tojson }},{% endfor %}];
+
+  // Pedido do Bruno (01/09/2026): "Status do pedido (informações)" colorido
+  // igual às outras badges de status do sistema (verde/amarelo/vermelho) —
+  // aqui é o próprio <select> que muda de cor conforme a opção escolhida.
+  const GO_STATUS_PEDIDO_INFO_CORES = {{ GO_STATUS_PEDIDO_INFO_CORES | tojson }};
+  const selectStatusPedidoInfo = document.getElementById('goStatusPedidoInfo');
+
+  function atualizarCorStatusPedidoInfo() {
+    const cor = GO_STATUS_PEDIDO_INFO_CORES[selectStatusPedidoInfo.value];
+    selectStatusPedidoInfo.className = 'form-select' + (cor ? ' text-bg-' + cor : '');
+  }
+
+  if (selectStatusPedidoInfo) {
+    selectStatusPedidoInfo.addEventListener('change', atualizarCorStatusPedidoInfo);
+    atualizarCorStatusPedidoInfo();
+  }
 
   function opcoesEstacao() {
     let html = '<option value="">Estação…</option>';
