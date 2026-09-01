@@ -169,7 +169,7 @@
 
           <hr class="my-2">
           <div class="row g-2">
-            <div class="col-md-3">
+            <div class="col-md-4">
               <label class="form-label small text-muted mb-1">Estação</label>
               <select class="form-select item-estacao" name="item_estacao[]">
                 <option value="">—</option>
@@ -178,7 +178,7 @@
                 {% endfor %}
               </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
               <label class="form-label small text-muted mb-1">Status
                 <i class="bi bi-info-circle text-muted" title="PENDENTE, ANDAMENTO e FINALIZADO são automáticos conforme as datas abaixo. Selecione EM TRATATIVA manualmente quando necessário."></i>
               </label>
@@ -188,57 +188,20 @@
                 {% endfor %}
               </select>
             </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">RNC</label>
-              <input type="text" class="form-control" name="item_rnc[]" value="{{ item.rnc or '' }}">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Lead time deste item</label>
+            <div class="col-md-4">
+              <label class="form-label small text-muted mb-1">Lead time (dias corridos)</label>
               <div class="form-control-plaintext small text-muted">
-                Espera: {{ item.tempo_espera_dias if item.tempo_espera_dias is not none else "—" }}d ·
-                Produção: {{ item.lt_producao_dias if item.lt_producao_dias is not none else "—" }}d ·
-                Total: {{ item.prazo_total_dias if item.prazo_total_dias is not none else "—" }}d
+                {{ item.lt_producao_dias if item.lt_producao_dias is not none else "—" }}{% if item.lt_producao_dias is not none %}d{% endif %}
               </div>
             </div>
 
-            <div class="col-md-3">
+            <div class="col-md-6">
               <label class="form-label small text-muted mb-1">Início produção</label>
               <input type="date" class="form-control" name="item_inicio_producao[]" value="{{ item.inicio_producao or '' }}">
             </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Início inspeção/embalagem</label>
-              <input type="date" class="form-control" name="item_inicio_inspecao[]" value="{{ item.inicio_inspecao or '' }}">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Término inspeção/embalagem</label>
-              <input type="date" class="form-control" name="item_termino_inspecao[]" value="{{ item.termino_inspecao or '' }}">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Liberação de faturamento</label>
-              <input type="date" class="form-control" name="item_liberacao_faturamento[]" value="{{ item.liberacao_faturamento or '' }}">
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Nº nota fiscal</label>
-              <input type="text" class="form-control" name="item_numero_nota_fiscal[]" value="{{ item.numero_nota_fiscal or '' }}">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Valor faturado (R$)</label>
-              <input type="number" step="any" min="0" class="form-control" name="item_valor_faturado[]" value="{{ item.valor_faturado if item.valor_faturado is not none else '' }}" placeholder="usa o valor do item se vazio">
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Transportadora</label>
-              <select class="form-select" name="item_transportadora_id[]">
-                <option value="">—</option>
-                {% for t in transportadoras %}
-                  <option value="{{ t.id }}" {% if item.transportadora_id == t.id %}selected{% endif %}>{{ t.nome }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label small text-muted mb-1">Data de envio</label>
-              <input type="date" class="form-control" name="item_data_envio[]" value="{{ item.data_envio or '' }}">
+            <div class="col-md-6">
+              <label class="form-label small text-muted mb-1">Conclusão produção</label>
+              <input type="date" class="form-control" name="item_conclusao_producao[]" value="{{ item.termino_inspecao or '' }}">
             </div>
           </div>
         </div>
@@ -276,17 +239,9 @@
   const totalEl = document.getElementById('valorTotalPreview');
   const ESTACOES = [{% for e in ESTACOES %}{{ e | tojson }},{% endfor %}];
   const STATUS_OPCOES = [{% for s in STATUS_OPCOES %}{{ s | tojson }},{% endfor %}];
-  const TRANSPORTADORAS = [{% for t in transportadoras %}{id: {{ t.id }}, nome: {{ t.nome | tojson }}},{% endfor %}];
-
   function opcoes(lista, comVazio) {
     let html = comVazio ? '<option value="">—</option>' : '';
     lista.forEach(function(v) { html += `<option value="${v}">${v}</option>`; });
-    return html;
-  }
-
-  function opcoesTransportadoras() {
-    let html = '<option value="">—</option>';
-    TRANSPORTADORAS.forEach(function(t) { html += `<option value="${t.id}">${t.nome}</option>`; });
     return html;
   }
 
@@ -317,53 +272,25 @@
       </div>
       <hr class="my-2">
       <div class="row g-2">
-        <div class="col-md-3">
+        <div class="col-md-4">
           <label class="form-label small text-muted mb-1">Estação</label>
           <select class="form-select item-estacao" name="item_estacao[]">${opcoes(ESTACOES, true)}</select>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-4">
           <label class="form-label small text-muted mb-1">Status</label>
           <select class="form-select item-status" name="item_status[]">${opcoes(STATUS_OPCOES, false)}</select>
         </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">RNC</label>
-          <input type="text" class="form-control" name="item_rnc[]">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Lead time deste item</label>
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">Lead time (dias corridos)</label>
           <div class="form-control-plaintext small text-muted">Item novo — sem histórico ainda</div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-6">
           <label class="form-label small text-muted mb-1">Início produção</label>
           <input type="date" class="form-control" name="item_inicio_producao[]">
         </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Início inspeção/embalagem</label>
-          <input type="date" class="form-control" name="item_inicio_inspecao[]">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Término inspeção/embalagem</label>
-          <input type="date" class="form-control" name="item_termino_inspecao[]">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Liberação de faturamento</label>
-          <input type="date" class="form-control" name="item_liberacao_faturamento[]">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Nº nota fiscal</label>
-          <input type="text" class="form-control" name="item_numero_nota_fiscal[]">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Valor faturado (R$)</label>
-          <input type="number" step="any" min="0" class="form-control" name="item_valor_faturado[]" placeholder="usa o valor do item se vazio">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Transportadora</label>
-          <select class="form-select" name="item_transportadora_id[]">${opcoesTransportadoras()}</select>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label small text-muted mb-1">Data de envio</label>
-          <input type="date" class="form-control" name="item_data_envio[]">
+        <div class="col-md-6">
+          <label class="form-label small text-muted mb-1">Conclusão produção</label>
+          <input type="date" class="form-control" name="item_conclusao_producao[]">
         </div>
       </div>`;
     return div;

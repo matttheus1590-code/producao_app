@@ -3036,15 +3036,17 @@ def register_routes(app):
             custos = f.getlist("item_custo[]")
             estacoes = f.getlist("item_estacao[]")
             status_itens = f.getlist("item_status[]")
-            rncs = f.getlist("item_rnc[]")
             inicios_producao = f.getlist("item_inicio_producao[]")
-            inicios_inspecao = f.getlist("item_inicio_inspecao[]")
-            terminos_inspecao = f.getlist("item_termino_inspecao[]")
-            liberacoes_faturamento = f.getlist("item_liberacao_faturamento[]")
-            notas_fiscais = f.getlist("item_numero_nota_fiscal[]")
-            valores_faturados = f.getlist("item_valor_faturado[]")
-            transportadoras_ids = f.getlist("item_transportadora_id[]")
-            datas_envio = f.getlist("item_data_envio[]")
+            # Pedido do Bruno (01/09/2026): a tela de edição não mostra mais
+            # início/término de inspeção-embalagem e liberação de faturamento
+            # como campos separados — só "Conclusão produção", um único campo
+            # que grava nos dois (termino_inspecao E liberacao_faturamento),
+            # exatamente como o botão "Avançar" do Kanban já fazia (ver
+            # estacao_kanban_mover) — os dois sempre andam juntos na prática,
+            # então isso não muda em nada o cálculo de FINALIZADO nem os
+            # relatórios de lead time/gargalos, que continuam lendo
+            # termino_inspecao normalmente.
+            conclusoes_producao = f.getlist("item_conclusao_producao[]")
 
             itens_originais = {item.id: item for item in pedido.itens}
             # snapshot ANTES de qualquer alteração, só dos itens que já existiam
@@ -3053,14 +3055,11 @@ def register_routes(app):
             ids_mantidos = set()
 
             linhas = zip(
-                item_ids, descricoes, quantidades, custos, estacoes, status_itens, rncs,
-                inicios_producao, inicios_inspecao, terminos_inspecao,
-                liberacoes_faturamento, notas_fiscais, valores_faturados,
-                transportadoras_ids, datas_envio,
+                item_ids, descricoes, quantidades, custos, estacoes, status_itens,
+                inicios_producao, conclusoes_producao,
             )
-            for (item_id, desc, qtd, custo, estacao_item, status_item, rnc,
-                 ini_prod, ini_insp, term_insp, lib_fat, nf, valor_faturado,
-                 transportadora_id, data_envio) in linhas:
+            for (item_id, desc, qtd, custo, estacao_item, status_item,
+                 ini_prod, concl_prod) in linhas:
                 desc = desc.strip()
 
                 if item_id:
@@ -3080,18 +3079,13 @@ def register_routes(app):
                 item.quantidade = _parse_float_form(qtd)
                 item.custo_unitario = _parse_float_form(custo)
                 item.estacao = estacao_item or None
-                item.rnc = rnc.strip() or None
                 item.inicio_producao = _parse_data_form(ini_prod)
-                item.inicio_inspecao = _parse_data_form(ini_insp)
-                item.termino_inspecao = _parse_data_form(term_insp)
-                item.liberacao_faturamento = _parse_data_form(lib_fat)
+                data_conclusao = _parse_data_form(concl_prod)
+                item.termino_inspecao = data_conclusao
+                item.liberacao_faturamento = data_conclusao
                 item.liberacao_prevista = lib_prevista_pedido
                 item.liberacao_real = lib_real_pedido
                 item.planejamento_semanal = planejamento_semanal_pedido
-                item.numero_nota_fiscal = nf.strip() or None
-                item.valor_faturado = _parse_float_form(valor_faturado, default=None) if valor_faturado.strip() else None
-                item.transportadora_id = int(transportadora_id) if transportadora_id.strip().isdigit() else None
-                item.data_envio = _parse_data_form(data_envio)
 
                 if status_item == "EM TRATATIVA":
                     item.status_manual = True
