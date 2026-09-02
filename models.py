@@ -169,6 +169,42 @@ RNC_STATUS_GERAL_CORES = {
 RNC_EFICACIA_CORES = {"Eficaz": "success", "Não Eficaz": "danger", "Pendente": "secondary"}
 
 # ---------------------------------------------------------------------------
+# Qualidade — Inspeção Final / RDIM (Relatório de Inspeção Dimensional e
+# Dureza), pedido do Bruno em 02/09/2026. Digitaliza a inspeção final hoje
+# feita em planilha/papel nas estações MANDRIL, PU e SILICONE. Diferente da
+# RNC (que não tem FK com nada), a InspecaoFinal usa FK real pra ItemPedido —
+# "OP", nesta base, É o próprio ItemPedido (o sistema nunca teve um número de
+# Ordem de Produção separado; confirmado por busca completa no código antes
+# de desenhar esta área).
+# ---------------------------------------------------------------------------
+RDIM_ESTACOES_OPCOES = ["MANDRIL", "PU", "SILICONE"]
+
+RDIM_RESULTADO_OPCOES = ["APROVADO", "REPROVADO", "APROVADO_COM_DESVIO"]
+RDIM_RESULTADO_LABELS = {
+    "APROVADO": "Aprovado",
+    "REPROVADO": "Reprovado",
+    "APROVADO_COM_DESVIO": "Aprovado com desvio",
+}
+RDIM_RESULTADO_CORES = {"APROVADO": "success", "REPROVADO": "danger", "APROVADO_COM_DESVIO": "warning"}
+
+RDIM_INSPECAO_VISUAL_OPCOES = ["OK", "Não OK"]
+
+# Nasce da própria distinção que o modelo oficial já faz na aprovação com
+# desvio ("Estético" vs. "Dimensional/Dureza") — é o que alimenta "principais
+# tipos de desvio" e "ranking de causas" no dashboard.
+RDIM_CATEGORIA_DESVIO_OPCOES = ["Dimensional", "Dureza", "Estético/Visual", "Outro"]
+
+# Sugestões pré-preenchidas na tela de Nova Inspeção — o operador pode editar,
+# remover ou adicionar outras (grandeza é texto livre em RdimMedicao), então
+# esta lista não trava nada, só acelera o preenchimento.
+RDIM_GRANDEZAS_PADRAO = [
+    "Diâmetro Externo (mm)",
+    "Diâmetro Interno (mm)",
+    "Espessura/Altura (mm)",
+    "Dureza Shore A",
+]
+
+# ---------------------------------------------------------------------------
 # P&D — Pesquisa e Desenvolvimento (Fase 14, 01/09/2026). Nova área pedida
 # pelo Bruno: "Central de Gestão de Projetos de Desenvolvimento, Inovação e
 # Melhoria", usada principalmente por ele (Coordenador de Operações
@@ -926,6 +962,123 @@ class RncQualidade(db.Model):
     @property
     def esta_aberto(self):
         return (self.status_geral or "Aberto") in RNC_STATUS_GERAL_ABERTOS
+
+
+class InspecaoFinal(db.Model):
+    """Qualidade — Inspeção Final / RDIM (pedido do Bruno, 02/09/2026).
+
+    Diferente da RncQualidade (que não tem FK com nada), esta tabela usa FK
+    real pra ItemPedido: cada registro É a inspeção final de um item de
+    pedido — "OP", nesta base, é o próprio ItemPedido, já que o sistema nunca
+    teve um número de Ordem de Produção separado. Cliente/Nº Pedido/Produto
+    nunca são duplicados aqui — sempre lidos através de `item` (properties
+    abaixo)."""
+
+    __tablename__ = "inspecoes_finais"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    item_pedido_id = db.Column(db.Integer, db.ForeignKey("itens_pedido.id"), nullable=False)
+    item = db.relationship("ItemPedido", foreign_keys=[item_pedido_id])
+
+    # Copiada do item no momento da criação — não é recalculada depois (se o
+    # item mudar de estação mais tarde, esta inspeção continua contando a
+    # estação de quando foi realmente inspecionada).
+    estacao = db.Column(db.String(40), nullable=True)
+
+    data_inspecao = db.Column(db.Date, nullable=True)
+    responsavel_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    responsavel = db.relationship("Usuario", foreign_keys=[responsavel_id])
+
+    numero_rif = db.Column(db.String(30), nullable=True)
+    procedimento = db.Column(db.String(60), nullable=True)
+    norma = db.Column(db.String(60), nullable=True)
+    instrucao_trabalho = db.Column(db.String(60), nullable=True)
+
+    inspecao_visual = db.Column(db.String(20), nullable=True)
+    desvio_encontrado = db.Column(db.Text, nullable=True)
+    categoria_desvio = db.Column(db.String(30), nullable=True)
+    observacao = db.Column(db.Text, nullable=True)
+    resultado = db.Column(db.String(24), nullable=True)
+
+    criado_por_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    criado_por = db.relationship("Usuario", foreign_keys=[criado_por_id])
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    medicoes = db.relationship(
+        "RdimMedicao",
+        backref="inspecao",
+        cascade="all, delete-orphan",
+        order_by="RdimMedicao.ordem",
+    )
+
+    @property
+    def pedido(self):
+        return self.item.pedido if self.item else None
+
+    @property
+    def cliente(self):
+        return self.pedido.cliente if self.pedido else None
+
+    @property
+    def pedido_venda(self):
+        return self.pedido.pedido_venda if self.pedido else None
+
+    @property
+    def produto(self):
+        return self.item.descricao_produto if self.item else None
+
+    @property
+    def tem_desvio_fora_tolerancia(self):
+        """True se alguma medição registrada estourou a especificação — usado
+        pra sinalização visual e pros KPIs do dashboard, sempre recalculado a
+        partir das medições reais (nunca guardado como campo à parte)."""
+        return any(m.dentro_da_tolerancia is False for m in self.medicoes)
+
+
+class RdimMedicao(db.Model):
+    """Uma linha = uma grandeza medida dentro de uma InspecaoFinal (diâmetro
+    externo, diâmetro interno, espessura/altura, dureza Shore A, ou qualquer
+    outra que o inspetor adicionar). Grandezas flexíveis por inspeção — não 4
+    colunas fixas — porque Mandril, PU e Silicone medem coisas diferentes."""
+
+    __tablename__ = "rdim_medicoes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    inspecao_final_id = db.Column(db.Integer, db.ForeignKey("inspecoes_finais.id"), nullable=False)
+
+    grandeza = db.Column(db.String(60), nullable=False)
+    especificado_min = db.Column(db.Float, nullable=True)
+    especificado_max = db.Column(db.Float, nullable=True)
+    # Faixa (mín/máx) encontrada no lote inspecionado — igual ao modelo
+    # oficial, não um valor único.
+    medido_min = db.Column(db.Float, nullable=True)
+    medido_max = db.Column(db.Float, nullable=True)
+    ordem = db.Column(db.Integer, nullable=False, default=0)
+
+    @property
+    def dentro_da_tolerancia(self):
+        """True/False, ou None quando falta dado suficiente pra comparar (sem
+        especificação, ou sem medição ainda) — usado pra sinalização visual
+        na tela e pros KPIs do dashboard. Nunca guardado como coluna: sempre
+        recalculado a partir de especificado_*/medido_* para não poder ficar
+        desatualizado."""
+        if self.especificado_min is None and self.especificado_max is None:
+            return None
+        if self.medido_min is None and self.medido_max is None:
+            return None
+        if self.especificado_min is not None:
+            if self.medido_min is not None and self.medido_min < self.especificado_min:
+                return False
+            if self.medido_max is not None and self.medido_max < self.especificado_min:
+                return False
+        if self.especificado_max is not None:
+            if self.medido_max is not None and self.medido_max > self.especificado_max:
+                return False
+            if self.medido_min is not None and self.medido_min > self.especificado_max:
+                return False
+        return True
 
 
 class ProjetoPD(db.Model):

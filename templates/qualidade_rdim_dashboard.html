@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat_card %}
+{% block title %}Qualidade · Dashboard RDIM · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-bar-chart"></i> Dashboard RDIM — Inspeção Final</h4>
+  <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-primary btn-sm">
+    <i class="bi bi-list-ul"></i> Ver inspeções
+  </a>
+</div>
+<p class="text-muted small mb-4">Calculado ao vivo a partir de todas as inspeções finais registradas (Mandril, PU e Silicone).</p>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Total de inspeções", dados.total, link=url_for('rdim_lista')) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Aprovadas", dados.aprovadas, cor="success", link=url_for('rdim_lista', resultado='APROVADO')) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Reprovadas", dados.reprovadas, cor="danger", link=url_for('rdim_lista', resultado='REPROVADO')) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("Aprovadas c/ desvio", dados.aprovadas_desvio, cor="warning", link=url_for('rdim_lista', resultado='APROVADO_COM_DESVIO')) }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("% Aprovação", dados.pct_aprovacao ~ "%", cor="success") }}
+  </div>
+  <div class="col-6 col-lg-2">
+    {{ stat_card("% Reprovação", dados.pct_reprovacao ~ "%", cor=("danger" if dados.pct_reprovacao else None)) }}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Evolução das reprovações (últimos 12 meses)</h6>
+        {% if dados.evolucao %}
+        <canvas id="graficoEvolucao" height="110"></canvas>
+        {% else %}
+        <p class="text-muted text-center py-4 mb-0">Sem inspeções suficientes ainda pra montar a evolução.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Principais tipos de desvio</h6>
+        {% if dados.por_categoria_desvio %}
+        <canvas id="graficoDesvios" height="110"></canvas>
+        {% else %}
+        <p class="text-muted text-center py-4 mb-0">Sem desvios registrados ainda.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Produtos com maior índice de reprovação</h6>
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Produto</th><th class="text-end">Reprovadas</th><th class="text-end">% do produto</th></tr></thead>
+          <tbody>
+          {% for l in dados.ranking_produtos %}
+            <tr>
+              <td class="text-truncate" style="max-width: 200px;" title="{{ l.chave }}">{{ l.chave }}</td>
+              <td class="text-end fw-semibold">{{ l.reprovadas }} / {{ l.total }}</td>
+              <td class="text-end">{{ l.pct }}%</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">Nenhuma reprovação registrada ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Clientes com maior índice de ocorrência</h6>
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Cliente</th><th class="text-end">Reprovadas</th><th class="text-end">% do cliente</th></tr></thead>
+          <tbody>
+          {% for l in dados.ranking_clientes %}
+            <tr>
+              <td class="text-truncate" style="max-width: 200px;" title="{{ l.chave }}">{{ l.chave }}</td>
+              <td class="text-end fw-semibold">{{ l.reprovadas }} / {{ l.total }}</td>
+              <td class="text-end">{{ l.pct }}%</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">Nenhuma reprovação registrada ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Inspeções por estação</h6>
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for l in dados.por_estacao %}
+            <tr><td>{{ l.chave }}</td><td class="text-end fw-semibold">{{ l.total }}</td></tr>
+          {% else %}
+            <tr><td class="text-center text-muted py-3">Sem inspeções ainda.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  Chart.defaults.color = "#495057";
+  Chart.defaults.font.size = 12;
+
+  const evolucao = {{ dados.evolucao | tojson }};
+  const desvios = {{ dados.por_categoria_desvio | tojson }};
+
+  const elEvolucao = document.getElementById("graficoEvolucao");
+  if (elEvolucao && evolucao.length) {
+    new Chart(elEvolucao, {
+      type: "line",
+      data: {
+        labels: evolucao.map(function (p) { return p.mes; }),
+        datasets: [
+          { label: "Reprovadas", data: evolucao.map(function (p) { return p.reprovadas; }), borderColor: "#dc3545", backgroundColor: "#dc3545", tension: 0.2 },
+          { label: "Total de inspeções", data: evolucao.map(function (p) { return p.total; }), borderColor: "#6ea8fe", backgroundColor: "#6ea8fe", tension: 0.2 },
+        ],
+      },
+      options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+    });
+  }
+
+  const elDesvios = document.getElementById("graficoDesvios");
+  if (elDesvios && desvios.length) {
+    new Chart(elDesvios, {
+      type: "bar",
+      data: {
+        labels: desvios.map(function (p) { return p.chave; }),
+        datasets: [{ label: "Ocorrências", data: desvios.map(function (p) { return p.total; }), backgroundColor: "#fd7e14" }],
+      },
+      options: { plugins: { legend: { display: false } }, indexAxis: "y", scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
+    });
+  }
+})();
+</script>
+{% endblock %}

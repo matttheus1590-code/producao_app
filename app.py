@@ -30,6 +30,13 @@ from models import (
     PRAZO_ALERTA_DIAS,
     PRIORIDADE_CORES,
     PRIORIDADE_OPCOES,
+    RDIM_CATEGORIA_DESVIO_OPCOES,
+    RDIM_ESTACOES_OPCOES,
+    RDIM_GRANDEZAS_PADRAO,
+    RDIM_INSPECAO_VISUAL_OPCOES,
+    RDIM_RESULTADO_CORES,
+    RDIM_RESULTADO_LABELS,
+    RDIM_RESULTADO_OPCOES,
     REGIAO_POR_UF,
     REGIOES_OPCOES,
     RNC_DISPOSICAO_OPCOES,
@@ -58,11 +65,13 @@ from models import (
     ControleSistema,
     Estacao,
     HistoricoAlteracao,
+    InspecaoFinal,
     ItemPedido,
     Pedido,
     PedidoOperacao,
     Programacao,
     ProjetoPD,
+    RdimMedicao,
     RncQualidade,
     TesteProjetoPD,
     Transportadora,
@@ -303,6 +312,14 @@ def create_app():
             PD_TIPO_EVENTO_OPCOES=PD_TIPO_EVENTO_OPCOES,
             PD_TESTE_RESULTADO_OPCOES=PD_TESTE_RESULTADO_OPCOES,
             PD_TESTE_RESULTADO_INFO=PD_TESTE_RESULTADO_INFO,
+            RDIM_ESTACOES_OPCOES=RDIM_ESTACOES_OPCOES,
+            RDIM_RESULTADO_OPCOES=RDIM_RESULTADO_OPCOES,
+            RDIM_RESULTADO_LABELS=RDIM_RESULTADO_LABELS,
+            RDIM_RESULTADO_CORES=RDIM_RESULTADO_CORES,
+            RDIM_INSPECAO_VISUAL_OPCOES=RDIM_INSPECAO_VISUAL_OPCOES,
+            RDIM_CATEGORIA_DESVIO_OPCOES=RDIM_CATEGORIA_DESVIO_OPCOES,
+            RDIM_GRANDEZAS_PADRAO=RDIM_GRANDEZAS_PADRAO,
+            hoje_iso=date.today().isoformat(),
         )
 
     register_routes(app)
@@ -2672,6 +2689,224 @@ def _rnc_para_form_dict(rnc):
 
 
 # ----------------------------------------------------------------------
+# Qualidade — Inspeção Final / RDIM (pedido do Bruno, 02/09/2026). Ao
+# contrário da RNC, usa FK real pra ItemPedido — "OP" nesta base é o próprio
+# ItemPedido. Mesmo padrão de filtro/paginação de _filtrar_rnc_qualidade.
+# ----------------------------------------------------------------------
+CAMPOS_HISTORICO_INSPECAO_FINAL = [
+    "resultado", "categoria_desvio", "desvio_encontrado", "observacao", "inspecao_visual",
+]
+
+
+def _itens_rdim_disponiveis(termo, limite=20):
+    """Itens de pedido inspecionáveis pelo RDIM — só das estações
+    MANDRIL/PU/SILICONE (pedido do Bruno: "válido para as estações MANDRIL,
+    PU e SILICONE"). Busca por descrição do produto, cliente ou nº do
+    pedido de venda, igual ao padrão já usado em _buscar_pedidos_para_status."""
+    termo = (termo or "").strip()
+    query = (
+        ItemPedido.query.join(Pedido)
+        .filter(ItemPedido.estacao.in_(RDIM_ESTACOES_OPCOES))
+    )
+    if termo:
+        like = f"%{termo}%"
+        query = query.filter(
+            or_(
+                ItemPedido.descricao_produto.ilike(like),
+                Pedido.cliente.ilike(like),
+                Pedido.pedido_venda.ilike(like),
+            )
+        )
+    itens = query.order_by(ItemPedido.atualizado_em.desc()).limit(limite).all()
+    return [
+        {
+            "item_id": item.id,
+            "cliente": item.pedido.cliente if item.pedido else "",
+            "pedido_venda": item.pedido.pedido_venda if item.pedido else "",
+            "produto": item.descricao_produto,
+            "quantidade": item.quantidade,
+            "estacao": item.estacao,
+        }
+        for item in itens
+    ]
+
+
+def _filtrar_inspecoes_finais(args):
+    """`args` é sempre `request.args`. Mesmo espírito de _filtrar_rnc_qualidade:
+    multi-seleção (Ctrl+clique) pra resultado/categoria de desvio/estação,
+    texto livre pra cliente/produto/pedido/OP, período por data de inspeção."""
+    query = InspecaoFinal.query.join(ItemPedido).join(Pedido)
+
+    busca = args.get("busca", "").strip()
+    resultado = [v for v in args.getlist("resultado") if v]
+    categoria_desvio = [v for v in args.getlist("categoria_desvio") if v]
+    estacao = [v for v in args.getlist("estacao") if v]
+    responsavel_id = args.get("responsavel_id", "").strip()
+    data_de = args.get("data_de", "").strip()
+    data_ate = args.get("data_ate", "").strip()
+
+    if busca:
+        like = f"%{busca}%"
+        query = query.filter(
+            or_(
+                Pedido.cliente.ilike(like),
+                Pedido.pedido_venda.ilike(like),
+                ItemPedido.descricao_produto.ilike(like),
+                InspecaoFinal.numero_rif.ilike(like),
+            )
+        )
+    if resultado:
+        query = query.filter(InspecaoFinal.resultado.in_(resultado))
+    if categoria_desvio:
+        query = query.filter(InspecaoFinal.categoria_desvio.in_(categoria_desvio))
+    if estacao:
+        query = query.filter(InspecaoFinal.estacao.in_(estacao))
+    if responsavel_id:
+        try:
+            query = query.filter(InspecaoFinal.responsavel_id == int(responsavel_id))
+        except ValueError:
+            responsavel_id = ""
+    if data_de:
+        try:
+            query = query.filter(InspecaoFinal.data_inspecao >= date.fromisoformat(data_de))
+        except ValueError:
+            data_de = ""
+    if data_ate:
+        try:
+            query = query.filter(InspecaoFinal.data_inspecao <= date.fromisoformat(data_ate))
+        except ValueError:
+            data_ate = ""
+
+    query = query.order_by(InspecaoFinal.data_inspecao.desc().nullslast(), InspecaoFinal.id.desc())
+
+    filtros = dict(
+        busca=busca, resultado=resultado, categoria_desvio=categoria_desvio, estacao=estacao,
+        responsavel_id=responsavel_id, data_de=data_de, data_ate=data_ate,
+    )
+    return query, filtros
+
+
+def _linhas_inspecoes_finais(args):
+    page = args.get("page", 1, type=int)
+    query, filtros = _filtrar_inspecoes_finais(args)
+    total_filtrado = query.count()
+    total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+    pagina = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+    return pagina, page, total_paginas, total_filtrado, filtros
+
+
+def _dashboard_rdim():
+    """Recalcula ao vivo os indicadores da Inspeção Final — mesmo espírito de
+    _dashboard_rnc_qualidade, nada pré-calculado/guardado."""
+    inspecoes = InspecaoFinal.query.options(selectinload(InspecaoFinal.item).selectinload(ItemPedido.pedido)).all()
+    total = len(inspecoes)
+
+    aprovadas = sum(1 for i in inspecoes if i.resultado == "APROVADO")
+    reprovadas = sum(1 for i in inspecoes if i.resultado == "REPROVADO")
+    aprovadas_desvio = sum(1 for i in inspecoes if i.resultado == "APROVADO_COM_DESVIO")
+    pct_aprovacao = round((aprovadas / total) * 100, 1) if total else 0
+    pct_reprovacao = round((reprovadas / total) * 100, 1) if total else 0
+
+    def _quebra_por(chave_fn, opcoes_ordem=None):
+        contagem = {}
+        for i in inspecoes:
+            chave = chave_fn(i) or "—"
+            contagem[chave] = contagem.get(chave, 0) + 1
+        if opcoes_ordem:
+            chaves = list(opcoes_ordem) + sorted(k for k in contagem if k not in opcoes_ordem and k != "—")
+            if "—" in contagem:
+                chaves.append("—")
+            return [{"chave": k, "total": contagem.get(k, 0)} for k in chaves if k in contagem]
+        return sorted(({"chave": k, "total": v} for k, v in contagem.items()), key=lambda d: -d["total"])[:10]
+
+    # Produtos/clientes com maior índice de REPROVAÇÃO (não só volume) — só
+    # entram no ranking quem já teve ao menos 1 inspeção reprovada.
+    def _ranking_reprovacao(chave_fn):
+        por_chave = {}
+        for i in inspecoes:
+            chave = chave_fn(i)
+            if not chave:
+                continue
+            d = por_chave.setdefault(chave, {"total": 0, "reprovadas": 0})
+            d["total"] += 1
+            if i.resultado == "REPROVADO":
+                d["reprovadas"] += 1
+        linhas = [
+            {"chave": k, "total": v["total"], "reprovadas": v["reprovadas"],
+             "pct": round((v["reprovadas"] / v["total"]) * 100, 1)}
+            for k, v in por_chave.items() if v["reprovadas"] > 0
+        ]
+        return sorted(linhas, key=lambda d: (-d["reprovadas"], -d["pct"]))[:10]
+
+    # Evolução mensal de reprovações — últimos 12 meses com pelo menos uma
+    # inspeção, em ordem cronológica (pro gráfico de linha).
+    por_mes = {}
+    for i in inspecoes:
+        if not i.data_inspecao:
+            continue
+        chave = i.data_inspecao.strftime("%m/%Y")
+        d = por_mes.setdefault(chave, {"ord": i.data_inspecao.replace(day=1), "total": 0, "reprovadas": 0})
+        d["total"] += 1
+        if i.resultado == "REPROVADO":
+            d["reprovadas"] += 1
+    evolucao = [
+        {"mes": k, "total": v["total"], "reprovadas": v["reprovadas"]}
+        for k, v in sorted(por_mes.items(), key=lambda kv: kv[1]["ord"])
+    ][-12:]
+
+    return {
+        "total": total,
+        "aprovadas": aprovadas,
+        "reprovadas": reprovadas,
+        "aprovadas_desvio": aprovadas_desvio,
+        "pct_aprovacao": pct_aprovacao,
+        "pct_reprovacao": pct_reprovacao,
+        "por_categoria_desvio": _quebra_por(lambda i: i.categoria_desvio, RDIM_CATEGORIA_DESVIO_OPCOES),
+        "por_estacao": _quebra_por(lambda i: i.estacao, RDIM_ESTACOES_OPCOES),
+        "ranking_produtos": _ranking_reprovacao(lambda i: i.produto),
+        "ranking_clientes": _ranking_reprovacao(lambda i: i.cliente),
+        "evolucao": evolucao,
+    }
+
+
+def _salvar_medicoes_rdim(inspecao, f, substituir=False):
+    """Grava as linhas de medição (grandeza + especificação + faixa medida)
+    a partir dos arrays paralelos do formulário — mesmo padrão de arrays
+    paralelos (zip) já usado pros itens de um pedido em editar_pedido. Em
+    edição, `substituir=True` apaga as medições antigas e recria do zero: é
+    mais simples que casar por id e cobre bem o caso comum (poucas linhas,
+    reescritas inteiras a cada salvamento) sem precisar de histórico por
+    medição — só a InspecaoFinal como um todo entra no histórico de alteração."""
+    if substituir:
+        for m in list(inspecao.medicoes):
+            db.session.delete(m)
+
+    grandezas = f.getlist("grandeza[]")
+    esp_mins = f.getlist("especificado_min[]")
+    esp_maxs = f.getlist("especificado_max[]")
+    med_mins = f.getlist("medido_min[]")
+    med_maxs = f.getlist("medido_max[]")
+
+    ordem = 0
+    for grandeza, esp_min, esp_max, med_min, med_max in zip(grandezas, esp_mins, esp_maxs, med_mins, med_maxs):
+        grandeza = grandeza.strip()
+        if not grandeza:
+            continue
+        db.session.add(
+            RdimMedicao(
+                inspecao=inspecao,
+                grandeza=grandeza,
+                especificado_min=_parse_float_form(esp_min, default=None),
+                especificado_max=_parse_float_form(esp_max, default=None),
+                medido_min=_parse_float_form(med_min, default=None),
+                medido_max=_parse_float_form(med_max, default=None),
+                ordem=ordem,
+            )
+        )
+        ordem += 1
+
+
+# ----------------------------------------------------------------------
 # P&D — Pesquisa e Desenvolvimento (Fase 14). Segue o mesmo padrão de
 # Qualidade/RNC acima: tabela própria, controle manual, funções auxiliares
 # separadas de filtro/listagem/dashboard/form pra não misturar com nenhuma
@@ -4149,6 +4384,130 @@ def register_routes(app):
             .all()
         )
         return render_template("qualidade_editar.html", rnc=rnc, valores=_rnc_para_form_dict(rnc), historico=historico)
+
+    # ------------------------------------------------------------------
+    # Qualidade — Inspeção Final / RDIM (pedido do Bruno, 02/09/2026).
+    # ------------------------------------------------------------------
+    @app.route("/qualidade/rdim/buscar-itens")
+    @login_required
+    def rdim_buscar_itens():
+        """Sugestões (JSON) pro campo de busca de item/OP da tela de Nova
+        Inspeção — só itens das estações MANDRIL/PU/SILICONE."""
+        termo = request.args.get("q", "")
+        return jsonify(_itens_rdim_disponiveis(termo))
+
+    @app.route("/qualidade/rdim/dashboard")
+    @login_required
+    def rdim_dashboard():
+        dados = _dashboard_rdim()
+        return render_template("qualidade_rdim_dashboard.html", dados=dados)
+
+    @app.route("/qualidade/rdim")
+    @login_required
+    def rdim_lista():
+        inspecoes, page, total_paginas, total_filtrado, filtros = _linhas_inspecoes_finais(request.args)
+        responsaveis = (
+            Usuario.query.join(InspecaoFinal, InspecaoFinal.responsavel_id == Usuario.id)
+            .distinct().order_by(Usuario.nome).all()
+        )
+        return render_template(
+            "qualidade_rdim_lista.html",
+            inspecoes=inspecoes, page=page, total_paginas=total_paginas,
+            total_filtrado=total_filtrado, filtros=filtros, responsaveis=responsaveis,
+        )
+
+    @app.route("/qualidade/rdim/novo", methods=["GET", "POST"])
+    @login_required
+    def rdim_novo():
+        item_id_inicial = request.args.get("item_id", "").strip()
+
+        if request.method == "POST":
+            f = request.form
+            item_id = f.get("item_pedido_id", "").strip()
+            resultado = f.get("resultado", "").strip()
+            item = db.session.get(ItemPedido, int(item_id)) if item_id.isdigit() else None
+
+            if item is None:
+                flash("Selecione uma OP (item de pedido) válida antes de salvar.", "danger")
+                return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=None)
+            if item.estacao not in RDIM_ESTACOES_OPCOES:
+                flash(f"O item selecionado está na estação {item.estacao or '—'} — RDIM só se aplica a MANDRIL, PU e SILICONE.", "danger")
+                return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)
+            if resultado not in RDIM_RESULTADO_OPCOES:
+                flash("Selecione o resultado da inspeção (Aprovado / Reprovado / Aprovado com desvio).", "danger")
+                return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)
+
+            nova = InspecaoFinal(
+                item_pedido_id=item.id,
+                estacao=item.estacao,
+                data_inspecao=_parse_data_form(f.get("data_inspecao")) or date.today(),
+                responsavel_id=current_user.id,
+                numero_rif=f.get("numero_rif", "").strip() or None,
+                procedimento=f.get("procedimento", "").strip() or None,
+                norma=f.get("norma", "").strip() or None,
+                instrucao_trabalho=f.get("instrucao_trabalho", "").strip() or None,
+                inspecao_visual=f.get("inspecao_visual", "").strip() or None,
+                desvio_encontrado=f.get("desvio_encontrado", "").strip() or None,
+                categoria_desvio=f.get("categoria_desvio", "").strip() or None,
+                observacao=f.get("observacao", "").strip() or None,
+                resultado=resultado,
+                criado_por_id=current_user.id,
+            )
+            db.session.add(nova)
+            _salvar_medicoes_rdim(nova, f)
+            db.session.commit()
+            flash("Inspeção final registrada com sucesso.", "success")
+            return redirect(url_for("rdim_editar", inspecao_id=nova.id))
+
+        item_selecionado = None
+        if item_id_inicial.isdigit():
+            item_selecionado = db.session.get(ItemPedido, int(item_id_inicial))
+        return render_template("qualidade_rdim_novo.html", valores={}, item_selecionado=item_selecionado)
+
+    @app.route("/qualidade/rdim/<int:inspecao_id>/editar", methods=["GET", "POST"])
+    @login_required
+    def rdim_editar(inspecao_id):
+        inspecao = db.session.get(InspecaoFinal, inspecao_id)
+        if inspecao is None:
+            flash("Inspeção não encontrada.", "danger")
+            return redirect(url_for("rdim_lista"))
+
+        if request.method == "POST":
+            f = request.form
+            resultado = f.get("resultado", "").strip()
+            if resultado not in RDIM_RESULTADO_OPCOES:
+                flash("Selecione o resultado da inspeção (Aprovado / Reprovado / Aprovado com desvio).", "danger")
+                historico = (
+                    HistoricoAlteracao.query.filter_by(entidade_tipo="inspecao_final", entidade_id=inspecao.id)
+                    .order_by(HistoricoAlteracao.criado_em.desc()).all()
+                )
+                return render_template("qualidade_rdim_editar.html", inspecao=inspecao, historico=historico)
+
+            antes = {c: getattr(inspecao, c) for c in CAMPOS_HISTORICO_INSPECAO_FINAL}
+            inspecao.data_inspecao = _parse_data_form(f.get("data_inspecao")) or inspecao.data_inspecao
+            inspecao.numero_rif = f.get("numero_rif", "").strip() or None
+            inspecao.procedimento = f.get("procedimento", "").strip() or None
+            inspecao.norma = f.get("norma", "").strip() or None
+            inspecao.instrucao_trabalho = f.get("instrucao_trabalho", "").strip() or None
+            inspecao.inspecao_visual = f.get("inspecao_visual", "").strip() or None
+            inspecao.desvio_encontrado = f.get("desvio_encontrado", "").strip() or None
+            inspecao.categoria_desvio = f.get("categoria_desvio", "").strip() or None
+            inspecao.observacao = f.get("observacao", "").strip() or None
+            inspecao.resultado = resultado
+            depois = {c: getattr(inspecao, c) for c in CAMPOS_HISTORICO_INSPECAO_FINAL}
+            _registrar_alteracoes("inspecao_final", inspecao.id, inspecao.item.pedido_id if inspecao.item else None,
+                                   antes, depois, CAMPOS_HISTORICO_INSPECAO_FINAL)
+
+            _salvar_medicoes_rdim(inspecao, f, substituir=True)
+            db.session.commit()
+            flash("Inspeção atualizada com sucesso.", "success")
+            return redirect(url_for("rdim_editar", inspecao_id=inspecao.id))
+
+        historico = (
+            HistoricoAlteracao.query.filter_by(entidade_tipo="inspecao_final", entidade_id=inspecao.id)
+            .order_by(HistoricoAlteracao.criado_em.desc()).all()
+        )
+        return render_template("qualidade_rdim_editar.html", inspecao=inspecao, historico=historico)
 
     # ------------------------------------------------------------------
     # P&D — Pesquisa e Desenvolvimento (Fase 14, 01/09/2026). Área nova,

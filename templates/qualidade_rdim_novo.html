@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% block title %}Qualidade · Nova Inspeção RDIM · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-rulers"></i> Nova Inspeção Final (RDIM)</h4>
+  <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-list-ul"></i> Ver inspeções
+  </a>
+</div>
+<p class="text-muted small mb-4">
+  Válido para as estações <strong>Mandril</strong>, <strong>PU</strong> e <strong>Silicone</strong>. Busque a OP (item do
+  pedido) abaixo — cliente, pedido e produto são preenchidos automaticamente.
+</p>
+
+<form method="post" id="formRdim">
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <label class="form-label small text-muted mb-1">Buscar OP — nº do pedido, cliente ou produto</label>
+      <div class="position-relative" style="max-width: 640px;">
+        <div class="input-group">
+          <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+          <input type="text" class="form-control" id="buscaItemInput" placeholder="Digite pra buscar…" autocomplete="off"
+                 value="{{ item_selecionado.descricao_produto if item_selecionado else '' }}">
+        </div>
+        <div id="buscaItemSugestoes" class="list-group position-absolute w-100 shadow-sm d-none" style="z-index: 1050; max-height: 320px; overflow-y: auto;"></div>
+      </div>
+
+      <input type="hidden" name="item_pedido_id" id="itemPedidoId" value="{{ item_selecionado.id if item_selecionado else '' }}" required>
+
+      <div id="itemResumo" class="row g-3 mt-2 {% if not item_selecionado %}d-none{% endif %}">
+        <div class="col-6 col-md-3">
+          <div class="text-muted small">Cliente</div>
+          <div class="fw-semibold" id="resumoCliente">{{ item_selecionado.pedido.cliente if item_selecionado and item_selecionado.pedido else "" }}</div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="text-muted small">Nº Pedido</div>
+          <div class="fw-semibold" id="resumoPedido">{{ item_selecionado.pedido.pedido_venda if item_selecionado and item_selecionado.pedido else "" }}</div>
+        </div>
+        <div class="col-12 col-md-4">
+          <div class="text-muted small">Produto</div>
+          <div class="fw-semibold" id="resumoProduto">{{ item_selecionado.descricao_produto if item_selecionado else "" }}</div>
+        </div>
+        <div class="col-6 col-md-1">
+          <div class="text-muted small">Qtd.</div>
+          <div class="fw-semibold" id="resumoQuantidade">{{ item_selecionado.quantidade if item_selecionado else "" }}</div>
+        </div>
+        <div class="col-6 col-md-2">
+          <div class="text-muted small">Estação</div>
+          <div class="fw-semibold" id="resumoEstacao">{{ item_selecionado.estacao if item_selecionado else "" }}</div>
+        </div>
+      </div>
+      <div id="itemNaoSelecionado" class="text-muted small mt-2 {% if item_selecionado %}d-none{% endif %}">
+        <i class="bi bi-info-circle"></i> Nenhuma OP selecionada ainda.
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Data da inspeção</label>
+      <input type="date" class="form-control" name="data_inspecao" value="{{ hoje_iso }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Responsável</label>
+      <input type="text" class="form-control" value="{{ current_user.nome }}" disabled>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-1">Nº da RIF</label>
+      <input type="text" class="form-control" name="numero_rif">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-1">Procedimento</label>
+      <input type="text" class="form-control" name="procedimento" value="PQ.08.-05 5.5.1">
+    </div>
+    <div class="col-md-1">
+      <label class="form-label small text-muted mb-1">Norma</label>
+      <input type="text" class="form-control" name="norma" value="ISO 9001 2015">
+    </div>
+    <div class="col-md-1">
+      <label class="form-label small text-muted mb-1">IT</label>
+      <input type="text" class="form-control" name="instrucao_trabalho" value="IT 08-05-11">
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="text-uppercase text-muted small mb-0">Medições</h6>
+        <button type="button" id="btnAdicionarGrandeza" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-plus-circle"></i> Adicionar grandeza
+        </button>
+      </div>
+      <p class="text-muted small">Especificação (mín/máx) e a faixa encontrada no lote (mín/máx medido). Fora da tolerância é sinalizado automaticamente.</p>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0" id="tabelaMedicoes">
+          <thead>
+            <tr>
+              <th style="min-width:200px;">Grandeza</th>
+              <th>Espec. mín</th>
+              <th>Espec. máx</th>
+              <th>Medido mín</th>
+              <th>Medido máx</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="medicoesBody">
+            {% for g in RDIM_GRANDEZAS_PADRAO %}
+            <tr class="medicao-row">
+              <td><input type="text" class="form-control form-control-sm" name="grandeza[]" value="{{ g }}"></td>
+              <td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_min[]"></td>
+              <td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_max[]"></td>
+              <td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_min[]"></td>
+              <td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_max[]"></td>
+              <td><span class="badge bg-secondary status-medicao">—</span></td>
+              <td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-medicao"><i class="bi bi-trash"></i></button></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Inspeção visual</label>
+      <select class="form-select" name="inspecao_visual">
+        <option value="">—</option>
+        {% for op in RDIM_INSPECAO_VISUAL_OPCOES %}
+          <option value="{{ op }}">{{ op }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Categoria do desvio (se houver)</label>
+      <select class="form-select" name="categoria_desvio">
+        <option value="">—</option>
+        {% for op in RDIM_CATEGORIA_DESVIO_OPCOES %}
+          <option value="{{ op }}">{{ op }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label small text-muted mb-1">Desvio encontrado</label>
+      <input type="text" class="form-control" name="desvio_encontrado" placeholder="Descreva o desvio, se houver">
+    </div>
+    <div class="col-12">
+      <label class="form-label small text-muted mb-1">Observação</label>
+      <textarea class="form-control" name="observacao" rows="2"></textarea>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <label class="form-label small text-muted mb-2 d-block">Resultado</label>
+      <div class="btn-group w-100" role="group">
+        {% for op in RDIM_RESULTADO_OPCOES %}
+        <input type="radio" class="btn-check" name="resultado" id="resultado{{ op }}" value="{{ op }}" required>
+        <label class="btn btn-outline-{{ RDIM_RESULTADO_CORES.get(op, 'secondary') }}" for="resultado{{ op }}">{{ RDIM_RESULTADO_LABELS.get(op, op) }}</label>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex justify-content-between">
+    <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-secondary">Cancelar</a>
+    <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Registrar inspeção</button>
+  </div>
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  // Nova Inspeção Final (RDIM) — pedido do Bruno (02/09/2026): busca dinâmica
+  // de OP (= ItemPedido, só MANDRIL/PU/SILICONE), auto-preenchimento do
+  // resumo, tabela de medições dinâmica (grandezas flexíveis) com
+  // sinalização de tolerância calculada ao digitar — a mesma conta que o
+  // servidor refaz ao salvar (RdimMedicao.dentro_da_tolerancia).
+  const buscaInput = document.getElementById("buscaItemInput");
+  const sugestoes = document.getElementById("buscaItemSugestoes");
+  const itemIdInput = document.getElementById("itemPedidoId");
+  const itemResumo = document.getElementById("itemResumo");
+  const itemNaoSelecionado = document.getElementById("itemNaoSelecionado");
+  let debounce = null;
+
+  function esconderSugestoes() {
+    sugestoes.innerHTML = "";
+    sugestoes.classList.add("d-none");
+  }
+
+  function selecionarItem(it) {
+    itemIdInput.value = it.item_id;
+    document.getElementById("resumoCliente").textContent = it.cliente || "—";
+    document.getElementById("resumoPedido").textContent = it.pedido_venda || "—";
+    document.getElementById("resumoProduto").textContent = it.produto || "—";
+    document.getElementById("resumoQuantidade").textContent = it.quantidade || "—";
+    document.getElementById("resumoEstacao").textContent = it.estacao || "—";
+    buscaInput.value = it.produto + " — " + (it.pedido_venda || "");
+    itemResumo.classList.remove("d-none");
+    itemNaoSelecionado.classList.add("d-none");
+    esconderSugestoes();
+  }
+
+  if (buscaInput) {
+    buscaInput.addEventListener("input", function () {
+      const termo = buscaInput.value.trim();
+      itemIdInput.value = "";
+      itemResumo.classList.add("d-none");
+      itemNaoSelecionado.classList.remove("d-none");
+      clearTimeout(debounce);
+      if (termo.length < 2) { esconderSugestoes(); return; }
+      debounce = setTimeout(function () {
+        fetch("{{ url_for('rdim_buscar_itens') }}?q=" + encodeURIComponent(termo))
+          .then(function (r) { return r.json(); })
+          .then(function (itens) {
+            if (!itens.length) { esconderSugestoes(); return; }
+            sugestoes.innerHTML = itens.map(function (it, i) {
+              return '<button type="button" class="list-group-item list-group-item-action" data-idx="' + i + '">' +
+                '<div class="fw-semibold">' + it.produto + '</div>' +
+                '<div class="small text-muted">' + (it.cliente || "—") + ' · Pedido ' + (it.pedido_venda || "—") + ' · ' + it.estacao + '</div>' +
+                '</button>';
+            }).join("");
+            sugestoes.classList.remove("d-none");
+            sugestoes.querySelectorAll("button").forEach(function (btn) {
+              btn.addEventListener("click", function () { selecionarItem(itens[parseInt(btn.dataset.idx, 10)]); });
+            });
+          });
+      }, 250);
+    });
+    document.addEventListener("click", function (e) {
+      if (!e.target.closest("#buscaItemInput") && !e.target.closest("#buscaItemSugestoes")) esconderSugestoes();
+    });
+  }
+
+  // ---- Medições: adicionar/remover linha + sinalização de tolerância ----
+  const medicoesBody = document.getElementById("medicoesBody");
+  const btnAdd = document.getElementById("btnAdicionarGrandeza");
+
+  function linhaMedicao() {
+    const tr = document.createElement("tr");
+    tr.className = "medicao-row";
+    tr.innerHTML =
+      '<td><input type="text" class="form-control form-control-sm" name="grandeza[]" placeholder="Ex.: Comprimento (mm)"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_min[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_max[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_min[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_max[]"></td>' +
+      '<td><span class="badge bg-secondary status-medicao">—</span></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-medicao"><i class="bi bi-trash"></i></button></td>';
+    return tr;
+  }
+
+  btnAdd.addEventListener("click", function () { medicoesBody.appendChild(linhaMedicao()); });
+
+  medicoesBody.addEventListener("click", function (e) {
+    const btn = e.target.closest(".btn-remover-medicao");
+    if (btn) btn.closest(".medicao-row").remove();
+  });
+
+  function avaliarTolerancia(row) {
+    const num = function (sel) {
+      const v = row.querySelector(sel).value;
+      return v === "" ? null : parseFloat(v);
+    };
+    const espMin = num('[name="especificado_min[]"]');
+    const espMax = num('[name="especificado_max[]"]');
+    const medMin = num('[name="medido_min[]"]');
+    const medMax = num('[name="medido_max[]"]');
+    const badge = row.querySelector(".status-medicao");
+    if ((espMin === null && espMax === null) || (medMin === null && medMax === null)) {
+      badge.className = "badge bg-secondary status-medicao"; badge.textContent = "—"; return;
+    }
+    let foraTolerancia = false;
+    if (espMin !== null) {
+      if ((medMin !== null && medMin < espMin) || (medMax !== null && medMax < espMin)) foraTolerancia = true;
+    }
+    if (espMax !== null) {
+      if ((medMax !== null && medMax > espMax) || (medMin !== null && medMin > espMax)) foraTolerancia = true;
+    }
+    if (foraTolerancia) { badge.className = "badge bg-danger status-medicao"; badge.textContent = "Fora"; }
+    else { badge.className = "badge bg-success status-medicao"; badge.textContent = "OK"; }
+  }
+
+  medicoesBody.addEventListener("input", function (e) {
+    if (e.target.classList.contains("med-input")) avaliarTolerancia(e.target.closest(".medicao-row"));
+  });
+})();
+</script>
+{% endblock %}

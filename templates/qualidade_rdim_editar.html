@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% block title %}Qualidade · Inspeção RDIM #{{ inspecao.id }} · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0">
+    <i class="bi bi-rulers"></i> Inspeção RDIM #{{ inspecao.id }}
+    {% if inspecao.cliente %}<span class="text-muted fw-normal">— {{ inspecao.cliente }}</span>{% endif %}
+  </h4>
+  <div class="d-flex align-items-center gap-2">
+    <span class="badge bg-{{ RDIM_RESULTADO_CORES.get(inspecao.resultado, 'secondary') }} fs-6">{{ RDIM_RESULTADO_LABELS.get(inspecao.resultado, inspecao.resultado or "—") }}</span>
+    <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul"></i> Voltar</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Estação</div>
+        <div class="fs-6 fw-semibold">{{ inspecao.estacao or "—" }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Cliente</div>
+        <div class="fs-6 fw-semibold">{{ inspecao.cliente or "—" }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Nº Pedido</div>
+        <div class="fs-6 fw-semibold">{{ inspecao.pedido_venda or "—" }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-4">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Produto</div>
+        <div class="fs-6 fw-semibold text-truncate" title="{{ inspecao.produto or '' }}">{{ inspecao.produto or "—" }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Quantidade</div>
+        <div class="fs-6 fw-semibold">{{ inspecao.item.quantidade if inspecao.item else "—" }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xl-8">
+    <form method="post" id="formRdimEditar">
+      <div class="row g-3 mb-3">
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Data da inspeção</label>
+          <input type="date" class="form-control" name="data_inspecao" value="{{ inspecao.data_inspecao.isoformat() if inspecao.data_inspecao else '' }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Responsável</label>
+          <input type="text" class="form-control" value="{{ inspecao.responsavel.nome if inspecao.responsavel else '—' }}" disabled>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small text-muted mb-1">Nº da RIF</label>
+          <input type="text" class="form-control" name="numero_rif" value="{{ inspecao.numero_rif or '' }}">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small text-muted mb-1">Procedimento</label>
+          <input type="text" class="form-control" name="procedimento" value="{{ inspecao.procedimento or '' }}">
+        </div>
+        <div class="col-md-1">
+          <label class="form-label small text-muted mb-1">Norma</label>
+          <input type="text" class="form-control" name="norma" value="{{ inspecao.norma or '' }}">
+        </div>
+        <div class="col-md-1">
+          <label class="form-label small text-muted mb-1">IT</label>
+          <input type="text" class="form-control" name="instrucao_trabalho" value="{{ inspecao.instrucao_trabalho or '' }}">
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-3">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="text-uppercase text-muted small mb-0">Medições</h6>
+            <button type="button" id="btnAdicionarGrandeza" class="btn btn-sm btn-outline-primary">
+              <i class="bi bi-plus-circle"></i> Adicionar grandeza
+            </button>
+          </div>
+          <p class="text-muted small">Especificação (mín/máx) e a faixa encontrada no lote (mín/máx medido). Fora da tolerância é sinalizado automaticamente.</p>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0" id="tabelaMedicoes">
+              <thead>
+                <tr>
+                  <th style="min-width:200px;">Grandeza</th>
+                  <th>Espec. mín</th>
+                  <th>Espec. máx</th>
+                  <th>Medido mín</th>
+                  <th>Medido máx</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="medicoesBody">
+                {% for m in inspecao.medicoes %}
+                <tr class="medicao-row">
+                  <td><input type="text" class="form-control form-control-sm" name="grandeza[]" value="{{ m.grandeza }}"></td>
+                  <td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_min[]" value="{{ m.especificado_min if m.especificado_min is not none else '' }}"></td>
+                  <td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_max[]" value="{{ m.especificado_max if m.especificado_max is not none else '' }}"></td>
+                  <td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_min[]" value="{{ m.medido_min if m.medido_min is not none else '' }}"></td>
+                  <td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_max[]" value="{{ m.medido_max if m.medido_max is not none else '' }}"></td>
+                  <td>
+                    {% if m.dentro_da_tolerancia is none %}
+                    <span class="badge bg-secondary status-medicao">—</span>
+                    {% elif m.dentro_da_tolerancia %}
+                    <span class="badge bg-success status-medicao">OK</span>
+                    {% else %}
+                    <span class="badge bg-danger status-medicao">Fora</span>
+                    {% endif %}
+                  </td>
+                  <td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-medicao"><i class="bi bi-trash"></i></button></td>
+                </tr>
+                {% else %}
+                {% for g in RDIM_GRANDEZAS_PADRAO %}
+                <tr class="medicao-row">
+                  <td><input type="text" class="form-control form-control-sm" name="grandeza[]" value="{{ g }}"></td>
+                  <td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_min[]"></td>
+                  <td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_max[]"></td>
+                  <td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_min[]"></td>
+                  <td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_max[]"></td>
+                  <td><span class="badge bg-secondary status-medicao">—</span></td>
+                  <td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-medicao"><i class="bi bi-trash"></i></button></td>
+                </tr>
+                {% endfor %}
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Inspeção visual</label>
+          <select class="form-select" name="inspecao_visual">
+            <option value="">—</option>
+            {% for op in RDIM_INSPECAO_VISUAL_OPCOES %}
+              <option value="{{ op }}" {% if inspecao.inspecao_visual == op %}selected{% endif %}>{{ op }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Categoria do desvio (se houver)</label>
+          <select class="form-select" name="categoria_desvio">
+            <option value="">—</option>
+            {% for op in RDIM_CATEGORIA_DESVIO_OPCOES %}
+              <option value="{{ op }}" {% if inspecao.categoria_desvio == op %}selected{% endif %}>{{ op }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label small text-muted mb-1">Desvio encontrado</label>
+          <input type="text" class="form-control" name="desvio_encontrado" value="{{ inspecao.desvio_encontrado or '' }}">
+        </div>
+        <div class="col-12">
+          <label class="form-label small text-muted mb-1">Observação</label>
+          <textarea class="form-control" name="observacao" rows="2">{{ inspecao.observacao or '' }}</textarea>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <label class="form-label small text-muted mb-2 d-block">Resultado</label>
+          <div class="btn-group w-100" role="group">
+            {% for op in RDIM_RESULTADO_OPCOES %}
+            <input type="radio" class="btn-check" name="resultado" id="resultado{{ op }}" value="{{ op }}" {% if inspecao.resultado == op %}checked{% endif %} required>
+            <label class="btn btn-outline-{{ RDIM_RESULTADO_CORES.get(op, 'secondary') }}" for="resultado{{ op }}">{{ RDIM_RESULTADO_LABELS.get(op, op) }}</label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-end gap-2">
+        <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-secondary">Voltar</a>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Salvar alterações</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-12 col-xl-4">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Histórico de alterações</h6>
+        {% if historico %}
+        <ul class="list-unstyled mb-0" style="max-height: 640px; overflow-y: auto;">
+          {% for h in historico %}
+          <li class="mb-3 pb-2 border-bottom">
+            <div class="small text-muted">
+              {{ h.criado_em.strftime('%d/%m/%Y %H:%M') }} · {{ h.usuario_nome or "sistema" }}
+            </div>
+            <div>
+              <strong class="normal-case">{{ h.campo }}</strong>:
+              <span class="text-muted normal-case">{{ h.valor_anterior or "—" }}</span>
+              <i class="bi bi-arrow-right mx-1"></i>
+              <span class="normal-case">{{ h.valor_novo or "—" }}</span>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted mb-0">Nenhuma alteração registrada ainda para esta inspeção.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const medicoesBody = document.getElementById("medicoesBody");
+  const btnAdd = document.getElementById("btnAdicionarGrandeza");
+
+  function linhaMedicao() {
+    const tr = document.createElement("tr");
+    tr.className = "medicao-row";
+    tr.innerHTML =
+      '<td><input type="text" class="form-control form-control-sm" name="grandeza[]" placeholder="Ex.: Comprimento (mm)"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_min[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="especificado_max[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_min[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="medido_max[]"></td>' +
+      '<td><span class="badge bg-secondary status-medicao">—</span></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-medicao"><i class="bi bi-trash"></i></button></td>';
+    return tr;
+  }
+
+  btnAdd.addEventListener("click", function () { medicoesBody.appendChild(linhaMedicao()); });
+
+  medicoesBody.addEventListener("click", function (e) {
+    const btn = e.target.closest(".btn-remover-medicao");
+    if (btn) btn.closest(".medicao-row").remove();
+  });
+
+  function avaliarTolerancia(row) {
+    const num = function (sel) {
+      const v = row.querySelector(sel).value;
+      return v === "" ? null : parseFloat(v);
+    };
+    const espMin = num('[name="especificado_min[]"]');
+    const espMax = num('[name="especificado_max[]"]');
+    const medMin = num('[name="medido_min[]"]');
+    const medMax = num('[name="medido_max[]"]');
+    const badge = row.querySelector(".status-medicao");
+    if ((espMin === null && espMax === null) || (medMin === null && medMax === null)) {
+      badge.className = "badge bg-secondary status-medicao"; badge.textContent = "—"; return;
+    }
+    let foraTolerancia = false;
+    if (espMin !== null) {
+      if ((medMin !== null && medMin < espMin) || (medMax !== null && medMax < espMin)) foraTolerancia = true;
+    }
+    if (espMax !== null) {
+      if ((medMax !== null && medMax > espMax) || (medMin !== null && medMin > espMax)) foraTolerancia = true;
+    }
+    if (foraTolerancia) { badge.className = "badge bg-danger status-medicao"; badge.textContent = "Fora"; }
+    else { badge.className = "badge bg-success status-medicao"; badge.textContent = "OK"; }
+  }
+
+  medicoesBody.addEventListener("input", function (e) {
+    if (e.target.classList.contains("med-input")) avaliarTolerancia(e.target.closest(".medicao-row"));
+  });
+})();
+</script>
+{% endblock %}

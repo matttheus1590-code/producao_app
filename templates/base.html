@@ -79,6 +79,15 @@
         <a class="app-nav-link {% if request.endpoint == 'qualidade_dashboard' %}active{% endif %}" href="{{ url_for('qualidade_dashboard') }}">
           <span>🩺 Dashboard</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'rdim_novo' %}active{% endif %}" href="{{ url_for('rdim_novo') }}">
+          <span>🧾 Nova Inspeção (RDIM)</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint in ('rdim_lista', 'rdim_editar') %}active{% endif %}" href="{{ url_for('rdim_lista') }}">
+          <span>📐 Inspeções (RDIM)</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'rdim_dashboard' %}active{% endif %}" href="{{ url_for('rdim_dashboard') }}">
+          <span>📊 Dashboard RDIM</span>
+        </a>
 
         <div class="app-nav-section">🧪 P&D</div>
         <a class="app-nav-link {% if request.endpoint == 'pd_dashboard' %}active{% endif %}" href="{{ url_for('pd_dashboard') }}">

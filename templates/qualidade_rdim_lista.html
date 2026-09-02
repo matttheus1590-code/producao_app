@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Qualidade · Inspeções RDIM · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-rulers"></i> Inspeção Final (RDIM) — Histórico</h4>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">{{ total_filtrado }} inspeção(ões)</span>
+    <a href="{{ url_for('rdim_dashboard') }}" class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-bar-chart"></i> Dashboard
+    </a>
+    <a href="{{ url_for('rdim_novo') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-circle"></i> Nova inspeção
+    </a>
+  </div>
+</div>
+<p class="text-muted small mb-3">
+  Registro digital das inspeções finais das estações Mandril, PU e Silicone. Veja os indicadores consolidados no
+  <a href="{{ url_for('rdim_dashboard') }}">Dashboard RDIM</a>.
+</p>
+
+<form class="row g-2 align-items-start mb-3" method="get">
+  <div class="col-12">
+    <p class="text-muted small mb-1">
+      <i class="bi bi-info-circle"></i> Nos filtros de resultado, categoria de desvio e estação, segure <kbd>Ctrl</kbd>
+      (ou <kbd>Cmd</kbd> no Mac) e clique pra marcar mais de uma opção ao mesmo tempo.
+    </p>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Buscar (cliente, pedido, produto, nº RIF)</label>
+    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+    <div class="row g-2 mt-1">
+      <div class="col-6">
+        <label class="form-label small text-muted mb-1">De</label>
+        <input type="date" class="form-control" name="data_de" value="{{ filtros.data_de }}">
+      </div>
+      <div class="col-6">
+        <label class="form-label small text-muted mb-1">Até</label>
+        <input type="date" class="form-control" name="data_ate" value="{{ filtros.data_ate }}">
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Resultado</label>
+    <select class="form-select" name="resultado" multiple size="5">
+      {% for op in RDIM_RESULTADO_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.resultado %}selected{% endif %}>{{ RDIM_RESULTADO_LABELS.get(op, op) }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Categoria de desvio</label>
+    <select class="form-select" name="categoria_desvio" multiple size="5">
+      {% for op in RDIM_CATEGORIA_DESVIO_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.categoria_desvio %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Estação</label>
+    <select class="form-select" name="estacao" multiple size="5">
+      {% for op in RDIM_ESTACOES_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.estacao %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Responsável</label>
+    <select class="form-select" name="responsavel_id">
+      <option value="">Todos</option>
+      {% for r in responsaveis %}
+        <option value="{{ r.id }}" {% if filtros.responsavel_id == r.id|string %}selected{% endif %}>{{ r.nome }}</option>
+      {% endfor %}
+    </select>
+    <div class="d-flex flex-column gap-2 mt-2">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+      <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-secondary btn-sm">Limpar</a>
+    </div>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-primary">
+      <tr>
+        <th>Data</th>
+        <th>Estação</th>
+        <th>Cliente</th>
+        <th>Nº Pedido</th>
+        <th>Produto</th>
+        <th>Nº RIF</th>
+        <th>Categoria desvio</th>
+        <th>Responsável</th>
+        <th>Resultado</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for i in inspecoes %}
+      <tr>
+        <td>{{ i.data_inspecao.strftime("%d/%m/%Y") if i.data_inspecao else "—" }}</td>
+        <td>{{ i.estacao or "—" }}</td>
+        <td>{{ i.cliente or "—" }}</td>
+        <td>{{ i.pedido_venda or "—" }}</td>
+        <td class="text-truncate" style="max-width: 220px;" title="{{ i.produto or '' }}">{{ i.produto or "—" }}</td>
+        <td>{{ i.numero_rif or "—" }}</td>
+        <td>{{ i.categoria_desvio or "—" }}</td>
+        <td>{{ i.responsavel.nome if i.responsavel else "—" }}</td>
+        <td><span class="badge bg-{{ RDIM_RESULTADO_CORES.get(i.resultado, 'secondary') }}">{{ RDIM_RESULTADO_LABELS.get(i.resultado, i.resultado or "—") }}</span></td>
+        <td class="text-end">
+          <a href="{{ url_for('rdim_editar', inspecao_id=i.id) }}" class="btn btn-sm btn-outline-primary" title="Ver / editar inspeção">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="text-center text-muted py-4">Nenhuma inspeção encontrada.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_paginas > 1 %}
+<nav class="d-flex justify-content-center">
+  <ul class="pagination">
+    {% for pg in range(1, total_paginas + 1) %}
+      <li class="page-item {% if pg == page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('rdim_lista', page=pg, **filtros) }}">{{ pg }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% endblock %}
