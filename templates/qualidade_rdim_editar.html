@@ -246,7 +246,15 @@
 
       <div class="d-flex justify-content-end gap-2">
         <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-secondary">Voltar</a>
-        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Salvar alterações</button>
+        <div class="d-flex gap-2">
+          {% if current_user.role in ('ADMIN', 'PCP') %}
+          <button type="submit" name="excluir_confirmado" formaction="{{ url_for('rdim_excluir', inspecao_id=inspecao.id) }}"
+                  class="btn btn-outline-danger" onclick="return confirm('Excluir esta inspeção RDIM definitivamente? Essa ação não pode ser desfeita.')">
+            <i class="bi bi-trash"></i> Excluir
+          </button>
+          {% endif %}
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Salvar alterações</button>
+        </div>
       </div>
     </form>
   </div>

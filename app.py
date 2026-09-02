@@ -4739,6 +4739,23 @@ def register_routes(app):
         )
         return render_template("qualidade_rdim_editar.html", inspecao=inspecao, historico=historico)
 
+    @app.route("/qualidade/rdim/<int:inspecao_id>/excluir", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def rdim_excluir(inspecao_id):
+        """Apagar uma inspeção RDIM definitivamente — pedido do Bruno
+        (02/09/2026): só tinha editar, faltava excluir. Restrito a ADMIN/PCP,
+        mesmo critério já usado em excluir_pedido — é um registro formal de
+        inspeção (RIF/norma/procedimento), então a exclusão fica mais
+        controlada que criar/editar (aberto a todo usuário autenticado).
+        RdimMedicao e RdimPecaDesvio somem juntos (cascade="all,
+        delete-orphan" já configurado no relacionamento)."""
+        inspecao = db.session.get(InspecaoFinal, inspecao_id)
+        if inspecao is not None:
+            db.session.delete(inspecao)
+            db.session.commit()
+            flash("Inspeção RDIM excluída.", "info")
+        return redirect(url_for("rdim_lista"))
+
     # ------------------------------------------------------------------
     # P&D — Pesquisa e Desenvolvimento (Fase 14, 01/09/2026). Área nova,
     # independente de PCP/Produção/Operação/Qualidade. Mesmo critério de
