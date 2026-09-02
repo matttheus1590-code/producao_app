@@ -193,6 +193,8 @@ body.col-resizing-ativo {
   letter-spacing: 0.05em;
   color: rgba(255, 255, 255, 0.85);
   padding: 1.15rem 0.6rem 0.4rem;
+  margin-top: 0.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .app-sidebar-nav > .app-nav-link:first-child {
