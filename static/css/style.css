@@ -988,3 +988,11 @@ body.col-resizing-ativo {
   color: #dc3545;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------------
+   Consulta Pedido (aba própria — pedido do Bruno, 02/09/2026, movida
+   pra fora do Painel)
+--------------------------------------------------------------------- */
+.consulta-pedido-hero {
+  border-left: 4px solid #3b82f6;
+}

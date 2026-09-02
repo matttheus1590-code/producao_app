@@ -3262,23 +3262,24 @@ def register_routes(app):
         logout_user()
         return redirect(url_for("login"))
 
-    @app.route("/painel/busca-sugestoes")
+    @app.route("/consulta-pedido/busca-sugestoes")
     @login_required
-    def painel_busca_sugestoes():
-        """Pedido do Bruno (01/09/2026): sugestões dinâmicas (digitando) pro
-        canal de busca de status do topo do Painel — devolve um fragmento
-        HTML pronto (mesmo padrão do resto do sistema, que é 100%
-        server-rendered) pra ser injetado direto na página via fetch()."""
+    def consulta_pedido_busca_sugestoes():
+        """Pedido do Bruno (01/09/2026, movido pra aba própria em 02/09/2026):
+        sugestões dinâmicas (digitando) pro canal de busca de status da aba
+        Consulta Pedido — devolve um fragmento HTML pronto (mesmo padrão do
+        resto do sistema, que é 100% server-rendered) pra ser injetado direto
+        na página via fetch()."""
         termo = request.args.get("q", "")
         sugestoes = _buscar_pedidos_para_status(termo)
-        return render_template("_painel_busca_sugestoes.html", sugestoes=sugestoes, termo=termo.strip())
+        return render_template("_consulta_pedido_sugestoes.html", sugestoes=sugestoes, termo=termo.strip())
 
-    @app.route("/painel/busca-detalhe")
+    @app.route("/consulta-pedido/busca-detalhe")
     @login_required
-    def painel_busca_detalhe():
+    def consulta_pedido_busca_detalhe():
         """Status completo de UM pedido (Produção + Operação, cruzados por
         pedido_venda) — devolve o fragmento HTML do painel de detalhe,
-        aberto ao clicar numa sugestão do canal de busca do Painel."""
+        aberto ao clicar numa sugestão/atalho da aba Consulta Pedido."""
         chave = (request.args.get("pedido_venda", "") or "").strip()
         if not chave:
             return "", 204
@@ -3291,17 +3292,47 @@ def register_routes(app):
         go = PedidoOperacao.query.filter(func.trim(PedidoOperacao.pedido_venda) == chave).first()
 
         if pedido is None and go is None:
-            return render_template("_painel_busca_detalhe.html", nao_encontrado=True, pedido_venda=chave)
+            return render_template("_consulta_pedido_detalhe.html", nao_encontrado=True, pedido_venda=chave)
 
         liberacao_pcp = _liberacao_pcp_por_pedido_venda([chave]).get(chave, {})
         situacao_entrega = _situacao_entrega_go(go, pedido)
         etapas = _etapas_acompanhamento_pedido(pedido, go)
 
         return render_template(
-            "_painel_busca_detalhe.html",
+            "_consulta_pedido_detalhe.html",
             pedido=pedido, go=go, pedido_venda=chave,
             liberacao_pcp=liberacao_pcp, situacao_entrega=situacao_entrega,
             etapas=etapas, nao_encontrado=False,
+        )
+
+    @app.route("/consulta-pedido")
+    @login_required
+    def consulta_pedido():
+        """Aba própria "🔍 Consulta Pedido" (pedido do Bruno, 02/09/2026): o
+        canal de busca de status que antes vivia dentro do Painel virou uma
+        tela dedicada — mesma busca por nº do pedido/cliente, mais dois
+        atalhos de acesso rápido (Atrasados/Vencendo, só pedidos com
+        pedido_venda preenchido pra garantir o cruzamento Produção×Operação)
+        pra quem já sabe que quer olhar um desses sem precisar digitar nada."""
+        atalho_base = and_(Pedido.pedido_venda.isnot(None), func.trim(Pedido.pedido_venda) != "")
+        atrasados = (
+            Pedido.query.options(selectinload(Pedido.itens))
+            .filter(_predicado_atrasado(), atalho_base)
+            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+            .limit(8)
+            .all()
+        )
+        vencendo = (
+            Pedido.query.options(selectinload(Pedido.itens))
+            .filter(_predicado_vencendo(), atalho_base)
+            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+            .limit(8)
+            .all()
+        )
+        pedido_venda_inicial = (request.args.get("pedido_venda", "") or "").strip()
+        return render_template(
+            "consulta_pedido.html",
+            atrasados=atrasados, vencendo=vencendo, pedido_venda_inicial=pedido_venda_inicial,
         )
 
     @app.route("/painel")

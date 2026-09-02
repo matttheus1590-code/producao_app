@@ -21,6 +21,9 @@
         <a class="app-nav-link {% if request.endpoint == 'painel' %}active{% endif %}" href="{{ url_for('painel') }}">
           <span>🎛️ Painel</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'consulta_pedido' %}active{% endif %}" href="{{ url_for('consulta_pedido') }}">
+          <span>🔍 Consulta Pedido</span>
+        </a>
 
         <div class="app-nav-section">📦 Gestão Operação</div>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_listagem_geral' %}active{% endif %}" href="{{ url_for('gestao_operacao_listagem_geral') }}">

@@ -1,0 +1,17 @@
+{# Pedido do Bruno (01/09/2026, movido pra aba própria em 02/09/2026):
+   fragmento HTML das sugestões dinâmicas do canal de busca de status da aba
+   Consulta Pedido — devolvido via fetch() e injetado direto no dropdown
+   (ver consulta_pedido.html). #}
+{% if not termo %}
+{% elif not sugestoes %}
+<div class="list-group-item text-muted small">Nenhum pedido encontrado para "{{ termo }}".</div>
+{% else %}
+  {% for s in sugestoes %}
+  <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center busca-pedido-sugestao" data-pedido-venda="{{ s.pedido_venda }}" data-cliente="{{ s.cliente or '' }}">
+    <span><strong>{{ s.pedido_venda }}</strong> — {{ s.cliente }}</span>
+    {% if not s.tem_producao %}
+      <span class="badge bg-secondary" title="Ainda não lançado em Gestão Produção">só Operação</span>
+    {% endif %}
+  </button>
+  {% endfor %}
+{% endif %}
