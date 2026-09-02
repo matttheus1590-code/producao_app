@@ -187,11 +187,17 @@ body.col-resizing-ativo {
 }
 
 .app-nav-section {
-  font-size: 0.82rem;
+  font-size: 1.05rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.45);
-  padding: 1rem 0.6rem 0.35rem;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.85);
+  padding: 1.15rem 0.6rem 0.4rem;
+}
+
+.app-sidebar-nav > .app-nav-link:first-child {
+  font-size: 1.1rem;
+  font-weight: 700;
 }
 
 .app-nav-link {
