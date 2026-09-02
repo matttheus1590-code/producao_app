@@ -29,48 +29,7 @@
 <div id="buscaPedidoDetalhe" class="mb-4">
   <div id="consultaPedidoVazio" class="text-center text-muted py-5">
     <i class="bi bi-signpost-split" style="font-size: 2.2rem;"></i>
-    <p class="mb-0 mt-2">Digite acima ou escolha um atalho abaixo pra ver o status completo de um pedido.</p>
-  </div>
-</div>
-
-<div class="row g-3">
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">🔴 Atrasados — acesso rápido</h6>
-        {% if atrasados %}
-        <div class="list-group list-group-flush">
-          {% for p in atrasados %}
-          <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center consulta-pedido-atalho" data-pedido-venda="{{ p.pedido_venda }}" data-cliente="{{ p.cliente or '' }}">
-            <span><strong>{{ p.pedido_venda }}</strong> — {{ p.cliente }}</span>
-            <span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span>
-          </button>
-          {% endfor %}
-        </div>
-        {% else %}
-        <div class="text-center text-muted py-3">Nenhum pedido atrasado 🎉</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">🟡 Vencendo em {{ PRAZO_ALERTA_DIAS }}d — acesso rápido</h6>
-        {% if vencendo %}
-        <div class="list-group list-group-flush">
-          {% for p in vencendo %}
-          <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center consulta-pedido-atalho" data-pedido-venda="{{ p.pedido_venda }}" data-cliente="{{ p.cliente or '' }}">
-            <span><strong>{{ p.pedido_venda }}</strong> — {{ p.cliente }}</span>
-            <span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span>
-          </button>
-          {% endfor %}
-        </div>
-        {% else %}
-        <div class="text-center text-muted py-3">Nenhum pedido vencendo no prazo 🎉</div>
-        {% endif %}
-      </div>
-    </div>
+    <p class="mb-0 mt-2">Digite o nº do pedido de venda ou o nome do cliente acima pra ver o status completo.</p>
   </div>
 </div>
 
@@ -81,11 +40,11 @@
 (function () {
   // Aba "🔍 Consulta Pedido" (pedido do Bruno, 02/09/2026) — canal de busca
   // de status que antes vivia dentro do Painel, agora com tela própria:
-  // mesma busca dinâmica por nº do pedido/cliente (debounce + sugestões),
-  // mais atalhos de um clique (Atrasados/Vencendo/Buscas recentes) que
-  // reaproveitam a mesma função de abrir o detalhe. Buscas recentes ficam
-  // só no navegador (localStorage) — não é dado do servidor, é conveniência
-  // de quem está usando esta tela.
+  // busca dinâmica por nº do pedido/cliente (debounce + sugestões), mais
+  // atalhos de um clique nas "Buscas recentes" (só no navegador, via
+  // localStorage — não é dado do servidor). Sem atalhos de
+  // atrasados/vencendo aqui de propósito (pedido do Bruno, 02/09/2026):
+  // esta tela é de acesso comercial, sem esse tipo de informação interna.
   const buscaInput = document.getElementById("buscaPedidoInput");
   const buscaSugestoes = document.getElementById("buscaPedidoSugestoes");
   const buscaDetalhe = document.getElementById("buscaPedidoDetalhe");

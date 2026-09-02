@@ -753,7 +753,9 @@ body.col-resizing-ativo {
    --------------------------------------------------------------------- */
 .busca-pedido-etapas-wrap {
   overflow-x: auto;
-  padding: 0.5rem 0 0.75rem;
+  padding: 0.5rem 0 1rem;
+  margin-bottom: 1.75rem;
+  border-bottom: 1px solid #eef0f3;
 }
 
 .busca-pedido-etapas {

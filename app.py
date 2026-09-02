@@ -3310,30 +3310,11 @@ def register_routes(app):
     def consulta_pedido():
         """Aba própria "🔍 Consulta Pedido" (pedido do Bruno, 02/09/2026): o
         canal de busca de status que antes vivia dentro do Painel virou uma
-        tela dedicada — mesma busca por nº do pedido/cliente, mais dois
-        atalhos de acesso rápido (Atrasados/Vencendo, só pedidos com
-        pedido_venda preenchido pra garantir o cruzamento Produção×Operação)
-        pra quem já sabe que quer olhar um desses sem precisar digitar nada."""
-        atalho_base = and_(Pedido.pedido_venda.isnot(None), func.trim(Pedido.pedido_venda) != "")
-        atrasados = (
-            Pedido.query.options(selectinload(Pedido.itens))
-            .filter(_predicado_atrasado(), atalho_base)
-            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
-            .limit(8)
-            .all()
-        )
-        vencendo = (
-            Pedido.query.options(selectinload(Pedido.itens))
-            .filter(_predicado_vencendo(), atalho_base)
-            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
-            .limit(8)
-            .all()
-        )
+        tela dedicada — só a busca por nº do pedido/cliente. Sem atalhos de
+        Atrasados/Vencendo aqui de propósito (pedido do Bruno, 02/09/2026):
+        esta área é de acesso comercial, sem esse tipo de informação interna."""
         pedido_venda_inicial = (request.args.get("pedido_venda", "") or "").strip()
-        return render_template(
-            "consulta_pedido.html",
-            atrasados=atrasados, vencendo=vencendo, pedido_venda_inicial=pedido_venda_inicial,
-        )
+        return render_template("consulta_pedido.html", pedido_venda_inicial=pedido_venda_inicial)
 
     @app.route("/painel")
     @login_required
