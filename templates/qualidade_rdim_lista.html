@@ -27,9 +27,13 @@
       Mês é um atalho pro intervalo De/Até — use um ou outro.
     </p>
   </div>
-  <div class="col-md-4">
+  <div class="col-md-3">
     <label class="form-label small text-muted mb-1">Buscar (cliente, pedido, produto, nº RIF)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">DN / Polegada</label>
+    <input type="text" class="form-control" name="dn_polegada" value="{{ filtros.dn_polegada }}" placeholder='Ex.: 18" ou DN200'>
   </div>
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Mês</label>
@@ -103,6 +107,7 @@
         <th>Nº RIF</th>
         <th>Categoria desvio</th>
         <th>Peças c/ desvio</th>
+        <th>Contexto do desvio</th>
         <th>Responsável</th>
         <th>Resultado</th>
         <th></th>
@@ -130,6 +135,23 @@
             <i class="bi bi-list-check text-muted" title="Detalhamento peça a peça — {{ i.resumo_pecas_desvio }}"></i>
           {% endif %}
         </td>
+        <td>
+          {% set pior = i.pior_apontamento_peca %}
+          {% if pior %}
+            <span class="small {% if pior.variacao > 0 %}text-danger fw-semibold{% else %}text-success{% endif %}"
+                  title="{{ i.contexto_pecas_desvio }}">
+              {% if pior.especificado_min is not none or pior.especificado_max is not none %}
+                espec. {{ pior.especificado_min if pior.especificado_min is not none else "—" }} a {{ pior.especificado_max if pior.especificado_max is not none else "—" }} ×
+              {% endif %}
+              medido {{ pior.valor_medido if pior.valor_medido is not none else "—" }}
+              {% if pior.variacao > 0 %}
+                ({{ "+" if pior.acima_da_tolerancia else "-" }}{{ pior.variacao }} {{ "acima" if pior.acima_da_tolerancia else "abaixo" }})
+              {% endif %}
+            </span>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
         <td>{{ i.responsavel.nome if i.responsavel else "—" }}</td>
         <td><span class="badge bg-{{ RDIM_RESULTADO_CORES.get(i.resultado, 'secondary') }}">{{ RDIM_RESULTADO_LABELS.get(i.resultado, i.resultado or "—") }}</span></td>
         <td class="text-end">
@@ -139,7 +161,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="11" class="text-center text-muted py-4">Nenhuma inspeção encontrada.</td></tr>
+      <tr><td colspan="12" class="text-center text-muted py-4">Nenhuma inspeção encontrada.</td></tr>
       {% endfor %}
     </tbody>
   </table>

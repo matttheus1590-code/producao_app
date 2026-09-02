@@ -1084,6 +1084,57 @@ class InspecaoFinal(db.Model):
             partes.append(rotulo)
         return "; ".join(partes)
 
+    @property
+    def contexto_pecas_desvio(self):
+        """Texto multi-linha com o "contexto do desvio" de cada peça
+        apontada (espec. x medido x variação) — pedido do Bruno (02/09/2026,
+        RDIM Fase 4): "medida solicitada X junto com a medida inspecionada X
+        junto com a variação que teve da peça". Usado como tooltip completo
+        na listagem RDIM (complementa o resumo compacto de
+        pior_apontamento_peca, que mostra só a pior linha na própria
+        célula)."""
+        linhas = []
+        for p in self.pecas_desvio:
+            rotulo = p.peca_numero or "—"
+            if p.caracteristica:
+                rotulo += ": " + p.caracteristica
+            if p.especificado_min is not None or p.especificado_max is not None:
+                espec = f"{p.especificado_min if p.especificado_min is not None else '—'} a {p.especificado_max if p.especificado_max is not None else '—'}"
+            else:
+                espec = "—"
+            medido = p.valor_medido if p.valor_medido is not None else "—"
+            if p.variacao is None:
+                variacao_txt = ""
+            elif p.variacao == 0:
+                variacao_txt = " (dentro da tolerância)"
+            elif p.acima_da_tolerancia:
+                variacao_txt = f" (+{p.variacao} acima da tolerância)"
+            else:
+                variacao_txt = f" (-{p.variacao} abaixo da tolerância)"
+            linhas.append(f"{rotulo} — espec. {espec} x medido {medido}{variacao_txt}")
+        return "; ".join(linhas)
+
+    @property
+    def pior_apontamento_peca(self):
+        """A linha de pecas_desvio com a MAIOR variação em relação à
+        tolerância (RdimPecaDesvio.variacao) — pedido do Bruno (02/09/2026,
+        RDIM Fase 4): na listagem de inspeções, mostrar o "contexto do
+        desvio" (medida solicitada x medida inspecionada x variação),
+        exemplo dele: "tolerância era de 0,5mm, peça inspecionada com
+        0,7mm, peça ficou 0,2mm acima da tolerância". Com várias peças
+        apontadas numa mesma inspeção, mostra a pior (maior variacao) como
+        resumo rápido na linha da tabela; o detalhamento completo continua
+        disponível ao abrir a inspeção. None se não há nenhum apontamento
+        com variação calculável (falta espec. ou valor medido)."""
+        pior = None
+        for p in self.pecas_desvio:
+            v = p.variacao
+            if v is None:
+                continue
+            if pior is None or v > pior.variacao:
+                pior = p
+        return pior
+
 
 class RdimMedicao(db.Model):
     """Uma linha = uma grandeza medida dentro de uma InspecaoFinal (diâmetro
@@ -1152,7 +1203,51 @@ class RdimPecaDesvio(db.Model):
     peca_numero = db.Column(db.String(20), nullable=True)
     caracteristica = db.Column(db.String(40), nullable=True)
     valor_medido = db.Column(db.Float, nullable=True)
+
+    # Especificação (tolerância) daquela característica, na própria peça —
+    # pedido do Bruno (02/09/2026): "tolerância era de 0,5mm, peça
+    # inspecionada com 0,7mm, peça ficou 0,2mm acima da tolerância". Campos
+    # novos numa tabela que já existe em produção (rdim_pecas_desvio criada
+    # na Fase 3) -> precisa de _migrar_rdim_pecas_desvio em app.py (ALTER
+    # TABLE), mesmo caso de subcategoria_desvio/quantidade_com_desvio antes.
+    especificado_min = db.Column(db.Float, nullable=True)
+    especificado_max = db.Column(db.Float, nullable=True)
+
     ordem = db.Column(db.Integer, nullable=False, default=0)
+
+    @property
+    def variacao(self):
+        """Quanto o valor medido ficou fora da tolerância — sempre positivo
+        (não importa se estourou pra cima ou pra baixo), None quando não dá
+        pra calcular (falta valor medido, ou nenhuma especificação
+        informada). Ex.: espec. máx 0,5mm, medido 0,7mm -> 0,2 (peça ficou
+        0,2mm ACIMA da tolerância). Dentro da tolerância -> 0.0. Nunca
+        guardado como coluna: sempre recalculado a partir de
+        especificado_*/valor_medido, mesmo espírito de
+        RdimMedicao.dentro_da_tolerancia."""
+        if self.valor_medido is None:
+            return None
+        if self.especificado_min is None and self.especificado_max is None:
+            return None
+        if self.especificado_max is not None and self.valor_medido > self.especificado_max:
+            return round(self.valor_medido - self.especificado_max, 4)
+        if self.especificado_min is not None and self.valor_medido < self.especificado_min:
+            return round(self.especificado_min - self.valor_medido, 4)
+        return 0.0
+
+    @property
+    def acima_da_tolerancia(self):
+        """True se valor_medido > especificado_max, False se < especificado_min
+        (abaixo), None se dentro da tolerância ou sem dado suficiente —
+        usado só pra escolher a seta/sinal no texto ("+0,2mm acima" vs
+        "-0,2mm abaixo")."""
+        if self.valor_medido is None:
+            return None
+        if self.especificado_max is not None and self.valor_medido > self.especificado_max:
+            return True
+        if self.especificado_min is not None and self.valor_medido < self.especificado_min:
+            return False
+        return None
 
 
 class ProjetoPD(db.Model):

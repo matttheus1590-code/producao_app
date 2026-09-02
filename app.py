@@ -4,6 +4,7 @@ import os
 import re
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+from itertools import zip_longest
 
 from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
@@ -268,6 +269,7 @@ def create_app():
         _seed_rnc_qualidade(app)
         _backfill_go_data_solicitada_cliente_retira(app)
         _migrar_rdim_inspecao_final(app)
+        _migrar_rdim_pecas_desvio(app)
 
     @app.context_processor
     def inject_globals():
@@ -1023,6 +1025,31 @@ def _migrar_rdim_inspecao_final(app):
         if "quantidade_com_desvio" not in colunas:
             conn.execute(text("ALTER TABLE inspecoes_finais ADD COLUMN quantidade_com_desvio FLOAT"))
     app.logger.info("Migração automática: campos subcategoria_desvio e quantidade_com_desvio adicionados em inspecoes_finais.")
+
+
+def _migrar_rdim_pecas_desvio(app):
+    """Adiciona os 2 campos novos da Fase 4 do RDIM (pedido do Bruno,
+    02/09/2026: contexto do desvio por peça — espec. mín/máx x medido) na
+    tabela `rdim_pecas_desvio` — que já existe em produção desde a Fase 3
+    (feature "Apontamentos por peça"), então essas colunas não são cobertas
+    só por `db.create_all()`. Mesmo padrão de `_migrar_rdim_inspecao_final`:
+    campos 100% novos e opcionais, ficam em branco nos apontamentos já
+    registrados."""
+    inspector = inspect(db.engine)
+    if "rdim_pecas_desvio" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("rdim_pecas_desvio")}
+    faltando = [c for c in ("especificado_min", "especificado_max") if c not in colunas]
+    if not faltando:
+        return
+
+    with db.engine.begin() as conn:
+        if "especificado_min" not in colunas:
+            conn.execute(text("ALTER TABLE rdim_pecas_desvio ADD COLUMN especificado_min FLOAT"))
+        if "especificado_max" not in colunas:
+            conn.execute(text("ALTER TABLE rdim_pecas_desvio ADD COLUMN especificado_max FLOAT"))
+    app.logger.info("Migração automática: campos especificado_min e especificado_max adicionados em rdim_pecas_desvio.")
 
 
 _CHAVE_SEED_RNC_QUALIDADE_31_08_2026 = "seed_rnc_qualidade_31_08_2026"
@@ -2767,6 +2794,7 @@ def _filtrar_inspecoes_finais(args):
     query = InspecaoFinal.query.join(ItemPedido).join(Pedido)
 
     busca = args.get("busca", "").strip()
+    dn_polegada = args.get("dn_polegada", "").strip()
     resultado = [v for v in args.getlist("resultado") if v]
     categoria_desvio = [v for v in args.getlist("categoria_desvio") if v]
     subcategoria_desvio = [v for v in args.getlist("subcategoria_desvio") if v]
@@ -2786,6 +2814,15 @@ def _filtrar_inspecoes_finais(args):
                 InspecaoFinal.numero_rif.ilike(like),
             )
         )
+    if dn_polegada:
+        # Filtro separado do "busca" geral (pedido do Bruno, 02/09/2026,
+        # RDIM Fase 4) — não existe campo estruturado de DN/polegada no
+        # sistema, a medida do produto vem embutida em texto livre dentro de
+        # descricao_produto (ex.: "DISCO SELO 18''"). Casamento só contra a
+        # descrição do produto, de propósito: se entrasse no OR do "busca"
+        # geral, um número de pedido ou RIF que por coincidência contivesse
+        # os mesmos dígitos do DN daria falso positivo.
+        query = query.filter(ItemPedido.descricao_produto.ilike(f"%{dn_polegada}%"))
     if resultado:
         query = query.filter(InspecaoFinal.resultado.in_(resultado))
     if categoria_desvio:
@@ -2821,7 +2858,7 @@ def _filtrar_inspecoes_finais(args):
     query = query.order_by(InspecaoFinal.data_inspecao.desc().nullslast(), InspecaoFinal.id.desc())
 
     filtros = dict(
-        busca=busca, resultado=resultado, categoria_desvio=categoria_desvio,
+        busca=busca, dn_polegada=dn_polegada, resultado=resultado, categoria_desvio=categoria_desvio,
         subcategoria_desvio=subcategoria_desvio, estacao=estacao,
         responsavel_id=responsavel_id, data_de=data_de, data_ate=data_ate, mes=mes,
     )
@@ -2989,11 +3026,14 @@ def _salvar_medicoes_rdim(inspecao, f, substituir=False):
 
 def _salvar_pecas_desvio_rdim(inspecao, f, substituir=False):
     """Grava o detalhamento peça a peça do desvio (nº da peça + característica
-    + valor medido daquela peça) — pedido do Bruno (02/09/2026, RDIM Fase 3),
-    mesmo padrão de arrays paralelos (zip) já usado em _salvar_medicoes_rdim.
-    Linhas sem característica selecionada são ignoradas (o nº da peça sozinho
-    não basta pra fazer sentido). Não mexe em quantidade_com_desvio — os dois
-    campos são independentes, por decisão do Bruno."""
+    + valor medido + especificação mín/máx daquela peça) — pedido do Bruno
+    (02/09/2026, RDIM Fase 3 e, pros campos especificado_min/max, Fase 4:
+    "tolerância era de 0,5mm, peça inspecionada com 0,7mm, peça ficou 0,2mm
+    acima da tolerância"), mesmo padrão de arrays paralelos (zip) já usado em
+    _salvar_medicoes_rdim. Linhas sem característica selecionada são
+    ignoradas (o nº da peça sozinho não basta pra fazer sentido). Não mexe em
+    quantidade_com_desvio — os dois campos são independentes, por decisão do
+    Bruno."""
     if substituir:
         for p in list(inspecao.pecas_desvio):
             db.session.delete(p)
@@ -3001,18 +3041,24 @@ def _salvar_pecas_desvio_rdim(inspecao, f, substituir=False):
     pecas_numero = f.getlist("peca_numero[]")
     pecas_caracteristica = f.getlist("peca_caracteristica[]")
     pecas_valor = f.getlist("peca_valor_medido[]")
+    pecas_espec_min = f.getlist("peca_especificado_min[]")
+    pecas_espec_max = f.getlist("peca_especificado_max[]")
 
     ordem = 0
-    for peca_numero, caracteristica, valor_medido in zip(pecas_numero, pecas_caracteristica, pecas_valor):
-        caracteristica = caracteristica.strip()
+    for peca_numero, caracteristica, valor_medido, espec_min, espec_max in zip_longest(
+        pecas_numero, pecas_caracteristica, pecas_valor, pecas_espec_min, pecas_espec_max, fillvalue=""
+    ):
+        caracteristica = (caracteristica or "").strip()
         if not caracteristica:
             continue
         db.session.add(
             RdimPecaDesvio(
                 inspecao=inspecao,
-                peca_numero=peca_numero.strip() or None,
+                peca_numero=(peca_numero or "").strip() or None,
                 caracteristica=caracteristica,
                 valor_medido=_parse_float_form(valor_medido, default=None),
+                especificado_min=_parse_float_form(espec_min, default=None),
+                especificado_max=_parse_float_form(espec_max, default=None),
                 ordem=ordem,
             )
         )

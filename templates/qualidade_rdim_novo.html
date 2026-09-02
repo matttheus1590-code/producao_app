@@ -175,14 +175,17 @@
           <i class="bi bi-plus-circle"></i> Adicionar peça
         </button>
       </div>
-      <p class="text-muted small">Detalhe a variação de cada peça com desvio: nº da peça, qual característica saiu do padrão e o valor medido dela. Uma peça com mais de uma característica fora do padrão entra em mais de uma linha.</p>
+      <p class="text-muted small">Detalhe a variação de cada peça com desvio: nº da peça, qual característica saiu do padrão, a especificação (tolerância) dela e o valor medido. Uma peça com mais de uma característica fora do padrão entra em mais de uma linha.</p>
       <div class="table-responsive">
         <table class="table table-sm align-middle mb-0" id="tabelaPecasDesvio">
           <thead>
             <tr>
-              <th style="width:140px;">Nº da peça</th>
+              <th style="width:110px;">Nº da peça</th>
               <th>Característica</th>
-              <th style="width:180px;">Valor medido</th>
+              <th style="width:130px;">Espec. mín</th>
+              <th style="width:130px;">Espec. máx</th>
+              <th style="width:130px;">Valor medido</th>
+              <th style="width:120px;">Variação</th>
               <th></th>
             </tr>
           </thead>
@@ -354,7 +357,10 @@
     tr.innerHTML =
       '<td><input type="text" class="form-control form-control-sm" name="peca_numero[]" placeholder="1" value="' + proximoNumeroPeca() + '"></td>' +
       '<td><select class="form-select form-select-sm" name="peca_caracteristica[]">' + opcoesHtml + '</select></td>' +
-      '<td><input type="number" step="any" class="form-control form-control-sm" name="peca_valor_medido[]" placeholder="Ex.: 2.3"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm peca-desvio-input" name="peca_especificado_min[]" placeholder="Ex.: -0.5"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm peca-desvio-input" name="peca_especificado_max[]" placeholder="Ex.: 0.5"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm peca-desvio-input" name="peca_valor_medido[]" placeholder="Ex.: 0.7"></td>' +
+      '<td><span class="badge bg-secondary status-peca-desvio">—</span></td>' +
       '<td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-peca-desvio"><i class="bi bi-trash"></i></button></td>';
     return tr;
   }
@@ -364,6 +370,37 @@
   pecasDesvioBody.addEventListener("click", function (e) {
     const btn = e.target.closest(".btn-remover-peca-desvio");
     if (btn) btn.closest(".peca-desvio-row").remove();
+  });
+
+  // Variação calculada ao digitar — mesma conta que o servidor refaz ao
+  // salvar (RdimPecaDesvio.variacao/acima_da_tolerancia): pedido do Bruno
+  // (02/09/2026, RDIM Fase 4) "tolerância era de 0,5mm, peça inspecionada
+  // com 0,7mm, peça ficou 0,2mm acima da tolerância".
+  function avaliarVariacaoPeca(row) {
+    const num = function (sel) {
+      const v = row.querySelector(sel).value;
+      return v === "" ? null : parseFloat(v);
+    };
+    const espMin = num('[name="peca_especificado_min[]"]');
+    const espMax = num('[name="peca_especificado_max[]"]');
+    const medido = num('[name="peca_valor_medido[]"]');
+    const badge = row.querySelector(".status-peca-desvio");
+    if (medido === null || (espMin === null && espMax === null)) {
+      badge.className = "badge bg-secondary status-peca-desvio"; badge.textContent = "—"; return;
+    }
+    if (espMax !== null && medido > espMax) {
+      const dif = Math.round((medido - espMax) * 10000) / 10000;
+      badge.className = "badge bg-danger status-peca-desvio"; badge.textContent = "+" + dif + " acima";
+    } else if (espMin !== null && medido < espMin) {
+      const dif = Math.round((espMin - medido) * 10000) / 10000;
+      badge.className = "badge bg-danger status-peca-desvio"; badge.textContent = "-" + dif + " abaixo";
+    } else {
+      badge.className = "badge bg-success status-peca-desvio"; badge.textContent = "OK";
+    }
+  }
+
+  pecasDesvioBody.addEventListener("input", function (e) {
+    if (e.target.classList.contains("peca-desvio-input")) avaliarVariacaoPeca(e.target.closest(".peca-desvio-row"));
   });
 })();
 </script>
