@@ -1034,6 +1034,19 @@ class InspecaoFinal(db.Model):
         order_by="RdimMedicao.ordem",
     )
 
+    # Detalhamento peça a peça do desvio — pedido do Bruno (02/09/2026, RDIM
+    # Fase 3): "quantidade_com_desvio" acima é só o total do lote; aqui fica
+    # o apontamento individual (nº da peça + característica + valor medido
+    # daquela peça específica). Tabela nova (não coluna em tabela
+    # existente) -> criada sozinha pelo db.create_all(), sem precisar de
+    # migração em app.py, mesmo caso de RdimMedicao na Fase 1.
+    pecas_desvio = db.relationship(
+        "RdimPecaDesvio",
+        backref="inspecao",
+        cascade="all, delete-orphan",
+        order_by="RdimPecaDesvio.ordem",
+    )
+
     @property
     def pedido(self):
         return self.item.pedido if self.item else None
@@ -1056,6 +1069,20 @@ class InspecaoFinal(db.Model):
         pra sinalização visual e pros KPIs do dashboard, sempre recalculado a
         partir das medições reais (nunca guardado como campo à parte)."""
         return any(m.dentro_da_tolerancia is False for m in self.medicoes)
+
+    @property
+    def resumo_pecas_desvio(self):
+        """Texto curto tipo "1: Espessura; 2: Espessura; 3: Diâmetro
+        Externo" a partir de pecas_desvio — usado só como tooltip na
+        listagem RDIM, pra dar uma prévia do detalhamento peça a peça sem
+        precisar abrir a inspeção."""
+        partes = []
+        for p in self.pecas_desvio:
+            rotulo = p.peca_numero or "—"
+            if p.caracteristica:
+                rotulo += ": " + p.caracteristica
+            partes.append(rotulo)
+        return "; ".join(partes)
 
 
 class RdimMedicao(db.Model):
@@ -1100,6 +1127,32 @@ class RdimMedicao(db.Model):
             if self.medido_min is not None and self.medido_min > self.especificado_max:
                 return False
         return True
+
+
+class RdimPecaDesvio(db.Model):
+    """Uma linha = uma peça com desvio numa característica específica,
+    dentro de uma InspecaoFinal — pedido do Bruno (02/09/2026, RDIM Fase 3):
+    "lote total contém 10 peças, mas 5 tiveram desvio na espessura" não era
+    detalhado o suficiente; ele quer registrar a variação peça a peça. Uma
+    peça com desvio em 2 características vira 2 linhas (decisão confirmada
+    com o Bruno) — mesmo espírito de "grandezas flexíveis" de RdimMedicao,
+    só que por peça em vez de por lote. NÃO recalcula nem substitui
+    quantidade_com_desvio (InspecaoFinal): esse continua sendo digitado à
+    mão, separado — por decisão dele, os dois números podem não bater 1:1,
+    esta lista é só um detalhamento complementar."""
+
+    __tablename__ = "rdim_pecas_desvio"
+
+    id = db.Column(db.Integer, primary_key=True)
+    inspecao_final_id = db.Column(db.Integer, db.ForeignKey("inspecoes_finais.id"), nullable=False)
+
+    # Número/identificação da peça dentro do lote (ex.: 1, 2, 3...) — texto
+    # livre (não Integer) pra também caber uma identificação tipo "peça 3B"
+    # ou uma tag/serial, caso o Bruno numere as peças de outro jeito.
+    peca_numero = db.Column(db.String(20), nullable=True)
+    caracteristica = db.Column(db.String(40), nullable=True)
+    valor_medido = db.Column(db.Float, nullable=True)
+    ordem = db.Column(db.Integer, nullable=False, default=0)
 
 
 class ProjetoPD(db.Model):

@@ -126,6 +126,9 @@
           {% else %}
             <span class="text-muted">—</span>
           {% endif %}
+          {% if i.pecas_desvio %}
+            <i class="bi bi-list-check text-muted" title="Detalhamento peça a peça — {{ i.resumo_pecas_desvio }}"></i>
+          {% endif %}
         </td>
         <td>{{ i.responsavel.nome if i.responsavel else "—" }}</td>
         <td><span class="badge bg-{{ RDIM_RESULTADO_CORES.get(i.resultado, 'secondary') }}">{{ RDIM_RESULTADO_LABELS.get(i.resultado, i.resultado or "—") }}</span></td>

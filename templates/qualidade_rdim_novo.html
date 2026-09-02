@@ -167,6 +167,31 @@
     </div>
   </div>
 
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="text-uppercase text-muted small mb-0">Apontamentos por peça</h6>
+        <button type="button" id="btnAdicionarPeca" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-plus-circle"></i> Adicionar peça
+        </button>
+      </div>
+      <p class="text-muted small">Detalhe a variação de cada peça com desvio: nº da peça, qual característica saiu do padrão e o valor medido dela. Uma peça com mais de uma característica fora do padrão entra em mais de uma linha.</p>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0" id="tabelaPecasDesvio">
+          <thead>
+            <tr>
+              <th style="width:140px;">Nº da peça</th>
+              <th>Característica</th>
+              <th style="width:180px;">Valor medido</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="pecasDesvioBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div class="card shadow-sm mb-4">
     <div class="card-body">
       <label class="form-label small text-muted mb-2 d-block">Resultado</label>
@@ -305,6 +330,40 @@
 
   medicoesBody.addEventListener("input", function (e) {
     if (e.target.classList.contains("med-input")) avaliarTolerancia(e.target.closest(".medicao-row"));
+  });
+
+  // ---- Apontamentos por peça: adicionar/remover linha, mesmo padrão da
+  // tabela de Medições acima — pedido do Bruno (02/09/2026, RDIM Fase 3) ----
+  const pecasDesvioBody = document.getElementById("pecasDesvioBody");
+  const btnAddPeca = document.getElementById("btnAdicionarPeca");
+  const OPCOES_CARACTERISTICA = {{ RDIM_SUBCATEGORIA_DESVIO_OPCOES | tojson }};
+
+  function proximoNumeroPeca() {
+    const linhas = pecasDesvioBody.querySelectorAll(".peca-desvio-row");
+    if (!linhas.length) return "1";
+    const ultimo = linhas[linhas.length - 1].querySelector('[name="peca_numero[]"]').value.trim();
+    const n = parseInt(ultimo, 10);
+    return isNaN(n) ? "" : String(n + 1);
+  }
+
+  function linhaPecaDesvio() {
+    const tr = document.createElement("tr");
+    tr.className = "peca-desvio-row";
+    const opcoesHtml = '<option value="">—</option>' +
+      OPCOES_CARACTERISTICA.map(function (op) { return '<option value="' + op + '">' + op + '</option>'; }).join("");
+    tr.innerHTML =
+      '<td><input type="text" class="form-control form-control-sm" name="peca_numero[]" placeholder="1" value="' + proximoNumeroPeca() + '"></td>' +
+      '<td><select class="form-select form-select-sm" name="peca_caracteristica[]">' + opcoesHtml + '</select></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm" name="peca_valor_medido[]" placeholder="Ex.: 2.3"></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-peca-desvio"><i class="bi bi-trash"></i></button></td>';
+    return tr;
+  }
+
+  btnAddPeca.addEventListener("click", function () { pecasDesvioBody.appendChild(linhaPecaDesvio()); });
+
+  pecasDesvioBody.addEventListener("click", function (e) {
+    const btn = e.target.closest(".btn-remover-peca-desvio");
+    if (btn) btn.closest(".peca-desvio-row").remove();
   });
 })();
 </script>

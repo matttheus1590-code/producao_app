@@ -73,6 +73,7 @@ from models import (
     Programacao,
     ProjetoPD,
     RdimMedicao,
+    RdimPecaDesvio,
     RncQualidade,
     TesteProjetoPD,
     Transportadora,
@@ -2986,6 +2987,38 @@ def _salvar_medicoes_rdim(inspecao, f, substituir=False):
         ordem += 1
 
 
+def _salvar_pecas_desvio_rdim(inspecao, f, substituir=False):
+    """Grava o detalhamento peça a peça do desvio (nº da peça + característica
+    + valor medido daquela peça) — pedido do Bruno (02/09/2026, RDIM Fase 3),
+    mesmo padrão de arrays paralelos (zip) já usado em _salvar_medicoes_rdim.
+    Linhas sem característica selecionada são ignoradas (o nº da peça sozinho
+    não basta pra fazer sentido). Não mexe em quantidade_com_desvio — os dois
+    campos são independentes, por decisão do Bruno."""
+    if substituir:
+        for p in list(inspecao.pecas_desvio):
+            db.session.delete(p)
+
+    pecas_numero = f.getlist("peca_numero[]")
+    pecas_caracteristica = f.getlist("peca_caracteristica[]")
+    pecas_valor = f.getlist("peca_valor_medido[]")
+
+    ordem = 0
+    for peca_numero, caracteristica, valor_medido in zip(pecas_numero, pecas_caracteristica, pecas_valor):
+        caracteristica = caracteristica.strip()
+        if not caracteristica:
+            continue
+        db.session.add(
+            RdimPecaDesvio(
+                inspecao=inspecao,
+                peca_numero=peca_numero.strip() or None,
+                caracteristica=caracteristica,
+                valor_medido=_parse_float_form(valor_medido, default=None),
+                ordem=ordem,
+            )
+        )
+        ordem += 1
+
+
 def _inspecoes_rdim_por_item(item_ids):
     """dict item_pedido_id -> InspecaoFinal mais recente (data_inspecao
     desc, depois id desc) — 1 query com IN, sem N+1. Pedido do Bruno
@@ -4638,6 +4671,7 @@ def register_routes(app):
             )
             db.session.add(nova)
             _salvar_medicoes_rdim(nova, f)
+            _salvar_pecas_desvio_rdim(nova, f)
             db.session.commit()
             flash("Inspeção final registrada com sucesso.", "success")
             return redirect(url_for("rdim_editar", inspecao_id=nova.id))
@@ -4694,6 +4728,7 @@ def register_routes(app):
                                    antes, depois, CAMPOS_HISTORICO_INSPECAO_FINAL)
 
             _salvar_medicoes_rdim(inspecao, f, substituir=True)
+            _salvar_pecas_desvio_rdim(inspecao, f, substituir=True)
             db.session.commit()
             flash("Inspeção atualizada com sucesso.", "success")
             return redirect(url_for("rdim_editar", inspecao_id=inspecao.id))
