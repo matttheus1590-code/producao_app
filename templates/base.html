@@ -19,62 +19,62 @@
 
       <nav class="app-sidebar-nav">
         <a class="app-nav-link {% if request.endpoint == 'painel' %}active{% endif %}" href="{{ url_for('painel') }}">
-          <i class="bi bi-speedometer2"></i> <span>Painel</span>
+          <i class="bi bi-speedometer2"></i> <span>🎛️ Painel</span>
         </a>
 
-        <div class="app-nav-section">Gestão Operação</div>
+        <div class="app-nav-section">📦 Gestão Operação</div>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_listagem_geral' %}active{% endif %}" href="{{ url_for('gestao_operacao_listagem_geral') }}">
-          <i class="bi bi-list-ul"></i> <span>Listagem Geral</span>
+          <i class="bi bi-list-ul"></i> <span>📃 Listagem Geral</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_pcp' %}active{% endif %}" href="{{ url_for('gestao_operacao_pcp') }}">
-          <i class="bi bi-gear"></i> <span>PCP</span>
+          <i class="bi bi-gear"></i> <span>⚙️ PCP</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_logistica' %}active{% endif %}" href="{{ url_for('gestao_operacao_logistica') }}">
-          <i class="bi bi-truck"></i> <span>Expedição/Logística</span>
+          <i class="bi bi-truck"></i> <span>🚚 Expedição/Logística</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_resultados' %}active{% endif %}" href="{{ url_for('gestao_operacao_resultados') }}">
-          <i class="bi bi-graph-up-arrow"></i> <span>Resultados</span>
+          <i class="bi bi-graph-up-arrow"></i> <span>📈 Resultados</span>
         </a>
 
-        <div class="app-nav-section">Gestão Produção</div>
+        <div class="app-nav-section">🏭 Gestão Produção</div>
         <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
-          <i class="bi bi-plus-circle"></i> <span>Novo pedido</span>
+          <i class="bi bi-plus-circle"></i> <span>➕ Novo pedido</span>
         </a>
         <a class="app-nav-link {% if request.endpoint in ('dashboard', 'detalhe_pedido', 'editar_pedido') %}active{% endif %}" href="{{ url_for('dashboard') }}">
-          <i class="bi bi-list-ul"></i> <span>Listagem Geral</span>
+          <i class="bi bi-list-ul"></i> <span>📋 Listagem Geral</span>
         </a>
         <a class="app-nav-link {% if request.endpoint in ('estacoes_lista', 'estacao_kanban') %}active{% endif %}" href="{{ url_for('estacoes_lista') }}">
-          <i class="bi bi-kanban"></i> <span>Estações</span>
+          <i class="bi bi-kanban"></i> <span>🗂️ Estações</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'programacao_semana' %}active{% endif %}" href="{{ url_for('programacao_semana') }}">
-          <i class="bi bi-calendar-week"></i> <span>Programação</span>
+          <i class="bi bi-calendar-week"></i> <span>🗓️ Programação</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'kpis' %}active{% endif %}" href="{{ url_for('kpis') }}">
-          <i class="bi bi-graph-up"></i> <span>KPIs</span>
+          <i class="bi bi-graph-up"></i> <span>📊 KPIs</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'gargalos' %}active{% endif %}" href="{{ url_for('gargalos') }}">
-          <i class="bi bi-exclamation-triangle"></i> <span>Gargalos</span>
+          <i class="bi bi-exclamation-triangle"></i> <span>⚠️ Gargalos</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'faturamento' %}active{% endif %}" href="{{ url_for('faturamento') }}">
-          <i class="bi bi-cash-coin"></i> <span>Faturamento</span>
+          <i class="bi bi-cash-coin"></i> <span>💵 Faturamento</span>
         </a>
 
         <a class="app-nav-link {% if request.endpoint == 'alertas' %}active{% endif %}" href="{{ url_for('alertas') }}">
-          <i class="bi bi-bell"></i> <span>Alertas</span>
+          <i class="bi bi-bell"></i> <span>🔔 Alertas</span>
         </a>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('relatorio') %}active{% endif %}" href="{{ url_for('relatorios') }}">
-          <i class="bi bi-download"></i> <span>Relatórios</span>
+          <i class="bi bi-download"></i> <span>📥 Relatórios</span>
         </a>
 
-        <div class="app-nav-section">Qualidade</div>
+        <div class="app-nav-section">🛡️ Qualidade</div>
         <a class="app-nav-link {% if request.endpoint == 'qualidade_novo' %}active{% endif %}" href="{{ url_for('qualidade_novo') }}">
-          <i class="bi bi-clipboard2-plus"></i> <span>Criar RNC</span>
+          <i class="bi bi-clipboard2-plus"></i> <span>📝 Criar RNC</span>
         </a>
         <a class="app-nav-link {% if request.endpoint in ('qualidade_lista', 'qualidade_editar') %}active{% endif %}" href="{{ url_for('qualidade_lista') }}">
-          <i class="bi bi-clipboard2-x"></i> <span>Controle de RNC</span>
+          <i class="bi bi-clipboard2-x"></i> <span>❌ Controle de RNC</span>
         </a>
         <a class="app-nav-link {% if request.endpoint == 'qualidade_dashboard' %}active{% endif %}" href="{{ url_for('qualidade_dashboard') }}">
-          <i class="bi bi-clipboard2-pulse"></i> <span>Dashboard</span>
+          <i class="bi bi-clipboard2-pulse"></i> <span>🩺 Dashboard</span>
         </a>
 
         <div class="app-nav-section">🧪 P&D</div>
@@ -98,22 +98,22 @@
         </a>
 
         {% if current_user.role in ('ADMIN', 'PCP') %}
-        <div class="app-nav-section">Cadastros</div>
+        <div class="app-nav-section">🗄️ Cadastros</div>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('cadastros_estacoes') %}active{% endif %}" href="{{ url_for('cadastros_estacoes') }}">
-          <i class="bi bi-diagram-3"></i> <span>Estações</span>
+          <i class="bi bi-diagram-3"></i> <span>🏗️ Estações</span>
         </a>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('cadastros_transportadoras') %}active{% endif %}" href="{{ url_for('cadastros_transportadoras') }}">
-          <i class="bi bi-truck"></i> <span>Transportadoras</span>
+          <i class="bi bi-truck"></i> <span>🚛 Transportadoras</span>
         </a>
         {% endif %}
 
         {% if current_user.role == 'ADMIN' %}
-        <div class="app-nav-section">Administração</div>
+        <div class="app-nav-section">🔐 Administração</div>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('usuarios_') %}active{% endif %}" href="{{ url_for('usuarios_lista') }}">
-          <i class="bi bi-people"></i> <span>Usuários</span>
+          <i class="bi bi-people"></i> <span>👥 Usuários</span>
         </a>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('admin_zerar_dados') %}active{% endif %}" href="{{ url_for('admin_zerar_dados') }}">
-          <i class="bi bi-eraser"></i> <span>Zerar dados de teste</span>
+          <i class="bi bi-eraser"></i> <span>🧹 Zerar dados de teste</span>
         </a>
         {% endif %}
       </nav>
