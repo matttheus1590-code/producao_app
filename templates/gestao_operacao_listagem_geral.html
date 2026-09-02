@@ -48,6 +48,7 @@
         <th>UF</th>
         <th>Cidade</th>
         <th>Proposta comercial</th>
+        <th>Qualidade</th>
         <th></th>
       </tr>
     </thead>
@@ -55,6 +56,7 @@
       {% for p in pedidos %}
       {% set chave_pv = (p.pedido_venda or "").strip() %}
       {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
+      {% set rdim = rdim_por_pedido_venda.get(chave_pv) %}
       <tr>
         <td>{{ p.pedido_venda or "—" }}</td>
         <td>
@@ -103,6 +105,17 @@
         <td>{{ p.estado or "—" }}</td>
         <td class="text-truncate" style="max-width: 160px;" title="{{ p.cidade or '' }}">{{ p.cidade or "—" }}</td>
         <td>{{ p.go_proposta or "—" }}</td>
+        <td>
+          {% if not rdim %}
+            <span class="text-muted">—</span>
+          {% elif rdim.reprovadas + rdim.com_desvio > 0 %}
+            <span class="badge bg-warning text-dark" title="{{ rdim.reprovadas }} reprovada(s), {{ rdim.com_desvio }} aprovada(s) c/ desvio, de {{ rdim.total }} inspeção(ões)">
+              <i class="bi bi-exclamation-triangle"></i> {{ rdim.reprovadas + rdim.com_desvio }} c/ desvio
+            </span>
+          {% else %}
+            <span class="badge bg-success" title="{{ rdim.total }} inspeção(ões), todas aprovadas">OK</span>
+          {% endif %}
+        </td>
         <td class="text-end">
           <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary" title="Editar">
             <i class="bi bi-pencil-square"></i>
@@ -110,7 +123,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="12" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="13" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

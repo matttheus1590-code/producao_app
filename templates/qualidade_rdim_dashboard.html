@@ -32,6 +32,18 @@
   </div>
 </div>
 
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-4">
+    {{ stat_card("Peças inspecionadas", dados.total_quantidade_inspecionada|round(0, 'floor')|int) }}
+  </div>
+  <div class="col-6 col-lg-4">
+    {{ stat_card("Peças com desvio", dados.total_quantidade_com_desvio|round(0, 'floor')|int, cor=("warning" if dados.total_quantidade_com_desvio else None)) }}
+  </div>
+  <div class="col-6 col-lg-4">
+    {{ stat_card("% Peças com desvio", dados.pct_pecas_desvio ~ "%", cor=("warning" if dados.pct_pecas_desvio else None)) }}
+  </div>
+</div>
+
 <div class="row g-3 mb-4">
   <div class="col-lg-7">
     <div class="card h-100">
@@ -53,6 +65,21 @@
         <canvas id="graficoDesvios" height="110"></canvas>
         {% else %}
         <p class="text-muted text-center py-4 mb-0">Sem desvios registrados ainda.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Principais características do desvio</h6>
+        {% if dados.por_subcategoria_desvio %}
+        <canvas id="graficoSubcategorias" height="110"></canvas>
+        {% else %}
+        <p class="text-muted text-center py-4 mb-0">Sem subcategoria de desvio registrada ainda.</p>
         {% endif %}
       </div>
     </div>
@@ -131,6 +158,7 @@
 
   const evolucao = {{ dados.evolucao | tojson }};
   const desvios = {{ dados.por_categoria_desvio | tojson }};
+  const subcategorias = {{ dados.por_subcategoria_desvio | tojson }};
 
   const elEvolucao = document.getElementById("graficoEvolucao");
   if (elEvolucao && evolucao.length) {
@@ -154,6 +182,18 @@
       data: {
         labels: desvios.map(function (p) { return p.chave; }),
         datasets: [{ label: "Ocorrências", data: desvios.map(function (p) { return p.total; }), backgroundColor: "#fd7e14" }],
+      },
+      options: { plugins: { legend: { display: false } }, indexAxis: "y", scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
+    });
+  }
+
+  const elSubcategorias = document.getElementById("graficoSubcategorias");
+  if (elSubcategorias && subcategorias.length) {
+    new Chart(elSubcategorias, {
+      type: "bar",
+      data: {
+        labels: subcategorias.map(function (p) { return p.chave; }),
+        datasets: [{ label: "Ocorrências", data: subcategorias.map(function (p) { return p.total; }), backgroundColor: "#6f42c1" }],
       },
       options: { plugins: { legend: { display: false } }, indexAxis: "y", scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
     });

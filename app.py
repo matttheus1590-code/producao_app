@@ -37,6 +37,7 @@ from models import (
     RDIM_RESULTADO_CORES,
     RDIM_RESULTADO_LABELS,
     RDIM_RESULTADO_OPCOES,
+    RDIM_SUBCATEGORIA_DESVIO_OPCOES,
     REGIAO_POR_UF,
     REGIOES_OPCOES,
     RNC_DISPOSICAO_OPCOES,
@@ -265,6 +266,7 @@ def create_app():
         _corrigir_semana_pcp_morken_835(app)
         _seed_rnc_qualidade(app)
         _backfill_go_data_solicitada_cliente_retira(app)
+        _migrar_rdim_inspecao_final(app)
 
     @app.context_processor
     def inject_globals():
@@ -318,6 +320,7 @@ def create_app():
             RDIM_RESULTADO_CORES=RDIM_RESULTADO_CORES,
             RDIM_INSPECAO_VISUAL_OPCOES=RDIM_INSPECAO_VISUAL_OPCOES,
             RDIM_CATEGORIA_DESVIO_OPCOES=RDIM_CATEGORIA_DESVIO_OPCOES,
+            RDIM_SUBCATEGORIA_DESVIO_OPCOES=RDIM_SUBCATEGORIA_DESVIO_OPCOES,
             RDIM_GRANDEZAS_PADRAO=RDIM_GRANDEZAS_PADRAO,
             hoje_iso=date.today().isoformat(),
         )
@@ -995,6 +998,30 @@ def _corrigir_semana_pcp_morken_835(app):
         )
     db.session.add(ControleSistema(chave=_CHAVE_CORRECAO_SEMANA_MORKEN_835))
     db.session.commit()
+
+
+def _migrar_rdim_inspecao_final(app):
+    """Adiciona os 2 campos novos da Fase 2 do RDIM (pedido do Bruno,
+    02/09/2026, depois de já usar a área) na tabela `inspecoes_finais` —
+    que já existe em produção desde a Fase 1, então essas colunas não são
+    cobertas só por `db.create_all()` (que só cria tabelas novas). Mesmo
+    padrão de `_migrar_faturamento_itens`: campos 100% novos e opcionais,
+    ficam em branco nas inspeções já registradas."""
+    inspector = inspect(db.engine)
+    if "inspecoes_finais" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("inspecoes_finais")}
+    faltando = [c for c in ("subcategoria_desvio", "quantidade_com_desvio") if c not in colunas]
+    if not faltando:
+        return
+
+    with db.engine.begin() as conn:
+        if "subcategoria_desvio" not in colunas:
+            conn.execute(text("ALTER TABLE inspecoes_finais ADD COLUMN subcategoria_desvio VARCHAR(40)"))
+        if "quantidade_com_desvio" not in colunas:
+            conn.execute(text("ALTER TABLE inspecoes_finais ADD COLUMN quantidade_com_desvio FLOAT"))
+    app.logger.info("Migração automática: campos subcategoria_desvio e quantidade_com_desvio adicionados em inspecoes_finais.")
 
 
 _CHAVE_SEED_RNC_QUALIDADE_31_08_2026 = "seed_rnc_qualidade_31_08_2026"
@@ -2694,7 +2721,8 @@ def _rnc_para_form_dict(rnc):
 # ItemPedido. Mesmo padrão de filtro/paginação de _filtrar_rnc_qualidade.
 # ----------------------------------------------------------------------
 CAMPOS_HISTORICO_INSPECAO_FINAL = [
-    "resultado", "categoria_desvio", "desvio_encontrado", "observacao", "inspecao_visual",
+    "resultado", "categoria_desvio", "subcategoria_desvio", "desvio_encontrado",
+    "observacao", "inspecao_visual", "quantidade_com_desvio",
 ]
 
 
@@ -2740,10 +2768,12 @@ def _filtrar_inspecoes_finais(args):
     busca = args.get("busca", "").strip()
     resultado = [v for v in args.getlist("resultado") if v]
     categoria_desvio = [v for v in args.getlist("categoria_desvio") if v]
+    subcategoria_desvio = [v for v in args.getlist("subcategoria_desvio") if v]
     estacao = [v for v in args.getlist("estacao") if v]
     responsavel_id = args.get("responsavel_id", "").strip()
     data_de = args.get("data_de", "").strip()
     data_ate = args.get("data_ate", "").strip()
+    mes = args.get("mes", "").strip()  # "AAAA-MM", do <input type="month"> — mesmo padrão de mes_emissao (RNC)
 
     if busca:
         like = f"%{busca}%"
@@ -2759,6 +2789,8 @@ def _filtrar_inspecoes_finais(args):
         query = query.filter(InspecaoFinal.resultado.in_(resultado))
     if categoria_desvio:
         query = query.filter(InspecaoFinal.categoria_desvio.in_(categoria_desvio))
+    if subcategoria_desvio:
+        query = query.filter(InspecaoFinal.subcategoria_desvio.in_(subcategoria_desvio))
     if estacao:
         query = query.filter(InspecaoFinal.estacao.in_(estacao))
     if responsavel_id:
@@ -2776,12 +2808,21 @@ def _filtrar_inspecoes_finais(args):
             query = query.filter(InspecaoFinal.data_inspecao <= date.fromisoformat(data_ate))
         except ValueError:
             data_ate = ""
+    if mes:
+        try:
+            ano_m, mes_m = (int(p) for p in mes.split("-"))
+            inicio = date(ano_m, mes_m, 1)
+            fim = date(ano_m, mes_m, monthrange(ano_m, mes_m)[1])
+            query = query.filter(InspecaoFinal.data_inspecao.between(inicio, fim))
+        except (ValueError, TypeError):
+            mes = ""  # valor incompreensível — ignora o filtro em vez de quebrar a busca
 
     query = query.order_by(InspecaoFinal.data_inspecao.desc().nullslast(), InspecaoFinal.id.desc())
 
     filtros = dict(
-        busca=busca, resultado=resultado, categoria_desvio=categoria_desvio, estacao=estacao,
-        responsavel_id=responsavel_id, data_de=data_de, data_ate=data_ate,
+        busca=busca, resultado=resultado, categoria_desvio=categoria_desvio,
+        subcategoria_desvio=subcategoria_desvio, estacao=estacao,
+        responsavel_id=responsavel_id, data_de=data_de, data_ate=data_ate, mes=mes,
     )
     return query, filtros
 
@@ -2806,6 +2847,17 @@ def _dashboard_rdim():
     aprovadas_desvio = sum(1 for i in inspecoes if i.resultado == "APROVADO_COM_DESVIO")
     pct_aprovacao = round((aprovadas / total) * 100, 1) if total else 0
     pct_reprovacao = round((reprovadas / total) * 100, 1) if total else 0
+
+    # Volume de peças (não só de inspeções) — pedido do Bruno (02/09/2026):
+    # "lote total contém 5 peças, mas dessas 2 unidades ficou com desvio".
+    # Sempre em relação ao lote inteiro (item.quantidade), decisão já
+    # confirmada com ele.
+    total_quantidade_inspecionada = sum((i.item.quantidade or 0) for i in inspecoes if i.item)
+    total_quantidade_com_desvio = sum(i.quantidade_com_desvio or 0 for i in inspecoes)
+    pct_pecas_desvio = (
+        round((total_quantidade_com_desvio / total_quantidade_inspecionada) * 100, 1)
+        if total_quantidade_inspecionada else 0
+    )
 
     def _quebra_por(chave_fn, opcoes_ordem=None):
         contagem = {}
@@ -2862,11 +2914,39 @@ def _dashboard_rdim():
         "pct_aprovacao": pct_aprovacao,
         "pct_reprovacao": pct_reprovacao,
         "por_categoria_desvio": _quebra_por(lambda i: i.categoria_desvio, RDIM_CATEGORIA_DESVIO_OPCOES),
+        "por_subcategoria_desvio": _quebra_por(lambda i: i.subcategoria_desvio, RDIM_SUBCATEGORIA_DESVIO_OPCOES),
         "por_estacao": _quebra_por(lambda i: i.estacao, RDIM_ESTACOES_OPCOES),
         "ranking_produtos": _ranking_reprovacao(lambda i: i.produto),
         "ranking_clientes": _ranking_reprovacao(lambda i: i.cliente),
         "evolucao": evolucao,
+        "total_quantidade_inspecionada": total_quantidade_inspecionada,
+        "total_quantidade_com_desvio": total_quantidade_com_desvio,
+        "pct_pecas_desvio": pct_pecas_desvio,
     }
+
+
+def _validar_quantidade_com_desvio(valor_form, quantidade_item):
+    """Lê o campo "Quantidade com desvio" do formulário de inspeção RDIM e
+    valida contra a quantidade do lote (item.quantidade) — pedido do Bruno
+    (02/09/2026): "lote total contém 5 peças, mas dessas 2 unidades ficou
+    com desvio", sempre em relação ao lote inteiro. Retorna (valor, erro) —
+    `erro` é None quando válido; quando não, a rota deve mostrar o flash e
+    NÃO salvar (mesmo padrão de bloqueio já usado pra resultado/estação).
+
+    `default=None` explícito no _parse_float_form: o default 0.0 da função
+    faria todo campo em branco virar "0 peças com desvio" em vez de "não
+    informado" — mesma armadilha já corrigida uma vez nas medições."""
+    quantidade_com_desvio = _parse_float_form(valor_form, default=None)
+    if quantidade_com_desvio is None:
+        return None, None
+    if quantidade_com_desvio < 0:
+        return None, "Quantidade com desvio não pode ser negativa."
+    if quantidade_item is not None and quantidade_com_desvio > quantidade_item:
+        return None, (
+            f"Quantidade com desvio ({quantidade_com_desvio:g}) não pode ser maior que "
+            f"a quantidade do lote ({quantidade_item:g})."
+        )
+    return quantidade_com_desvio, None
 
 
 def _salvar_medicoes_rdim(inspecao, f, substituir=False):
@@ -2904,6 +2984,80 @@ def _salvar_medicoes_rdim(inspecao, f, substituir=False):
             )
         )
         ordem += 1
+
+
+def _inspecoes_rdim_por_item(item_ids):
+    """dict item_pedido_id -> InspecaoFinal mais recente (data_inspecao
+    desc, depois id desc) — 1 query com IN, sem N+1. Pedido do Bruno
+    (02/09/2026): conectar o RDIM com Produção/Operação, mostrando o status
+    de qualidade de cada item nas telas que já existem (Consulta Pedido,
+    Detalhe do Pedido, Listagem Geral) sem duplicar a lógica em cada uma.
+    Se um item tiver mais de uma inspeção, mostra só a mais recente — a
+    tabela InspecaoFinal.query já vem ordenada, `setdefault` fica só com a
+    primeira ocorrência de cada item_pedido_id."""
+    ids = sorted({i for i in item_ids if i})
+    if not ids:
+        return {}
+    inspecoes = (
+        InspecaoFinal.query
+        .filter(InspecaoFinal.item_pedido_id.in_(ids))
+        .order_by(InspecaoFinal.item_pedido_id, InspecaoFinal.data_inspecao.desc().nullslast(), InspecaoFinal.id.desc())
+        .all()
+    )
+    mapa = {}
+    for insp in inspecoes:
+        mapa.setdefault(insp.item_pedido_id, insp)
+    return mapa
+
+
+def _resumo_rdim_pedido(inspecoes):
+    """Agrega as InspecaoFinal de UM pedido (normalmente vindas de
+    _inspecoes_rdim_por_item(...).values()) em contagens por resultado + o
+    quantitativo de peças com desvio/total — usado no bloco de resumo de
+    Qualidade da Consulta Pedido e do Detalhe do Pedido. Retorna None se a
+    lista vier vazia (pedido sem nenhuma inspeção RDIM ainda)."""
+    inspecoes = list(inspecoes)
+    if not inspecoes:
+        return None
+    return {
+        "total": len(inspecoes),
+        "aprovadas": sum(1 for i in inspecoes if i.resultado == "APROVADO"),
+        "reprovadas": sum(1 for i in inspecoes if i.resultado == "REPROVADO"),
+        "aprovadas_desvio": sum(1 for i in inspecoes if i.resultado == "APROVADO_COM_DESVIO"),
+        "quantidade_com_desvio": sum(i.quantidade_com_desvio or 0 for i in inspecoes),
+        "quantidade_total": sum((i.item.quantidade or 0) for i in inspecoes if i.item),
+    }
+
+
+def _rdim_resumo_por_pedido_venda(pedidos_venda):
+    """dict pedido_venda (trim) -> {total, reprovadas, com_desvio,
+    quantidade_com_desvio} — pro indicador (mais simples, pedido-level) de
+    Qualidade na Listagem Geral de Gestão Operação. Mesmo casamento por
+    texto (sem FK, trim() nos dois lados) já usado por
+    _itens_producao_por_pedido_venda — só pra exibir uma dica visual, nunca
+    aproximado."""
+    valores = sorted({v.strip() for v in pedidos_venda if v and v.strip()})
+    if not valores:
+        return {}
+    inspecoes = (
+        InspecaoFinal.query.join(ItemPedido).join(Pedido)
+        .options(selectinload(InspecaoFinal.item).selectinload(ItemPedido.pedido))
+        .filter(func.trim(Pedido.pedido_venda).in_(valores))
+        .all()
+    )
+    mapa = {}
+    for insp in inspecoes:
+        chave = (insp.pedido_venda or "").strip()
+        if not chave:
+            continue
+        d = mapa.setdefault(chave, {"total": 0, "reprovadas": 0, "com_desvio": 0, "quantidade_com_desvio": 0})
+        d["total"] += 1
+        if insp.resultado == "REPROVADO":
+            d["reprovadas"] += 1
+        if insp.resultado == "APROVADO_COM_DESVIO":
+            d["com_desvio"] += 1
+        d["quantidade_com_desvio"] += insp.quantidade_com_desvio or 0
+    return mapa
 
 
 # ----------------------------------------------------------------------
@@ -3533,11 +3687,18 @@ def register_routes(app):
         situacao_entrega = _situacao_entrega_go(go, pedido)
         etapas = _etapas_acompanhamento_pedido(pedido, go)
 
+        # Qualidade (RDIM) — pedido do Bruno (02/09/2026): ver o processo de
+        # qualidade item a item dentro do pedido, na mesma tela que já une
+        # Produção + Operação.
+        inspecoes_rdim = _inspecoes_rdim_por_item([i.id for i in pedido.itens]) if pedido else {}
+        resumo_rdim = _resumo_rdim_pedido(inspecoes_rdim.values())
+
         return render_template(
             "_consulta_pedido_detalhe.html",
             pedido=pedido, go=go, pedido_venda=chave,
             liberacao_pcp=liberacao_pcp, situacao_entrega=situacao_entrega,
             etapas=etapas, nao_encontrado=False,
+            inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
         )
 
     @app.route("/consulta-pedido")
@@ -3896,6 +4057,10 @@ def register_routes(app):
 
         filtros_paginacao = dict(filtros, sort=sort, dir=dir_ordenacao)
 
+        # Qualidade (RDIM) — pedido do Bruno (02/09/2026): coluna de status
+        # de qualidade por item, direto na Listagem Geral.
+        inspecoes_rdim = _inspecoes_rdim_por_item([l.item_id for l in linhas_pagina])
+
         return render_template(
             "dashboard.html",
             linhas=linhas_pagina,
@@ -3907,6 +4072,7 @@ def register_routes(app):
             filtros_paginacao=filtros_paginacao,
             sort=sort,
             dir_ordenacao=dir_ordenacao,
+            inspecoes_rdim=inspecoes_rdim,
         )
 
     @app.route("/pedidos/novo", methods=["GET", "POST"])
@@ -4113,7 +4279,12 @@ def register_routes(app):
             .all()
         )
         timeline = _construir_timeline(pedido)
-        return render_template("detalhe_pedido.html", pedido=pedido, historico=historico, timeline=timeline)
+        inspecoes_rdim = _inspecoes_rdim_por_item([i.id for i in pedido.itens])
+        resumo_rdim = _resumo_rdim_pedido(inspecoes_rdim.values())
+        return render_template(
+            "detalhe_pedido.html", pedido=pedido, historico=historico, timeline=timeline,
+            inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
+        )
 
     @app.route("/pedidos/<int:pedido_id>/excluir", methods=["POST"])
     @requer_role("ADMIN", "PCP")
@@ -4225,11 +4396,16 @@ def register_routes(app):
         venda — sem criar nenhum vínculo real entre as duas tabelas."""
         pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
         itens_por_pedido_venda = _itens_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
+        # Qualidade (RDIM) — pedido do Bruno (02/09/2026): indicador simples
+        # (pedido-level, sem granularidade de item/estação) de "contém
+        # desvio" nesta listagem.
+        rdim_por_pedido_venda = _rdim_resumo_por_pedido_venda([p.pedido_venda for p in pedidos])
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
             itens_por_pedido_venda=itens_por_pedido_venda,
+            rdim_por_pedido_venda=rdim_por_pedido_venda,
         )
 
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
@@ -4437,6 +4613,11 @@ def register_routes(app):
                 flash("Selecione o resultado da inspeção (Aprovado / Reprovado / Aprovado com desvio).", "danger")
                 return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)
 
+            quantidade_com_desvio, erro_qtd = _validar_quantidade_com_desvio(f.get("quantidade_com_desvio"), item.quantidade)
+            if erro_qtd:
+                flash(erro_qtd, "danger")
+                return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)
+
             nova = InspecaoFinal(
                 item_pedido_id=item.id,
                 estacao=item.estacao,
@@ -4449,8 +4630,10 @@ def register_routes(app):
                 inspecao_visual=f.get("inspecao_visual", "").strip() or None,
                 desvio_encontrado=f.get("desvio_encontrado", "").strip() or None,
                 categoria_desvio=f.get("categoria_desvio", "").strip() or None,
+                subcategoria_desvio=f.get("subcategoria_desvio", "").strip() or None,
                 observacao=f.get("observacao", "").strip() or None,
                 resultado=resultado,
+                quantidade_com_desvio=quantidade_com_desvio,
                 criado_por_id=current_user.id,
             )
             db.session.add(nova)
@@ -4483,6 +4666,16 @@ def register_routes(app):
                 )
                 return render_template("qualidade_rdim_editar.html", inspecao=inspecao, historico=historico)
 
+            quantidade_item = inspecao.item.quantidade if inspecao.item else None
+            quantidade_com_desvio, erro_qtd = _validar_quantidade_com_desvio(f.get("quantidade_com_desvio"), quantidade_item)
+            if erro_qtd:
+                flash(erro_qtd, "danger")
+                historico = (
+                    HistoricoAlteracao.query.filter_by(entidade_tipo="inspecao_final", entidade_id=inspecao.id)
+                    .order_by(HistoricoAlteracao.criado_em.desc()).all()
+                )
+                return render_template("qualidade_rdim_editar.html", inspecao=inspecao, historico=historico)
+
             antes = {c: getattr(inspecao, c) for c in CAMPOS_HISTORICO_INSPECAO_FINAL}
             inspecao.data_inspecao = _parse_data_form(f.get("data_inspecao")) or inspecao.data_inspecao
             inspecao.numero_rif = f.get("numero_rif", "").strip() or None
@@ -4492,8 +4685,10 @@ def register_routes(app):
             inspecao.inspecao_visual = f.get("inspecao_visual", "").strip() or None
             inspecao.desvio_encontrado = f.get("desvio_encontrado", "").strip() or None
             inspecao.categoria_desvio = f.get("categoria_desvio", "").strip() or None
+            inspecao.subcategoria_desvio = f.get("subcategoria_desvio", "").strip() or None
             inspecao.observacao = f.get("observacao", "").strip() or None
             inspecao.resultado = resultado
+            inspecao.quantidade_com_desvio = quantidade_com_desvio
             depois = {c: getattr(inspecao, c) for c in CAMPOS_HISTORICO_INSPECAO_FINAL}
             _registrar_alteracoes("inspecao_final", inspecao.id, inspecao.item.pedido_id if inspecao.item else None,
                                    antes, depois, CAMPOS_HISTORICO_INSPECAO_FINAL)

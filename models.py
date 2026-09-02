@@ -194,6 +194,13 @@ RDIM_INSPECAO_VISUAL_OPCOES = ["OK", "Não OK"]
 # tipos de desvio" e "ranking de causas" no dashboard.
 RDIM_CATEGORIA_DESVIO_OPCOES = ["Dimensional", "Dureza", "Estético/Visual", "Outro"]
 
+# Subcategoria — pedido do Bruno (02/09/2026, depois de já usar a área):
+# mais granular que a categoria acima, aponta exatamente QUAL característica
+# desviou (alimenta "principais características do desvio" no dashboard).
+RDIM_SUBCATEGORIA_DESVIO_OPCOES = [
+    "Espessura", "Diâmetro Externo", "Diâmetro Interno", "Comprimento", "Deformação/Ranhura",
+]
+
 # Sugestões pré-preenchidas na tela de Nova Inspeção — o operador pode editar,
 # remover ou adicionar outras (grandeza é texto livre em RdimMedicao), então
 # esta lista não trava nada, só acelera o preenchimento.
@@ -998,8 +1005,22 @@ class InspecaoFinal(db.Model):
     inspecao_visual = db.Column(db.String(20), nullable=True)
     desvio_encontrado = db.Column(db.Text, nullable=True)
     categoria_desvio = db.Column(db.String(30), nullable=True)
+    # Subcategoria (característica específica que desviou) — pedido do Bruno
+    # (02/09/2026), mais granular que categoria_desvio. Coluna nova em tabela
+    # que já existe em produção -> precisa de _migrar_rdim_inspecao_final em
+    # app.py (ALTER TABLE), não é coberta só por db.create_all().
+    subcategoria_desvio = db.Column(db.String(40), nullable=True)
     observacao = db.Column(db.Text, nullable=True)
     resultado = db.Column(db.String(24), nullable=True)
+
+    # Quantitativo de peças do lote (item.quantidade) que apresentaram
+    # desvio — pedido do Bruno (02/09/2026): "lote total contém 5 peças, mas
+    # dessas 2 unidades ficou com desvio". Sempre em relação ao lote inteiro
+    # (decisão confirmada com Bruno) — não existe campo separado de
+    # "quantidade inspecionada"; a % de desvio é sempre quantidade_com_desvio
+    # / item.quantidade. Float (não Integer) pra bater com o tipo de
+    # ItemPedido.quantidade.
+    quantidade_com_desvio = db.Column(db.Float, nullable=True)
 
     criado_por_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
     criado_por = db.relationship("Usuario", foreign_keys=[criado_por_id])

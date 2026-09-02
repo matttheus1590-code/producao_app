@@ -22,47 +22,26 @@
 <form class="row g-2 align-items-start mb-3" method="get">
   <div class="col-12">
     <p class="text-muted small mb-1">
-      <i class="bi bi-info-circle"></i> Nos filtros de resultado, categoria de desvio e estação, segure <kbd>Ctrl</kbd>
-      (ou <kbd>Cmd</kbd> no Mac) e clique pra marcar mais de uma opção ao mesmo tempo.
+      <i class="bi bi-info-circle"></i> Nos filtros de resultado, categoria/subcategoria de desvio e estação, segure
+      <kbd>Ctrl</kbd> (ou <kbd>Cmd</kbd> no Mac) e clique pra marcar mais de uma opção ao mesmo tempo. O filtro de
+      Mês é um atalho pro intervalo De/Até — use um ou outro.
     </p>
   </div>
-  <div class="col-md-3">
+  <div class="col-md-4">
     <label class="form-label small text-muted mb-1">Buscar (cliente, pedido, produto, nº RIF)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
-    <div class="row g-2 mt-1">
-      <div class="col-6">
-        <label class="form-label small text-muted mb-1">De</label>
-        <input type="date" class="form-control" name="data_de" value="{{ filtros.data_de }}">
-      </div>
-      <div class="col-6">
-        <label class="form-label small text-muted mb-1">Até</label>
-        <input type="date" class="form-control" name="data_ate" value="{{ filtros.data_ate }}">
-      </div>
-    </div>
   </div>
   <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Resultado</label>
-    <select class="form-select" name="resultado" multiple size="5">
-      {% for op in RDIM_RESULTADO_OPCOES %}
-        <option value="{{ op }}" {% if op in filtros.resultado %}selected{% endif %}>{{ RDIM_RESULTADO_LABELS.get(op, op) }}</option>
-      {% endfor %}
-    </select>
+    <label class="form-label small text-muted mb-1">Mês</label>
+    <input type="month" class="form-control" name="mes" value="{{ filtros.mes }}">
   </div>
   <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Categoria de desvio</label>
-    <select class="form-select" name="categoria_desvio" multiple size="5">
-      {% for op in RDIM_CATEGORIA_DESVIO_OPCOES %}
-        <option value="{{ op }}" {% if op in filtros.categoria_desvio %}selected{% endif %}>{{ op }}</option>
-      {% endfor %}
-    </select>
+    <label class="form-label small text-muted mb-1">De</label>
+    <input type="date" class="form-control" name="data_de" value="{{ filtros.data_de }}">
   </div>
   <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Estação</label>
-    <select class="form-select" name="estacao" multiple size="5">
-      {% for op in RDIM_ESTACOES_OPCOES %}
-        <option value="{{ op }}" {% if op in filtros.estacao %}selected{% endif %}>{{ op }}</option>
-      {% endfor %}
-    </select>
+    <label class="form-label small text-muted mb-1">Até</label>
+    <input type="date" class="form-control" name="data_ate" value="{{ filtros.data_ate }}">
   </div>
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Responsável</label>
@@ -72,8 +51,41 @@
         <option value="{{ r.id }}" {% if filtros.responsavel_id == r.id|string %}selected{% endif %}>{{ r.nome }}</option>
       {% endfor %}
     </select>
-    <div class="d-flex flex-column gap-2 mt-2">
-      <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+  </div>
+
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Resultado</label>
+    <select class="form-select" name="resultado" multiple size="5">
+      {% for op in RDIM_RESULTADO_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.resultado %}selected{% endif %}>{{ RDIM_RESULTADO_LABELS.get(op, op) }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Categoria de desvio</label>
+    <select class="form-select" name="categoria_desvio" multiple size="5">
+      {% for op in RDIM_CATEGORIA_DESVIO_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.categoria_desvio %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Subcategoria do desvio</label>
+    <select class="form-select" name="subcategoria_desvio" multiple size="5">
+      {% for op in RDIM_SUBCATEGORIA_DESVIO_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.subcategoria_desvio %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Estação</label>
+    <select class="form-select" name="estacao" multiple size="5">
+      {% for op in RDIM_ESTACOES_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.estacao %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+    </select>
+    <div class="d-flex gap-2 mt-2">
+      <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-search"></i> Filtrar</button>
       <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-secondary btn-sm">Limpar</a>
     </div>
   </div>
@@ -90,6 +102,7 @@
         <th>Produto</th>
         <th>Nº RIF</th>
         <th>Categoria desvio</th>
+        <th>Peças c/ desvio</th>
         <th>Responsável</th>
         <th>Resultado</th>
         <th></th>
@@ -104,7 +117,16 @@
         <td>{{ i.pedido_venda or "—" }}</td>
         <td class="text-truncate" style="max-width: 220px;" title="{{ i.produto or '' }}">{{ i.produto or "—" }}</td>
         <td>{{ i.numero_rif or "—" }}</td>
-        <td>{{ i.categoria_desvio or "—" }}</td>
+        <td>{{ i.categoria_desvio or "—" }}{% if i.subcategoria_desvio %} <span class="text-muted small">({{ i.subcategoria_desvio }})</span>{% endif %}</td>
+        <td>
+          {% if i.quantidade_com_desvio is not none %}
+            <span class="{% if i.quantidade_com_desvio > 0 %}text-danger fw-semibold{% else %}text-muted{% endif %}">
+              {{ i.quantidade_com_desvio|round(0, 'floor')|int }}{% if i.item and i.item.quantidade %} / {{ i.item.quantidade|round(0, 'floor')|int }}{% endif %}
+            </span>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
         <td>{{ i.responsavel.nome if i.responsavel else "—" }}</td>
         <td><span class="badge bg-{{ RDIM_RESULTADO_CORES.get(i.resultado, 'secondary') }}">{{ RDIM_RESULTADO_LABELS.get(i.resultado, i.resultado or "—") }}</span></td>
         <td class="text-end">
@@ -114,7 +136,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="text-center text-muted py-4">Nenhuma inspeção encontrada.</td></tr>
+      <tr><td colspan="11" class="text-center text-muted py-4">Nenhuma inspeção encontrada.</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -165,7 +165,23 @@
             {% endfor %}
           </select>
         </div>
-        <div class="col-md-6">
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Subcategoria do desvio</label>
+          <select class="form-select" name="subcategoria_desvio">
+            <option value="">—</option>
+            {% for op in RDIM_SUBCATEGORIA_DESVIO_OPCOES %}
+              <option value="{{ op }}" {% if inspecao.subcategoria_desvio == op %}selected{% endif %}>{{ op }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Quantidade com desvio</label>
+          <input type="number" step="any" min="0" class="form-control" name="quantidade_com_desvio"
+                 value="{{ inspecao.quantidade_com_desvio if inspecao.quantidade_com_desvio is not none else '' }}"
+                 {% if inspecao.item %}max="{{ inspecao.item.quantidade }}"{% endif %}>
+          <div class="form-text">de {{ inspecao.item.quantidade if inspecao.item else "—" }} peça(s) no lote</div>
+        </div>
+        <div class="col-12">
           <label class="form-label small text-muted mb-1">Desvio encontrado</label>
           <input type="text" class="form-control" name="desvio_encontrado" value="{{ inspecao.desvio_encontrado or '' }}">
         </div>

@@ -142,7 +142,22 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-6">
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Subcategoria do desvio</label>
+      <select class="form-select" name="subcategoria_desvio">
+        <option value="">—</option>
+        {% for op in RDIM_SUBCATEGORIA_DESVIO_OPCOES %}
+          <option value="{{ op }}">{{ op }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Quantidade com desvio</label>
+      <input type="number" step="any" min="0" class="form-control" name="quantidade_com_desvio" id="quantidadeComDesvio"
+             {% if item_selecionado %}max="{{ item_selecionado.quantidade }}"{% endif %}>
+      <div class="form-text" id="quantidadeComDesvioHint">de <span id="qtdTotalItem">{{ item_selecionado.quantidade if item_selecionado else "—" }}</span> peça(s) no lote</div>
+    </div>
+    <div class="col-12">
       <label class="form-label small text-muted mb-1">Desvio encontrado</label>
       <input type="text" class="form-control" name="desvio_encontrado" placeholder="Descreva o desvio, se houver">
     </div>
@@ -199,6 +214,9 @@
     document.getElementById("resumoProduto").textContent = it.produto || "—";
     document.getElementById("resumoQuantidade").textContent = it.quantidade || "—";
     document.getElementById("resumoEstacao").textContent = it.estacao || "—";
+    document.getElementById("qtdTotalItem").textContent = it.quantidade != null ? it.quantidade : "—";
+    var qtdDesvioInput = document.getElementById("quantidadeComDesvio");
+    if (it.quantidade != null) { qtdDesvioInput.max = it.quantidade; } else { qtdDesvioInput.removeAttribute("max"); }
     buscaInput.value = it.produto + " — " + (it.pedido_venda || "");
     itemResumo.classList.remove("d-none");
     itemNaoSelecionado.classList.add("d-none");

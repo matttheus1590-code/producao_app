@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import rdim_status_item %}
 {% block title %}Pedido #{{ pedido.id }} · Detalhe{% endblock %}
 {% block content %}
 
@@ -113,6 +114,7 @@
                     <th>Estação</th>
                     <th>Status</th>
                     <th>Faturamento</th>
+                    <th>Qualidade</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -124,13 +126,51 @@
                     <td>{{ item.estacao or "—" }}</td>
                     <td><span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span></td>
                     <td>{{ item.liberacao_faturamento or "—" }}</td>
+                    <td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS, RDIM_ESTACOES_OPCOES) }}</td>
                   </tr>
                   {% else %}
-                  <tr><td colspan="6" class="text-center text-muted py-3">Nenhum item.</td></tr>
+                  <tr><td colspan="7" class="text-center text-muted py-3">Nenhum item.</td></tr>
                   {% endfor %}
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+
+        <div class="card mb-4">
+          <div class="card-body">
+            <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-rulers"></i> Qualidade (Inspeção Final / RDIM)</h6>
+            {% if resumo_rdim %}
+            <div class="row g-3 mb-2">
+              <div class="col-6 col-md-3">
+                <div class="text-muted small">Inspeções</div>
+                <div class="fw-semibold">{{ resumo_rdim.total }}</div>
+              </div>
+              <div class="col-6 col-md-3">
+                <div class="text-muted small">Aprovadas / Reprovadas / c/ desvio</div>
+                <div class="fw-semibold">
+                  <span class="text-success">{{ resumo_rdim.aprovadas }}</span> /
+                  <span class="text-danger">{{ resumo_rdim.reprovadas }}</span> /
+                  <span class="text-warning">{{ resumo_rdim.aprovadas_desvio }}</span>
+                </div>
+              </div>
+              <div class="col-6 col-md-3">
+                <div class="text-muted small">Peças com desvio</div>
+                <div class="fw-semibold">
+                  {{ resumo_rdim.quantidade_com_desvio|round(0, 'floor')|int }} / {{ resumo_rdim.quantidade_total|round(0, 'floor')|int }}
+                </div>
+              </div>
+              <div class="col-6 col-md-3 d-flex align-items-end">
+                <a href="{{ url_for('rdim_lista', busca=pedido.pedido_venda) }}" class="btn btn-outline-primary btn-sm">
+                  <i class="bi bi-list-ul"></i> Ver inspeções deste pedido
+                </a>
+              </div>
+            </div>
+            {% else %}
+            <div class="alert alert-light border small text-muted mb-0">
+              <i class="bi bi-info-circle"></i> Nenhuma inspeção RDIM registrada ainda para os itens deste pedido.
+            </div>
+            {% endif %}
           </div>
         </div>
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat_card, sort_th %}
+{% from "_macros.html" import stat_card, sort_th, rdim_status_item %}
 {% block title %}Listagem · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
@@ -152,6 +152,7 @@
       <col style="width:115px">
       <col style="width:115px">
       <col style="width:125px">
+      <col style="width:110px">
     </colgroup>
     <thead class="table-light">
       <tr>
@@ -176,6 +177,7 @@
         {{ sort_th("Venda unidade item", "venda_unidade", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Venda total item", "venda_total", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Venda total pedido", "venda_total_pedido", "dashboard", sort, dir_ordenacao, filtros) }}
+        <th>Qualidade</th>
       </tr>
     </thead>
     <tbody>
@@ -214,9 +216,10 @@
         <td>R$ {{ "{:,.2f}".format(l.venda_unidade).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td>R$ {{ "{:,.2f}".format(l.venda_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td>R$ {{ "{:,.2f}".format(l.venda_total_pedido).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+        <td>{{ rdim_status_item(l.item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS, RDIM_ESTACOES_OPCOES) }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="21" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="22" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

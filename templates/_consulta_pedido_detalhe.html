@@ -2,6 +2,7 @@
    fragmento HTML do status completo de UM pedido (Produção + Operação,
    cruzados por pedido_venda) — devolvido via fetch() e injetado na aba
    Consulta Pedido ao clicar numa sugestão/atalho do canal de busca. #}
+{% from "_macros.html" import rdim_status_item %}
 {% if nao_encontrado %}
 <div class="alert alert-warning">
   <i class="bi bi-exclamation-triangle"></i>
@@ -108,7 +109,7 @@
         <thead class="table-light">
           <tr>
             <th>Produto</th><th>Qtd</th><th>Estação</th><th>Status</th>
-            <th>Início produção</th><th>Conclusão produção</th><th>Lead time</th>
+            <th>Início produção</th><th>Conclusão produção</th><th>Lead time</th><th>Qualidade</th>
           </tr>
         </thead>
         <tbody>
@@ -121,13 +122,47 @@
             <td>{{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</td>
             <td>{{ item.termino_inspecao.strftime("%d/%m/%Y") if item.termino_inspecao else "—" }}</td>
             <td>{{ (item.lt_producao_dias|string + "d") if item.lt_producao_dias is not none else "—" }}</td>
+            <td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS, RDIM_ESTACOES_OPCOES) }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="7" class="text-center text-muted py-3">Nenhum item cadastrado.</td></tr>
+          <tr><td colspan="8" class="text-center text-muted py-3">Nenhum item cadastrado.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+
+    <h6 class="text-uppercase small text-muted mt-4 mb-2"><i class="bi bi-rulers"></i> Qualidade (Inspeção Final / RDIM)</h6>
+    {% if resumo_rdim %}
+    <div class="row g-3 mb-2">
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Inspeções</div>
+        <div class="fw-semibold">{{ resumo_rdim.total }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Aprovadas / Reprovadas / c/ desvio</div>
+        <div class="fw-semibold">
+          <span class="text-success">{{ resumo_rdim.aprovadas }}</span> /
+          <span class="text-danger">{{ resumo_rdim.reprovadas }}</span> /
+          <span class="text-warning">{{ resumo_rdim.aprovadas_desvio }}</span>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Peças com desvio</div>
+        <div class="fw-semibold">
+          {{ resumo_rdim.quantidade_com_desvio|round(0, 'floor')|int }} / {{ resumo_rdim.quantidade_total|round(0, 'floor')|int }}
+        </div>
+      </div>
+      <div class="col-6 col-md-3 d-flex align-items-end">
+        <a href="{{ url_for('rdim_lista', busca=pedido_venda) }}" class="btn btn-outline-primary btn-sm">
+          <i class="bi bi-list-ul"></i> Ver inspeções deste pedido
+        </a>
+      </div>
+    </div>
+    {% else %}
+    <div class="alert alert-light border small text-muted">
+      <i class="bi bi-info-circle"></i> Nenhuma inspeção RDIM registrada ainda para os itens deste pedido.
+    </div>
+    {% endif %}
     {% else %}
     <div class="alert alert-light border small text-muted">
       <i class="bi bi-info-circle"></i> Pedido ainda não lançado em Gestão Produção — sem itens/estação disponíveis. Mostrando só os dados comerciais/operacionais abaixo.

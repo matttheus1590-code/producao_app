@@ -20,6 +20,31 @@
 {% endif %}
 {% endmacro %}
 
+{% macro rdim_status_item(item, inspecoes_rdim, resultado_cores, resultado_labels, estacoes_rdim) %}
+{# Qualidade (RDIM) por item — pedido do Bruno (02/09/2026): usada em
+   Consulta Pedido, Detalhe do Pedido e Listagem Geral de Produção, pra não
+   repetir a mesma lógica em 3 templates. As constantes RDIM_* já chegam a
+   todo template via inject_globals, mas macros não herdam o contexto do
+   template que chama (sem "with context") — por isso entram como parâmetro,
+   mesmo espírito de stat_card/sort_th acima. #}
+{% if item.estacao not in estacoes_rdim %}
+  <span class="text-muted">—</span>
+{% else %}
+  {% set insp = inspecoes_rdim.get(item.id) %}
+  {% if insp %}
+    <a href="{{ url_for('rdim_editar', inspecao_id=insp.id) }}"
+       class="badge bg-{{ resultado_cores.get(insp.resultado, 'secondary') }} text-decoration-none"
+       title="{{ resultado_labels.get(insp.resultado, insp.resultado) }}{% if insp.quantidade_com_desvio %} · {{ insp.quantidade_com_desvio|round(0, 'floor')|int }} peça(s) com desvio{% endif %}">
+      {{ resultado_labels.get(insp.resultado, insp.resultado) }}
+    </a>
+  {% else %}
+    <a href="{{ url_for('rdim_novo', item_id=item.id) }}" class="badge bg-light text-dark border text-decoration-none" title="Nenhuma inspeção RDIM registrada ainda para este item">
+      <i class="bi bi-plus-circle"></i> Inspecionar
+    </a>
+  {% endif %}
+{% endif %}
+{% endmacro %}
+
 {% macro sort_th(label, campo, endpoint, sort_atual, dir_atual, filtros) %}
 {% set nova_dir = 'desc' if (sort_atual == campo and dir_atual == 'asc') else 'asc' %}
 <th title="{{ label }}">
