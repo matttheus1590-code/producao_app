@@ -81,8 +81,20 @@
         <a class="app-nav-link {% if request.endpoint == 'pd_dashboard' %}active{% endif %}" href="{{ url_for('pd_dashboard') }}">
           <i class="bi bi-graph-up"></i> <span>📊 Dashboard</span>
         </a>
-        <a class="app-nav-link {% if request.endpoint in ('pd_lista', 'pd_novo', 'pd_editar') %}active{% endif %}" href="{{ url_for('pd_lista') }}">
+        <a class="app-nav-link {% if request.endpoint in ('pd_lista', 'pd_novo', 'pd_editar', 'pd_kanban') %}active{% endif %}" href="{{ url_for('pd_lista') }}">
           <i class="bi bi-flask"></i> <span>📋 Projetos</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'pd_cronograma' %}active{% endif %}" href="{{ url_for('pd_cronograma') }}">
+          <i class="bi bi-calendar-week"></i> <span>📅 Cronograma</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'pd_testes_lista' %}active{% endif %}" href="{{ url_for('pd_testes_lista') }}">
+          <i class="bi bi-clipboard2-check"></i> <span>🧪 Testes & Validações</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'pd_custos' %}active{% endif %}" href="{{ url_for('pd_custos') }}">
+          <i class="bi bi-cash-coin"></i> <span>💰 Custos & Resultados</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'pd_conhecimento' %}active{% endif %}" href="{{ url_for('pd_conhecimento') }}">
+          <i class="bi bi-journal-bookmark"></i> <span>📚 Base de Conhecimento</span>
         </a>
 
         {% if current_user.role in ('ADMIN', 'PCP') %}

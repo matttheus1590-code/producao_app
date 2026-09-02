@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}P&D · Base de Conhecimento · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0">📚 Base de Conhecimento de P&D</h4>
+  <a href="{{ url_for('pd_lista') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul"></i> Ver projetos</a>
+</div>
+<p class="text-muted small mb-3">
+  Todo projeto que já tem Problema, Solução ou Lições aprendidas preenchidos (aba "Dados do projeto") aparece aqui — pra responder rápido
+  "a gente já desenvolveu algo parecido?" antes de começar um projeto novo do zero.
+</p>
+
+<form class="row g-2 mb-4" method="get">
+  <div class="col-md-6">
+    <input type="text" class="form-control" name="busca" value="{{ busca }}" placeholder="Buscar por nome, problema, solução, lições aprendidas, categoria, cliente, produto, fornecedor…">
+  </div>
+  <div class="col-md-2">
+    <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> Buscar</button>
+  </div>
+  {% if busca %}
+  <div class="col-md-2">
+    <a href="{{ url_for('pd_conhecimento') }}" class="btn btn-outline-secondary w-100">Limpar</a>
+  </div>
+  {% endif %}
+</form>
+
+{% if not projetos %}
+<div class="alert alert-light border text-muted">
+  <i class="bi bi-info-circle"></i>
+  {% if busca %}Nenhum resultado para "{{ busca }}".{% else %}Nenhum projeto com base de conhecimento preenchida ainda.{% endif %}
+</div>
+{% endif %}
+
+<div class="row g-3">
+  {% for p in projetos %}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+          <h6 class="mb-0"><a href="{{ url_for('pd_editar', projeto_id=p.id) }}" class="text-decoration-none">{{ p.codigo or ("#" ~ p.id) }} — {{ p.nome }}</a></h6>
+          <span class="badge bg-{{ PD_ETAPA_CORES.get(p.etapa_atual, 'secondary') }}">{{ p.etapa_atual }}</span>
+        </div>
+        <div class="small text-muted mb-2">
+          {{ p.categoria or "—" }}
+          {% if p.cliente %} · Cliente: {{ p.cliente }}{% endif %}
+          {% if p.produto %} · Produto: {{ p.produto }}{% endif %}
+          {% if p.fornecedor %} · Fornecedor: {{ p.fornecedor }}{% endif %}
+        </div>
+        {% if p.problema %}<div class="mb-2"><span class="fw-semibold small">Problema:</span> <span class="small">{{ p.problema }}</span></div>{% endif %}
+        {% if p.solucao %}<div class="mb-2"><span class="fw-semibold small">Solução:</span> <span class="small">{{ p.solucao }}</span></div>{% endif %}
+        {% if p.licoes_aprendidas %}<div class="mb-0"><span class="fw-semibold small">Lições aprendidas:</span> <span class="small">{{ p.licoes_aprendidas }}</span></div>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

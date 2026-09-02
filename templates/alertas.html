@@ -148,4 +148,143 @@
   </div>
 </div>
 
+<hr class="my-4">
+
+<h5 class="mb-3">🧪 P&D</h5>
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-danger"><div class="card-body">
+      <div class="text-muted small">🔴 Atrasados</div>
+      <div class="fs-4 fw-semibold text-danger">{{ pd_alertas.atrasados | length }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-warning"><div class="card-body">
+      <div class="text-muted small">🟡 Prazo próximo</div>
+      <div class="fs-4 fw-semibold text-warning">{{ pd_alertas.prazo_proximo | length }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-danger"><div class="card-body">
+      <div class="text-muted small">🔴 Testes atrasados</div>
+      <div class="fs-4 fw-semibold text-danger">{{ pd_alertas.testes_atrasados | length }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-warning"><div class="card-body">
+      <div class="text-muted small">🟠 Sem atualização ({{ PD_DIAS_SEM_ATUALIZACAO }}+ dias)</div>
+      <div class="fs-4 fw-semibold text-warning">{{ pd_alertas.sem_atualizacao | length }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-danger"><div class="card-body">
+      <div class="text-muted small">🔴 Parados ({{ PD_DIAS_PARADO }}+ dias)</div>
+      <div class="fs-4 fw-semibold text-danger">{{ pd_alertas.parados | length }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-2">
+    <div class="card text-center h-100 border-danger"><div class="card-body">
+      <div class="text-muted small">🔴 Custo acima do previsto</div>
+      <div class="fs-4 fw-semibold text-danger">{{ pd_alertas.custo_acima | length }}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-exclamation-octagon text-danger"></i> Projetos atrasados / críticos</h6>
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Projeto</th><th>Etapa</th><th class="text-end">Atraso</th></tr></thead>
+          <tbody>
+            {% for p in pd_alertas.atrasados %}
+            <tr>
+              <td><a href="{{ url_for('pd_editar', projeto_id=p.id) }}">{{ p.codigo or ("#" ~ p.id) }} — {{ p.nome }}</a></td>
+              <td><span class="badge bg-{{ PD_ETAPA_CORES.get(p.etapa_atual, 'secondary') }}">{{ p.etapa_atual }}</span></td>
+              <td class="text-end text-danger fw-semibold">{{ -p.dias_restantes }}d</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">Nenhum projeto atrasado. 🎉</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="text-end mt-2"><a href="{{ url_for('pd_lista', apenas_atrasados='1') }}" class="small">Ver todos →</a></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-clipboard2-x text-danger"></i> Testes atrasados</h6>
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Projeto</th><th>Teste</th><th>Planejado</th></tr></thead>
+          <tbody>
+            {% for t in pd_alertas.testes_atrasados %}
+            <tr>
+              <td class="text-truncate" style="max-width: 180px;"><a href="{{ url_for('pd_editar', projeto_id=t.projeto_id) }}#testes">{{ t.projeto.nome }}</a></td>
+              <td>{{ t.numero or ("#" ~ t.id) }}</td>
+              <td class="text-danger">{{ t.data_planejada.strftime("%d/%m/%Y") }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">Nenhum teste atrasado.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="text-end mt-2"><a href="{{ url_for('pd_testes_lista', apenas_atrasados='1') }}" class="small">Ver todos →</a></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-hourglass-split text-warning"></i> Sem atualização / parados</h6>
+        <ul class="list-unstyled mb-0">
+          {% for p in pd_alertas.parados %}
+          <li class="mb-1"><a href="{{ url_for('pd_editar', projeto_id=p.id) }}">{{ p.nome }}</a> <span class="badge bg-danger">parado</span></li>
+          {% endfor %}
+          {% for p in pd_alertas.sem_atualizacao %}
+          <li class="mb-1"><a href="{{ url_for('pd_editar', projeto_id=p.id) }}">{{ p.nome }}</a> <span class="badge bg-warning text-dark">sem atualização</span></li>
+          {% endfor %}
+          {% if not pd_alertas.parados and not pd_alertas.sem_atualizacao %}
+          <li class="text-center text-muted py-3">Todos os projetos ativos foram atualizados recentemente.</li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-cash-coin text-danger"></i> Custo acima do previsto</h6>
+        <ul class="list-unstyled mb-0">
+          {% for p in pd_alertas.custo_acima %}
+          <li class="mb-1"><a href="{{ url_for('pd_editar', projeto_id=p.id) }}">{{ p.nome }}</a></li>
+          {% else %}
+          <li class="text-center text-muted py-3">Nenhum projeto acima do previsto. 🎉</li>
+          {% endfor %}
+        </ul>
+        <div class="text-end mt-2"><a href="{{ url_for('pd_custos') }}" class="small">Ver Custos & Resultados →</a></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-patch-check text-info"></i> Em homologação</h6>
+        <ul class="list-unstyled mb-0">
+          {% for p in pd_alertas.homologacao %}
+          <li class="mb-1"><a href="{{ url_for('pd_editar', projeto_id=p.id) }}">{{ p.nome }}</a></li>
+          {% else %}
+          <li class="text-center text-muted py-3">Nenhum projeto em homologação no momento.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}

@@ -2933,6 +2933,173 @@ def _dashboard_pd():
     }
 
 
+def _cronograma_pd():
+    """Monta as linhas do Cronograma Geral (Gantt simplificado, sem
+    biblioteca externa — barras posicionadas por porcentagem dentro de uma
+    faixa de datas comum). Só entram projetos com data de início preenchida;
+    os demais são contados à parte (sem_data) pra não sumirem silenciosamente."""
+    projetos = ProjetoPD.query.filter(ProjetoPD.data_inicio.isnot(None)).order_by(ProjetoPD.data_inicio.asc()).all()
+    sem_data = ProjetoPD.query.filter(ProjetoPD.data_inicio.is_(None)).count()
+    hoje = date.today()
+
+    if not projetos:
+        return {"linhas": [], "sem_data": sem_data, "marcadores_mes": [], "hoje_pct": None}
+
+    def _fim_projeto(p):
+        fim = p.data_real_conclusao or p.data_prevista_conclusao or p.data_inicio
+        return fim if fim >= p.data_inicio else p.data_inicio
+
+    inicio_min = min(p.data_inicio for p in projetos)
+    fim_max = max([_fim_projeto(p) for p in projetos] + [hoje])
+    total_dias = max((fim_max - inicio_min).days, 1)
+
+    def _pct(d):
+        return max(0.0, min(100.0, ((d - inicio_min).days / total_dias) * 100))
+
+    linhas = []
+    for p in projetos:
+        fim = _fim_projeto(p)
+        marcos = []
+        for t in p.testes:
+            data_evento = t.data_realizada or t.data_planejada
+            if data_evento and inicio_min <= data_evento <= fim_max:
+                info = PD_TESTE_RESULTADO_INFO.get(t.resultado, {})
+                marcos.append({
+                    "pos_pct": _pct(data_evento),
+                    "label": f"Teste {t.numero}".strip() if t.numero else "Teste",
+                    "cor": info.get("cor", "secondary"),
+                    "emoji": info.get("emoji", ""),
+                })
+        linhas.append({
+            "projeto": p,
+            "offset_pct": _pct(p.data_inicio),
+            "largura_pct": max(_pct(fim) - _pct(p.data_inicio), 0.6),
+            "marcos": marcos,
+        })
+
+    marcadores_mes = []
+    cursor = date(inicio_min.year, inicio_min.month, 1)
+    while cursor <= fim_max:
+        marcadores_mes.append({"pos_pct": _pct(cursor), "label": f"{MESES_PT[cursor.month - 1]}/{cursor.year}"})
+        if cursor.month == 12:
+            cursor = date(cursor.year + 1, 1, 1)
+        else:
+            cursor = date(cursor.year, cursor.month + 1, 1)
+
+    return {
+        "linhas": linhas, "sem_data": sem_data, "marcadores_mes": marcadores_mes,
+        "hoje_pct": _pct(hoje), "inicio_min": inicio_min, "fim_max": fim_max,
+    }
+
+
+def _filtrar_testes_pd(args):
+    """Visão global de Testes & Validações — mesmos testes já vistos dentro
+    de cada projeto (aba Testes & Validações), aqui juntados de todos os
+    projetos numa lista só, com filtro por projeto/resultado/responsável."""
+    projeto_id = args.get("projeto_id", type=int)
+    resultado = args.getlist("resultado")
+    responsavel = args.get("responsavel", "").strip()
+    apenas_atrasados = args.get("apenas_atrasados", "").strip()
+
+    query = TesteProjetoPD.query.join(ProjetoPD, TesteProjetoPD.projeto_id == ProjetoPD.id)
+    if projeto_id:
+        query = query.filter(TesteProjetoPD.projeto_id == projeto_id)
+    if resultado:
+        query = query.filter(TesteProjetoPD.resultado.in_(resultado))
+    if responsavel:
+        query = query.filter(TesteProjetoPD.responsavel.ilike(f"%{responsavel}%"))
+    if apenas_atrasados == "1":
+        query = query.filter(
+            TesteProjetoPD.data_planejada.isnot(None),
+            TesteProjetoPD.data_planejada < date.today(),
+            TesteProjetoPD.data_realizada.is_(None),
+        )
+    query = query.order_by(TesteProjetoPD.data_planejada.desc().nullslast(), TesteProjetoPD.id.desc())
+
+    filtros = dict(projeto_id=projeto_id, resultado=resultado, responsavel=responsavel, apenas_atrasados=apenas_atrasados)
+    return query, filtros
+
+
+def _custos_pd():
+    """Totais previsto x realizado / economia / ROI de todos os projetos —
+    página própria de analytics financeiro de P&D (Bruno pediu "Custos &
+    Resultados" separado do Dashboard geral)."""
+    projetos = ProjetoPD.query.order_by(ProjetoPD.data_prevista_conclusao.asc().nullslast(), ProjetoPD.id.desc()).all()
+
+    totais = {
+        "custo_previsto": sum(p.custo_previsto or 0 for p in projetos),
+        "custo_realizado": sum(p.custo_realizado or 0 for p in projetos),
+        "investimento_previsto": sum(p.investimento_previsto or 0 for p in projetos),
+        "investimento_realizado": sum(p.investimento_realizado or 0 for p in projetos),
+        "economia_prevista": sum(p.economia_prevista or 0 for p in projetos),
+        "economia_realizada": sum(p.economia_realizada or 0 for p in projetos),
+    }
+    totais["roi_geral"] = (
+        round(((totais["economia_realizada"] - totais["investimento_realizado"]) / totais["investimento_realizado"]) * 100, 1)
+        if totais["investimento_realizado"] else None
+    )
+
+    acima_do_previsto = [
+        p for p in projetos
+        if (p.custo_realizado is not None and p.custo_previsto is not None and p.custo_realizado > p.custo_previsto)
+        or (p.investimento_realizado is not None and p.investimento_previsto is not None and p.investimento_realizado > p.investimento_previsto)
+    ]
+    return {"projetos": projetos, "totais": totais, "acima_do_previsto": acima_do_previsto}
+
+
+# Limiares (em dias) usados só pelos alertas de "sem atualização"/"parado" —
+# ajustáveis aqui sem mexer no resto da lógica, caso o Bruno peça outro valor.
+PD_DIAS_SEM_ATUALIZACAO = 15
+PD_DIAS_PARADO = 30
+
+
+def _alertas_pd():
+    """Consolida os alertas de P&D pedidos pelo Bruno (atrasado, prazo
+    próximo, teste atrasado, projeto sem atualização, projeto parado, custo
+    acima do previsto, homologação em andamento) — só considera projetos
+    ainda não concluídos, igual ao resto do sistema já faz pra Pedido."""
+    projetos = ProjetoPD.query.filter(ProjetoPD.etapa_atual != "Concluído").all()
+    hoje = date.today()
+    agora = datetime.utcnow()
+
+    sem_atualizacao, parados = [], []
+    for p in projetos:
+        referencia = p.atualizado_em or p.criado_em
+        if not referencia:
+            continue
+        dias = (agora - referencia).days
+        if dias >= PD_DIAS_PARADO:
+            parados.append(p)
+        elif dias >= PD_DIAS_SEM_ATUALIZACAO:
+            sem_atualizacao.append(p)
+
+    custo_acima = [
+        p for p in projetos
+        if (p.custo_realizado is not None and p.custo_previsto is not None and p.custo_realizado > p.custo_previsto)
+        or (p.investimento_realizado is not None and p.investimento_previsto is not None and p.investimento_realizado > p.investimento_previsto)
+    ]
+
+    testes_atrasados = (
+        TesteProjetoPD.query.join(ProjetoPD, TesteProjetoPD.projeto_id == ProjetoPD.id)
+        .filter(
+            TesteProjetoPD.data_planejada.isnot(None),
+            TesteProjetoPD.data_planejada < hoje,
+            TesteProjetoPD.data_realizada.is_(None),
+        )
+        .all()
+    )
+
+    return {
+        "atrasados": [p for p in projetos if p.atrasado],
+        "prazo_proximo": [p for p in projetos if p.prazo_proximo],
+        "homologacao": [p for p in projetos if p.etapa_atual == "Homologação"],
+        "sem_atualizacao": sem_atualizacao,
+        "parados": parados,
+        "custo_acima": custo_acima,
+        "testes_atrasados": testes_atrasados,
+    }
+
+
 # ----------------------------------------------------------------------
 # Relatórios (fase 12) — exportações CSV/Excel sob demanda, sem agendamento
 # automático (geradas na hora, a partir dos mesmos dados já calculados
@@ -3371,6 +3538,7 @@ def register_routes(app):
         )
         gargalos_criticos = [g for g in _gargalos_por_estacao() if g["fila"] > 0 or g["atraso"] > 0][:5]
         faturamento_pendente = _faturamento_previsto_nao_realizado()
+        pd_alertas = _alertas_pd()
 
         return render_template(
             "alertas.html",
@@ -3378,6 +3546,9 @@ def register_routes(app):
             pedidos_vencendo=pedidos_vencendo,
             gargalos_criticos=gargalos_criticos,
             faturamento_pendente=faturamento_pendente,
+            pd_alertas=pd_alertas,
+            PD_DIAS_SEM_ATUALIZACAO=PD_DIAS_SEM_ATUALIZACAO,
+            PD_DIAS_PARADO=PD_DIAS_PARADO,
         )
 
     # ------------------------------------------------------------------
@@ -4105,6 +4276,86 @@ def register_routes(app):
         db.session.commit()
         flash("Visita/reunião registrada com sucesso.", "success")
         return redirect(url_for("pd_editar", projeto_id=projeto.id) + "#eventos")
+
+    # Kanban de P&D — pedido do Bruno: "visão alternada" dentro de Projetos,
+    # colunas = as 8 etapas do ciclo de vida, arrastável. Mover uma coluna
+    # pra outra usa a mesma rota que o <select> de fallback (sem JS/toque) —
+    # os dois caminhos (drag-and-drop e o <select>) chamam pd_mover_etapa.
+    @app.route("/pd/kanban")
+    @login_required
+    def pd_kanban():
+        projetos = ProjetoPD.query.order_by(ProjetoPD.data_prevista_conclusao.asc().nullslast(), ProjetoPD.id.desc()).all()
+        colunas = {etapa: [] for etapa in PD_ETAPA_OPCOES}
+        for p in projetos:
+            colunas.setdefault(p.etapa_atual, []).append(p)
+        return render_template("pd_kanban.html", colunas=colunas)
+
+    @app.route("/pd/<int:projeto_id>/mover-etapa", methods=["POST"])
+    @login_required
+    def pd_mover_etapa(projeto_id):
+        projeto = db.session.get(ProjetoPD, projeto_id)
+        if projeto is None:
+            flash("Projeto de P&D não encontrado.", "danger")
+            return redirect(url_for("pd_kanban"))
+
+        nova_etapa = request.form.get("etapa", "").strip()
+        if nova_etapa not in PD_ETAPA_OPCOES:
+            flash("Etapa inválida.", "danger")
+            return redirect(url_for("pd_kanban"))
+
+        if nova_etapa != projeto.etapa_atual:
+            antes = {c: getattr(projeto, c) for c in CAMPOS_HISTORICO_PD}
+            projeto.etapa_atual = nova_etapa
+            # Conveniência: ao mover pra "Concluído" sem data real de
+            # conclusão ainda preenchida, carimba hoje sozinho (o Bruno pode
+            # sempre corrigir depois na aba "Dados do projeto").
+            if nova_etapa == "Concluído" and not projeto.data_real_conclusao:
+                projeto.data_real_conclusao = date.today()
+            depois = {c: getattr(projeto, c) for c in CAMPOS_HISTORICO_PD}
+            _registrar_alteracoes("projeto_pd", projeto.id, None, antes, depois, CAMPOS_HISTORICO_PD)
+            db.session.commit()
+            flash(f"\"{projeto.nome}\" movido para {nova_etapa}.", "success")
+
+        return redirect(url_for("pd_kanban"))
+
+    @app.route("/pd/cronograma")
+    @login_required
+    def pd_cronograma():
+        dados = _cronograma_pd()
+        return render_template("pd_cronograma.html", **dados)
+
+    @app.route("/pd/testes")
+    @login_required
+    def pd_testes_lista():
+        query, filtros = _filtrar_testes_pd(request.args)
+        testes = query.all()
+        projetos_opcoes = ProjetoPD.query.order_by(ProjetoPD.nome).all()
+        return render_template("pd_testes.html", testes=testes, projetos_opcoes=projetos_opcoes, filtros=filtros)
+
+    @app.route("/pd/custos")
+    @login_required
+    def pd_custos():
+        dados = _custos_pd()
+        return render_template("pd_custos.html", **dados)
+
+    @app.route("/pd/conhecimento")
+    @login_required
+    def pd_conhecimento():
+        busca = request.args.get("busca", "").strip()
+        query = ProjetoPD.query.filter(
+            or_(ProjetoPD.problema.isnot(None), ProjetoPD.solucao.isnot(None), ProjetoPD.licoes_aprendidas.isnot(None))
+        )
+        if busca:
+            termo = f"%{busca}%"
+            query = query.filter(
+                or_(
+                    ProjetoPD.nome.ilike(termo), ProjetoPD.problema.ilike(termo), ProjetoPD.solucao.ilike(termo),
+                    ProjetoPD.licoes_aprendidas.ilike(termo), ProjetoPD.categoria.ilike(termo),
+                    ProjetoPD.cliente.ilike(termo), ProjetoPD.produto.ilike(termo), ProjetoPD.fornecedor.ilike(termo),
+                )
+            )
+        projetos = query.order_by(ProjetoPD.data_real_conclusao.desc().nullslast(), ProjetoPD.id.desc()).all()
+        return render_template("pd_conhecimento.html", projetos=projetos, busca=busca)
 
     # ------------------------------------------------------------------
     # Usuários (papéis de acesso) — só ADMIN cadastra/edita usuários

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}P&D · Cronograma · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-calendar-week"></i> Cronograma Geral de P&D</h4>
+  <a href="{{ url_for('pd_lista') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul"></i> Ver projetos</a>
+</div>
+<p class="text-muted small mb-3">
+  Cada barra vai da data de início até a conclusão (real, se já houver, senão a prevista). Os marcadores ▲ indicam testes lançados no projeto.
+  A linha vermelha mostra "hoje". {% if sem_data %}<strong>{{ sem_data }} projeto(s)</strong> sem data de início ainda não aparecem aqui.{% endif %}
+</p>
+
+{% if not linhas %}
+<div class="alert alert-light border text-muted">
+  <i class="bi bi-info-circle"></i> Nenhum projeto com data de início cadastrada ainda.
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body pd-gantt-scroll">
+    <div class="pd-gantt-track">
+      <div class="pd-gantt-meses">
+        {% for m in marcadores_mes %}
+        <div class="pd-gantt-mes-marcador" style="left: {{ m.pos_pct }}%;">{{ m.label }}</div>
+        {% endfor %}
+        {% if hoje_pct is not none %}
+        <div class="pd-gantt-hoje-linha" style="left: {{ hoje_pct }}%;">
+          <span class="pd-gantt-hoje-label">Hoje</span>
+        </div>
+        {% endif %}
+      </div>
+      <div class="pd-gantt-linhas">
+        {% for l in linhas %}
+        {% set p = l.projeto %}
+        <div class="pd-gantt-row">
+          <div class="pd-gantt-row-label" title="{{ p.nome }}">
+            <a href="{{ url_for('pd_editar', projeto_id=p.id) }}" class="text-decoration-none">{{ p.codigo or ("#" ~ p.id) }} — {{ p.nome }}</a>
+          </div>
+          <div class="pd-gantt-row-track">
+            {% if hoje_pct is not none %}<div class="pd-gantt-hoje-linha" style="left: {{ hoje_pct }}%;"></div>{% endif %}
+            <a href="{{ url_for('pd_editar', projeto_id=p.id) }}"
+               class="pd-gantt-bar bg-{{ PD_ETAPA_CORES.get(p.etapa_atual, 'secondary') }} {% if p.atrasado %}border border-danger border-2{% endif %}"
+               style="left: {{ l.offset_pct }}%; width: {{ l.largura_pct }}%;"
+               title="{{ p.nome }} — {{ p.etapa_atual }} ({{ p.data_inicio.strftime('%d/%m/%Y') }} até {{ (p.data_real_conclusao or p.data_prevista_conclusao).strftime('%d/%m/%Y') if (p.data_real_conclusao or p.data_prevista_conclusao) else '—' }})">
+              {{ p.etapa_atual }}
+            </a>
+            {% for marco in l.marcos %}
+            <div class="pd-gantt-marco text-{{ marco.cor }}" style="left: {{ marco.pos_pct }}%; border-top-color: currentColor;" title="{{ marco.emoji }} {{ marco.label }}"></div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="d-flex flex-wrap gap-3 mt-3 small text-muted">
+  {% for etapa in PD_ETAPA_OPCOES %}
+  <div class="d-flex align-items-center gap-1">
+    <span class="badge bg-{{ PD_ETAPA_CORES.get(etapa, 'secondary') }}">&nbsp;</span> {{ etapa }}
+  </div>
+  {% endfor %}
+  <div class="d-flex align-items-center gap-1"><span class="text-danger">▲</span> marcador de teste</div>
+  <div class="d-flex align-items-center gap-1"><span style="color:#dc3545;">┃</span> hoje</div>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}P&D · Testes & Validações · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0">🧪 Testes & Validações — todos os projetos</h4>
+  <a href="{{ url_for('pd_lista') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul"></i> Ver projetos</a>
+</div>
+<p class="text-muted small mb-3">Visão consolidada de todos os testes lançados em qualquer projeto de P&D. Pra registrar um teste novo, abra o projeto correspondente.</p>
+
+<form class="row g-2 align-items-end mb-3" method="get">
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Projeto</label>
+    <select class="form-select" name="projeto_id">
+      <option value="">Todos</option>
+      {% for p in projetos_opcoes %}
+        <option value="{{ p.id }}" {% if filtros.projeto_id == p.id %}selected{% endif %}>{{ p.codigo or ("#" ~ p.id) }} — {{ p.nome }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Resultado</label>
+    <select class="form-select" name="resultado" multiple size="4">
+      {% for op in PD_TESTE_RESULTADO_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.resultado %}selected{% endif %}>{{ PD_TESTE_RESULTADO_INFO.get(op, {}).get('emoji','') }} {{ op }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Responsável</label>
+    <input type="text" class="form-control" name="responsavel" value="{{ filtros.responsavel }}">
+  </div>
+  <div class="col-md-2 d-flex flex-column gap-2">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+    <a href="{{ url_for('pd_testes_lista') }}" class="btn btn-outline-secondary btn-sm">Limpar</a>
+  </div>
+  <div class="col-12">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="apenas_atrasados" value="1" id="testesAtrasados" {% if filtros.apenas_atrasados == '1' %}checked{% endif %} onchange="this.form.submit()">
+      <label class="form-check-label small" for="testesAtrasados">🔴 Só testes atrasados (planejado no passado, ainda não realizado)</label>
+    </div>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-primary">
+      <tr>
+        <th>Projeto</th><th>Nº</th><th>Planejado</th><th>Realizado</th><th>Responsável</th>
+        <th>Material</th><th>Lote</th><th>Fornecedor</th><th>Resultado</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in testes %}
+      <tr>
+        <td class="text-truncate" style="max-width: 200px;" title="{{ t.projeto.nome }}">
+          <a href="{{ url_for('pd_editar', projeto_id=t.projeto_id) }}">{{ t.projeto.codigo or ("#" ~ t.projeto.id) }} — {{ t.projeto.nome }}</a>
+        </td>
+        <td>{{ t.numero or ("#" ~ t.id) }}</td>
+        <td>{{ t.data_planejada.strftime("%d/%m/%Y") if t.data_planejada else "—" }}</td>
+        <td>{{ t.data_realizada.strftime("%d/%m/%Y") if t.data_realizada else "—" }}</td>
+        <td>{{ t.responsavel or "—" }}</td>
+        <td>{{ t.material_utilizado or "—" }}</td>
+        <td>{{ t.lote or "—" }}</td>
+        <td>{{ t.fornecedor or "—" }}</td>
+        <td>
+          {% set info = PD_TESTE_RESULTADO_INFO.get(t.resultado, {}) %}
+          <span class="badge bg-{{ info.get('cor','secondary') }}">{{ info.get('emoji','') }} {{ t.resultado or "—" }}</span>
+        </td>
+        <td class="text-end">
+          <a href="{{ url_for('pd_editar', projeto_id=t.projeto_id) }}#testes" class="btn btn-sm btn-outline-primary" title="Ver no projeto">
+            <i class="bi bi-eye"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum teste encontrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

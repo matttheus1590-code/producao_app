@@ -6,6 +6,9 @@
   <h4 class="mb-0"><i class="bi bi-clipboard-data"></i> Projetos de P&D</h4>
   <div class="d-flex align-items-center gap-2">
     <span class="text-muted small">{{ total_filtrado }} projeto(s)</span>
+    <a href="{{ url_for('pd_kanban') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-kanban"></i> Ver Kanban
+    </a>
     <a href="{{ url_for('pd_novo') }}" class="btn btn-primary btn-sm">
       <i class="bi bi-plus-circle"></i> Novo Projeto
     </a>

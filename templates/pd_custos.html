@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}P&D · Custos & Resultados · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0">💰 Custos & Resultados</h4>
+  <a href="{{ url_for('pd_lista') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul"></i> Ver projetos</a>
+</div>
+<p class="text-muted small mb-4">Previsto x realizado de todos os projetos de P&D, consolidado — pra editar os valores de um projeto, abra-o na aba "Dados do projeto".</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Custo previsto</div>
+      <div class="fs-5 fw-semibold">R$ {{ "{:,.2f}".format(totais.custo_previsto).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Custo realizado</div>
+      <div class="fs-5 fw-semibold">R$ {{ "{:,.2f}".format(totais.custo_realizado).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Investimento previsto</div>
+      <div class="fs-5 fw-semibold">R$ {{ "{:,.2f}".format(totais.investimento_previsto).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Investimento realizado</div>
+      <div class="fs-5 fw-semibold">R$ {{ "{:,.2f}".format(totais.investimento_realizado).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-4">
+    <div class="card text-center h-100 border-success"><div class="card-body">
+      <div class="text-muted small">Economia prevista</div>
+      <div class="fs-5 fw-semibold">R$ {{ "{:,.2f}".format(totais.economia_prevista).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-4">
+    <div class="card text-center h-100 border-success"><div class="card-body">
+      <div class="text-muted small">Economia realizada</div>
+      <div class="fs-5 fw-semibold text-success">R$ {{ "{:,.2f}".format(totais.economia_realizada).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-4">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">ROI geral</div>
+      <div class="fs-5 fw-semibold {% if totais.roi_geral is not none %}{{ 'text-success' if totais.roi_geral >= 0 else 'text-danger' }}{% endif %}">
+        {{ (totais.roi_geral ~ "%") if totais.roi_geral is not none else "—" }}
+      </div>
+    </div></div>
+  </div>
+</div>
+
+{% if acima_do_previsto %}
+<div class="card mb-4 border-danger">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-exclamation-octagon text-danger"></i> Projetos com custo/investimento acima do previsto</h6>
+    <ul class="list-unstyled mb-0">
+      {% for p in acima_do_previsto %}
+      <li class="mb-1"><a href="{{ url_for('pd_editar', projeto_id=p.id) }}">{{ p.codigo or ("#" ~ p.id) }} — {{ p.nome }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-primary">
+      <tr>
+        <th>Projeto</th><th class="text-end">Custo previsto</th><th class="text-end">Custo realizado</th>
+        <th class="text-end">Investimento previsto</th><th class="text-end">Investimento realizado</th>
+        <th class="text-end">Economia prevista</th><th class="text-end">Economia realizada</th><th class="text-end">ROI</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in projetos %}
+      <tr>
+        <td class="text-truncate" style="max-width: 220px;">
+          <a href="{{ url_for('pd_editar', projeto_id=p.id) }}">{{ p.codigo or ("#" ~ p.id) }} — {{ p.nome }}</a>
+        </td>
+        <td class="text-end">{{ "R$ %.2f"|format(p.custo_previsto) if p.custo_previsto is not none else "—" }}</td>
+        <td class="text-end">{{ "R$ %.2f"|format(p.custo_realizado) if p.custo_realizado is not none else "—" }}</td>
+        <td class="text-end">{{ "R$ %.2f"|format(p.investimento_previsto) if p.investimento_previsto is not none else "—" }}</td>
+        <td class="text-end">{{ "R$ %.2f"|format(p.investimento_realizado) if p.investimento_realizado is not none else "—" }}</td>
+        <td class="text-end">{{ "R$ %.2f"|format(p.economia_prevista) if p.economia_prevista is not none else "—" }}</td>
+        <td class="text-end">{{ "R$ %.2f"|format(p.economia_realizada) if p.economia_realizada is not none else "—" }}</td>
+        <td class="text-end">
+          {% if p.roi_percentual is not none %}
+            <span class="{{ 'text-success' if p.roi_percentual >= 0 else 'text-danger' }}">{{ p.roi_percentual }}%</span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="text-center text-muted py-4">Nenhum projeto cadastrado ainda.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

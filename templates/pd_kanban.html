@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}P&D · Kanban · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-kanban"></i> Kanban de P&D</h4>
+  <div class="d-flex align-items-center gap-2">
+    <a href="{{ url_for('pd_lista') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul"></i> Ver como lista</a>
+    <a href="{{ url_for('pd_novo') }}" class="btn btn-primary btn-sm"><i class="bi bi-plus-circle"></i> Novo Projeto</a>
+  </div>
+</div>
+<p class="text-muted small mb-3">Arraste um card pra outra coluna pra mudar a etapa — ou use o seletor no rodapé do card. Toda mudança fica registrada no histórico do projeto.</p>
+
+<div class="kanban-board pd-kanban-board">
+  {% for etapa in PD_ETAPA_OPCOES %}
+  <div class="kanban-coluna">
+    <div class="kanban-coluna-titulo bg-{{ PD_ETAPA_CORES.get(etapa, 'secondary') }} bg-opacity-25">
+      {{ etapa }}
+      <span class="badge bg-{{ PD_ETAPA_CORES.get(etapa, 'secondary') }}">{{ colunas[etapa] | length }}</span>
+    </div>
+    <div class="kanban-coluna-corpo pd-kanban-coluna-corpo" data-etapa="{{ etapa }}">
+      {% for p in colunas[etapa] %}
+      <div class="card kanban-card pd-kanban-card mb-2" draggable="true" data-projeto-id="{{ p.id }}">
+        <div class="card-body p-2">
+          <div class="small text-muted">{{ p.codigo or ("#" ~ p.id) }} {% if p.categoria %}· {{ p.categoria }}{% endif %}</div>
+          <div class="fw-semibold small mb-1">
+            <a href="{{ url_for('pd_editar', projeto_id=p.id) }}" class="text-decoration-none">{{ p.nome }}</a>
+          </div>
+          <div class="small text-muted mb-1"><i class="bi bi-person"></i> {{ p.responsavel or "—" }}</div>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            {% if p.prioridade %}<span class="badge bg-{{ PRIORIDADE_CORES.get(p.prioridade, 'secondary') }}">{{ p.prioridade }}</span>{% else %}<span></span>{% endif %}
+            {% if p.concluido %}
+              <span class="badge bg-success">Concluído</span>
+            {% elif p.atrasado %}
+              <span class="badge bg-danger">🔴 {{ -p.dias_restantes }}d atrasado</span>
+            {% elif p.prazo_proximo %}
+              <span class="badge bg-warning text-dark">🟡 {{ p.dias_restantes }}d</span>
+            {% else %}
+              <span class="badge bg-light text-dark border">{{ p.percentual_conclusao or 0 }}%</span>
+            {% endif %}
+          </div>
+          <form method="post" action="{{ url_for('pd_mover_etapa', projeto_id=p.id) }}" class="pd-kanban-mover-form">
+            <select name="etapa" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="Mover etapa">
+              {% for et in PD_ETAPA_OPCOES %}
+                <option value="{{ et }}" {% if et == etapa %}selected{% endif %}>{{ et }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <div class="text-muted small text-center py-3">Vazio</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    document.querySelectorAll('.pd-kanban-card[draggable="true"]').forEach(function (card) {
+      card.addEventListener('dragstart', function (e) {
+        e.dataTransfer.setData('text/plain', card.dataset.projetoId);
+        e.dataTransfer.effectAllowed = 'move';
+        card.classList.add('dragging');
+      });
+      card.addEventListener('dragend', function () {
+        card.classList.remove('dragging');
+      });
+    });
+
+    document.querySelectorAll('.pd-kanban-coluna-corpo').forEach(function (col) {
+      col.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        col.classList.add('drag-over');
+      });
+      col.addEventListener('dragleave', function () {
+        col.classList.remove('drag-over');
+      });
+      col.addEventListener('drop', function (e) {
+        e.preventDefault();
+        col.classList.remove('drag-over');
+        var projetoId = e.dataTransfer.getData('text/plain');
+        var etapa = col.dataset.etapa;
+        if (!projetoId || !etapa) { return; }
+        fetch('/pd/' + projetoId + '/mover-etapa', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'etapa=' + encodeURIComponent(etapa),
+        }).then(function () {
+          window.location.reload();
+        }).catch(function () {
+          window.location.reload();
+        });
+      });
+    });
+  })();
+</script>
+{% endblock %}
