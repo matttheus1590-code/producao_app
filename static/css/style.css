@@ -42,6 +42,45 @@ body {
   position: relative;
 }
 
+/* Cabeçalho "grudento" (pedido do Bruno, 03/09/2026): ao descer a
+   Listagem Geral, a linha de cabeçalho acompanha a rolagem em vez de
+   sumir — apoio pra não perder a referência de qual coluna é qual numa
+   lista longa. `position: sticky` some com o `position: relative` do
+   bloco acima (a alça de redimensionar, .col-resize-handle, continua
+   posicionada em relação ao <th> normalmente — sticky também é uma
+   posição "positioned" pra fins de conter descendentes absolutos).
+   Fundo explícito (mesmo tom do .table-light do Bootstrap) e sombra sutil
+   são necessários porque, ao grudar, o cabeçalho passa a ficar por cima
+   das linhas da tabela, que rolam por baixo dele. */
+.tabela-listagem-geral thead th {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background-color: #f8f9fa;
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* position:sticky só "gruda" de verdade em relação ao ancestral mais
+   próximo que for, ele mesmo, um contêiner de rolagem — e o Bootstrap
+   .table-responsive (overflow-x:auto) já classifica essa div como
+   contêiner de rolagem NOS DOIS EIXOS (é assim que o CSS define overflow:
+   um eixo diferente de "visible" força o outro a virar "auto" também,
+   mesmo escrevendo "overflow-y: visible" à mão — testado e confirmado via
+   getComputedStyle, não escapa). Como essa div não tinha altura própria
+   (só crescia do tamanho do conteúdo), ela nunca rolava sozinha — e sem
+   rolagem própria, o "grudento" não tem o que acompanhar, então o
+   cabeçalho simplesmente sumia rolando junto com o resto.
+
+   Solução (pedido do Bruno, 03/09/2026): em vez de brigar com essa regra,
+   assumir de vez que esta div é o contêiner de rolagem — dando a ela uma
+   altura máxima e rolagem vertical própria (a lista fica "dentro de uma
+   janela", tipo planilha, com cabeçalho fixo no topo e rolagem indepen-
+   dente da página) — filtros/cards acima continuam sempre visíveis. */
+.tabela-listagem-geral-wrap {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
 /* Alça de redimensionar coluna: uma faixa fina na borda direita de cada
    cabeçalho — arrasta pra ajustar a largura da coluna (JS no dashboard.html). */
 .tabela-listagem-geral th.th-redimensionavel {
