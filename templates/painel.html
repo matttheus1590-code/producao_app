@@ -59,11 +59,16 @@
     <div class="notif-qualidade-lista">
       {% for a in apontamentos_qualidade %}
       <a href="{{ a.link }}" class="notif-qualidade-item {% if a.novo %}notif-qualidade-item-novo{% endif %}">
-        <span class="badge bg-{{ 'primary' if a.tipo == 'RDIM' else 'dark' }} notif-qualidade-tipo">{{ a.tipo }}</span>
-        <span class="notif-qualidade-titulo">{{ a.titulo }}</span>
-        <span class="badge bg-{{ a.cor }}">{{ a.detalhe }}</span>
-        {% if a.novo %}<span class="badge bg-danger">NOVO</span>{% endif %}
-        <span class="notif-qualidade-tempo text-muted small">{{ a.ha_quanto_tempo }}</span>
+        <div class="notif-qualidade-linha1">
+          <span class="badge bg-{{ 'primary' if a.tipo == 'RDIM' else 'dark' }} notif-qualidade-tipo">{{ a.tipo }}</span>
+          <span class="notif-qualidade-titulo">{{ a.titulo }}</span>
+          <span class="badge bg-{{ a.cor }}">{{ a.detalhe }}</span>
+          {% if a.novo %}<span class="badge bg-danger">NOVO</span>{% endif %}
+          <span class="notif-qualidade-tempo text-muted small">{{ a.ha_quanto_tempo }}</span>
+        </div>
+        {% if a.contexto %}
+        <div class="notif-qualidade-contexto text-muted small">{{ a.contexto }}</div>
+        {% endif %}
       </a>
       {% endfor %}
     </div>

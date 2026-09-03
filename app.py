@@ -2205,6 +2205,97 @@ def _tempo_relativo(quando):
     return quando.strftime("%d/%m/%Y")
 
 
+def _fmt_num_rdim(v):
+    """Formata um float de medição RDIM sem casas decimais penduradas — 5.0
+    vira "5", 5.25 vira "5,25" (vírgula, padrão BR) — usado só no texto do
+    feed de apontamentos do Painel, pra não sair "5.0mm" feio na notificação."""
+    if v is None:
+        return None
+    texto = f"{v:.3f}".rstrip("0").rstrip(".")
+    if texto in ("", "-"):
+        texto = "0"
+    return texto.replace(".", ",")
+
+
+def _contexto_desvio_rdim(i):
+    """Texto curto com o DETALHE do desvio (não só o resultado) — pedido do
+    Bruno (03/09/2026): "cite com detalhes o desvio, ex: desvio dimensional,
+    desvio espessura, mínimo e máximo era X, e ficou com Y". Monta a partir
+    de categoria_desvio/subcategoria_desvio + o pior apontamento peça a peça
+    (pecas_desvio) quando existir; se a inspeção não tiver detalhamento
+    peça a peça, cai pra pior medição fora de tolerância (RdimMedicao).
+    None quando a inspeção foi aprovada sem nenhum desvio."""
+    if i.resultado == "APROVADO":
+        return None
+
+    partes = []
+    if i.categoria_desvio:
+        rotulo_cat = f"Desvio {i.categoria_desvio}"
+        if i.subcategoria_desvio:
+            rotulo_cat += f" · {i.subcategoria_desvio}"
+        partes.append(rotulo_cat)
+    elif i.subcategoria_desvio:
+        partes.append(f"Desvio {i.subcategoria_desvio}")
+
+    pior_peca = i.pior_apontamento_peca
+    if pior_peca and pior_peca.valor_medido is not None:
+        if pior_peca.especificado_min is not None and pior_peca.especificado_max is not None:
+            espec_txt = f"mín. {_fmt_num_rdim(pior_peca.especificado_min)} e máx. {_fmt_num_rdim(pior_peca.especificado_max)}"
+        elif pior_peca.especificado_max is not None:
+            espec_txt = f"máx. {_fmt_num_rdim(pior_peca.especificado_max)}"
+        elif pior_peca.especificado_min is not None:
+            espec_txt = f"mín. {_fmt_num_rdim(pior_peca.especificado_min)}"
+        else:
+            espec_txt = None
+        if espec_txt:
+            partes.append(f"especificação era {espec_txt} e ficou com {_fmt_num_rdim(pior_peca.valor_medido)}")
+        else:
+            partes.append(f"medido {_fmt_num_rdim(pior_peca.valor_medido)}")
+    else:
+        pior_medicao = None
+        for m in i.medicoes:
+            if m.dentro_da_tolerancia is False:
+                pior_medicao = m
+                break
+        if pior_medicao:
+            medido = pior_medicao.medido_max if pior_medicao.medido_max is not None else pior_medicao.medido_min
+            if pior_medicao.especificado_min is not None and pior_medicao.especificado_max is not None:
+                espec_txt = f"mín. {_fmt_num_rdim(pior_medicao.especificado_min)} e máx. {_fmt_num_rdim(pior_medicao.especificado_max)}"
+            elif pior_medicao.especificado_max is not None:
+                espec_txt = f"máx. {_fmt_num_rdim(pior_medicao.especificado_max)}"
+            elif pior_medicao.especificado_min is not None:
+                espec_txt = f"mín. {_fmt_num_rdim(pior_medicao.especificado_min)}"
+            else:
+                espec_txt = None
+            if espec_txt and medido is not None:
+                partes.append(f"{pior_medicao.grandeza}: especificação era {espec_txt} e ficou com {_fmt_num_rdim(medido)}")
+            elif medido is not None:
+                partes.append(f"{pior_medicao.grandeza}: medido {_fmt_num_rdim(medido)}")
+
+    if not partes and i.desvio_encontrado:
+        texto = i.desvio_encontrado.strip()
+        partes.append(texto[:140] + ("…" if len(texto) > 140 else ""))
+
+    if i.quantidade_com_desvio and i.item and i.item.quantidade:
+        partes.append(f"{_fmt_num_rdim(i.quantidade_com_desvio)} de {_fmt_num_rdim(i.item.quantidade)} peças")
+
+    return " — ".join(partes) if partes else None
+
+
+def _contexto_rnc(r):
+    """Texto curto de contexto pro apontamento de RNC no feed do Painel —
+    mesmo espírito do detalhe de desvio do RDIM acima: dar uma ideia real do
+    que aconteceu sem precisar abrir o RNC. Usa a descrição da não
+    conformidade (texto livre já preenchido no formulário); cai pro
+    requisito não atendido quando a descrição está vazia."""
+    texto = (r.descricao_nc or "").strip()
+    if texto:
+        return texto[:140] + ("…" if len(texto) > 140 else "")
+    if r.requisito_nao_atendido:
+        return f"Requisito não atendido: {r.requisito_nao_atendido}"
+    return None
+
+
 def _apontamentos_recentes_qualidade(desde=None, limite=15):
     """Últimos apontamentos de Qualidade (RDIM + RNC), mais recentes primeiro
     — pedido do Bruno (03/09/2026): "todo apontamento diário da qualidade...
@@ -2219,7 +2310,11 @@ def _apontamentos_recentes_qualidade(desde=None, limite=15):
     controle de leitura (guardado na sessão do próprio navegador)."""
     rdims = (
         InspecaoFinal.query
-        .options(selectinload(InspecaoFinal.item).selectinload(ItemPedido.pedido))
+        .options(
+            selectinload(InspecaoFinal.item).selectinload(ItemPedido.pedido),
+            selectinload(InspecaoFinal.medicoes),
+            selectinload(InspecaoFinal.pecas_desvio),
+        )
         .order_by(InspecaoFinal.criado_em.desc())
         .limit(limite)
         .all()
@@ -2233,6 +2328,7 @@ def _apontamentos_recentes_qualidade(desde=None, limite=15):
             "criado_em": i.criado_em,
             "titulo": f"{i.pedido_venda or 'Pedido —'} · {i.cliente or 'Sem cliente'}",
             "detalhe": RDIM_RESULTADO_LABELS.get(i.resultado, i.resultado or "Sem resultado"),
+            "contexto": _contexto_desvio_rdim(i),
             "cor": RDIM_RESULTADO_CORES.get(i.resultado, "secondary"),
             "link": url_for("rdim_editar", inspecao_id=i.id),
         })
@@ -2242,6 +2338,7 @@ def _apontamentos_recentes_qualidade(desde=None, limite=15):
             "criado_em": r.criado_em,
             "titulo": f"{r.numero_rnc or ('RNC #' + str(r.id))} · {r.cliente_projeto or 'Sem cliente/projeto'}",
             "detalhe": r.tipo_nc or r.status_geral or "Sem tipo",
+            "contexto": _contexto_rnc(r),
             "cor": RNC_SEVERIDADE_CORES.get(r.severidade, "secondary"),
             "link": url_for("qualidade_editar", rnc_id=r.id),
         })
