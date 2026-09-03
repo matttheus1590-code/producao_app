@@ -1772,21 +1772,153 @@ def _projecao_pcp_mensal(mes_de, mes_ate):
     return linhas
 
 
-def _pedidos_operacao_do_mes(ano, mes):
-    """Query de PedidoOperacao com Término Semanal PCP dentro do mês (ano,
-    mes) — MESMA definição de "mês" usada em _faturamento_semanal_pcp e no
-    segmento "planejamento" de _filtrar_pedidos_operacao, só que direta (sem
-    passar pelos filtros de cliente/vendedor/busca da tela). Usada pelo
-    resumo fixo do topo da tela Resultados/OTD (pedido do Bruno,
-    03/09/2026) — sempre mostra o mês selecionado, independente do
-    dropdown de segmento mais abaixo na página."""
-    semanas_mes = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, mes, 1))
-    return PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas_mes))
+_PERIODO_TIPOS = ("mes", "tri", "sem", "ano")
 
 
-def _faturamento_semanal_pcp(ano, mes):
-    """Faturamento de Agosto (ou qualquer mês) por semana de PCP — pedido do
-    Bruno em 28/08/2026.
+def _parse_periodo(valor_str):
+    """Decodifica o parâmetro `periodo` da tela Resultados/OTD — pedido do
+    Bruno (03/09/2026): "inclua em formato de lista... além do mês, inclua
+    também 1º trimestre, 2, 3, 4 trimestre, 1º e segundo semestre... e o
+    filtro geral (incluindo todos os períodos/meses)". Formatos aceitos:
+    "todos", "mes-AAAA-M", "tri-AAAA-T" (T 1-4), "sem-AAAA-S" (S 1-2),
+    "ano-AAAA". Sem valor reconhecível, cai no mês atual (mesmo default de
+    sempre). Devolve (tipo, ano, valor, label) — `valor` é None pra
+    tipo "ano" e pra "todos"."""
+    hoje = date.today()
+    padrao_mes_atual = ("mes", hoje.year, hoje.month, f"{MESES_PT[hoje.month - 1]}/{hoje.year}")
+
+    if valor_str == "todos":
+        return "todos", None, None, "Todos os períodos"
+
+    m = re.match(r"^(mes|tri|sem|ano)-(\d{4})(?:-(\d+))?$", valor_str or "")
+    if not m:
+        return padrao_mes_atual
+    tipo, ano_s, valor_s = m.groups()
+    ano = int(ano_s)
+    valor = int(valor_s) if valor_s else None
+
+    if tipo == "mes" and valor and 1 <= valor <= 12:
+        return "mes", ano, valor, f"{MESES_PT[valor - 1]}/{ano}"
+    if tipo == "tri" and valor and 1 <= valor <= 4:
+        return "tri", ano, valor, f"{valor}º Trimestre/{ano}"
+    if tipo == "sem" and valor and 1 <= valor <= 2:
+        return "sem", ano, valor, f"{valor}º Semestre/{ano}"
+    if tipo == "ano":
+        return "ano", ano, None, f"Ano {ano}"
+    return padrao_mes_atual
+
+
+def _periodo_para_str(tipo, ano, valor):
+    """Inverso de _parse_periodo (sem o label) — monta a string `periodo`
+    a partir de (tipo, ano, valor), pros links/campos ocultos do
+    formulário."""
+    if tipo == "todos":
+        return "todos"
+    if tipo == "ano":
+        return f"ano-{ano}"
+    return f"{tipo}-{ano}-{valor}"
+
+
+def _periodo_vizinho(tipo, ano, valor, direcao):
+    """String `periodo` do período vizinho (direcao -1 ou +1), na MESMA
+    granularidade — usado nos botões "Período anterior"/"Próximo período"
+    da tela Resultados/OTD, que agora navegam mês a mês, trimestre a
+    trimestre, semestre a semestre ou ano a ano, dependendo do que está
+    selecionado. "todos" não tem vizinho (botões ficam escondidos)."""
+    if tipo == "mes":
+        m, a = valor + direcao, ano
+        if m < 1:
+            m, a = 12, ano - 1
+        elif m > 12:
+            m, a = 1, ano + 1
+        return _periodo_para_str("mes", a, m)
+    if tipo == "tri":
+        t, a = valor + direcao, ano
+        if t < 1:
+            t, a = 4, ano - 1
+        elif t > 4:
+            t, a = 1, ano + 1
+        return _periodo_para_str("tri", a, t)
+    if tipo == "sem":
+        s, a = valor + direcao, ano
+        if s < 1:
+            s, a = 2, ano - 1
+        elif s > 2:
+            s, a = 1, ano + 1
+        return _periodo_para_str("sem", a, s)
+    if tipo == "ano":
+        return _periodo_para_str("ano", ano + direcao, None)
+    return None
+
+
+def _opcoes_periodo():
+    """Lista de opções pro dropdown de período da tela Resultados/OTD,
+    agrupada por ano (Ano atual - 1 até Ano atual + 1) — cada grupo com Ano
+    inteiro, os 2 semestres, os 4 trimestres e os 12 meses, mais "Todos os
+    períodos" no topo, fora de qualquer grupo."""
+    hoje = date.today()
+    grupos = []
+    for ano in range(hoje.year - 1, hoje.year + 2):
+        itens = [{"valor": _periodo_para_str("ano", ano, None), "label": f"Ano {ano}"}]
+        itens += [
+            {"valor": _periodo_para_str("sem", ano, s), "label": f"{s}º Semestre {ano}"} for s in (1, 2)
+        ]
+        itens += [
+            {"valor": _periodo_para_str("tri", ano, t), "label": f"{t}º Trimestre {ano}"} for t in (1, 2, 3, 4)
+        ]
+        itens += [
+            {"valor": _periodo_para_str("mes", ano, m), "label": f"{MESES_PT[m - 1]}/{ano}"} for m in range(1, 13)
+        ]
+        grupos.append({"ano": ano, "itens": itens})
+    return grupos
+
+
+def _semanas_do_periodo(tipo, ano, valor):
+    """Lista de rótulos de semana PCP (formato de gerar_semanas_pcp) cobertos
+    por um período mes/tri/sem/ano — não trata "todos" (ver
+    _filtrar_por_periodo_pcp, que pra "todos" não filtra nada)."""
+    if tipo == "mes":
+        meses = [valor]
+    elif tipo == "tri":
+        meses = list(range((valor - 1) * 3 + 1, (valor - 1) * 3 + 4))
+    elif tipo == "sem":
+        meses = list(range(1, 7)) if valor == 1 else list(range(7, 13))
+    else:  # "ano"
+        meses = list(range(1, 13))
+    semanas = []
+    for m in meses:
+        semanas.extend(gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, m, 1)))
+    return semanas
+
+
+def _filtrar_por_periodo_pcp(query, tipo, ano, valor):
+    """Aplica (ou não) o filtro de Término Semanal PCP num query de
+    PedidoOperacao, de acordo com o período — "todos" não filtra nada
+    (literalmente todos os pedidos, tenham ou não Término Semanal PCP
+    definido; pedido do Bruno, 03/09/2026: "o filtro geral, incluindo
+    todos os períodos/meses")."""
+    if tipo == "todos":
+        return query
+    semanas = _semanas_do_periodo(tipo, ano, valor)
+    return query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas))
+
+
+def _pedidos_operacao_do_periodo(tipo, ano, valor):
+    """Query de PedidoOperacao filtrada pelo período (ver
+    _filtrar_por_periodo_pcp), direta (sem passar pelos filtros de
+    cliente/vendedor/busca da tela). Usada pelo resumo fixo do topo da tela
+    Resultados/OTD (pedido do Bruno, 03/09/2026) — sempre mostra o período
+    selecionado, independente do dropdown de segmento mais abaixo na
+    página."""
+    return _filtrar_por_periodo_pcp(PedidoOperacao.query, tipo, ano, valor)
+
+
+def _faturamento_por_periodo(tipo, ano, valor):
+    """Generaliza o antigo "Faturamento por Semana" (só um mês) pra
+    qualquer período — mês, trimestre, semestre, ano ou "todos" — pedido do
+    Bruno em 28/08/2026 (base) e 03/09/2026 (dropdown de período). Uma
+    linha por semana de PCP dentro do período; pra "todos", usa toda semana
+    que realmente tem algum pedido (em vez de gerar um calendário sem fim).
 
     Revisado em 28/08/2026 depois que o Bruno conferiu os números da semana
     04/Ago manualmente: a versão original desta função exigia Data Efetiva de
@@ -1819,12 +1951,21 @@ def _faturamento_semanal_pcp(ano, mes):
     Bruno, 03/09/2026: clicar na semana e abrir os pedidos dela, sem sair da
     página) — já vem pronta daqui (sem N+1) porque os pedidos da semana já
     são carregados de qualquer forma pra somar qtd/valor."""
-    semanas = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, mes, 1))
-    pedidos = (
-        PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas))
-        .order_by(PedidoOperacao.pedido_venda)
-        .all()
-    )
+    if tipo == "todos":
+        pedidos_todos = (
+            PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.isnot(None))
+            .order_by(PedidoOperacao.pedido_venda)
+            .all()
+        )
+        semanas = sorted({p.go_termino_semanal_pcp for p in pedidos_todos}, key=_chave_semana_pcp)
+        pedidos = pedidos_todos
+    else:
+        semanas = _semanas_do_periodo(tipo, ano, valor)
+        pedidos = (
+            PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas))
+            .order_by(PedidoOperacao.pedido_venda)
+            .all()
+        )
 
     baldes = {
         s: {"qtd_liberada": 0, "valor_liberado": 0.0, "qtd_faturada": 0, "valor_faturado": 0.0, "pedidos": []}
@@ -2499,26 +2640,26 @@ def _filtrar_pedidos_operacao(args):
     Resultados). Independente de _filtrar_pedidos (Gestão Produção) — opera só
     em PedidoOperacao, sem nenhum join com Pedido/ItemPedido/estação.
 
-    `segmento` + `ano`/`mes` (pedido do Bruno, 03/09/2026 — tela Resultados/
+    `segmento` + `periodo` (pedido do Bruno, 03/09/2026 — tela Resultados/
     OTD: "quero ver todos os pedidos de julho faturados ou dentro do
-    planejamento semanal do pcp, com isso ver o otd") — reaproveita a MESMA
-    definição de "mês" já usada em _faturamento_semanal_pcp: agrupa pelo
-    Término Semanal PCP (go_termino_semanal_pcp), não por nenhuma data de
-    calendário.
-      - "planejamento": todo pedido cujo Término Semanal PCP cai no mês
+    planejamento semanal do pcp, com isso ver o otd"; ampliado no mesmo dia
+    pra aceitar não só mês, mas trimestre/semestre/ano/"todos" — ver
+    _parse_periodo) — reaproveita a MESMA definição de "período" já usada em
+    _faturamento_por_periodo: agrupa pelo Término Semanal PCP
+    (go_termino_semanal_pcp), não por nenhuma data de calendário.
+      - "planejamento": todo pedido cujo Término Semanal PCP cai no período
         escolhido (equivalente ao "Qtd/Valor liberado" da tabela semanal).
       - "faturados": o mesmo conjunto acima, restrito a quem já tem Valor NF
         Emitida preenchido (equivalente ao "Qtd/Valor faturado").
-    Sem `segmento` (ou sem ano/mes válidos), nenhum filtro de mês é
-    aplicado — comportamento antigo, todos os pedidos."""
+    Sem `segmento`, nenhum filtro de período é aplicado — comportamento
+    antigo, todos os pedidos."""
     query = PedidoOperacao.query
 
     cliente = args.get("cliente", "").strip()
     vendedor = args.get("vendedor", "").strip()
     busca = args.get("busca", "").strip()
     segmento = args.get("segmento", "").strip()
-    ano_segmento = args.get("ano", type=int)
-    mes_segmento = args.get("mes", type=int)
+    periodo_str = args.get("periodo", "").strip()
 
     if cliente:
         query = query.filter(PedidoOperacao.cliente.ilike(f"%{cliente}%"))
@@ -2534,15 +2675,8 @@ def _filtrar_pedidos_operacao(args):
         )
 
     if segmento in ("planejamento", "faturados"):
-        # ano/mes têm o mesmo default "mês atual" já usado na tela (Faturamento
-        # por Semana) — não exige que a requisição informe os dois pra o
-        # filtro funcionar (ex.: link direto/compartilhado sem ano/mes).
-        hoje = date.today()
-        ano_segmento = ano_segmento or hoje.year
-        if not mes_segmento or not (1 <= mes_segmento <= 12):
-            mes_segmento = hoje.month
-        semanas_mes = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano_segmento, mes_segmento, 1))
-        query = query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas_mes))
+        tipo_p, ano_p, valor_p, _ = _parse_periodo(periodo_str)
+        query = _filtrar_por_periodo_pcp(query, tipo_p, ano_p, valor_p)
         if segmento == "faturados":
             query = query.filter(PedidoOperacao.go_valor_nf_emitida.isnot(None))
     else:
@@ -4950,43 +5084,42 @@ def register_routes(app):
     @app.route("/gestao-operacao/resultados")
     @login_required
     def gestao_operacao_resultados():
-        # Faturamento por Semana (pedido do Bruno, 28/08/2026) — mês
-        # selecionável, sem hardcode: default é o mês atual (mesmo padrão da
-        # tela de Faturamento de Gestão Produção). Calculado ANTES de
-        # _linhas_gestao_operacao pra poder usar `ano`/`mes` (já com o
-        # default aplicado) nos campos ocultos do formulário de segmento
-        # (ver abaixo) — assim o filtro de segmento sempre navega com um
-        # ano/mês explícito, mesmo na primeira visita à página.
-        hoje = date.today()
-        ano = request.args.get("ano", hoje.year, type=int)
-        mes = request.args.get("mes", hoje.month, type=int)
-        if not (1 <= mes <= 12):
-            mes = hoje.month
-        faturamento_semanal = _faturamento_semanal_pcp(ano, mes)
-        mes_anterior_ano, mes_anterior_mes = (ano, mes - 1) if mes > 1 else (ano - 1, 12)
-        mes_seguinte_ano, mes_seguinte_mes = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
+        # Período (pedido do Bruno, 28/08/2026: mês selecionável; ampliado
+        # 03/09/2026 — "inclua em formato de lista... além do mês, inclua
+        # também trimestre, semestre... e o filtro geral" — ver
+        # _parse_periodo/_opcoes_periodo). Sem `periodo` na URL, cai no mês
+        # atual (mesmo default de sempre). Calculado ANTES de
+        # _linhas_gestao_operacao pra poder usar `periodo_str` (já com o
+        # default aplicado) no campo oculto do formulário de segmento (ver
+        # abaixo) — assim o filtro de segmento sempre navega com um período
+        # explícito, mesmo na primeira visita à página.
+        tipo_periodo, ano_periodo, valor_periodo, periodo_label = _parse_periodo(request.args.get("periodo", ""))
+        periodo_str = _periodo_para_str(tipo_periodo, ano_periodo, valor_periodo)
+        faturamento_semanal = _faturamento_por_periodo(tipo_periodo, ano_periodo, valor_periodo)
+        periodo_anterior = _periodo_vizinho(tipo_periodo, ano_periodo, valor_periodo, -1)
+        periodo_seguinte = _periodo_vizinho(tipo_periodo, ano_periodo, valor_periodo, 1)
 
         pedidos, page, total_paginas, total_filtrado, filtros, query_operacao = _linhas_gestao_operacao(request.args)
         # Pedido do Bruno (03/09/2026): "quero ver todos os pedidos de julho
         # faturados ou dentro do planejamento semanal do pcp, com isso ver o
-        # otd" — filtros["segmento"] (junto com ano/mes) já veio aplicado em
-        # query_operacao (ver _filtrar_pedidos_operacao); o resumo de OTD
+        # otd" — filtros["segmento"] (junto com o período) já veio aplicado
+        # em query_operacao (ver _filtrar_pedidos_operacao); o resumo de OTD
         # abaixo usa o MESMO recorte, em vez de sempre olhar pra todos os
         # pedidos.
         otd = _resumo_otd(query_operacao)
 
-        # Resumo fixo do mês (pedido do Bruno, 03/09/2026: "preciso ver os
-        # resultados detalhados de cada mês, como otd, lead time operação,
-        # lead time chão de fábrica (produção), lead time operação cif,
-        # lead time operação fob... de preferência no topo da página,
-        # do lado do faturamento") — SEMPRE o mês selecionado em cima
-        # (ano/mes), no mesmo recorte "planejamento" (Término Semanal PCP no
-        # mês) usado em "Qtd/Valor liberado", independente do dropdown de
+        # Resumo fixo do período (pedido do Bruno, 03/09/2026: "preciso ver
+        # os resultados detalhados de cada mês, como otd, lead time
+        # operação, lead time chão de fábrica (produção), lead time operação
+        # cif, lead time operação fob... de preferência no topo da página,
+        # do lado do faturamento") — SEMPRE o período selecionado em cima,
+        # no mesmo recorte "planejamento" (Término Semanal PCP no período)
+        # usado em "Qtd/Valor liberado", independente do dropdown de
         # segmento mais abaixo (que continua controlando só os cards de OTD
         # "geral" e a lista de pedidos).
-        query_mes = _pedidos_operacao_do_mes(ano, mes)
-        otd_mes = _resumo_otd(query_mes)
-        lead_times_mes = _resumo_lead_times(query_mes)
+        query_periodo = _pedidos_operacao_do_periodo(tipo_periodo, ano_periodo, valor_periodo)
+        otd_mes = _resumo_otd(query_periodo)
+        lead_times_mes = _resumo_lead_times(query_periodo)
 
         return render_template(
             "gestao_operacao_resultados.html",
@@ -4994,9 +5127,9 @@ def register_routes(app):
             total_filtrado=total_filtrado, filtros=filtros, otd=otd,
             faturamento_semanal=faturamento_semanal,
             otd_mes=otd_mes, lead_times_mes=lead_times_mes,
-            ano=ano, mes=mes, mes_label=f"{MESES_PT[mes - 1]}/{ano}",
-            mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
-            mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
+            periodo=periodo_str, tipo_periodo=tipo_periodo, mes_label=periodo_label,
+            periodo_anterior=periodo_anterior, periodo_seguinte=periodo_seguinte,
+            opcoes_periodo=_opcoes_periodo(),
         )
 
     @app.route("/gestao-operacao/listagem-geral")

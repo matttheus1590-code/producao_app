@@ -21,18 +21,39 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
       <h5 class="mb-0"><i class="bi bi-cash-stack"></i> Faturamento por Semana — {{ mes_label }}</h5>
-      <div class="d-flex align-items-center gap-2">
-        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_resultados', ano=mes_anterior.ano, mes=mes_anterior.mes, **filtros) }}">
-          <i class="bi bi-chevron-left"></i> Mês anterior
-        </a>
-        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_resultados', ano=mes_seguinte.ano, mes=mes_seguinte.mes, **filtros) }}">
-          Próximo mês <i class="bi bi-chevron-right"></i>
-        </a>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <form method="get" class="d-flex align-items-center gap-1">
+          {% for chave, valor in filtros.items() %}
+            <input type="hidden" name="{{ chave }}" value="{{ valor }}">
+          {% endfor %}
+          <label class="small text-muted mb-0 me-1" for="periodo-select"><i class="bi bi-calendar3"></i> Período:</label>
+          <select id="periodo-select" name="periodo" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+            <option value="todos" {% if tipo_periodo == "todos" %}selected{% endif %}>Todos os períodos</option>
+            {% for grupo in opcoes_periodo %}
+              <optgroup label="{{ grupo.ano }}">
+                {% for item in grupo.itens %}
+                  <option value="{{ item.valor }}" {% if item.valor == periodo %}selected{% endif %}>{{ item.label }}</option>
+                {% endfor %}
+              </optgroup>
+            {% endfor %}
+          </select>
+          <noscript><button class="btn btn-sm btn-primary" type="submit">Ir</button></noscript>
+        </form>
+        {% if periodo_anterior and periodo_seguinte %}
+        <div class="d-flex align-items-center gap-2">
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_resultados', periodo=periodo_anterior, **filtros) }}" title="Período anterior">
+            <i class="bi bi-chevron-left"></i>
+          </a>
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_resultados', periodo=periodo_seguinte, **filtros) }}" title="Próximo período">
+            <i class="bi bi-chevron-right"></i>
+          </a>
+        </div>
+        {% endif %}
       </div>
     </div>
     <p class="text-muted small mb-3">
-      Com base no Planejamento Semanal de PCP (Término Semanal PCP). "Liberado" = todo pedido planejado pra encerrar naquela semana (liberado ou não);
-      "Faturado" = Valor NF Emitida dos pedidos daquela semana.
+      Com base no Planejamento Semanal de PCP (Término Semanal PCP). "Liberado" = todo pedido planejado pra encerrar naquele período (liberado ou não);
+      "Faturado" = Valor NF Emitida dos pedidos daquele período.
     </p>
 
     <div class="row g-3 mb-3">
@@ -180,7 +201,7 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="5" class="text-center text-muted py-3">Nenhuma semana de PCP planejada nesse mês.</td></tr>
+          <tr><td colspan="5" class="text-center text-muted py-3">Nenhuma semana de PCP planejada nesse período.</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -191,26 +212,25 @@
 <div class="card mb-3">
   <div class="card-body py-3">
     <form method="get" class="d-flex align-items-center flex-wrap gap-2">
-      <input type="hidden" name="ano" value="{{ ano }}">
-      <input type="hidden" name="mes" value="{{ mes }}">
+      <input type="hidden" name="periodo" value="{{ periodo }}">
       <label class="form-label small text-muted mb-0 me-1" for="segmento-select">
         <i class="bi bi-funnel"></i> Ver OTD e pedidos de {{ mes_label }}:
       </label>
       <select id="segmento-select" name="segmento" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
-        <option value="" {% if not filtros.segmento %}selected{% endif %}>Todos os pedidos (sem filtro de mês)</option>
+        <option value="" {% if not filtros.segmento %}selected{% endif %}>Todos os pedidos (sem filtro de período)</option>
         <option value="planejamento" {% if filtros.segmento == "planejamento" %}selected{% endif %}>Dentro do planejamento semanal PCP</option>
         <option value="faturados" {% if filtros.segmento == "faturados" %}selected{% endif %}>Faturados (NF emitida)</option>
       </select>
       <noscript><button class="btn btn-sm btn-primary" type="submit">Filtrar</button></noscript>
       {% if filtros.segmento %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('gestao_operacao_resultados', ano=ano, mes=mes) }}">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('gestao_operacao_resultados', periodo=periodo) }}">
           <i class="bi bi-x-circle"></i> Limpar filtro
         </a>
       {% endif %}
     </form>
     {% if filtros.segmento %}
       <p class="text-muted small mb-0 mt-2">
-        Use <strong>Mês anterior</strong> / <strong>Próximo mês</strong> acima pra mudar o mês sem perder esse filtro.
+        Use o <strong>seletor de período</strong> acima pra mudar mês/trimestre/semestre/ano sem perder esse filtro.
       </p>
     {% endif %}
   </div>
@@ -351,7 +371,7 @@
   <ul class="pagination">
     {% for pg in range(1, total_paginas + 1) %}
       <li class="page-item {% if pg == page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('gestao_operacao_resultados', page=pg, ano=ano, mes=mes, **filtros) }}">{{ pg }}</a>
+        <a class="page-link" href="{{ url_for('gestao_operacao_resultados', page=pg, periodo=periodo, **filtros) }}">{{ pg }}</a>
       </li>
     {% endfor %}
   </ul>
