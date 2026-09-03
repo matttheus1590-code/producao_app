@@ -1472,7 +1472,7 @@ def _calcular_resumo_filtrado(linhas):
     }
 
 
-def _resumo_otd():
+def _resumo_otd(query=None):
     """Estatísticas de OTD (On-Time Delivery) da Gestão Operação — usa o campo
     go_otd_realizado (SIM/NÃO preenchido manualmente na planilha/tela), bem
     mais confiável que o _otd_percentual() antigo (que depende de datas quase
@@ -1480,9 +1480,16 @@ def _resumo_otd():
     quem ainda não tem essa informação fica de fora do percentual (não conta
     como "não cumpriu").
 
+    `query` (opcional): uma query de PedidoOperacao já filtrada (ver
+    _filtrar_pedidos_operacao) — pedido do Bruno (03/09/2026): filtrar
+    Resultados/OTD por mês/segmento (planejamento semanal PCP / faturados) e
+    ver o OTD só desse recorte. Sem argumento, mantém o comportamento antigo
+    (todos os pedidos).
+
     Gestão Operação tem tabela própria (PedidoOperacao) — cada linha já é um
     pedido comercial, sem precisar agrupar nada em tempo de execução."""
-    pedidos = PedidoOperacao.query.filter(PedidoOperacao.go_otd_realizado.isnot(None)).all()
+    base = query if query is not None else PedidoOperacao.query
+    pedidos = base.filter(PedidoOperacao.go_otd_realizado.isnot(None)).all()
 
     total = len(pedidos)
     no_prazo = sum(1 for p in pedidos if p.go_otd_realizado == "SIM")
@@ -2408,12 +2415,28 @@ DIR_PADRAO = "desc"
 def _filtrar_pedidos_operacao(args):
     """Filtros das 4 sub-abas de Gestão Operação (Comercial/PCP/Logística/
     Resultados). Independente de _filtrar_pedidos (Gestão Produção) — opera só
-    em PedidoOperacao, sem nenhum join com Pedido/ItemPedido/estação."""
+    em PedidoOperacao, sem nenhum join com Pedido/ItemPedido/estação.
+
+    `segmento` + `ano`/`mes` (pedido do Bruno, 03/09/2026 — tela Resultados/
+    OTD: "quero ver todos os pedidos de julho faturados ou dentro do
+    planejamento semanal do pcp, com isso ver o otd") — reaproveita a MESMA
+    definição de "mês" já usada em _faturamento_semanal_pcp: agrupa pelo
+    Término Semanal PCP (go_termino_semanal_pcp), não por nenhuma data de
+    calendário.
+      - "planejamento": todo pedido cujo Término Semanal PCP cai no mês
+        escolhido (equivalente ao "Qtd/Valor liberado" da tabela semanal).
+      - "faturados": o mesmo conjunto acima, restrito a quem já tem Valor NF
+        Emitida preenchido (equivalente ao "Qtd/Valor faturado").
+    Sem `segmento` (ou sem ano/mes válidos), nenhum filtro de mês é
+    aplicado — comportamento antigo, todos os pedidos."""
     query = PedidoOperacao.query
 
     cliente = args.get("cliente", "").strip()
     vendedor = args.get("vendedor", "").strip()
     busca = args.get("busca", "").strip()
+    segmento = args.get("segmento", "").strip()
+    ano_segmento = args.get("ano", type=int)
+    mes_segmento = args.get("mes", type=int)
 
     if cliente:
         query = query.filter(PedidoOperacao.cliente.ilike(f"%{cliente}%"))
@@ -2428,9 +2451,24 @@ def _filtrar_pedidos_operacao(args):
             )
         )
 
+    if segmento in ("planejamento", "faturados"):
+        # ano/mes têm o mesmo default "mês atual" já usado na tela (Faturamento
+        # por Semana) — não exige que a requisição informe os dois pra o
+        # filtro funcionar (ex.: link direto/compartilhado sem ano/mes).
+        hoje = date.today()
+        ano_segmento = ano_segmento or hoje.year
+        if not mes_segmento or not (1 <= mes_segmento <= 12):
+            mes_segmento = hoje.month
+        semanas_mes = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano_segmento, mes_segmento, 1))
+        query = query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas_mes))
+        if segmento == "faturados":
+            query = query.filter(PedidoOperacao.go_valor_nf_emitida.isnot(None))
+    else:
+        segmento = ""
+
     query = query.order_by(PedidoOperacao.data_inclusao_pedido.desc().nullslast(), PedidoOperacao.id.desc())
 
-    filtros = dict(cliente=cliente, vendedor=vendedor, busca=busca)
+    filtros = dict(cliente=cliente, vendedor=vendedor, busca=busca, segmento=segmento)
     return query, filtros
 
 
@@ -2438,13 +2476,15 @@ def _linhas_gestao_operacao(args):
     """Usado pelas 4 sub-abas de Gestão Operação: pagina o resultado de
     _filtrar_pedidos_operacao. Cada linha já é 1 pedido comercial (tabela
     própria PedidoOperacao) — sem duplicidade legada, sem precisar agrupar
-    nada em Python."""
+    nada em Python. Devolve também a `query` (filtrada, sem paginação) —
+    usada pela tela Resultados/OTD pra calcular o resumo de OTD só sobre o
+    mesmo conjunto filtrado (ver _resumo_otd)."""
     page = args.get("page", 1, type=int)
     query, filtros = _filtrar_pedidos_operacao(args)
     total_filtrado = query.count()
     total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
     pagina = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
-    return pagina, page, total_paginas, total_filtrado, filtros
+    return pagina, page, total_paginas, total_filtrado, filtros, query
 
 
 def _itens_producao_por_pedido_venda(pedidos_venda):
@@ -4800,7 +4840,7 @@ def register_routes(app):
     @app.route("/gestao-operacao/pcp")
     @login_required
     def gestao_operacao_pcp():
-        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
+        pedidos, page, total_paginas, total_filtrado, filtros, _query_operacao = _linhas_gestao_operacao(request.args)
         status_real_por_pedido_venda = _status_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
         liberacao_pcp_por_pedido_venda = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
         # "Solicitada cliente/retira" também acompanha ao vivo a "Data do
@@ -4818,7 +4858,7 @@ def register_routes(app):
     @app.route("/gestao-operacao/logistica")
     @login_required
     def gestao_operacao_logistica():
-        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
+        pedidos, page, total_paginas, total_filtrado, filtros, _query_operacao = _linhas_gestao_operacao(request.args)
         return render_template(
             "gestao_operacao_logistica.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -4828,12 +4868,13 @@ def register_routes(app):
     @app.route("/gestao-operacao/resultados")
     @login_required
     def gestao_operacao_resultados():
-        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
-        otd = _resumo_otd()
-
         # Faturamento por Semana (pedido do Bruno, 28/08/2026) — mês
         # selecionável, sem hardcode: default é o mês atual (mesmo padrão da
-        # tela de Faturamento de Gestão Produção).
+        # tela de Faturamento de Gestão Produção). Calculado ANTES de
+        # _linhas_gestao_operacao pra poder usar `ano`/`mes` (já com o
+        # default aplicado) nos campos ocultos do formulário de segmento
+        # (ver abaixo) — assim o filtro de segmento sempre navega com um
+        # ano/mês explícito, mesmo na primeira visita à página.
         hoje = date.today()
         ano = request.args.get("ano", hoje.year, type=int)
         mes = request.args.get("mes", hoje.month, type=int)
@@ -4842,6 +4883,15 @@ def register_routes(app):
         faturamento_semanal = _faturamento_semanal_pcp(ano, mes)
         mes_anterior_ano, mes_anterior_mes = (ano, mes - 1) if mes > 1 else (ano - 1, 12)
         mes_seguinte_ano, mes_seguinte_mes = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
+
+        pedidos, page, total_paginas, total_filtrado, filtros, query_operacao = _linhas_gestao_operacao(request.args)
+        # Pedido do Bruno (03/09/2026): "quero ver todos os pedidos de julho
+        # faturados ou dentro do planejamento semanal do pcp, com isso ver o
+        # otd" — filtros["segmento"] (junto com ano/mes) já veio aplicado em
+        # query_operacao (ver _filtrar_pedidos_operacao); o resumo de OTD
+        # abaixo usa o MESMO recorte, em vez de sempre olhar pra todos os
+        # pedidos.
+        otd = _resumo_otd(query_operacao)
 
         return render_template(
             "gestao_operacao_resultados.html",
@@ -4862,7 +4912,7 @@ def register_routes(app):
         clicar, no touch) sobre "Itens" mostra os produtos/quantidades já
         preenchidos em Gestão Produção pelo PCP, casando pelo nº de pedido de
         venda — sem criar nenhum vínculo real entre as duas tabelas."""
-        pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
+        pedidos, page, total_paginas, total_filtrado, filtros, _query_operacao = _linhas_gestao_operacao(request.args)
         itens_por_pedido_venda = _itens_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
         # Qualidade (RDIM) — pedido do Bruno (02/09/2026): indicador simples
         # (pedido-level, sem granularidade de item/estação) de "contém
