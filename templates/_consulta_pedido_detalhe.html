@@ -42,11 +42,24 @@
       </div>
     </div>
 
-    <div class="alert alert-{{ situacao_entrega.cor }} d-flex align-items-center gap-2 my-3">
-      <i class="bi {{ situacao_entrega.icone }} fs-4"></i>
-      <div>
-        <div class="fw-semibold small text-uppercase">Situação de entrega</div>
-        <div>{{ situacao_entrega.texto }}</div>
+    <div class="row g-2 my-3">
+      <div class="col-md-6">
+        <div class="alert alert-{{ situacao_entrega.cor }} d-flex align-items-center gap-2 h-100 mb-0">
+          <i class="bi {{ situacao_entrega.icone }} fs-4"></i>
+          <div>
+            <div class="fw-semibold small text-uppercase">Situação de entrega</div>
+            <div>{{ situacao_entrega.texto }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="alert alert-{{ otd_pedido.cor }} d-flex align-items-center gap-2 h-100 mb-0">
+          <i class="bi {{ otd_pedido.icone }} fs-4"></i>
+          <div>
+            <div class="fw-semibold small text-uppercase">OTD do pedido</div>
+            <div>{{ otd_pedido.texto }}</div>
+          </div>
+        </div>
       </div>
     </div>
 

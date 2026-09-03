@@ -3089,6 +3089,54 @@ def _situacao_entrega_go(go, pedido=None):
     return {"texto": "Ainda não expedido.", "cor": "secondary", "icone": "bi-hourglass"}
 
 
+def _otd_do_pedido(go):
+    """OTD (On-Time Delivery) de UM pedido específico — pedido do Bruno
+    (03/09/2026, tela Consulta Pedido): "incluir o OTD do pedido, se atendeu
+    ou não, bem didático e informativo", ao lado da "Situação de entrega".
+    Mesma fonte de verdade da tela Resultados/OTD (go.go_otd_realizado,
+    preenchido manualmente na aba Resultados/OTD de Gestão Operação) — nunca
+    recalculado por conta própria a partir de datas, pra não divergir do
+    número que já aparece agregado em Resultados/OTD.
+
+    go_dias_atraso_antecipacao (solicitado x entregue de verdade) entra só
+    como detalhe complementar, quando disponível — o "atendeu ou não" em si
+    sempre vem do campo manual."""
+    if go is None:
+        return {
+            "texto": "OTD não disponível — pedido ainda não lançado em Gestão Operação.",
+            "cor": "secondary",
+            "icone": "bi-question-circle",
+        }
+    if not go.go_otd_realizado:
+        return {
+            "texto": "OTD ainda não registrado para este pedido.",
+            "cor": "secondary",
+            "icone": "bi-hourglass",
+        }
+
+    atraso = go.go_dias_atraso_antecipacao
+    if atraso is None:
+        detalhe = ""
+    elif atraso > 0:
+        detalhe = f" — entregue {atraso} dia(s) após o prazo solicitado."
+    elif atraso < 0:
+        detalhe = f" — entregue {abs(atraso)} dia(s) antes do prazo solicitado."
+    else:
+        detalhe = " — entregue exatamente no dia solicitado."
+
+    if go.go_otd_realizado == "SIM":
+        return {
+            "texto": f"Atendeu o OTD (dentro do prazo solicitado){detalhe}",
+            "cor": "success",
+            "icone": "bi-check-circle-fill",
+        }
+    return {
+        "texto": f"Não atendeu o OTD (fora do prazo solicitado){detalhe}",
+        "cor": "danger",
+        "icone": "bi-x-circle-fill",
+    }
+
+
 # "Acompanhamento do pedido" — trilha de 5 etapas (recebido -> produção ->
 # inspeção/expedição -> transporte -> entrega) no painel de status de um
 # pedido. Pedido do Bruno (01/09/2026), a partir de uma imagem de referência
@@ -4513,6 +4561,7 @@ def register_routes(app):
         liberacao_pcp = _liberacao_pcp_por_pedido_venda([chave]).get(chave, {})
         data_cliente_producao = _data_cliente_por_pedido_venda([chave]).get(chave)
         situacao_entrega = _situacao_entrega_go(go, pedido)
+        otd_pedido = _otd_do_pedido(go)
         etapas = _etapas_acompanhamento_pedido(pedido, go)
 
         # Qualidade (RDIM) — pedido do Bruno (02/09/2026): ver o processo de
@@ -4525,7 +4574,7 @@ def register_routes(app):
             "_consulta_pedido_detalhe.html",
             pedido=pedido, go=go, pedido_venda=chave,
             liberacao_pcp=liberacao_pcp, data_cliente_producao=data_cliente_producao,
-            situacao_entrega=situacao_entrega,
+            situacao_entrega=situacao_entrega, otd_pedido=otd_pedido,
             etapas=etapas, nao_encontrado=False,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
         )
