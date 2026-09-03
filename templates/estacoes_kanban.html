@@ -38,6 +38,9 @@
               <div><i class="bi bi-box-seam"></i> {{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s)</div>
               <div><i class="bi bi-calendar-plus"></i> Incluído {{ item.pedido.data_inclusao_pedido.strftime("%d/%m/%Y") if item.pedido.data_inclusao_pedido else "—" }}</div>
               <div><i class="bi bi-calendar-event"></i> Solicitado {{ item.pedido.data_cliente.strftime("%d/%m/%Y") if item.pedido.data_cliente else "—" }}</div>
+              <div class="{% if cor == 'vermelho' %}text-danger fw-semibold{% elif cor == 'amarelo' %}text-warning fw-semibold{% endif %}">
+                <i class="bi bi-flag"></i> Previsto {{ item.liberacao_prevista.strftime("%d/%m/%Y") if item.liberacao_prevista else "—" }}
+              </div>
               {% if etapa in ("EM_PRODUCAO", "FINALIZADO") %}
               <div><i class="bi bi-play-circle"></i> Início produção {{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</div>
               {% endif %}
