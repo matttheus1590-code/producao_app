@@ -6,7 +6,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from itertools import zip_longest
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Response, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -2001,6 +2001,26 @@ def _faturamento_por_periodo(tipo, ano, valor):
     return {"linhas": linhas, "totais": totais}
 
 
+def _otd_mensal_ano(ano):
+    """OTD (Gestão Operação, go_otd_realizado) mês a mês, Jan-Dez de um ano —
+    pedido do Bruno (03/09/2026): gráfico de OTD mensal no Painel, mesma
+    meta mínima da tela Resultados/OTD (GO_OTD_META_PERCENTUAL, 78%). Usa o
+    mesmo recorte por Término Semanal PCP já usado em Resultados/OTD
+    (_pedidos_operacao_do_periodo/_resumo_otd), só resumido mês a mês pro
+    ano inteiro."""
+    resultado = []
+    for mes in range(1, 13):
+        query = _pedidos_operacao_do_periodo("mes", ano, mes)
+        otd = _resumo_otd(query)
+        resultado.append({
+            "mes": MESES_PT[mes - 1],
+            "percentual": otd["percentual"],
+            "total": otd["total"],
+            "atinge_meta": otd["atinge_meta"],
+        })
+    return resultado
+
+
 def _predicado_vencendo():
     """Pedido "vencendo": tem item com liberação prevista nos próximos
     PRAZO_ALERTA_DIAS dias (e ainda não atrasado nenhum item) — mesma regra do
@@ -2065,6 +2085,21 @@ def _faturamento_tendencia(meses=6):
     return resultado
 
 
+def _faturamento_mensal_ano(ano):
+    """Faturamento REALIZADO mês a mês, Jan-Dez de um ano — pedido do Bruno
+    (03/09/2026): trocar o gráfico "Faturamento previsto × realizado (6
+    meses)" do Painel por uma visão anual, só do realizado (o previsto
+    continua disponível no card "Faturamento previsto (mês)" acima e na tela
+    de Faturamento). Reaproveita _faturamento_mes (mesma fonte/critério de
+    sempre: liberação de faturamento dentro do mês, valor faturado real
+    quando preenchido, senão quantidade × custo)."""
+    resultado = []
+    for mes in range(1, 13):
+        _, realizado = _faturamento_mes(ano, mes)
+        resultado.append({"mes": MESES_PT[mes - 1], "realizado": realizado})
+    return resultado
+
+
 def _lead_time_medio_dias():
     """Média de dias entre início de produção e término de inspeção/embalagem,
     entre os itens que já têm as duas datas preenchidas.
@@ -2097,16 +2132,126 @@ def _otd_percentual():
 
 
 def _backlog_por_estacao():
-    """Quantidade de itens não finalizados por estação — usado no gráfico do
-    Painel e é a base do ranking de Gargalos (fase 8)."""
-    linhas = (
-        db.session.query(ItemPedido.estacao, func.count(ItemPedido.id))
-        .filter(ItemPedido.status_producao != "FINALIZADO", ItemPedido.estacao.isnot(None))
-        .group_by(ItemPedido.estacao)
-        .order_by(func.count(ItemPedido.id).desc())
+    """Quantidade de itens não finalizados por estação, com uma amostra dos
+    próprios pedidos parados ali — usado no gráfico "Backlog por estação" do
+    Painel (única tela que chama esta função). Pedido do Bruno (03/09/2026):
+
+      1) não contar "OUTROS"/"PROJETO ESPECIAL" nesse gráfico específico —
+         são "estações" genéricas demais aqui; a tela /estacoes continua
+         mostrando as duas normalmente (estacoes_lista() tem sua própria
+         consulta, independente desta função, então não é afetada);
+      2) ao passar o mouse, já ver quais pedidos estão parados naquela
+         estação, com link direto pra abrir o Kanban dela — por isso cada
+         linha já sai com uma amostra de itens (pedido/cliente/produto) e a
+         própria URL da estação, prontas pro tooltip/clique do gráfico (ver
+         painel.html)."""
+    ESTACOES_FORA_DO_GRAFICO_PAINEL = {"OUTROS", "PROJETO ESPECIAL"}
+    itens = (
+        ItemPedido.query.options(selectinload(ItemPedido.pedido))
+        .filter(
+            ItemPedido.status_producao != "FINALIZADO",
+            ItemPedido.estacao.isnot(None),
+            ~ItemPedido.estacao.in_(ESTACOES_FORA_DO_GRAFICO_PAINEL),
+        )
         .all()
     )
-    return [{"estacao": e or "—", "quantidade": q} for e, q in linhas]
+
+    agrupado = {}
+    for item in itens:
+        agrupado.setdefault(item.estacao, []).append(item)
+
+    resultado = []
+    for estacao, lista in agrupado.items():
+        lista.sort(key=lambda i: i.pedido.data_inclusao_pedido if (i.pedido and i.pedido.data_inclusao_pedido) else date.min)
+        amostra = [
+            {
+                "pedido_venda": i.pedido.pedido_venda if i.pedido else None,
+                "cliente": i.pedido.cliente if i.pedido else "—",
+                "produto": i.descricao_produto,
+            }
+            for i in lista[:8]
+        ]
+        resultado.append({
+            "estacao": estacao,
+            "quantidade": len(lista),
+            "itens_amostra": amostra,
+            "restante": max(0, len(lista) - len(amostra)),
+            "url": url_for("estacao_kanban", nome=estacao),
+        })
+    resultado.sort(key=lambda r: -r["quantidade"])
+    return resultado
+
+
+def _tempo_relativo(quando):
+    """"agora mesmo" / "há Xmin" / "há Xh" / "há X dias" a partir de um
+    datetime (UTC, mesmo padrão de todo `criado_em` no app) — usado só no
+    feed de apontamentos de Qualidade do Painel, pra dar uma ideia rápida de
+    "quando" sem cravar hora exata. Itens com mais de 30 dias caem pra data
+    cheia (dd/mm/aaaa), já que "há 47 dias" deixa de ser uma leitura útil."""
+    if not quando:
+        return "—"
+    segundos = (datetime.utcnow() - quando).total_seconds()
+    if segundos < 60:
+        return "agora mesmo"
+    if segundos < 3600:
+        return f"há {int(segundos // 60)}min"
+    if segundos < 86400:
+        return f"há {int(segundos // 3600)}h"
+    dias = int(segundos // 86400)
+    if dias == 1:
+        return "há 1 dia"
+    if dias < 30:
+        return f"há {dias} dias"
+    return quando.strftime("%d/%m/%Y")
+
+
+def _apontamentos_recentes_qualidade(desde=None, limite=15):
+    """Últimos apontamentos de Qualidade (RDIM + RNC), mais recentes primeiro
+    — pedido do Bruno (03/09/2026): "todo apontamento diário da qualidade...
+    tenha um campo de aviso ou notificação dentro do painel", pra ele, como
+    gestor, ter ciência breve de todo apontamento sem precisar entrar na
+    área de Qualidade todo dia — cada linha já sai com link direto pro
+    registro (RDIM -> rdim_editar, RNC -> qualidade_editar).
+
+    `desde` (opcional): datetime da última vez que o Painel foi aberto (ver
+    sessão 'ultima_visita_painel' na rota `painel()`) — marca quais entram
+    como "novo desde a última visita", sem precisar de tabela/coluna nova de
+    controle de leitura (guardado na sessão do próprio navegador)."""
+    rdims = (
+        InspecaoFinal.query
+        .options(selectinload(InspecaoFinal.item).selectinload(ItemPedido.pedido))
+        .order_by(InspecaoFinal.criado_em.desc())
+        .limit(limite)
+        .all()
+    )
+    rncs = RncQualidade.query.order_by(RncQualidade.criado_em.desc()).limit(limite).all()
+
+    eventos = []
+    for i in rdims:
+        eventos.append({
+            "tipo": "RDIM",
+            "criado_em": i.criado_em,
+            "titulo": f"{i.pedido_venda or 'Pedido —'} · {i.cliente or 'Sem cliente'}",
+            "detalhe": RDIM_RESULTADO_LABELS.get(i.resultado, i.resultado or "Sem resultado"),
+            "cor": RDIM_RESULTADO_CORES.get(i.resultado, "secondary"),
+            "link": url_for("rdim_editar", inspecao_id=i.id),
+        })
+    for r in rncs:
+        eventos.append({
+            "tipo": "RNC",
+            "criado_em": r.criado_em,
+            "titulo": f"{r.numero_rnc or ('RNC #' + str(r.id))} · {r.cliente_projeto or 'Sem cliente/projeto'}",
+            "detalhe": r.tipo_nc or r.status_geral or "Sem tipo",
+            "cor": RNC_SEVERIDADE_CORES.get(r.severidade, "secondary"),
+            "link": url_for("qualidade_editar", rnc_id=r.id),
+        })
+
+    eventos.sort(key=lambda e: e["criado_em"] or datetime.min, reverse=True)
+    eventos = eventos[:limite]
+    for e in eventos:
+        e["ha_quanto_tempo"] = _tempo_relativo(e["criado_em"])
+        e["novo"] = bool(desde and e["criado_em"] and e["criado_em"] > desde)
+    return eventos
 
 
 def _lead_time_por_estacao(desde=None):
@@ -4426,6 +4571,35 @@ def register_routes(app):
         if pcp_de > pcp_ate:
             pcp_de, pcp_ate = pcp_ate, pcp_de
 
+        # OTD/Lead Time da Operação, recorte "mês atual" — pedido do Bruno
+        # (03/09/2026): "os principais KPIs da operação já sejam visuais logo
+        # no painel", trazendo pro Painel os mesmos indicadores da tela
+        # Resultados/OTD (mesmas funções, mesmo critério/meta).
+        query_operacao_mes = _pedidos_operacao_do_periodo("mes", hoje.year, hoje.month)
+        otd_operacao_mes = _resumo_otd(query_operacao_mes)
+        lead_times_operacao_mes = _resumo_lead_times(query_operacao_mes)
+        mes_atual_label = f"{MESES_PT[hoje.month - 1]}/{hoje.year}"
+
+        # Gráficos anuais de faturamento realizado e OTD (pedido do Bruno,
+        # 03/09/2026, no lugar do antigo "previsto × realizado (6 meses)") —
+        # 1 filtro de ano simples, compartilhado pelos dois gráficos.
+        anos_disponiveis_graficos = list(range(hoje.year - 2, hoje.year + 1))
+        ano_graficos = request.args.get("ano_graficos", hoje.year, type=int)
+        if ano_graficos not in anos_disponiveis_graficos:
+            ano_graficos = hoje.year
+
+        # Apontamentos recentes de Qualidade (RDIM + RNC) — pedido do Bruno
+        # (03/09/2026): "notificação breve" de todo apontamento novo, pra ele
+        # ter ciência sem precisar entrar na área de Qualidade. "Novo desde a
+        # última visita" é guardado na sessão do navegador (sem tabela nova),
+        # e é sempre atualizado DEPOIS de calcular a lista, pra este mesmo
+        # carregamento ainda mostrar o que entrou desde a visita anterior.
+        ultima_visita_str = session.get("ultima_visita_painel")
+        ultima_visita = datetime.fromisoformat(ultima_visita_str) if ultima_visita_str else None
+        apontamentos_qualidade = _apontamentos_recentes_qualidade(desde=ultima_visita)
+        novos_apontamentos = sum(1 for a in apontamentos_qualidade if a["novo"])
+        session["ultima_visita_painel"] = datetime.utcnow().isoformat()
+
         return render_template(
             "painel.html",
             resumo=resumo,
@@ -4436,13 +4610,21 @@ def register_routes(app):
             realizado_mes=realizado_mes,
             lead_time_medio=_lead_time_medio_dias(),
             otd=_otd_percentual(),
-            tendencia_faturamento=_faturamento_tendencia(),
             backlog_estacao=_backlog_por_estacao(),
             pedidos_atrasados=pedidos_atrasados,
             projecao_pcp=_projecao_pcp(),
             projecao_pcp_mensal=_projecao_pcp_mensal(pcp_de, pcp_ate),
             pcp_de_str=f"{pcp_de[0]:04d}-{pcp_de[1]:02d}",
             pcp_ate_str=f"{pcp_ate[0]:04d}-{pcp_ate[1]:02d}",
+            otd_operacao_mes=otd_operacao_mes,
+            lead_times_operacao_mes=lead_times_operacao_mes,
+            mes_atual_label=mes_atual_label,
+            faturamento_mensal_ano=_faturamento_mensal_ano(ano_graficos),
+            otd_mensal_ano=_otd_mensal_ano(ano_graficos),
+            ano_graficos=ano_graficos,
+            anos_disponiveis_graficos=anos_disponiveis_graficos,
+            apontamentos_qualidade=apontamentos_qualidade,
+            novos_apontamentos=novos_apontamentos,
         )
 
     @app.route("/kpis")

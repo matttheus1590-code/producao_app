@@ -1035,3 +1035,51 @@ body.col-resizing-ativo {
 .semana-linha-clicavel[aria-expanded="true"] .semana-caret {
   transform: rotate(90deg);
 }
+
+/* ---------------------------------------------------------------------
+   Painel — "Últimos apontamentos de Qualidade (RDIM + RNC)" (pedido do
+   Bruno, 03/09/2026): feed curto e clicável, com destaque pro que é novo
+   desde a última visita ao Painel.
+--------------------------------------------------------------------- */
+.notif-qualidade-lista {
+  max-height: 280px;
+  overflow-y: auto;
+}
+.notif-qualidade-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.4rem;
+  border-bottom: 1px solid #eef0f2;
+  border-left: 3px solid transparent;
+  text-decoration: none;
+  color: inherit;
+}
+.notif-qualidade-item:last-child {
+  border-bottom: none;
+}
+.notif-qualidade-item:hover {
+  background-color: rgba(13, 110, 253, 0.06);
+}
+.notif-qualidade-item-novo {
+  border-left-color: #dc3545;
+  background-color: rgba(220, 53, 69, 0.04);
+}
+.notif-qualidade-tipo {
+  flex-shrink: 0;
+  min-width: 3.4rem;
+  text-align: center;
+}
+.notif-qualidade-titulo {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #212529;
+}
+.notif-qualidade-tempo {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

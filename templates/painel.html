@@ -41,8 +41,102 @@
 </div>
 {% endif %}
 
+<div class="card mb-4 border-info-subtle">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">
+        <i class="bi bi-bell"></i> Últimos apontamentos de Qualidade (RDIM + RNC)
+      </h6>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        {% if novos_apontamentos %}
+          <span class="badge bg-danger">{{ novos_apontamentos }} novo(s) desde sua última visita</span>
+        {% endif %}
+        <a href="{{ url_for('rdim_lista') }}" class="small"><i class="bi bi-clipboard-check"></i> RDIM</a>
+        <a href="{{ url_for('qualidade_lista') }}" class="small"><i class="bi bi-clipboard-x"></i> RNC</a>
+      </div>
+    </div>
+    {% if apontamentos_qualidade %}
+    <div class="notif-qualidade-lista">
+      {% for a in apontamentos_qualidade %}
+      <a href="{{ a.link }}" class="notif-qualidade-item {% if a.novo %}notif-qualidade-item-novo{% endif %}">
+        <span class="badge bg-{{ 'primary' if a.tipo == 'RDIM' else 'dark' }} notif-qualidade-tipo">{{ a.tipo }}</span>
+        <span class="notif-qualidade-titulo">{{ a.titulo }}</span>
+        <span class="badge bg-{{ a.cor }}">{{ a.detalhe }}</span>
+        {% if a.novo %}<span class="badge bg-danger">NOVO</span>{% endif %}
+        <span class="notif-qualidade-tempo text-muted small">{{ a.ha_quanto_tempo }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">Nenhum apontamento de Qualidade registrado ainda.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-1">
+      <h6 class="text-uppercase text-muted small mb-0">
+        <i class="bi bi-speedometer2"></i> OTD e Lead Time — Operação · {{ mes_atual_label }}
+      </h6>
+      <a href="{{ url_for('gestao_operacao_resultados') }}" class="small">Ver detalhado em Resultados/OTD <i class="bi bi-arrow-right"></i></a>
+    </div>
+    <p class="text-muted small mb-3">
+      Baseado no Planejamento Semanal de PCP (Término Semanal PCP) do mês atual — mesmos indicadores da tela Gestão Operação › Resultados/OTD.
+    </p>
+    <div class="row g-3">
+      <div class="col-6 col-lg-2">
+        {{ stat_card(
+          "🎯 OTD do mês",
+          (otd_operacao_mes.percentual ~ "%") if otd_operacao_mes.percentual is not none else "—",
+          cor=("success" if otd_operacao_mes.atinge_meta else "danger"),
+          borda=("success" if otd_operacao_mes.atinge_meta else "danger"),
+          sufixo=(otd_operacao_mes.total ~ " pedido(s) com OTD" if otd_operacao_mes.total else "sem OTD ainda")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-2">
+        {{ stat_card(
+          "⏱️ LT Operação",
+          (lead_times_operacao_mes.lt_operacao.media ~ "d") if lead_times_operacao_mes.lt_operacao.media is not none else "—",
+          cor="primary",
+          sufixo=(lead_times_operacao_mes.lt_operacao.n ~ " pedido(s)" if lead_times_operacao_mes.lt_operacao.n else "sem dado")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-2">
+        {{ stat_card(
+          "🚢 LT CIF",
+          (lead_times_operacao_mes.lt_operacao_cif.media ~ "d") if lead_times_operacao_mes.lt_operacao_cif.media is not none else "—",
+          sufixo=(lead_times_operacao_mes.lt_operacao_cif.n ~ " pedido(s)" if lead_times_operacao_mes.lt_operacao_cif.n else "sem dado")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-2">
+        {{ stat_card(
+          "🚚 LT FOB",
+          (lead_times_operacao_mes.lt_operacao_fob.media ~ "d") if lead_times_operacao_mes.lt_operacao_fob.media is not none else "—",
+          sufixo=(lead_times_operacao_mes.lt_operacao_fob.n ~ " pedido(s)" if lead_times_operacao_mes.lt_operacao_fob.n else "sem dado")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-2">
+        {{ stat_card(
+          "🚛 LT Frete",
+          (lead_times_operacao_mes.lt_frete.media ~ "d") if lead_times_operacao_mes.lt_frete.media is not none else "—",
+          sufixo=(lead_times_operacao_mes.lt_frete.n ~ " pedido(s)" if lead_times_operacao_mes.lt_frete.n else "sem dado")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-2">
+        {{ stat_card(
+          "🏭 LT Chão de Fábrica",
+          (lead_times_operacao_mes.lt_producao.media ~ "d") if lead_times_operacao_mes.lt_producao.media is not none else "—",
+          cor="secondary",
+          sufixo=(lead_times_operacao_mes.lt_producao.n ~ " item(ns)" if lead_times_operacao_mes.lt_producao.n else "sem dado")
+        ) }}
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="row g-3 mb-4">
-  <div class="col-lg-4">
+  <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-body">
         <h6 class="text-uppercase text-muted small mb-3">Pedidos por status</h6>
@@ -50,19 +144,39 @@
       </div>
     </div>
   </div>
-  <div class="col-lg-4">
+  <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Faturamento previsto × realizado (6 meses)</h6>
-        <canvas id="graficoFaturamento" height="220"></canvas>
+        <h6 class="text-uppercase text-muted small mb-1">Backlog por estação</h6>
+        <p class="text-muted small mb-2">Passe o mouse pra ver os pedidos parados ali; clique pra abrir a estação.</p>
+        <canvas id="graficoBacklog" height="220"></canvas>
       </div>
     </div>
   </div>
-  <div class="col-lg-4">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Backlog por estação</h6>
-        <canvas id="graficoBacklog" height="220"></canvas>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h6 class="text-uppercase text-muted small mb-0"><i class="bi bi-bar-chart-line"></i> Faturamento e OTD mensais — {{ ano_graficos }}</h6>
+      <form method="get" class="d-flex align-items-center gap-2">
+        <label class="small text-muted mb-0" for="ano-graficos-select">Ano:</label>
+        <select id="ano-graficos-select" name="ano_graficos" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+          {% for a in anos_disponiveis_graficos %}
+            <option value="{{ a }}" {% if a == ano_graficos %}selected{% endif %}>{{ a }}</option>
+          {% endfor %}
+        </select>
+        <noscript><button class="btn btn-sm btn-primary" type="submit">Ir</button></noscript>
+      </form>
+    </div>
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <h6 class="text-muted small mb-2">Faturamento realizado por mês</h6>
+        <canvas id="graficoFaturamentoAnual" height="220"></canvas>
+      </div>
+      <div class="col-lg-6">
+        <h6 class="text-muted small mb-2">OTD por mês <span class="text-muted">(meta mínima {{ GO_OTD_META_PERCENTUAL }}%)</span></h6>
+        <canvas id="graficoOtdAnual" height="220"></canvas>
       </div>
     </div>
   </div>
@@ -208,27 +322,107 @@
     options: { plugins: { legend: { position: "bottom" } } },
   });
 
-  const tendencia = {{ tendencia_faturamento | tojson }};
-  new Chart(document.getElementById("graficoFaturamento"), {
-    type: "bar",
-    data: {
-      labels: tendencia.map(function (p) { return p.mes; }),
-      datasets: [
-        { label: "Previsto", data: tendencia.map(function (p) { return p.previsto; }), backgroundColor: "#6ea8fe" },
-        { label: "Realizado", data: tendencia.map(function (p) { return p.realizado; }), backgroundColor: "#198754" },
-      ],
-    },
-    options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
-  });
-
+  // Backlog por estação — pedido do Bruno (03/09/2026): hover mostra os
+  // pedidos parados naquela estação (sem OUTROS/PROJETO ESPECIAL, só nesse
+  // gráfico) e clicar abre o Kanban da estação direto.
   const backlogEstacao = {{ backlog_estacao | tojson }};
-  new Chart(document.getElementById("graficoBacklog"), {
+  const backlogCanvas = document.getElementById("graficoBacklog");
+  new Chart(backlogCanvas, {
     type: "bar",
     data: {
       labels: backlogEstacao.map(function (p) { return p.estacao; }),
       datasets: [{ label: "Itens em aberto", data: backlogEstacao.map(function (p) { return p.quantidade; }), backgroundColor: "#f59f00" }],
     },
-    options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
+    options: {
+      indexAxis: "y",
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: function (itens) {
+              const p = backlogEstacao[itens[0].dataIndex];
+              return p.estacao + " — " + p.quantidade + " item(ns) em aberto";
+            },
+            label: function (ctx) {
+              const p = backlogEstacao[ctx.dataIndex];
+              const linhas = p.itens_amostra.map(function (it) {
+                return "• " + (it.pedido_venda || "—") + " · " + (it.cliente || "—");
+              });
+              if (p.restante > 0) linhas.push("+ " + p.restante + " outro(s)");
+              linhas.push("");
+              linhas.push("Clique para abrir a estação →");
+              return linhas;
+            },
+          },
+        },
+      },
+      scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+      onClick: function (evt, elements) {
+        if (!elements.length) return;
+        const p = backlogEstacao[elements[0].index];
+        if (p && p.url) window.location.href = p.url;
+      },
+      onHover: function (evt, elements) {
+        backlogCanvas.style.cursor = elements.length ? "pointer" : "default";
+      },
+    },
+  });
+
+  // Faturamento realizado mensal (ano) — no lugar do antigo "previsto x
+  // realizado (6 meses)", pedido do Bruno (03/09/2026).
+  const faturamentoAnual = {{ faturamento_mensal_ano | tojson }};
+  new Chart(document.getElementById("graficoFaturamentoAnual"), {
+    type: "bar",
+    data: {
+      labels: faturamentoAnual.map(function (p) { return p.mes; }),
+      datasets: [{ label: "Faturamento realizado", data: faturamentoAnual.map(function (p) { return p.realizado; }), backgroundColor: "#198754" }],
+    },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+  });
+
+  // OTD mensal (ano), com linha de meta mínima — pedido do Bruno (03/09/2026).
+  const otdAnual = {{ otd_mensal_ano | tojson }};
+  const otdMeta = {{ GO_OTD_META_PERCENTUAL }};
+  new Chart(document.getElementById("graficoOtdAnual"), {
+    data: {
+      labels: otdAnual.map(function (p) { return p.mes; }),
+      datasets: [
+        {
+          type: "bar",
+          label: "OTD (%)",
+          data: otdAnual.map(function (p) { return p.percentual; }),
+          backgroundColor: otdAnual.map(function (p) {
+            if (p.percentual === null) return "#dee2e6";
+            return p.atinge_meta ? "#198754" : "#dc3545";
+          }),
+        },
+        {
+          type: "line",
+          label: "Meta mínima (" + otdMeta + "%)",
+          data: otdAnual.map(function () { return otdMeta; }),
+          borderColor: "#6c757d",
+          borderDash: [6, 4],
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: {
+          callbacks: {
+            afterLabel: function (ctx) {
+              if (ctx.datasetIndex !== 0) return "";
+              const p = otdAnual[ctx.dataIndex];
+              return p.total ? p.total + " pedido(s) com OTD registrado" : "sem OTD registrado ainda";
+            },
+          },
+        },
+      },
+      scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + "%"; } } } },
+    },
   });
 
   const projecaoPcp = {{ projecao_pcp | tojson }};
