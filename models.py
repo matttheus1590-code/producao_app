@@ -415,6 +415,20 @@ class Pedido(db.Model):
         order_by="ItemPedido.id",
     )
 
+    # Todo o histórico de auditoria ligado a este pedido — tanto edições do
+    # pedido em si quanto dos itens/inspeções dele, já que
+    # HistoricoAlteracao.pedido_id vem preenchido nos três casos (ver
+    # comentário na classe HistoricoAlteracao). cascade="all, delete-orphan"
+    # (bug corrigido 03/09/2026, pedido do Bruno "não consigo apagar nenhum
+    # pedido"): sem isso, excluir_pedido batia em ForeignKeyViolation assim
+    # que o pedido tinha qualquer histórico de alteração — ou seja,
+    # basicamente todo pedido já editado ao menos uma vez.
+    historico = db.relationship(
+        "HistoricoAlteracao",
+        backref="pedido",
+        cascade="all, delete-orphan",
+    )
+
     # ------------- Dados do pedido como um todo -------------
     prioridade = db.Column(db.String(20), default="MÉDIA")
     obs = db.Column(db.Text, nullable=True)
@@ -726,7 +740,12 @@ class Programacao(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     item_pedido_id = db.Column(db.Integer, db.ForeignKey("itens_pedido.id"), nullable=False)
-    item = db.relationship("ItemPedido", backref="programacoes")
+    # cascade="all, delete-orphan" no backref (bug corrigido 03/09/2026, pedido
+    # do Bruno "não consigo apagar nenhum pedido"): sem isso, apagar um item
+    # com programação (ou o pedido inteiro, via cascade de Pedido.itens)
+    # batia em ForeignKeyViolation na hora do commit, porque o item era
+    # excluído sem antes excluir as Programacao que ainda apontavam pra ele.
+    item = db.relationship("ItemPedido", backref=db.backref("programacoes", cascade="all, delete-orphan"))
 
     data_programada = db.Column(db.Date, nullable=False)
     estacao = db.Column(db.String(40), nullable=False)  # snapshot — pode divergir do item se ele for reatribuído depois
@@ -986,7 +1005,17 @@ class InspecaoFinal(db.Model):
     id = db.Column(db.Integer, primary_key=True)
 
     item_pedido_id = db.Column(db.Integer, db.ForeignKey("itens_pedido.id"), nullable=False)
-    item = db.relationship("ItemPedido", foreign_keys=[item_pedido_id])
+    # cascade="all, delete-orphan" no backref (bug corrigido 03/09/2026,
+    # pedido do Bruno "não consigo apagar nenhum pedido"): sem isso, apagar
+    # um item que já tinha inspeção RDIM (ou o pedido inteiro, via cascade de
+    # Pedido.itens) batia em ForeignKeyViolation, porque o item era excluído
+    # sem antes excluir as InspecaoFinal que ainda apontavam pra ele —
+    # RdimMedicao/RdimPecaDesvio já tinham cascade certo a partir daqui, só
+    # faltava este elo entre ItemPedido e InspecaoFinal.
+    item = db.relationship(
+        "ItemPedido", foreign_keys=[item_pedido_id],
+        backref=db.backref("inspecoes_finais", cascade="all, delete-orphan"),
+    )
 
     # Copiada do item no momento da criação — não é recalculada depois (se o
     # item mudar de estação mais tarde, esta inspeção continua contando a

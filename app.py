@@ -11,6 +11,7 @@ from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from sqlalchemy import and_, extract, false, func, inspect, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from extensions import db, login_manager
@@ -3673,11 +3674,16 @@ def _responder_xlsx(nome_arquivo, cabecalho, linhas, titulo="Relatório"):
 
 
 def _construir_backup_pedidos_wb():
-    """Monta um Workbook com TODAS as colunas de Pedido, ItemPedido e
-    PedidoOperacao (uma aba cada), lendo as colunas direto do mapeamento do
-    SQLAlchemy (não uma lista escrita à mão) — assim não corre o risco de
-    esquecer um campo novo que apareça no futuro. Usado como rede de
-    segurança antes de "/admin/zerar-dados" apagar tudo de verdade."""
+    """Monta um Workbook com TODAS as colunas de cada tabela apagada por
+    "/admin/zerar-dados" (uma aba cada), lendo as colunas direto do
+    mapeamento do SQLAlchemy (não uma lista escrita à mão) — assim não corre
+    o risco de esquecer um campo novo que apareça no futuro. Usado como rede
+    de segurança antes da exclusão permanente.
+
+    Pedido do Bruno (03/09/2026): "zerar dados" passou a apagar também
+    Qualidade (RNC + RDIM) e P&D, então o backup precisa cobrir as mesmas
+    tabelas — senão a "rede de segurança" fica incompleta bem na hora que
+    mais importa."""
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -3700,9 +3706,24 @@ def _construir_backup_pedidos_wb():
             largura = max(valores) if valores else 10
             ws.column_dimensions[coluna[0].column_letter].width = min(largura + 2, 40)
 
+    # ---- Produção + Operação (já existia) ----
     _add_sheet("Pedidos", Pedido, Pedido.query.order_by(Pedido.id).all())
     _add_sheet("Itens", ItemPedido, ItemPedido.query.order_by(ItemPedido.id).all())
     _add_sheet("Gestao Operacao", PedidoOperacao, PedidoOperacao.query.order_by(PedidoOperacao.id).all())
+    _add_sheet("Programacao", Programacao, Programacao.query.order_by(Programacao.id).all())
+    _add_sheet("Historico Alteracoes", HistoricoAlteracao, HistoricoAlteracao.query.order_by(HistoricoAlteracao.id).all())
+
+    # ---- Qualidade: RNC + RDIM (novo, 03/09/2026) ----
+    _add_sheet("RNC Qualidade", RncQualidade, RncQualidade.query.order_by(RncQualidade.id).all())
+    _add_sheet("Inspecoes RDIM", InspecaoFinal, InspecaoFinal.query.order_by(InspecaoFinal.id).all())
+    _add_sheet("RDIM Medicoes", RdimMedicao, RdimMedicao.query.order_by(RdimMedicao.id).all())
+    _add_sheet("RDIM Pecas Desvio", RdimPecaDesvio, RdimPecaDesvio.query.order_by(RdimPecaDesvio.id).all())
+
+    # ---- P&D (novo, 03/09/2026) ----
+    _add_sheet("Projetos PD", ProjetoPD, ProjetoPD.query.order_by(ProjetoPD.id).all())
+    _add_sheet("Testes PD", TesteProjetoPD, TesteProjetoPD.query.order_by(TesteProjetoPD.id).all())
+    _add_sheet("Visitas Reunioes PD", VisitaReuniaoPD, VisitaReuniaoPD.query.order_by(VisitaReuniaoPD.id).all())
+
     return wb
 
 
@@ -4371,7 +4392,25 @@ def register_routes(app):
         pedido = db.session.get(Pedido, pedido_id)
         if pedido is not None:
             db.session.delete(pedido)
-            db.session.commit()
+            try:
+                db.session.commit()
+            except IntegrityError:
+                # Defesa extra (bug real corrigido 03/09/2026, pedido do
+                # Bruno "não consigo apagar nenhum pedido"): faltavam
+                # cascades de exclusão pra Programacao/InspecaoFinal/
+                # HistoricoAlteracao, o que fazia qualquer pedido já editado
+                # ou inspecionado estourar um 500 sem aviso nenhum. Os
+                # relacionamentos já foram corrigidos com cascade="all,
+                # delete-orphan" em models.py — isto aqui é só uma rede de
+                # segurança pra nunca mais devolver um 500 cru se algum
+                # cadastro novo no futuro esquecer o mesmo cuidado.
+                db.session.rollback()
+                flash(
+                    "Não foi possível excluir este pedido: ainda há registros vinculados a ele "
+                    "(histórico, inspeção ou programação) que não puderam ser removidos. Avise o suporte.",
+                    "danger",
+                )
+                return redirect(url_for("dashboard"))
             flash("Pedido excluído.", "info")
         return redirect(url_for("dashboard"))
 
@@ -5128,11 +5167,16 @@ def register_routes(app):
         return redirect(url_for("usuarios_lista"))
 
     # ------------------------------------------------------------------
-    # Zerar dados de teste (pedido do Bruno, 28/08/2026) — apaga TODOS os
-    # Pedido/ItemPedido (Gestão Produção) e PedidoOperacao (Gestão Operação)
-    # de uma vez, pra ele testar manualmente a inclusão de itens do zero. Só
-    # ADMIN, com confirmação por texto digitado — e sempre com um backup
-    # (.xlsx) disponível antes, já que é uma exclusão permanente.
+    # Zerar dados de teste (pedido do Bruno, 28/08/2026; ampliado pra
+    # Qualidade + P&D em 03/09/2026 — "quero que exclua não só produção e
+    # operação, mas também todos os dados de testes (P&D e Qualidade)") —
+    # apaga TODOS os Pedido/ItemPedido (Gestão Produção), PedidoOperacao
+    # (Gestão Operação), RncQualidade + InspecaoFinal/RdimMedicao/
+    # RdimPecaDesvio (Qualidade) e ProjetoPD/TesteProjetoPD/VisitaReuniaoPD
+    # (P&D) de uma vez, pra ele testar manualmente do zero. Só ADMIN, com
+    # confirmação por texto digitado — e sempre com um backup (.xlsx)
+    # disponível antes, já que é uma exclusão permanente. Cadastros
+    # (usuários, estações, transportadoras) nunca são tocados.
     # ------------------------------------------------------------------
     _FRASE_CONFIRMACAO_ZERAR = "ZERAR TUDO"
 
@@ -5144,6 +5188,9 @@ def register_routes(app):
             total_pedidos=Pedido.query.count(),
             total_itens=ItemPedido.query.count(),
             total_pedidos_operacao=PedidoOperacao.query.count(),
+            total_rnc=RncQualidade.query.count(),
+            total_inspecoes_rdim=InspecaoFinal.query.count(),
+            total_projetos_pd=ProjetoPD.query.count(),
             frase_confirmacao=_FRASE_CONFIRMACAO_ZERAR,
         )
 
@@ -5175,30 +5222,51 @@ def register_routes(app):
         total_pedidos = Pedido.query.count()
         total_itens = ItemPedido.query.count()
         total_pedidos_operacao = PedidoOperacao.query.count()
+        total_rnc = RncQualidade.query.count()
+        total_inspecoes_rdim = InspecaoFinal.query.count()
+        total_projetos_pd = ProjetoPD.query.count()
 
-        # Ordem importa: filhos antes dos pais, por causa das foreign keys
-        # (Programacao -> ItemPedido; HistoricoAlteracao -> Pedido).
+        # Ordem importa: filhos antes dos pais, por causa das foreign keys —
+        # bulk delete (.query.delete()) não aciona cascade de ORM, só as
+        # normais do banco, então cada FK precisa ser removida "na mão" na
+        # ordem certa (RdimPecaDesvio/RdimMedicao -> InspecaoFinal ->
+        # ItemPedido; Programacao -> ItemPedido; HistoricoAlteracao ->
+        # Pedido; TesteProjetoPD/VisitaReuniaoPD -> ProjetoPD). RncQualidade
+        # e ProjetoPD/PedidoOperacao são tabelas independentes (sem FK com o
+        # resto), podem vir em qualquer ordem.
+        RdimPecaDesvio.query.delete(synchronize_session=False)
+        RdimMedicao.query.delete(synchronize_session=False)
+        InspecaoFinal.query.delete(synchronize_session=False)
         Programacao.query.delete(synchronize_session=False)
         HistoricoAlteracao.query.delete(synchronize_session=False)
         ItemPedido.query.delete(synchronize_session=False)
         Pedido.query.delete(synchronize_session=False)
         PedidoOperacao.query.delete(synchronize_session=False)
+        RncQualidade.query.delete(synchronize_session=False)
+        TesteProjetoPD.query.delete(synchronize_session=False)
+        VisitaReuniaoPD.query.delete(synchronize_session=False)
+        ProjetoPD.query.delete(synchronize_session=False)
 
         # Marca que foi de propósito — sem isso, _seed_inicial e
         # _importar_gestao_operacao reimportariam a planilha antiga sozinhos
-        # no próximo deploy, assim que virem as tabelas vazias.
+        # no próximo deploy, assim que virem as tabelas vazias. (RNC e P&D
+        # não têm reimportação automática recorrente — _seed_rnc_qualidade já
+        # roda uma única vez, guardado por ControleSistema próprio, e nunca
+        # reimporta de novo mesmo com a tabela vazia; P&D não tem seed nenhum.)
         if ControleSistema.query.filter_by(chave=_CHAVE_DADOS_ZERADOS_MANUALMENTE).first() is None:
             db.session.add(ControleSistema(chave=_CHAVE_DADOS_ZERADOS_MANUALMENTE))
 
         db.session.commit()
         app.logger.warning(
-            "ZERAR DADOS: %s executou a limpeza manual — %d pedidos, %d itens e %d pedidos de "
-            "Gestão Operação apagados.",
+            "ZERAR DADOS: %s executou a limpeza manual — %d pedidos, %d itens, %d pedidos de Gestão "
+            "Operação, %d RNCs, %d inspeções RDIM e %d projetos de P&D apagados.",
             current_user.nome, total_pedidos, total_itens, total_pedidos_operacao,
+            total_rnc, total_inspecoes_rdim, total_projetos_pd,
         )
         flash(
-            f"Pronto: {total_pedidos} pedido(s), {total_itens} item(ns) e {total_pedidos_operacao} "
-            "pedido(s) de Gestão Operação foram apagados. Pode começar a testar do zero.",
+            f"Pronto: {total_pedidos} pedido(s), {total_itens} item(ns), {total_pedidos_operacao} "
+            f"pedido(s) de Gestão Operação, {total_rnc} RNC(s), {total_inspecoes_rdim} inspeção(ões) "
+            f"RDIM e {total_projetos_pd} projeto(s) de P&D foram apagados. Pode começar a testar do zero.",
             "success",
         )
         return redirect(url_for("admin_zerar_dados"))

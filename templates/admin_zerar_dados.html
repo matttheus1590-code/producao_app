@@ -8,8 +8,9 @@
 
 <div class="alert alert-warning">
   <i class="bi bi-exclamation-triangle"></i>
-  Isso apaga <strong>permanentemente</strong> todos os pedidos e itens de Gestão Produção e todos os
-  pedidos de Gestão Operação. Cadastros (usuários, estações, transportadoras) não são afetados.
+  Isso apaga <strong>permanentemente</strong> todos os pedidos e itens de Gestão Produção, todos os
+  pedidos de Gestão Operação, todos os RNCs e inspeções RDIM de Qualidade, e todos os projetos de P&D.
+  Cadastros (usuários, estações, transportadoras) não são afetados.
 </div>
 
 <div class="row g-3 mb-4">
@@ -31,14 +32,33 @@
       <div class="fs-3 fw-semibold">{{ total_pedidos_operacao }}</div>
     </div></div>
   </div>
+  <div class="col-6 col-lg-4">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">RNCs (Qualidade)</div>
+      <div class="fs-3 fw-semibold">{{ total_rnc }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-4">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Inspeções RDIM (Qualidade)</div>
+      <div class="fs-3 fw-semibold">{{ total_inspecoes_rdim }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-4">
+    <div class="card text-center h-100"><div class="card-body">
+      <div class="text-muted small">Projetos (P&amp;D)</div>
+      <div class="fs-3 fw-semibold">{{ total_projetos_pd }}</div>
+    </div></div>
+  </div>
 </div>
 
 <div class="card mb-4">
   <div class="card-body">
     <h6 class="text-uppercase text-muted small mb-2">Passo 1 — Baixar backup</h6>
     <p class="text-muted small">
-      Gera um Excel com tudo que existe hoje (Pedidos, Itens e Gestão Operação), pra garantir que nada
-      se perde de verdade. Pode baixar quantas vezes quiser, mesmo sem intenção de zerar depois.
+      Gera um Excel com tudo que existe hoje (Pedidos, Itens, Gestão Operação, RNC, Inspeções RDIM e
+      P&D), pra garantir que nada se perde de verdade. Pode baixar quantas vezes quiser, mesmo sem
+      intenção de zerar depois.
     </p>
     <a href="{{ url_for('admin_zerar_dados_backup') }}" class="btn btn-outline-primary">
       <i class="bi bi-download"></i> Baixar backup completo (.xlsx)
@@ -61,8 +81,8 @@
         </div>
         <div class="col-md-6">
           <button type="submit" class="btn btn-danger" id="btnZerarDados" disabled
-                  onclick="return confirm('Tem certeza? Isso apaga TODOS os pedidos e itens de forma permanente.');">
-            <i class="bi bi-trash3"></i> Zerar Pedidos e Itens (Produção + Operação)
+                  onclick="return confirm('Tem certeza? Isso apaga TODOS os pedidos, itens, dados de Gestão Operação, Qualidade (RNC + RDIM) e P&amp;D de forma permanente.');">
+            <i class="bi bi-trash3"></i> Zerar tudo (Produção + Operação + Qualidade + P&amp;D)
           </button>
         </div>
       </div>
