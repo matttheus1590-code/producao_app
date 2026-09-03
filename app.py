@@ -281,6 +281,10 @@ def create_app():
         # Roda por último de todos: depende de tudo acima (Pedido/ItemPedido
         # com todas as colunas migradas, PedidoOperacao já existindo).
         _sincronizar_planilha_producao_03_09_2026(app)
+        # Mesmo motivo do sync 28/08 acima, só que com a planilha mais nova
+        # que o Bruno mandou em 03/09 (mesmo layout de coluna, bloco
+        # "Resultados" novo) — depende só de PedidoOperacao já existir.
+        _sincronizar_gestao_operacao_03_09_2026(app)
 
     @app.context_processor
     def inject_globals():
@@ -1122,6 +1126,63 @@ def _sincronizar_gestao_operacao_28_08_2026(app):
         stats["exato"],
         stats["aproximado"],
     )
+
+
+_CHAVE_SINCRONIZACAO_GO_03_09_2026 = "sincronizacao_gestao_operacao_03_09_2026"
+
+
+def _sincronizar_gestao_operacao_03_09_2026(app):
+    """Sincroniza Gestão Operação (PedidoOperacao) com a planilha "03_09 Gestão
+    de Fluxo Produtivo 2026" enviada pelo Bruno — mesmo formato de coluna já
+    usado em 28/08/2026 (conferido coluna a coluna antes de reaproveitar
+    sincronizar_gestao_operacao.py), com o bloco novo "Resultados" (valor NF/
+    custo produção/custo frete, mais completo — ver _coalesce_numero em
+    sincronizar_gestao_operacao.py) e rastreio de criticidade/OTD fora do
+    esperado. Protegido por `ControleSistema` — roda exatamente uma vez, e
+    nunca lança exceção (um erro aqui não pode derrubar o boot do site
+    inteiro)."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SINCRONIZACAO_GO_03_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "sincronizacao_gestao_operacao_03_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from sincronizar_gestao_operacao import sincronizar_gestao_operacao
+
+    try:
+        stats = sincronizar_gestao_operacao(xlsx_path)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Sincronização Gestão Operação 03/09/2026 falhou com erro inesperado.")
+        return
+
+    db.session.add(ControleSistema(chave=_CHAVE_SINCRONIZACAO_GO_03_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Sincronização Gestão Operação 03/09/2026: %d linhas | %d pedidos atualizados | "
+        "%d pedidos criados | %d campos atualizados | %d casamentos exatos | %d aproximados | "
+        "%d sem match de pedido_venda (viraram novos).",
+        stats["linhas_lidas"],
+        stats["pedidos_atualizados"],
+        stats["pedidos_criados"],
+        stats["campos_atualizados"],
+        stats["exato"],
+        stats["aproximado"],
+        stats["sem_match_pedido_venda"],
+    )
+    if stats["criticidades_nao_reconhecidas"]:
+        app.logger.warning(
+            "Sincronização Gestão Operação 03/09/2026 — valores de CRITICIDADE não reconhecidos "
+            "(prioridade não atualizada automaticamente nessas linhas, checar manualmente): %s",
+            stats["criticidades_nao_reconhecidas"],
+        )
+    if stats["otd_nao_reconhecidos"]:
+        app.logger.warning(
+            "Sincronização Gestão Operação 03/09/2026 — valores de OTD fora do padrão SIM/NÃO "
+            "(gravados como texto truncado, checar manualmente): %s",
+            stats["otd_nao_reconhecidos"],
+        )
 
 
 _CHAVE_BACKFILL_SOLICITADA_CLIENTE_RETIRA_01_09_2026 = "backfill_go_data_solicitada_cliente_retira_01_09_2026"

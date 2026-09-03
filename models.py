@@ -930,6 +930,23 @@ class PedidoOperacao(db.Model):
         return None
 
     @property
+    def go_custo_total(self):
+        """Custo produção + custo frete final — pedido do Bruno (03/09/2026,
+        planilha "Gestão de Fluxo Produtivo"): lá existe uma coluna "CUSTO
+        TOTAL = PRODUÇÃO + HH + FRETE" na aba Resultados. Não existe HH ainda
+        no site (a coluna correspondente na planilha está sempre vazia), e
+        conferimos que esta soma bate 100% com o "CUSTO TOTAL" da planilha
+        nas linhas em que os dois existem — então fica como propriedade
+        calculada (nunca gravada), igual a go_lead_time_frete_dias, em vez de
+        um campo próprio: sempre em dia com go_custo_producao_real/
+        go_custo_frete_final, sem precisar sincronizar um terceiro valor.
+        None só quando os dois lados estão vazios (não dá pra distinguir
+        "custo zero" de "sem dado")."""
+        if self.go_custo_producao_real is None and self.go_custo_frete_final is None:
+            return None
+        return (self.go_custo_producao_real or 0) + (self.go_custo_frete_final or 0)
+
+    @property
     def prazo_total_dias_corridos(self):
         """Prazo total combinado com o cliente, em dias corridos: da inclusão
         do pedido até a data solicitada de entrega (bloco Comercial) — usado

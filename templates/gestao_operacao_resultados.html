@@ -155,6 +155,7 @@
         <th>Solicitada cliente</th>
         <th>Entregue cliente</th>
         <th>Dias atraso/antecipação</th>
+        <th class="text-end" title="Custo produção real + Custo frete final">Custo total</th>
         <th>Status final</th>
         <th>Obs.</th>
         <th></th>
@@ -181,6 +182,11 @@
           {% elif dias < 0 %}<span class="text-success">{{ -dias }}d antecipado</span>
           {% else %}no dia{% endif %}
         </td>
+        <td class="text-end" title="Custo produção real + Custo frete final">
+          {% if p.go_custo_total is not none %}
+            R$ {{ "{:,.2f}".format(p.go_custo_total).replace(",", "X").replace(".", ",").replace("X", ".") }}
+          {% else %}—{% endif %}
+        </td>
         <td>{{ p.go_status_final_alinhamento or "—" }}</td>
         <td class="text-truncate" style="max-width: 200px;" title="{{ p.go_obs_operacao or '' }}">{{ p.go_obs_operacao or "—" }}</td>
         <td class="text-end">
@@ -190,7 +196,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

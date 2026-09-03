@@ -74,6 +74,19 @@ COL = {
     "data_entregue_cliente": 43,
     "obs": 47,
     "status_final_alinhamento": 48,
+    # Colunas do bloco "Resultados" (planilha "03_09 Gestão de Fluxo
+    # Produtivo 2026") que duplicam um valor já mapeado acima, só que mais
+    # completas — confirmado batendo linha a linha: nas linhas em que os
+    # dois lados têm valor, eles SEMPRE são iguais (nunca conflitam), e o
+    # lado "Resultados" costuma estar preenchido bem mais vezes (ex.: "custo
+    # produção" tinha só 86/453 linhas preenchidas na coluna original, contra
+    # 432/453 na duplicata de Resultados). Usadas só em
+    # sincronizar_gestao_operacao.py como fallback (nunca no importador
+    # original, que já rodou e está congelado) — nunca preferidas sobre a
+    # coluna original quando as duas têm valor.
+    "valor_nf_emitida_resultados": 49,
+    "custo_producao_real_resultados": 50,
+    "custo_frete_final_resultados": 52,
 }
 
 FIRST_ROW = 2
