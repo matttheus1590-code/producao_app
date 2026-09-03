@@ -37,16 +37,16 @@
 
     <div class="row g-3 mb-3">
       <div class="col-6 col-lg-3">
-        {{ stat_card("Qtd. liberada no mês", faturamento_semanal.totais.qtd_liberada) }}
+        {{ stat_card("📦 Qtd. liberada no mês", faturamento_semanal.totais.qtd_liberada) }}
       </div>
       <div class="col-6 col-lg-3">
-        {{ stat_card("Valor liberado no mês", "R$ " ~ "{:,.2f}".format(faturamento_semanal.totais.valor_liberado).replace(",", "X").replace(".", ",").replace("X", "."), cor="primary") }}
+        {{ stat_card("💰 Valor liberado no mês", "R$ " ~ "{:,.2f}".format(faturamento_semanal.totais.valor_liberado).replace(",", "X").replace(".", ",").replace("X", "."), cor="primary") }}
       </div>
       <div class="col-6 col-lg-3">
-        {{ stat_card("Qtd. faturada no mês", faturamento_semanal.totais.qtd_faturada) }}
+        {{ stat_card("🧾 Qtd. faturada no mês", faturamento_semanal.totais.qtd_faturada) }}
       </div>
       <div class="col-6 col-lg-3">
-        {{ stat_card("Valor faturado no mês", "R$ " ~ "{:,.2f}".format(faturamento_semanal.totais.valor_faturado).replace(",", "X").replace(".", ",").replace("X", "."), cor="success") }}
+        {{ stat_card("💵 Valor faturado no mês", "R$ " ~ "{:,.2f}".format(faturamento_semanal.totais.valor_faturado).replace(",", "X").replace(".", ",").replace("X", "."), cor="success") }}
       </div>
     </div>
 
@@ -60,7 +60,7 @@
     <div class="row g-3 mb-3">
       <div class="col-6 col-lg-4">
         {{ stat_card(
-          "OTD do mês",
+          "🎯 OTD do mês",
           (otd_mes.percentual ~ "%") if otd_mes.percentual is not none else "—",
           cor=("success" if otd_mes.atinge_meta else "danger"),
           borda=("success" if otd_mes.atinge_meta else "danger"),
@@ -69,7 +69,7 @@
       </div>
       <div class="col-6 col-lg-4">
         {{ stat_card(
-          "Lead Time Operação",
+          "⏱️ Lead Time Operação",
           (lead_times_mes.lt_operacao.media ~ " dias") if lead_times_mes.lt_operacao.media is not none else "—",
           cor="primary",
           sufixo=(lead_times_mes.lt_operacao.n ~ " pedido(s) com dado" if lead_times_mes.lt_operacao.n else "sem dado suficiente")
@@ -77,28 +77,28 @@
       </div>
       <div class="col-6 col-lg-4">
         {{ stat_card(
-          "Lead Time Operação — CIF",
+          "🚢 Lead Time Operação — CIF",
           (lead_times_mes.lt_operacao_cif.media ~ " dias") if lead_times_mes.lt_operacao_cif.media is not none else "—",
           sufixo=(lead_times_mes.lt_operacao_cif.n ~ " pedido(s) CIF" if lead_times_mes.lt_operacao_cif.n else "sem pedido CIF com dado")
         ) }}
       </div>
       <div class="col-6 col-lg-4">
         {{ stat_card(
-          "Lead Time Operação — FOB",
+          "🚚 Lead Time Operação — FOB",
           (lead_times_mes.lt_operacao_fob.media ~ " dias") if lead_times_mes.lt_operacao_fob.media is not none else "—",
           sufixo=(lead_times_mes.lt_operacao_fob.n ~ " pedido(s) FOB" if lead_times_mes.lt_operacao_fob.n else "sem pedido FOB com dado")
         ) }}
       </div>
       <div class="col-6 col-lg-4">
         {{ stat_card(
-          "Lead Time Frete",
+          "🚛 Lead Time Frete",
           (lead_times_mes.lt_frete.media ~ " dias") if lead_times_mes.lt_frete.media is not none else "—",
           sufixo=(lead_times_mes.lt_frete.n ~ " pedido(s) com dado" if lead_times_mes.lt_frete.n else "sem dado suficiente")
         ) }}
       </div>
       <div class="col-6 col-lg-4">
         {{ stat_card(
-          "Lead Time Chão de Fábrica (Produção)",
+          "🏭 Lead Time Chão de Fábrica (Produção)",
           (lead_times_mes.lt_producao.media ~ " dias") if lead_times_mes.lt_producao.media is not none else "—",
           cor="secondary",
           sufixo=(lead_times_mes.lt_producao.n ~ " item(ns) com dado" if lead_times_mes.lt_producao.n else "sem dado suficiente")
@@ -106,6 +106,9 @@
       </div>
     </div>
 
+    <p class="text-muted small mb-2">
+      <i class="bi bi-hand-index-thumb"></i> Clique numa semana pra ver os pedidos dela — clique de novo pra encolher.
+    </p>
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0">
         <thead>
@@ -119,12 +122,62 @@
         </thead>
         <tbody>
         {% for l in faturamento_semanal.linhas %}
-          <tr>
-            <td>{{ l.semana_curta }}</td>
+          <tr class="semana-linha-clicavel" data-bs-toggle="collapse" data-bs-target="#semana-detalhe-{{ loop.index0 }}" aria-expanded="false" aria-controls="semana-detalhe-{{ loop.index0 }}">
+            <td><i class="bi bi-caret-right-fill semana-caret"></i> {{ l.semana_curta }}</td>
             <td class="text-center">{{ l.qtd_liberada }}</td>
             <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_liberado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
             <td class="text-center">{{ l.qtd_faturada }}</td>
             <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_faturado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+          </tr>
+          <tr class="collapse" id="semana-detalhe-{{ loop.index0 }}">
+            <td colspan="5" class="p-0 border-0">
+              <div class="p-2 bg-light border-bottom">
+                <table class="table table-sm table-hover mb-0 bg-white">
+                  <thead>
+                    <tr>
+                      <th>Pedido</th>
+                      <th>Cliente</th>
+                      <th class="text-end">Valor pedido</th>
+                      <th class="text-end">Valor NF</th>
+                      <th>OTD</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for p in l.pedidos %}
+                    <tr>
+                      <td>{{ p.pedido_venda or "—" }}</td>
+                      <td>{{ p.cliente }}</td>
+                      <td class="text-end">
+                        {% if p.go_valor_pedido_operacao is not none %}
+                          R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
+                        {% else %}—{% endif %}
+                      </td>
+                      <td class="text-end">
+                        {% if p.go_valor_nf_emitida is not none %}
+                          R$ {{ "{:,.2f}".format(p.go_valor_nf_emitida).replace(",", "X").replace(".", ",").replace("X", ".") }}
+                        {% else %}—{% endif %}
+                      </td>
+                      <td>
+                        {% if p.go_otd_realizado == "SIM" %}
+                          <span class="badge bg-success">SIM</span>
+                        {% elif p.go_otd_realizado %}
+                          <span class="badge bg-danger">{{ p.go_otd_realizado }}</span>
+                        {% else %}—{% endif %}
+                      </td>
+                      <td class="text-end">
+                        <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='resultados') }}" class="btn btn-sm btn-outline-primary" title="Editar Resultados">
+                          <i class="bi bi-pencil-square"></i>
+                        </a>
+                      </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="text-center text-muted py-2">Nenhum pedido nessa semana.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </td>
           </tr>
         {% else %}
           <tr><td colspan="5" class="text-center text-muted py-3">Nenhuma semana de PCP planejada nesse mês.</td></tr>
@@ -170,16 +223,16 @@
 
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
-    {{ stat_card("OTD geral", (otd.percentual ~ "%") if otd.percentual is not none else "—", cor=("success" if otd.atinge_meta else "danger"), borda=("success" if otd.atinge_meta else "danger"), sufixo=("Meta: " ~ GO_OTD_META_PERCENTUAL ~ "% " ~ ("✓ atingida" if otd.atinge_meta else "abaixo da meta"))) }}
+    {{ stat_card("🎯 OTD geral", (otd.percentual ~ "%") if otd.percentual is not none else "—", cor=("success" if otd.atinge_meta else "danger"), borda=("success" if otd.atinge_meta else "danger"), sufixo=("Meta: " ~ GO_OTD_META_PERCENTUAL ~ "% " ~ ("✓ atingida" if otd.atinge_meta else "abaixo da meta"))) }}
   </div>
   <div class="col-6 col-lg-3">
-    {{ stat_card("Entregues no prazo", otd.no_prazo, cor="success") }}
+    {{ stat_card("✅ Entregues no prazo", otd.no_prazo, cor="success") }}
   </div>
   <div class="col-6 col-lg-3">
-    {{ stat_card("Fora do prazo", (otd.total - otd.no_prazo) if otd.total else 0, cor="danger") }}
+    {{ stat_card("⚠️ Fora do prazo", (otd.total - otd.no_prazo) if otd.total else 0, cor="danger") }}
   </div>
   <div class="col-6 col-lg-3">
-    {{ stat_card("Pedidos com OTD registrado", otd.total) }}
+    {{ stat_card("📋 Pedidos com OTD registrado", otd.total) }}
   </div>
 </div>
 

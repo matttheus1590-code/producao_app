@@ -1813,18 +1813,28 @@ def _faturamento_semanal_pcp(ano, mes):
     (mesmo parser usado no resto do site, ver _parse_numero em
     importar_gestao_operacao.py), então o total pode ficar um pouco MAIOR
     que o da planilha nesses meses com célula de texto — reportado ao Bruno
-    junto com a entrega."""
+    junto com a entrega.
+
+    Cada linha também carrega a lista de `pedidos` daquela semana (pedido do
+    Bruno, 03/09/2026: clicar na semana e abrir os pedidos dela, sem sair da
+    página) — já vem pronta daqui (sem N+1) porque os pedidos da semana já
+    são carregados de qualquer forma pra somar qtd/valor."""
     semanas = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, mes, 1))
-    pedidos = PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas)).all()
+    pedidos = (
+        PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas))
+        .order_by(PedidoOperacao.pedido_venda)
+        .all()
+    )
 
     baldes = {
-        s: {"qtd_liberada": 0, "valor_liberado": 0.0, "qtd_faturada": 0, "valor_faturado": 0.0}
+        s: {"qtd_liberada": 0, "valor_liberado": 0.0, "qtd_faturada": 0, "valor_faturado": 0.0, "pedidos": []}
         for s in semanas
     }
     for p in pedidos:
         b = baldes[p.go_termino_semanal_pcp]
         b["qtd_liberada"] += 1
         b["valor_liberado"] += p.go_valor_pedido_operacao or 0.0
+        b["pedidos"].append(p)
         if p.go_valor_nf_emitida:
             b["qtd_faturada"] += 1
             b["valor_faturado"] += p.go_valor_nf_emitida
@@ -1837,6 +1847,7 @@ def _faturamento_semanal_pcp(ano, mes):
             "valor_liberado": round(baldes[s]["valor_liberado"], 2),
             "qtd_faturada": baldes[s]["qtd_faturada"],
             "valor_faturado": round(baldes[s]["valor_faturado"], 2),
+            "pedidos": baldes[s]["pedidos"],
         }
         for s in semanas
     ]

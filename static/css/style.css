@@ -1016,3 +1016,22 @@ body.col-resizing-ativo {
 .consulta-pedido-hero {
   border-left: 4px solid #3b82f6;
 }
+
+/* ---------------------------------------------------------------------
+   Gestão Operação — Resultados/OTD: linha de "Semana" clicável (pedido do
+   Bruno, 03/09/2026) que expande/encolhe a lista de pedidos daquela semana
+   (Bootstrap collapse já carregado no projeto — só o visual do gatilho).
+--------------------------------------------------------------------- */
+.semana-linha-clicavel {
+  cursor: pointer;
+}
+.semana-linha-clicavel:hover {
+  background-color: rgba(13, 110, 253, 0.06);
+}
+.semana-caret {
+  transition: transform 0.15s ease-in-out;
+  display: inline-block;
+}
+.semana-linha-clicavel[aria-expanded="true"] .semana-caret {
+  transform: rotate(90deg);
+}
