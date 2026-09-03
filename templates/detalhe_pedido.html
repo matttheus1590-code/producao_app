@@ -126,7 +126,7 @@
                     <td>{{ item.estacao or "—" }}</td>
                     <td><span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span></td>
                     <td>{{ item.liberacao_faturamento or "—" }}</td>
-                    <td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS, RDIM_ESTACOES_OPCOES) }}</td>
+                    <td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>
                   </tr>
                   {% else %}
                   <tr><td colspan="7" class="text-center text-muted py-3">Nenhum item.</td></tr>

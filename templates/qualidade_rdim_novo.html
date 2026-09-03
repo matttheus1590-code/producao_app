@@ -9,8 +9,7 @@
   </a>
 </div>
 <p class="text-muted small mb-4">
-  Válido para as estações <strong>Mandril</strong>, <strong>PU</strong> e <strong>Silicone</strong>. Busque a OP (item do
-  pedido) abaixo — cliente, pedido e produto são preenchidos automaticamente.
+  Busque a OP (item do pedido) abaixo — de qualquer estação — cliente, pedido e produto são preenchidos automaticamente.
 </p>
 
 <form method="post" id="formRdim">
@@ -219,8 +218,9 @@
 <script>
 (function () {
   // Nova Inspeção Final (RDIM) — pedido do Bruno (02/09/2026): busca dinâmica
-  // de OP (= ItemPedido, só MANDRIL/PU/SILICONE), auto-preenchimento do
-  // resumo, tabela de medições dinâmica (grandezas flexíveis) com
+  // de OP (= ItemPedido; 03/09/2026: busca em qualquer estação, sem
+  // restrição), auto-preenchimento do resumo, tabela de medições dinâmica
+  // (grandezas flexíveis) com
   // sinalização de tolerância calculada ao digitar — a mesma conta que o
   // servidor refaz ao salvar (RdimMedicao.dentro_da_tolerancia).
   const buscaInput = document.getElementById("buscaItemInput");

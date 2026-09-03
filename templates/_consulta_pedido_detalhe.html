@@ -122,7 +122,7 @@
             <td>{{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</td>
             <td>{{ item.termino_inspecao.strftime("%d/%m/%Y") if item.termino_inspecao else "—" }}</td>
             <td>{{ (item.lt_producao_dias|string + "d") if item.lt_producao_dias is not none else "—" }}</td>
-            <td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS, RDIM_ESTACOES_OPCOES) }}</td>
+            <td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>
           </tr>
           {% else %}
           <tr><td colspan="8" class="text-center text-muted py-3">Nenhum item cadastrado.</td></tr>

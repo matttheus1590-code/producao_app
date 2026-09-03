@@ -216,7 +216,7 @@
         <td>R$ {{ "{:,.2f}".format(l.venda_unidade).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td>R$ {{ "{:,.2f}".format(l.venda_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td>R$ {{ "{:,.2f}".format(l.venda_total_pedido).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-        <td>{{ rdim_status_item(l.item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS, RDIM_ESTACOES_OPCOES) }}</td>
+        <td>{{ rdim_status_item(l.item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>
       </tr>
       {% else %}
       <tr><td colspan="22" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>

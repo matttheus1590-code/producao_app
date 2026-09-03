@@ -20,7 +20,7 @@
 {% endif %}
 {% endmacro %}
 
-{% macro rdim_status_item(item, inspecoes_rdim, resultado_cores, resultado_labels, estacoes_rdim) %}
+{% macro rdim_status_item(item, inspecoes_rdim, resultado_cores, resultado_labels) %}
 {# Qualidade (RDIM) por item — pedido do Bruno (02/09/2026), ajustado
    03/09/2026: usada em Consulta Pedido, Detalhe do Pedido e Listagem Geral
    de Produção, pra não repetir a mesma lógica em 3 templates. As constantes
@@ -33,20 +33,24 @@
    prática, então não faz sentido cobrar "Inspecionar" item a item aqui.
    Item sem inspeção registrada, ou já inspecionado como Aprovado (sem
    desvio), fica em branco. Clicar no badge de desvio abre a inspeção com
-   todo o contexto (rdim_editar). #}
-{% if item.estacao not in estacoes_rdim %}
-  <span class="text-muted">—</span>
+   todo o contexto (rdim_editar).
+
+   03/09/2026 (2): tirado o filtro "item.estacao not in estacoes_rdim" que
+   existia aqui — o RDIM deixou de ser restrito às estações MANDRIL/PU/
+   SILICONE (pedido do Bruno: "quero que os campos qualidade puxe todo o
+   banco de dados da produção", depois de um desvio não aparecer na busca
+   da OP por causa dessa restrição). Agora QUALQUER item pode ter uma
+   inspeção RDIM registrada, então o badge de desvio precisa aparecer
+   independente da estação do item. #}
+{% set insp = inspecoes_rdim.get(item.id) %}
+{% if insp and insp.resultado in ("REPROVADO", "APROVADO_COM_DESVIO") %}
+  <a href="{{ url_for('rdim_editar', inspecao_id=insp.id) }}"
+     class="badge bg-{{ resultado_cores.get(insp.resultado, 'secondary') }} text-decoration-none"
+     title="{{ resultado_labels.get(insp.resultado, insp.resultado) }}{% if insp.quantidade_com_desvio %} · {{ insp.quantidade_com_desvio|round(0, 'floor')|int }} peça(s) com desvio{% endif %} — clique para ver o contexto completo">
+    <i class="bi bi-exclamation-triangle"></i> {{ resultado_labels.get(insp.resultado, insp.resultado) }}
+  </a>
 {% else %}
-  {% set insp = inspecoes_rdim.get(item.id) %}
-  {% if insp and insp.resultado in ("REPROVADO", "APROVADO_COM_DESVIO") %}
-    <a href="{{ url_for('rdim_editar', inspecao_id=insp.id) }}"
-       class="badge bg-{{ resultado_cores.get(insp.resultado, 'secondary') }} text-decoration-none"
-       title="{{ resultado_labels.get(insp.resultado, insp.resultado) }}{% if insp.quantidade_com_desvio %} · {{ insp.quantidade_com_desvio|round(0, 'floor')|int }} peça(s) com desvio{% endif %} — clique para ver o contexto completo">
-      <i class="bi bi-exclamation-triangle"></i> {{ resultado_labels.get(insp.resultado, insp.resultado) }}
-    </a>
-  {% else %}
-    <span class="text-muted">—</span>
-  {% endif %}
+  <span class="text-muted">—</span>
 {% endif %}
 {% endmacro %}
 

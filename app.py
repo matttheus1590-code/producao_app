@@ -2984,15 +2984,17 @@ CAMPOS_HISTORICO_INSPECAO_FINAL = [
 
 
 def _itens_rdim_disponiveis(termo, limite=20):
-    """Itens de pedido inspecionáveis pelo RDIM — só das estações
-    MANDRIL/PU/SILICONE (pedido do Bruno: "válido para as estações MANDRIL,
-    PU e SILICONE"). Busca por descrição do produto, cliente ou nº do
-    pedido de venda, igual ao padrão já usado em _buscar_pedidos_para_status."""
+    """Itens de pedido inspecionáveis pelo RDIM — busca em TODO o banco de
+    Gestão Produção, sem restrição de estação (pedido do Bruno, 03/09/2026:
+    "quero que os campos qualidade puxe todo o banco de dados da produção" —
+    ele foi apontar um desvio no RDIM e a busca da OP não encontrou o
+    pedido, porque a busca antiga só olhava itens das estações MANDRIL/PU/
+    SILICONE. RDIM_ESTACOES_OPCOES continua existindo só como ordem de
+    exibição no dashboard/filtro — não é mais um filtro de elegibilidade).
+    Busca por descrição do produto, cliente ou nº do pedido de venda, igual
+    ao padrão já usado em _buscar_pedidos_para_status."""
     termo = (termo or "").strip()
-    query = (
-        ItemPedido.query.join(Pedido)
-        .filter(ItemPedido.estacao.in_(RDIM_ESTACOES_OPCOES))
-    )
+    query = ItemPedido.query.join(Pedido)
     if termo:
         like = f"%{termo}%"
         query = query.filter(
@@ -4970,9 +4972,6 @@ def register_routes(app):
             if item is None:
                 flash("Selecione uma OP (item de pedido) válida antes de salvar.", "danger")
                 return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=None)
-            if item.estacao not in RDIM_ESTACOES_OPCOES:
-                flash(f"O item selecionado está na estação {item.estacao or '—'} — RDIM só se aplica a MANDRIL, PU e SILICONE.", "danger")
-                return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)
             if resultado not in RDIM_RESULTADO_OPCOES:
                 flash("Selecione o resultado da inspeção (Aprovado / Reprovado / Aprovado com desvio).", "danger")
                 return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)

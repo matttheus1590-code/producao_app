@@ -84,7 +84,11 @@
   <div class="col-md-3">
     <label class="form-label small text-muted mb-1">Estação</label>
     <select class="form-select" name="estacao" multiple size="5">
-      {% for op in RDIM_ESTACOES_OPCOES %}
+      {# 03/09/2026: RDIM deixou de ser restrito a MANDRIL/PU/SILICONE — filtro
+         agora lista todas as estações ativas (mesma ESTACOES injetada em
+         todo template), não só as 3 originais, senão o filtro não acharia
+         inspeções registradas em outras estações. #}
+      {% for op in ESTACOES %}
         <option value="{{ op }}" {% if op in filtros.estacao %}selected{% endif %}>{{ op }}</option>
       {% endfor %}
     </select>
