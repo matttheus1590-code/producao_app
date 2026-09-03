@@ -2446,35 +2446,70 @@ def _status_producao_por_pedido_venda(pedidos_venda):
 
 
 def _liberacao_pcp_por_pedido_venda(pedidos_venda):
-    """Pedido do Bruno (01/09/2026): as colunas "Previsão liberação PCP" e
-    "Data efetiva liberação" da tela PCP de Gestão Operação têm que
-    acompanhar automaticamente as mesmas datas "Liberação prevista"/
-    "Liberação real" já preenchidas em Gestão Produção — mesmo casamento por
-    pedido_venda (trim, sem FK, nunca aproximado) já usado pra Status
-    produção/itens da Listagem Geral. Enquanto o pedido não tiver sido
-    lançado em Gestão Produção (sem match), os campos próprios de
-    PedidoOperacao (go_previsao_liberacao_pcp/go_data_efetiva_liberacao_pcp)
-    continuam valendo como fallback editável manualmente — mesmo espírito de
-    status_producao/_status_producao_por_pedido_venda.
+    """Pedido do Bruno (01/09/2026, ampliado 03/09/2026): as colunas
+    "Previsão liberação PCP", "Data efetiva liberação" e "Término semanal"
+    da tela PCP de Gestão Operação têm que acompanhar automaticamente os
+    dados equivalentes já preenchidos em Gestão Produção ("Liberação
+    prevista"/"Liberação real"/"Planejamento semanal" de cada item) — mesmo
+    casamento por pedido_venda (trim, sem FK, nunca aproximado) já usado pra
+    Status produção/itens da Listagem Geral. Enquanto o pedido não tiver
+    sido lançado em Gestão Produção (sem match), os campos próprios de
+    PedidoOperacao (go_previsao_liberacao_pcp/go_data_efetiva_liberacao_pcp/
+    go_termino_semanal_pcp) continuam valendo como fallback editável
+    manualmente — mesmo espírito de status_producao/
+    _status_producao_por_pedido_venda.
 
-    Essas duas datas são preenchidas em Produção por um único bloco no topo
+    Previsão/Efetiva são preenchidas em Produção por um único bloco no topo
     do formulário de edição que aplica o MESMO valor a todos os itens do
     pedido de uma vez (decisão de 31/08/2026) — então, quando por algum
     motivo os itens de um mesmo pedido têm valores diferentes entre si (dado
     legado, de antes dessa decisão existir), usamos a data mais recente
-    entre eles."""
+    entre eles. "Término semanal" é texto (ex. "SEMANA 03 / AGO / 2026"), não
+    dado — usamos _chave_semana_pcp (mesma função que já ordena esse rótulo
+    em outros lugares do sistema) pra achar o rótulo cronologicamente mais
+    recente entre os itens."""
     itens_por_pedido = _itens_producao_por_pedido_venda(pedidos_venda)
     liberacao_por_pedido = {}
     for chave, itens in itens_por_pedido.items():
         previstas = [i.liberacao_prevista for i in itens if i.liberacao_prevista]
         reais = [i.liberacao_real for i in itens if i.liberacao_real]
-        if not previstas and not reais:
+        semanas = [i.planejamento_semanal for i in itens if i.planejamento_semanal]
+        if not previstas and not reais and not semanas:
             continue
         liberacao_por_pedido[chave] = {
             "previsao": max(previstas) if previstas else None,
             "efetiva": max(reais) if reais else None,
+            "termino_semanal": max(semanas, key=_chave_semana_pcp) if semanas else None,
         }
     return liberacao_por_pedido
+
+
+def _data_cliente_por_pedido_venda(pedidos_venda):
+    """Pedido.data_cliente por pedido_venda (trim, sem FK) — pedido do Bruno
+    (03/09/2026): "quero que todos os dados dentro da gestão operação seja
+    extraída automaticamente da gestão produção". "Solicitada cliente/
+    retira" (PCP) e "Data solicitada entrega" (Comercial) de Gestão Operação
+    são o MESMO dado que "Data do cliente" de Gestão Produção (já
+    documentado em _criar_pedido_operacao_a_partir_de_producao) — até aqui
+    elas só copiavam esse valor UMA VEZ na inclusão do pedido em Operação;
+    agora acompanham ao vivo, mesmo espírito de _liberacao_pcp_por_pedido_
+    venda. Os campos próprios de PedidoOperacao continuam valendo como
+    fallback editável manualmente enquanto o pedido não tiver sido lançado
+    em Gestão Produção."""
+    valores = sorted({v.strip() for v in pedidos_venda if v and v.strip()})
+    if not valores:
+        return {}
+    pedidos = (
+        Pedido.query
+        .filter(func.trim(Pedido.pedido_venda).in_(valores), Pedido.data_cliente.isnot(None))
+        .all()
+    )
+    mapa = {}
+    for pedido in pedidos:
+        chave = (pedido.pedido_venda or "").strip()
+        if chave:
+            mapa[chave] = pedido.data_cliente
+    return mapa
 
 
 def _buscar_pedidos_para_status(termo, limite=12):
@@ -4014,6 +4049,7 @@ def register_routes(app):
             return render_template("_consulta_pedido_detalhe.html", nao_encontrado=True, pedido_venda=chave)
 
         liberacao_pcp = _liberacao_pcp_por_pedido_venda([chave]).get(chave, {})
+        data_cliente_producao = _data_cliente_por_pedido_venda([chave]).get(chave)
         situacao_entrega = _situacao_entrega_go(go, pedido)
         etapas = _etapas_acompanhamento_pedido(pedido, go)
 
@@ -4026,7 +4062,8 @@ def register_routes(app):
         return render_template(
             "_consulta_pedido_detalhe.html",
             pedido=pedido, go=go, pedido_venda=chave,
-            liberacao_pcp=liberacao_pcp, situacao_entrega=situacao_entrega,
+            liberacao_pcp=liberacao_pcp, data_cliente_producao=data_cliente_producao,
+            situacao_entrega=situacao_entrega,
             etapas=etapas, nao_encontrado=False,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
         )
@@ -4705,12 +4742,16 @@ def register_routes(app):
         pedidos, page, total_paginas, total_filtrado, filtros = _linhas_gestao_operacao(request.args)
         status_real_por_pedido_venda = _status_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
         liberacao_pcp_por_pedido_venda = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
+        # "Solicitada cliente/retira" também acompanha ao vivo a "Data do
+        # cliente" de Gestão Produção — pedido do Bruno (03/09/2026).
+        data_cliente_por_pedido_venda = _data_cliente_por_pedido_venda([p.pedido_venda for p in pedidos])
         return render_template(
             "gestao_operacao_pcp.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
             status_real_por_pedido_venda=status_real_por_pedido_venda,
             liberacao_pcp_por_pedido_venda=liberacao_pcp_por_pedido_venda,
+            data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
         )
 
     @app.route("/gestao-operacao/logistica")
@@ -4766,12 +4807,16 @@ def register_routes(app):
         # (pedido-level, sem granularidade de item/estação) de "contém
         # desvio" nesta listagem.
         rdim_por_pedido_venda = _rdim_resumo_por_pedido_venda([p.pedido_venda for p in pedidos])
+        # "Data solic. cliente" também acompanha ao vivo a "Data do cliente"
+        # de Gestão Produção — pedido do Bruno (03/09/2026).
+        data_cliente_por_pedido_venda = _data_cliente_por_pedido_venda([p.pedido_venda for p in pedidos])
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
             itens_por_pedido_venda=itens_por_pedido_venda,
             rdim_por_pedido_venda=rdim_por_pedido_venda,
+            data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
         )
 
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
@@ -4796,22 +4841,36 @@ def register_routes(app):
         if request.method == "POST":
             f = request.form
             if secao == "pcp":
-                # Pedido do Bruno (01/09/2026): quando já existe a data
-                # automática vinda de Gestão Produção pra "Previsão liberação
-                # PCP"/"Data efetiva liberação", essas duas colunas viram só
-                # leitura aqui — não sobrescreve (nem zera) o campo antigo de
-                # PedidoOperacao ao salvar o resto da aba PCP, senão o valor
-                # manual histórico se perderia à toa mesmo sem o usuário ter
-                # mexido nele (o formulário nem mostra mais um <input> pra
-                # esses dois campos nesse caso — ver gestao_operacao_editar.html).
-                liberacao_real_pcp = (
-                    _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get((pedido.pedido_venda or "").strip())
-                    or {}
-                )
+                # Pedido do Bruno (01/09/2026, ampliado 03/09/2026): quando já
+                # existe o dado automático vindo de Gestão Produção pra
+                # "Previsão liberação PCP"/"Data efetiva liberação"/
+                # "Solicitada cliente/retira"/"Término semanal", essas colunas
+                # viram só leitura aqui — não sobrescreve (nem zera) o campo
+                # antigo de PedidoOperacao ao salvar o resto da aba PCP, senão
+                # o valor manual histórico se perderia à toa mesmo sem o
+                # usuário ter mexido nele (o formulário nem mostra mais um
+                # <input> pra esses campos nesse caso — ver
+                # gestao_operacao_editar.html).
+                chave_pv = (pedido.pedido_venda or "").strip()
+                liberacao_real_pcp = _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get(chave_pv) or {}
+                data_cliente_real = _data_cliente_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
                 campos_secao = [
                     c for c in campos_secao
                     if not (c == "go_previsao_liberacao_pcp" and liberacao_real_pcp.get("previsao"))
                     and not (c == "go_data_efetiva_liberacao_pcp" and liberacao_real_pcp.get("efetiva"))
+                    and not (c == "go_data_solicitada_cliente_retira" and data_cliente_real)
+                    and not (c == "go_termino_semanal_pcp" and liberacao_real_pcp.get("termino_semanal"))
+                ]
+            elif secao == "comercial":
+                # Mesmo espírito acima, pro campo equivalente da aba Comercial
+                # (pedido do Bruno, 03/09/2026: "quero que todos os dados
+                # dentro da gestão operação seja extraída automaticamente da
+                # gestão produção").
+                chave_pv = (pedido.pedido_venda or "").strip()
+                data_cliente_real = _data_cliente_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
+                campos_secao = [
+                    c for c in campos_secao
+                    if not (c == "go_data_solicitada_entrega" and data_cliente_real)
                 ]
             campos_historico = [c for c in campos_secao if c in CAMPOS_HISTORICO_GESTAO_OPERACAO]
             antes = {c: getattr(pedido, c) for c in campos_historico}
@@ -4830,15 +4889,15 @@ def register_routes(app):
             flash(f"Gestão Operação ({GO_SECAO_LABEL[secao]}) do pedido atualizada com sucesso.", "success")
             return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id, secao=secao))
 
-        status_real = _status_producao_por_pedido_venda([pedido.pedido_venda]).get((pedido.pedido_venda or "").strip())
-        liberacao_real = (
-            _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get((pedido.pedido_venda or "").strip()) or {}
-        )
+        chave_pv = (pedido.pedido_venda or "").strip()
+        status_real = _status_producao_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
+        liberacao_real = _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get(chave_pv) or {}
+        data_cliente_real = _data_cliente_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
 
         return render_template(
             "gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras,
             secao=secao, GO_SECOES=GO_SECOES, GO_SECAO_ENDPOINT=GO_SECAO_ENDPOINT, GO_SECAO_LABEL=GO_SECAO_LABEL,
-            status_real=status_real, liberacao_real=liberacao_real,
+            status_real=status_real, liberacao_real=liberacao_real, data_cliente_real=data_cliente_real,
         )
 
     # ------------------------------------------------------------------

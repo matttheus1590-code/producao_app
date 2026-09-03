@@ -45,6 +45,9 @@
       {% set liberacao_p = liberacao_pcp_por_pedido_venda.get((p.pedido_venda or "").strip(), {}) %}
       {% set previsao_exibida = liberacao_p.get("previsao") or p.go_previsao_liberacao_pcp %}
       {% set efetiva_exibida = liberacao_p.get("efetiva") or p.go_data_efetiva_liberacao_pcp %}
+      {% set data_cliente_p = data_cliente_por_pedido_venda.get((p.pedido_venda or "").strip()) %}
+      {% set solicitada_exibida = data_cliente_p or p.go_data_solicitada_cliente_retira %}
+      {% set termino_exibido = liberacao_p.get("termino_semanal") or p.go_termino_semanal_pcp %}
       <tr>
         <td>{{ p.pedido_venda or "—" }}</td>
         <td>{{ p.cliente }}</td>
@@ -53,13 +56,13 @@
         </td>
         <td title="{{ 'Automático — direto da Liberação prevista em Gestão Produção' if liberacao_p.get('previsao') else '' }}">{{ previsao_exibida.strftime("%d/%m/%Y") if previsao_exibida else "—" }}</td>
         <td title="{{ 'Automático — direto da Liberação real em Gestão Produção' if liberacao_p.get('efetiva') else '' }}">{{ efetiva_exibida.strftime("%d/%m/%Y") if efetiva_exibida else "—" }}</td>
-        <td>{{ p.go_data_solicitada_cliente_retira.strftime("%d/%m/%Y") if p.go_data_solicitada_cliente_retira else "—" }}</td>
+        <td title="{{ 'Automático — direto da Data do cliente em Gestão Produção' if data_cliente_p else '' }}">{{ solicitada_exibida.strftime("%d/%m/%Y") if solicitada_exibida else "—" }}</td>
         <td>
           {% if p.go_custo_producao_real is not none %}
             R$ {{ "{:,.2f}".format(p.go_custo_producao_real).replace(",", "X").replace(".", ",").replace("X", ".") }}
           {% else %}—{% endif %}
         </td>
-        <td>{{ p.go_termino_semanal_pcp or "—" }}</td>
+        <td title="{{ 'Automático — direto do Planejamento semanal em Gestão Produção' if liberacao_p.get('termino_semanal') else '' }}">{{ termino_exibido or "—" }}</td>
         <td class="text-end">
           <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='pcp') }}" class="btn btn-sm btn-outline-primary" title="Editar PCP">
             <i class="bi bi-pencil-square"></i>

@@ -207,11 +207,12 @@
       </div>
       <div class="col-6 col-md-3">
         <div class="text-muted small">Solicitada cliente/retira</div>
-        <div class="fw-semibold">{{ go.go_data_solicitada_cliente_retira.strftime("%d/%m/%Y") if go.go_data_solicitada_cliente_retira else "—" }}</div>
+        {% set solic = data_cliente_producao or go.go_data_solicitada_cliente_retira %}
+        <div class="fw-semibold">{{ solic.strftime("%d/%m/%Y") if solic else "—" }}</div>
       </div>
       <div class="col-6 col-md-3">
         <div class="text-muted small">Término semanal (PCP)</div>
-        <div class="fw-semibold">{{ go.go_termino_semanal_pcp or "—" }}</div>
+        <div class="fw-semibold">{{ liberacao_pcp.get("termino_semanal") or go.go_termino_semanal_pcp or "—" }}</div>
       </div>
 
       <div class="col-6 col-md-3">

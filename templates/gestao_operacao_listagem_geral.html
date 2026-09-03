@@ -57,6 +57,8 @@
       {% set chave_pv = (p.pedido_venda or "").strip() %}
       {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
       {% set rdim = rdim_por_pedido_venda.get(chave_pv) %}
+      {% set data_cliente_p = data_cliente_por_pedido_venda.get(chave_pv) %}
+      {% set solicitada_exibida = data_cliente_p or p.go_data_solicitada_entrega %}
       <tr>
         <td>{{ p.pedido_venda or "—" }}</td>
         <td>
@@ -94,7 +96,7 @@
           {% else %}—{% endif %}
         </td>
         <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
-        <td>{{ p.go_data_solicitada_entrega.strftime("%d/%m/%Y") if p.go_data_solicitada_entrega else "—" }}</td>
+        <td title="{{ 'Automático — direto da Data do cliente em Gestão Produção' if data_cliente_p else '' }}">{{ solicitada_exibida.strftime("%d/%m/%Y") if solicitada_exibida else "—" }}</td>
         <td>
           {% if p.prazo_total_dias_corridos is not none %}
             {{ p.prazo_total_dias_corridos }}d
