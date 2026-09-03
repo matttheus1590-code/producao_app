@@ -241,6 +241,7 @@ def create_app():
         _migrar_producao_para_itens(app)
         _migrar_usuarios_role(app)
         _migrar_estacoes_tabela(app)
+        _atualizar_estacoes_planilha_03_09_2026(app)
         _migrar_faturamento_itens(app)
         _migrar_logistica_itens(app)
         _migrar_planejamento_semanal_itens(app)
@@ -271,6 +272,9 @@ def create_app():
         _backfill_go_data_solicitada_cliente_retira(app)
         _migrar_rdim_inspecao_final(app)
         _migrar_rdim_pecas_desvio(app)
+        # Roda por último de todos: depende de tudo acima (Pedido/ItemPedido
+        # com todas as colunas migradas, PedidoOperacao já existindo).
+        _sincronizar_planilha_producao_03_09_2026(app)
 
     @app.context_processor
     def inject_globals():
@@ -549,6 +553,48 @@ def _migrar_estacoes_tabela(app):
         db.session.add(Estacao(nome=nome, ordem_exibicao=i, ativo=True))
     db.session.commit()
     app.logger.info("Migração automática: %d estações cadastradas como tabela.", len(ESTACOES))
+
+
+_CHAVE_ESTACOES_PLANILHA_03_09_2026 = "atualizacao_estacoes_planilha_03_09_2026"
+_ESTACOES_NOVAS_03_09_2026 = ["SOBRESSALENTE METAL MECANICA", "SOBRESSALENTE BORRACHA", "MANUTENÇÃO / DEVOLUÇÃO"]
+_ESTACOES_DESATIVADAS_03_09_2026 = ["REFORMA", "REVENDA"]
+
+
+def _atualizar_estacoes_planilha_03_09_2026(app):
+    """Reconcilia a tabela `estacoes` (cadastro) com a nova lista ESTACOES —
+    pedido do Bruno (03/09/2026): "considere exatamente as mesmas estações da
+    planilha... revenda não vai existir mais, sobressalentes de borracha e
+    metal mecânica passarão a existir". `_migrar_estacoes_tabela` só semeia
+    a tabela quando ela está VAZIA, então em produção (já populada desde o
+    primeiro boot) mudar a constante ESTACOES sozinha não reflete nos
+    registros existentes — precisa desta migração à parte, guardada por
+    ControleSistema pra rodar exatamente uma vez.
+
+    Desativa (ativo=False) em vez de apagar — mesmo critério já usado no
+    cadastro manual de estações (não existe rota de exclusão física, só
+    ativar/desativar), então nenhum pedido antigo que porventura já tenha
+    usado "Reforma"/"Revenda" fica com referência quebrada."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_ESTACOES_PLANILHA_03_09_2026).first() is not None:
+        return
+
+    for nome in _ESTACOES_DESATIVADAS_03_09_2026:
+        estacao = Estacao.query.filter_by(nome=nome).first()
+        if estacao is not None and estacao.ativo:
+            estacao.ativo = False
+
+    maior_ordem = db.session.query(func.max(Estacao.ordem_exibicao)).scalar() or 0
+    for i, nome in enumerate(_ESTACOES_NOVAS_03_09_2026):
+        if Estacao.query.filter_by(nome=nome).first() is None:
+            maior_ordem += 1
+            db.session.add(Estacao(nome=nome, ordem_exibicao=maior_ordem, ativo=True))
+
+    db.session.add(ControleSistema(chave=_CHAVE_ESTACOES_PLANILHA_03_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Migração automática: estações atualizadas conforme planilha 03/09/2026 — "
+        "%s desativadas, %s criadas.",
+        ", ".join(_ESTACOES_DESATIVADAS_03_09_2026), ", ".join(_ESTACOES_NOVAS_03_09_2026),
+    )
 
 
 def _migrar_faturamento_itens(app):
@@ -902,6 +948,88 @@ def _sincronizar_planilha_producao_25_08_2026(app):
         stats["itens_criados"],
         len(stats["pedidos_sem_cliente_ignorados"]),
     )
+
+
+_CHAVE_SINCRONIZACAO_03_09_2026 = "sincronizacao_planilha_producao_03_09_2026"
+
+
+def _sincronizar_planilha_producao_03_09_2026(app):
+    """Sincroniza Gestão Produção (Pedido/ItemPedido) com a aba "GERAL TESTE"
+    da nova planilha enviada pelo Bruno em 03/09/2026 ("03_09 CONTROLE
+    PRODUCAO_V1.xlsx", layout de colunas diferente da de 25/08 — ver
+    sincronizar_planilha_producao.py) e, na sequência, cria registros básicos
+    em Gestão Operação (PedidoOperacao) pros pedidos desta planilha que ainda
+    não têm nenhum lá — pedido do Bruno (03/09/2026, AskUserQuestion):
+    "extraia todos os dados da planilha anexa... distribua em todo o
+    aplicativo, devidamente para cada area (produção e operação)", com o
+    reforço explícito de NÃO tocar em Qualidade nem P&D (por isso esta função
+    só chama os dois sincronizadores de Produção/Operação, nada de RNC/RDIM/
+    ProjetoPD).
+
+    Protegida por `ControleSistema` (mesmo padrão de
+    `_sincronizar_planilha_producao_25_08_2026`) — roda por cima de dados que
+    já existem, precisa rodar exatamente uma vez. Se a validação de
+    cabeçalhos da planilha falhar (`stats["cabecalhos_invalidos"]`), NÃO
+    marca o ControleSistema como concluído — loga um erro e sai, pra dar
+    outra chance de rodar automaticamente depois que o mapeamento de colunas
+    (COL) for corrigido, sem precisar mexer manualmente no banco. Nunca
+    lança exceção: um erro aqui não pode derrubar o boot do site inteiro."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SINCRONIZACAO_03_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "sincronizacao_producao_03_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from sincronizar_planilha_producao import seed_pedidos_operacao_basico, sincronizar_planilha_producao
+
+    try:
+        stats = sincronizar_planilha_producao(xlsx_path)
+        if stats.get("cabecalhos_invalidos"):
+            app.logger.error(
+                "Sincronização planilha 03/09/2026 ABORTADA — cabeçalhos da planilha não "
+                "batem com o mapeamento esperado (COL): %s",
+                " | ".join(stats["cabecalhos_invalidos"]),
+            )
+            return
+
+        stats_operacao = seed_pedidos_operacao_basico(xlsx_path)
+        if stats_operacao.get("cabecalhos_invalidos"):
+            # Não deveria acontecer (mesma planilha já validou acima), mas se
+            # acontecer não descarta o que a sincronização de Produção já
+            # commitou — só loga e segue sem os registros de Operação.
+            app.logger.error(
+                "Seed de PedidoOperacao (planilha 03/09/2026) ABORTADO — cabeçalhos não bateram: %s",
+                " | ".join(stats_operacao["cabecalhos_invalidos"]),
+            )
+            stats_operacao = {"pedidos_operacao_criados": 0, "pedidos_operacao_ja_existentes": 0}
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Sincronização planilha 03/09/2026 falhou com erro inesperado.")
+        return
+
+    db.session.add(ControleSistema(chave=_CHAVE_SINCRONIZACAO_03_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Sincronização planilha 03/09/2026: %d linhas | %d pedidos atualizados | "
+        "%d pedidos criados | %d itens atualizados | %d itens criados | "
+        "%d pedidos sem cliente ignorados | Operação: %d PedidoOperacao criados, "
+        "%d já existentes.",
+        stats["linhas_lidas"],
+        stats["pedidos_atualizados"],
+        stats["pedidos_criados"],
+        stats["itens_atualizados"],
+        stats["itens_criados"],
+        len(stats["pedidos_sem_cliente_ignorados"]),
+        stats_operacao["pedidos_operacao_criados"],
+        stats_operacao["pedidos_operacao_ja_existentes"],
+    )
+    if stats["valores_nao_reconhecidos"]:
+        app.logger.warning(
+            "Sincronização planilha 03/09/2026 — valores não reconhecidos (não importados "
+            "automaticamente, checar manualmente): %s",
+            {campo: list(valores.keys()) for campo, valores in stats["valores_nao_reconhecidos"].items()},
+        )
 
 
 _CHAVE_SINCRONIZACAO_GO_28_08_2026 = "sincronizacao_gestao_operacao_28_08_2026"

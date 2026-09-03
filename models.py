@@ -15,12 +15,23 @@ ESTACOES = [
     "MANDRIL",
     "ESPUMAGEM",
     "SILICONE",
+    # "PU" representa aqui a estação "SOBRESSALENTE PU" da planilha de
+    # controle (pedido do Bruno, 03/09/2026: "considere exatamente as mesmas
+    # estações da planilha") — mantido com este nome de propósito, sem virar
+    # "SOBRESSALENTE PU", porque RDIM_ESTACOES_OPCOES (Qualidade, que não
+    # pode ser tocado) já espera literalmente "PU" pra liberar inspeção RDIM.
     "PU",
-    "REFORMA",
-    "REVENDA",
+    "SOBRESSALENTE METAL MECANICA",
+    "SOBRESSALENTE BORRACHA",
+    "MANUTENÇÃO / DEVOLUÇÃO",
     "PROJETO ESPECIAL",
     "OUTROS",
 ]
+# "REFORMA" e "REVENDA" saíram da lista (pedido do Bruno, 03/09/2026: revenda
+# não existe mais como estação; a planilha de controle atual também não tem
+# nenhuma linha com REFORMA). Ver _atualizar_estacoes_planilha_03_09_2026 em
+# app.py — desativa (não apaga) os registros correspondentes já cadastrados
+# em produção na tabela `estacoes`, e cria as 3 estações novas.
 
 STATUS_OPCOES = ["PENDENTE", "EM TRATATIVA", "ANDAMENTO", "FINALIZADO"]
 
