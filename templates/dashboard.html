@@ -5,19 +5,19 @@
 
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-2">
-    {{ stat_card("Total de pedidos", resumo.total, link=url_for('dashboard'), ativo=(not filtros.status)) }}
+    {{ stat_card("Total de pedidos", resumo.total, link=url_for('dashboard', **filtros_status_cards.total), ativo=(not filtros.status)) }}
   </div>
   <div class="col-6 col-lg-2">
-    {{ stat_card("Pendentes", resumo.pendente, cor="danger", borda="danger", link=url_for('dashboard', status='PENDENTE'), ativo=(filtros.status == 'PENDENTE')) }}
+    {{ stat_card("Pendentes", resumo.pendente, cor="danger", borda="danger", link=url_for('dashboard', **filtros_status_cards.pendente), ativo=(filtros.status == 'PENDENTE')) }}
   </div>
   <div class="col-6 col-lg-2">
-    {{ stat_card("Em tratativa", resumo.em_tratativa, cor="warning", borda="warning", link=url_for('dashboard', status='EM TRATATIVA'), ativo=(filtros.status == 'EM TRATATIVA')) }}
+    {{ stat_card("Em tratativa", resumo.em_tratativa, cor="warning", borda="warning", link=url_for('dashboard', **filtros_status_cards.em_tratativa), ativo=(filtros.status == 'EM TRATATIVA')) }}
   </div>
   <div class="col-6 col-lg-2">
-    {{ stat_card("Em andamento", resumo.andamento, cor="info", borda="info", link=url_for('dashboard', status='ANDAMENTO'), ativo=(filtros.status == 'ANDAMENTO')) }}
+    {{ stat_card("Em andamento", resumo.andamento, cor="info", borda="info", link=url_for('dashboard', **filtros_status_cards.andamento), ativo=(filtros.status == 'ANDAMENTO')) }}
   </div>
   <div class="col-6 col-lg-2">
-    {{ stat_card("Finalizados", resumo.finalizado, cor="success", borda="success", link=url_for('dashboard', status='FINALIZADO'), ativo=(filtros.status == 'FINALIZADO')) }}
+    {{ stat_card("Finalizados", resumo.finalizado, cor="success", borda="success", link=url_for('dashboard', **filtros_status_cards.finalizado), ativo=(filtros.status == 'FINALIZADO')) }}
   </div>
   <div class="col-6 col-lg-2">
     {{ stat_card("Valor total", "R$ " + "{:,.2f}".format(resumo.valor_total).replace(",", "X").replace(".", ",").replace("X", ".")) }}

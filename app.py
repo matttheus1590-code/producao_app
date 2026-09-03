@@ -1367,6 +1367,50 @@ def _calcular_resumo():
     }
 
 
+def _calcular_resumo_filtrado(linhas):
+    """Mesmos cards de resumo de _calcular_resumo (topo da Listagem Geral),
+    mas recalculados em cima do que está de fato filtrado/visível na tela —
+    pedido do Bruno (03/09/2026): "quero que TODO esse painel seja
+    totalmente dinâmico... se eu filtrar algo como mês, região, estação,
+    status, quero que automaticamente ele atualize". Antes esses 6 números
+    vinham sempre de _calcular_resumo() (banco inteiro, sem filtro nenhum) —
+    por isso nunca mudavam ao filtrar a tabela abaixo.
+
+    `linhas` é a lista já achatada (1 linha por item, ver _LinhaListagemGeral)
+    depois de TODOS os filtros da Listagem Geral já aplicados. Total de
+    pedidos/Pendentes/Em tratativa/Em andamento/Finalizados contam PEDIDOS
+    distintos entre essas linhas — usando o status "rollup" de cada pedido
+    (Pedido.status_producao, o mesmo critério já usado pelo próprio filtro de
+    Status em _predicado_status), não o status do item individual. Valor
+    total soma só os ITENS que aparecem nas linhas (bate exatamente com a
+    tabela logo abaixo — se um pedido tem 5 itens e só 2 passaram no filtro
+    de estação, por exemplo, conta só esses 2, não o pedido inteiro).
+
+    Calculado em Python sobre objetos que a rota já carregou (nenhuma query
+    nova ao banco) — os mesmos `pedido`/`item` que _linhas_listagem_geral
+    usou pra montar as linhas."""
+    pedidos_vistos = {}
+    valor_total = 0.0
+    for l in linhas:
+        pedidos_vistos[l.pedido_id] = l.pedido
+        valor_total += l.venda_total or 0
+
+    contagem = {"PENDENTE": 0, "EM TRATATIVA": 0, "ANDAMENTO": 0, "FINALIZADO": 0}
+    for pedido in pedidos_vistos.values():
+        status = pedido.status_producao
+        if status in contagem:
+            contagem[status] += 1
+
+    return {
+        "total": len(pedidos_vistos),
+        "pendente": contagem["PENDENTE"],
+        "em_tratativa": contagem["EM TRATATIVA"],
+        "andamento": contagem["ANDAMENTO"],
+        "finalizado": contagem["FINALIZADO"],
+        "valor_total": round(valor_total, 2),
+    }
+
+
 def _resumo_otd():
     """Estatísticas de OTD (On-Time Delivery) da Gestão Operação — usa o campo
     go_otd_realizado (SIM/NÃO preenchido manualmente na planilha/tela), bem
@@ -4337,9 +4381,26 @@ def register_routes(app):
         total_paginas = 1
         linhas_pagina = linhas
 
-        resumo = _calcular_resumo()
+        # Pedido do Bruno (03/09/2026): os cards do topo (Total/Pendentes/Em
+        # tratativa/Em andamento/Finalizados/Valor total) agora recalculam em
+        # cima do resultado já filtrado, em vez do banco inteiro sempre —
+        # ver _calcular_resumo_filtrado.
+        resumo = _calcular_resumo_filtrado(linhas)
 
         filtros_paginacao = dict(filtros, sort=sort, dir=dir_ordenacao)
+
+        # Link de cada card de status: mantém os OUTROS filtros ativos
+        # (mês, região, estação, busca...) e só troca o status — clicar em
+        # "Pendentes" com um filtro de região já aplicado continua só
+        # naquela região, em vez de resetar tudo (mesmo pedido do Bruno, já
+        # que os números do card agora refletem esse recorte).
+        filtros_status_cards = {
+            "total": dict(filtros, status=""),
+            "pendente": dict(filtros, status="PENDENTE"),
+            "em_tratativa": dict(filtros, status="EM TRATATIVA"),
+            "andamento": dict(filtros, status="ANDAMENTO"),
+            "finalizado": dict(filtros, status="FINALIZADO"),
+        }
 
         # Qualidade (RDIM) — pedido do Bruno (02/09/2026): coluna de status
         # de qualidade por item, direto na Listagem Geral.
@@ -4354,6 +4415,7 @@ def register_routes(app):
             total_filtrado=total_filtrado,
             filtros=filtros,
             filtros_paginacao=filtros_paginacao,
+            filtros_status_cards=filtros_status_cards,
             sort=sort,
             dir_ordenacao=dir_ordenacao,
             inspecoes_rdim=inspecoes_rdim,
