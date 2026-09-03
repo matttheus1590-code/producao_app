@@ -5521,16 +5521,27 @@ def register_routes(app):
             flash("Estação não encontrada.", "danger")
             return redirect(url_for("estacoes_lista"))
 
-        # Pedido do Bruno (25/08/2026): em toda coluna, o item mais novo/mais
-        # recém movimentado fica no topo. "atualizado_em" cobre os dois casos
-        # de uma vez só — item novo nasce com esse carimbo, e "Avançar" no
-        # Kanban (ou qualquer edição) atualiza sozinho (ver ItemPedido.atualizado_em).
         itens = ItemPedido.query.options(selectinload(ItemPedido.pedido)).filter(ItemPedido.estacao == nome).all()
-        itens.sort(key=lambda i: (i.atualizado_em or datetime.min, i.id), reverse=True)
 
         colunas = {chave: [] for chave in STATUS_CHAO_OPCOES}
         for item in itens:
             colunas[item.status_chao].append(item)
+
+        # Pedido do Bruno (03/09/2026, em TODAS as estações): em Pendente e Em
+        # produção, prazo mais curto (liberação prevista) sempre primeiro —
+        # quem "aperta" mais fica visível sem precisar rolar a coluna. Item
+        # sem liberação prevista cadastrada vai pro final da coluna (não tem
+        # como saber se é urgente ou não).
+        def _chave_prazo(item):
+            return (item.liberacao_prevista is None, item.liberacao_prevista or date.max, item.id)
+
+        for chave in ("PENDENTE", "EM_PRODUCAO"):
+            colunas[chave].sort(key=_chave_prazo)
+
+        # Finalizado continua no critério antigo (25/08/2026): item mais
+        # recém concluído/movimentado no topo — depois de entregue, prazo
+        # previsto deixa de ser o que importa pra essa coluna.
+        colunas["FINALIZADO"].sort(key=lambda i: (i.atualizado_em or datetime.min, i.id), reverse=True)
 
         return render_template(
             "estacoes_kanban.html",
