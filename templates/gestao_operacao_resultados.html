@@ -50,6 +50,62 @@
       </div>
     </div>
 
+    <hr class="my-3">
+
+    <h6 class="text-uppercase text-muted small mb-1"><i class="bi bi-speedometer2"></i> OTD e Lead Time — {{ mes_label }}</h6>
+    <p class="text-muted small mb-3">
+      Mesmo recorte de "liberado" acima (Término Semanal PCP no mês). OTD = entregas dentro do prazo solicitado. Lead Time Operação = da inclusão do pedido até a entrega no cliente;
+      "CIF"/"FOB" é o mesmo lead time só que separado por modalidade de frete. Lead Time Chão de Fábrica (Produção) = do início ao término da produção em Gestão Produção (início da produção até o fim da inspeção do item).
+    </p>
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-lg-4">
+        {{ stat_card(
+          "OTD do mês",
+          (otd_mes.percentual ~ "%") if otd_mes.percentual is not none else "—",
+          cor=("success" if otd_mes.atinge_meta else "danger"),
+          borda=("success" if otd_mes.atinge_meta else "danger"),
+          sufixo=(otd_mes.total ~ " pedido(s) com OTD registrado" if otd_mes.total else "sem OTD registrado ainda")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-4">
+        {{ stat_card(
+          "Lead Time Operação",
+          (lead_times_mes.lt_operacao.media ~ " dias") if lead_times_mes.lt_operacao.media is not none else "—",
+          cor="primary",
+          sufixo=(lead_times_mes.lt_operacao.n ~ " pedido(s) com dado" if lead_times_mes.lt_operacao.n else "sem dado suficiente")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-4">
+        {{ stat_card(
+          "Lead Time Operação — CIF",
+          (lead_times_mes.lt_operacao_cif.media ~ " dias") if lead_times_mes.lt_operacao_cif.media is not none else "—",
+          sufixo=(lead_times_mes.lt_operacao_cif.n ~ " pedido(s) CIF" if lead_times_mes.lt_operacao_cif.n else "sem pedido CIF com dado")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-4">
+        {{ stat_card(
+          "Lead Time Operação — FOB",
+          (lead_times_mes.lt_operacao_fob.media ~ " dias") if lead_times_mes.lt_operacao_fob.media is not none else "—",
+          sufixo=(lead_times_mes.lt_operacao_fob.n ~ " pedido(s) FOB" if lead_times_mes.lt_operacao_fob.n else "sem pedido FOB com dado")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-4">
+        {{ stat_card(
+          "Lead Time Frete",
+          (lead_times_mes.lt_frete.media ~ " dias") if lead_times_mes.lt_frete.media is not none else "—",
+          sufixo=(lead_times_mes.lt_frete.n ~ " pedido(s) com dado" if lead_times_mes.lt_frete.n else "sem dado suficiente")
+        ) }}
+      </div>
+      <div class="col-6 col-lg-4">
+        {{ stat_card(
+          "Lead Time Chão de Fábrica (Produção)",
+          (lead_times_mes.lt_producao.media ~ " dias") if lead_times_mes.lt_producao.media is not none else "—",
+          cor="secondary",
+          sufixo=(lead_times_mes.lt_producao.n ~ " item(ns) com dado" if lead_times_mes.lt_producao.n else "sem dado suficiente")
+        ) }}
+      </div>
+    </div>
+
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0">
         <thead>

@@ -1526,6 +1526,65 @@ def _resumo_otd(query=None):
     }
 
 
+def _media_dias(valores):
+    """Média simples de uma lista de inteiros/None, ignorando os None — mesmo
+    critério do resto do resumo de Resultados/OTD: quem não tem o dado
+    calculável fica de fora da média (não conta como zero). Devolve
+    (média arredondada em 1 casa, quantidade de pedidos que entraram na
+    conta) — a quantidade é sempre mostrada junto do número no card (pedido
+    do Bruno: "bem claro, didático"), pra deixar claro quando a média vem de
+    poucos pedidos."""
+    validos = [v for v in valores if v is not None]
+    if not validos:
+        return None, 0
+    return round(sum(validos) / len(validos), 1), len(validos)
+
+
+def _resumo_lead_times(query):
+    """Lead times médios da Gestão Operação pra tela Resultados/OTD — pedido
+    do Bruno (03/09/2026): "preciso ver os resultados detalhados de cada
+    mês, como otd, lead time operação, lead time chão de fábrica (produção),
+    lead time operação cif, lead time operação fob". Recebe a MESMA query já
+    filtrada por mês/segmento usada em _resumo_otd (ver
+    _filtrar_pedidos_operacao) — cada card do resumo reflete o mesmo recorte.
+
+      - lt_operacao: PedidoOperacao.go_lead_time_operacao_dias (inclusão do
+        pedido até entrega efetiva no cliente) — geral, depois quebrado por
+        modalidade de frete (CIF/FOB, ver FRETE_OPCOES).
+      - lt_frete: PedidoOperacao.go_lead_time_frete_dias (expedição até
+        entrega/coleta real).
+      - lt_producao: "chão de fábrica" — vem de Gestão Produção (ItemPedido.
+        lt_producao_dias: início produção até término inspeção), cruzado
+        pelo mesmo casamento por pedido_venda (trim, sem FK, nunca
+        aproximado) já usado em _itens_producao_por_pedido_venda. Pedidos
+        que ainda não foram lançados em Gestão Produção, ou cujos itens
+        ainda não têm as duas datas, ficam de fora da média."""
+    pedidos = query.all()
+
+    lt_operacao_media, lt_operacao_n = _media_dias(p.go_lead_time_operacao_dias for p in pedidos)
+    lt_operacao_cif_media, lt_operacao_cif_n = _media_dias(
+        p.go_lead_time_operacao_dias for p in pedidos if p.frete == "CIF"
+    )
+    lt_operacao_fob_media, lt_operacao_fob_n = _media_dias(
+        p.go_lead_time_operacao_dias for p in pedidos if p.frete == "FOB"
+    )
+    lt_frete_media, lt_frete_n = _media_dias(p.go_lead_time_frete_dias for p in pedidos)
+
+    itens_por_pedido = _itens_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
+    valores_lt_producao = [
+        item.lt_producao_dias for itens in itens_por_pedido.values() for item in itens
+    ]
+    lt_producao_media, lt_producao_n = _media_dias(valores_lt_producao)
+
+    return {
+        "lt_operacao": {"media": lt_operacao_media, "n": lt_operacao_n},
+        "lt_operacao_cif": {"media": lt_operacao_cif_media, "n": lt_operacao_cif_n},
+        "lt_operacao_fob": {"media": lt_operacao_fob_media, "n": lt_operacao_fob_n},
+        "lt_frete": {"media": lt_frete_media, "n": lt_frete_n},
+        "lt_producao": {"media": lt_producao_media, "n": lt_producao_n},
+    }
+
+
 def _semana_label_curto(semana):
     """Encurta "SEMANA 03 / AGO / 2026" pra "S03 AGO/26" (rótulo do eixo do
     gráfico de projeção) — valores antigos que não seguem esse padrão (ex.:
@@ -1711,6 +1770,18 @@ def _projecao_pcp_mensal(mes_de, mes_ate):
         )
         ano, mes = _somar_meses(ano, mes, 1)
     return linhas
+
+
+def _pedidos_operacao_do_mes(ano, mes):
+    """Query de PedidoOperacao com Término Semanal PCP dentro do mês (ano,
+    mes) — MESMA definição de "mês" usada em _faturamento_semanal_pcp e no
+    segmento "planejamento" de _filtrar_pedidos_operacao, só que direta (sem
+    passar pelos filtros de cliente/vendedor/busca da tela). Usada pelo
+    resumo fixo do topo da tela Resultados/OTD (pedido do Bruno,
+    03/09/2026) — sempre mostra o mês selecionado, independente do
+    dropdown de segmento mais abaixo na página."""
+    semanas_mes = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, mes, 1))
+    return PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.in_(semanas_mes))
 
 
 def _faturamento_semanal_pcp(ano, mes):
@@ -4893,11 +4964,25 @@ def register_routes(app):
         # pedidos.
         otd = _resumo_otd(query_operacao)
 
+        # Resumo fixo do mês (pedido do Bruno, 03/09/2026: "preciso ver os
+        # resultados detalhados de cada mês, como otd, lead time operação,
+        # lead time chão de fábrica (produção), lead time operação cif,
+        # lead time operação fob... de preferência no topo da página,
+        # do lado do faturamento") — SEMPRE o mês selecionado em cima
+        # (ano/mes), no mesmo recorte "planejamento" (Término Semanal PCP no
+        # mês) usado em "Qtd/Valor liberado", independente do dropdown de
+        # segmento mais abaixo (que continua controlando só os cards de OTD
+        # "geral" e a lista de pedidos).
+        query_mes = _pedidos_operacao_do_mes(ano, mes)
+        otd_mes = _resumo_otd(query_mes)
+        lead_times_mes = _resumo_lead_times(query_mes)
+
         return render_template(
             "gestao_operacao_resultados.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros, otd=otd,
             faturamento_semanal=faturamento_semanal,
+            otd_mes=otd_mes, lead_times_mes=lead_times_mes,
             ano=ano, mes=mes, mes_label=f"{MESES_PT[mes - 1]}/{ano}",
             mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
             mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
