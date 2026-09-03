@@ -106,14 +106,14 @@
         <td class="text-truncate" style="max-width: 160px;" title="{{ p.cidade or '' }}">{{ p.cidade or "—" }}</td>
         <td>{{ p.go_proposta or "—" }}</td>
         <td>
-          {% if not rdim %}
-            <span class="text-muted">—</span>
-          {% elif rdim.reprovadas + rdim.com_desvio > 0 %}
-            <span class="badge bg-warning text-dark" title="{{ rdim.reprovadas }} reprovada(s), {{ rdim.com_desvio }} aprovada(s) c/ desvio, de {{ rdim.total }} inspeção(ões)">
+          {% if rdim and rdim.reprovadas + rdim.com_desvio > 0 %}
+            <a href="{{ url_for('rdim_lista', busca=p.pedido_venda, resultado=['REPROVADO', 'APROVADO_COM_DESVIO']) }}"
+               class="badge bg-warning text-dark text-decoration-none"
+               title="{{ rdim.reprovadas }} reprovada(s), {{ rdim.com_desvio }} aprovada(s) c/ desvio, de {{ rdim.total }} inspeção(ões) — clique para ver o contexto completo">
               <i class="bi bi-exclamation-triangle"></i> {{ rdim.reprovadas + rdim.com_desvio }} c/ desvio
-            </span>
+            </a>
           {% else %}
-            <span class="badge bg-success" title="{{ rdim.total }} inspeção(ões), todas aprovadas">OK</span>
+            <span class="text-muted">—</span>
           {% endif %}
         </td>
         <td class="text-end">
