@@ -134,6 +134,22 @@ body.col-resizing-ativo {
   background-color: rgba(0, 0, 0, 0.02);
 }
 
+/* Cabeçalho de cada uma das 3 colunas da tela de monitoramento de Estações
+   (/estacoes) — pedido do Bruno (03/09/2026): agrupar por processo (Espumagem/
+   Silicone, Poliuretano Cast, Outros) de um jeito visualmente claro, no mesmo
+   espírito de .kanban-coluna-titulo mas mais discreto (aqui é só um rótulo de
+   agrupamento, não uma coluna com contagem de itens dentro). */
+.estacoes-grupo-titulo {
+  font-weight: 700;
+  font-size: 1.05rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #495057;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 3px solid #6ea8fe;
+}
+
 /* ---------------------------------------------------------------------
    Menu lateral (sidebar) do Dashboard Gerencial de PCP
 --------------------------------------------------------------------- */

@@ -23,15 +23,67 @@ ESTACOES = [
     "PU",
     "SOBRESSALENTE METAL MECANICA",
     "SOBRESSALENTE BORRACHA",
-    "MANUTENÇÃO / DEVOLUÇÃO",
+    "MANUTENÇÃO",
     "PROJETO ESPECIAL",
     "OUTROS",
 ]
-# "REFORMA" e "REVENDA" saíram da lista (pedido do Bruno, 03/09/2026: revenda
-# não existe mais como estação; a planilha de controle atual também não tem
-# nenhuma linha com REFORMA). Ver _atualizar_estacoes_planilha_03_09_2026 em
-# app.py — desativa (não apaga) os registros correspondentes já cadastrados
-# em produção na tabela `estacoes`, e cria as 3 estações novas.
+# "REFORMA" e "REVENDA" saíram da lista de vez (pedido do Bruno, 03/09/2026,
+# em duas etapas: primeiro só desativadas no cadastro — junto com a
+# reconciliação com a planilha de controle — depois, no mesmo dia, excluídas
+# de verdade a pedido explícito dele). Ver _organizar_estacoes_03_09_2026 em
+# app.py — como ItemPedido.estacao é texto solto (sem FK, ver docstring de
+# Estacao), excluir a linha do cadastro não quebra nenhum pedido antigo que
+# porventura tenha usado esses nomes.
+# "MANUTENÇÃO / DEVOLUÇÃO" virou só "MANUTENÇÃO" (mesmo pedido, 03/09/2026)
+# — _organizar_estacoes_03_09_2026 renomeia tanto o cadastro quanto qualquer
+# ItemPedido.estacao já gravado com o nome antigo.
+
+# Rótulos de exibição usados SÓ na tela de monitoramento de Estações
+# (/estacoes, ver ESTACOES_GRUPOS_MONITORAMENTO e a rota estacoes_lista/
+# estacao_kanban em app.py) — pedido do Bruno (03/09/2026). O nome
+# GRAVADO/oficial da estação (cadastro, dropdowns de pedido, Listagem Geral,
+# Consulta Pedido etc.) continua o de ESTACOES acima; só o texto mostrado
+# nessa tela específica muda. "MANDRIL" em especial NUNCA pode virar "PIG
+# MANDRIL" de verdade no valor gravado — RDIM_ESTACOES_OPCOES (Qualidade, que
+# não pode ser tocado) depende do texto exato "MANDRIL" pra liberar inspeção
+# RDIM; renomear o valor de verdade quebraria esse fluxo mesmo sem tocar em
+# nenhum arquivo de Qualidade. Mesma lógica (mais leve) pra "Corte de
+# Espumas" e "Sobressalente Itens em Borracha" — o Bruno não pediu
+# explicitamente pra renomear essas duas em todo o site, só descreveu como
+# quer que apareçam nessa tela.
+ESTACOES_ROTULOS_EXIBICAO = {
+    "CORTE": "Corte de Espumas",
+    "MANDRIL": "Pig Mandril",
+    "SOBRESSALENTE BORRACHA": "Sobressalente Itens em Borracha",
+}
+
+
+def rotulo_estacao(nome):
+    """Nome "bonito" de exibição de uma estação (ver ESTACOES_ROTULOS_EXIBICAO)
+    — devolve o próprio nome quando não há rótulo especial cadastrado."""
+    return ESTACOES_ROTULOS_EXIBICAO.get(nome, nome)
+
+
+# 3 colunas fixas da tela de monitoramento /estacoes (pedido do Bruno,
+# 03/09/2026: "quero esse espaço bem intuitivo, didático e claro" — líderes,
+# PCP e gestores usam essa tela pra acompanhar a fila/criticidade/lead time
+# de cada estação de um jeito rápido, agrupado por processo). Estação ativa
+# no cadastro que não aparecer em nenhuma lista abaixo cai numa coluna extra
+# "Outras estações" (ver estacoes_lista em app.py) — nunca some em silêncio.
+ESTACOES_GRUPOS_MONITORAMENTO = [
+    {"titulo": "Espumagem/Silicone", "estacoes": ["ESPUMAGEM", "CORTE", "SILICONE"]},
+    {"titulo": "Poliuretano Cast", "estacoes": ["PU", "MANDRIL"]},
+    {
+        "titulo": "Outros",
+        "estacoes": [
+            "SOBRESSALENTE METAL MECANICA",
+            "SOBRESSALENTE BORRACHA",
+            "MANUTENÇÃO",
+            "PROJETO ESPECIAL",
+            "OUTROS",
+        ],
+    },
+]
 
 STATUS_OPCOES = ["PENDENTE", "EM TRATATIVA", "ANDAMENTO", "FINALIZADO"]
 

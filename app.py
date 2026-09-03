@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from extensions import db, login_manager
 from models import (
     ESTACOES,
+    ESTACOES_GRUPOS_MONITORAMENTO,
     FRETE_OPCOES,
     GO_OTD_META_PERCENTUAL,
     GO_STATUS_PEDIDO_INFO_CORES,
@@ -82,6 +83,7 @@ from models import (
     Usuario,
     VisitaReuniaoPD,
     gerar_semanas_pcp,
+    rotulo_estacao,
 )
 from permissoes import ROLES, ROLES_LABELS, pode_editar_estacao, requer_role
 
@@ -242,6 +244,10 @@ def create_app():
         _migrar_usuarios_role(app)
         _migrar_estacoes_tabela(app)
         _atualizar_estacoes_planilha_03_09_2026(app)
+        # Depende da reconciliação acima já ter rodado (garante que Reforma/
+        # Revenda existem no cadastro pra serem excluídas, e que Manutenção /
+        # Devolução já existe pra ser renomeada).
+        _organizar_estacoes_03_09_2026(app)
         _migrar_faturamento_itens(app)
         _migrar_logistica_itens(app)
         _migrar_planejamento_semanal_itens(app)
@@ -594,6 +600,56 @@ def _atualizar_estacoes_planilha_03_09_2026(app):
         "Migração automática: estações atualizadas conforme planilha 03/09/2026 — "
         "%s desativadas, %s criadas.",
         ", ".join(_ESTACOES_DESATIVADAS_03_09_2026), ", ".join(_ESTACOES_NOVAS_03_09_2026),
+    )
+
+
+_CHAVE_ORGANIZAR_ESTACOES_03_09_2026 = "organizar_estacoes_03_09_2026"
+_ESTACOES_EXCLUIDAS_03_09_2026 = ["REFORMA", "REVENDA"]
+_ESTACAO_RENOMEADA_03_09_2026 = ("MANUTENÇÃO / DEVOLUÇÃO", "MANUTENÇÃO")
+
+
+def _organizar_estacoes_03_09_2026(app):
+    """Segunda rodada de ajuste no cadastro de Estações, mesmo dia da
+    reconciliação com a planilha (`_atualizar_estacoes_planilha_03_09_2026`),
+    agora a pedido direto do Bruno na tela de Estações:
+      1. Exclui de vez "Reforma" e "Revenda" — antes só tinham sido
+         desativadas (não existia pedido pra excluir ainda). Como
+         `ItemPedido.estacao` é texto solto, sem chave estrangeira pra
+         `Estacao` (ver docstring do model), apagar a linha do cadastro é
+         seguro — não quebra nenhum pedido antigo que porventura tenha usado
+         esses nomes, só deixa de aparecer no cadastro/dropdowns.
+      2. Renomeia "Manutenção / Devolução" pra só "Manutenção", tanto no
+         cadastro quanto em qualquer ItemPedido já gravado com o nome antigo
+         (pra não sobrar pedido usando um nome de estação que não existe
+         mais em lugar nenhum do site).
+
+    Guardado por ControleSistema pra rodar exatamente uma vez, mesmo padrão
+    de todas as outras migrações de estações."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_ORGANIZAR_ESTACOES_03_09_2026).first() is not None:
+        return
+
+    excluidas = []
+    for nome in _ESTACOES_EXCLUIDAS_03_09_2026:
+        estacao = Estacao.query.filter_by(nome=nome).first()
+        if estacao is not None:
+            db.session.delete(estacao)
+            excluidas.append(nome)
+
+    nome_antigo, nome_novo = _ESTACAO_RENOMEADA_03_09_2026
+    estacao_manutencao = Estacao.query.filter_by(nome=nome_antigo).first()
+    if estacao_manutencao is not None:
+        estacao_manutencao.nome = nome_novo
+
+    itens_renomeados = ItemPedido.query.filter_by(estacao=nome_antigo).update(
+        {"estacao": nome_novo}, synchronize_session=False
+    )
+
+    db.session.add(ControleSistema(chave=_CHAVE_ORGANIZAR_ESTACOES_03_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Migração automática: estações organizadas (pedido Bruno 03/09/2026) — "
+        "excluídas: %s | renomeada: '%s' -> '%s' (%d item(ns) atualizado(s)).",
+        ", ".join(excluidas) or "nenhuma", nome_antigo, nome_novo, itens_renomeados,
     )
 
 
@@ -5405,10 +5461,10 @@ def register_routes(app):
     @app.route("/estacoes")
     @login_required
     def estacoes_lista():
-        estacoes = Estacao.query.order_by(Estacao.ordem_exibicao).all()
         hoje = date.today()
-        linhas = []
-        for e in estacoes:
+        estacoes_por_nome = {e.nome: e for e in Estacao.query.all()}
+
+        def _linha(e):
             fila = ItemPedido.query.filter(
                 ItemPedido.estacao == e.nome, ItemPedido.status_producao != "FINALIZADO"
             ).count()
@@ -5428,8 +5484,34 @@ def register_routes(app):
                 if itens_lt
                 else None
             )
-            linhas.append({"estacao": e, "fila": fila, "criticos": criticos, "lt_medio": lt_medio})
-        return render_template("estacoes_lista.html", linhas=linhas)
+            return {"estacao": e, "rotulo": rotulo_estacao(e.nome), "fila": fila, "criticos": criticos, "lt_medio": lt_medio}
+
+        # 3 colunas fixas (pedido do Bruno, 03/09/2026) — ver
+        # ESTACOES_GRUPOS_MONITORAMENTO em models.py. Só entram estações
+        # ativas; uma estação ativa que não conste em nenhum grupo cai numa
+        # coluna extra "Outras estações" no final, pra nunca sumir em
+        # silêncio do monitoramento (ex.: uma estação nova cadastrada depois
+        # sem eu saber encaixar num dos 3 grupos).
+        grupos = []
+        nomes_agrupados = set()
+        for grupo in ESTACOES_GRUPOS_MONITORAMENTO:
+            linhas_grupo = []
+            for nome in grupo["estacoes"]:
+                nomes_agrupados.add(nome)
+                e = estacoes_por_nome.get(nome)
+                if e is not None and e.ativo:
+                    linhas_grupo.append(_linha(e))
+            grupos.append({"titulo": grupo["titulo"], "linhas": linhas_grupo})
+
+        extras = [
+            _linha(e)
+            for nome, e in sorted(estacoes_por_nome.items())
+            if nome not in nomes_agrupados and e.ativo
+        ]
+        if extras:
+            grupos.append({"titulo": "Outras estações", "linhas": extras})
+
+        return render_template("estacoes_lista.html", grupos=grupos)
 
     @app.route("/estacoes/<nome>")
     @login_required
@@ -5453,6 +5535,7 @@ def register_routes(app):
         return render_template(
             "estacoes_kanban.html",
             estacao=estacao,
+            rotulo=rotulo_estacao(estacao.nome),
             colunas=colunas,
             pode_editar=pode_editar_estacao(current_user, nome),
         )
