@@ -245,12 +245,31 @@ def _match_pedido(valor, exatos, indice_tokens):
     planilha seja EXATAMENTE igual a algum número de pedido já indexado a
     partir dos pedido_venda cadastrados — nunca por "contém como substring"
     (isso é o que evita casar "146" com "14"). Se mais de um PedidoOperacao
-    bater por token, fica com o primeiro (caso raro — normalmente só há um)."""
+    bater por token, fica com o primeiro (caso raro — normalmente só há um).
+
+    EXCEÇÃO — bug encontrado e corrigido em 04/09/2026 (pedido do Bruno, ao
+    investigar divergência de "Valor liberado no mês" entre o site e a
+    planilha): pedidos com barra e sufixo curto (ex.: "492/1", "578/1",
+    "16/569") NUNCA usam casamento aproximado, mesmo que um dos números bata
+    com um pedido_venda já cadastrado — só casamento exato. O Bruno confirmou
+    (AskUserQuestion, 04/09/2026): "492" e "492/1" são pedidos COMERCIAIS
+    DIFERENTES (não é a mesma venda desdobrada), cada um com sua própria
+    liberação/faturamento — mas como "1" tem só 1 dígito (abaixo de
+    _TOKEN_MIN_LEN, então nem vira token), "492/1" gerava só o token "492" e
+    casava (errado) com o pedido "492" já cadastrado, fazendo os dois pedidos
+    virarem UM SÓ registro no site (o mais recente processado sobrescrevia os
+    campos do outro — o "perdido" simplesmente sumia de Valor liberado/
+    faturado do mês). Achei 12 casos assim na planilha inteira ao investigar.
+    Mantém o casamento aproximado normal pra valores SEM barra (ex.: "253
+    (229)", caso original que este mecanismo foi criado pra cobrir — combinar
+    um valor com duas referências dentro da MESMA célula)."""
     valor = (valor or "").strip()
     if not valor or valor.upper() in _VALORES_INVALIDOS_PEDIDO_VENDA:
         return None, None
     if valor in exatos:
         return exatos[valor], "exato"
+    if "/" in valor:
+        return None, None
 
     for tok in _tokens_numericos(valor):
         candidatos = indice_tokens.get(tok)

@@ -285,6 +285,9 @@ def create_app():
         # que o Bruno mandou em 03/09 (mesmo layout de coluna, bloco
         # "Resultados" novo) — depende só de PedidoOperacao já existir.
         _sincronizar_gestao_operacao_03_09_2026(app)
+        # Correção pontual pedida pelo Bruno (04/09/2026) — precisa rodar
+        # depois da sincronização acima (é o bug dela que corrige).
+        _corrigir_colisao_barra_gestao_operacao(app)
         _seed_usuario_pd_gustavo(app)
         _seed_usuarios_pcp_fabiano_daniel(app)
 
@@ -1127,6 +1130,64 @@ def _sincronizar_gestao_operacao_28_08_2026(app):
         stats["campos_atualizados"],
         stats["exato"],
         stats["aproximado"],
+    )
+
+
+_CHAVE_CORRECAO_COLISAO_BARRA_GO_04_09_2026 = "correcao_colisao_barra_gestao_operacao_04_09_2026"
+
+
+def _corrigir_colisao_barra_gestao_operacao(app):
+    """Correção pontual (pedido do Bruno, 04/09/2026: "Valor liberado no mês"
+    divergindo da planilha em abril/maio/junho) — reprocessa a MESMA planilha
+    "03_09 Gestão de Fluxo Produtivo 2026" (já sincronizada uma vez em
+    _sincronizar_gestao_operacao_03_09_2026), agora com o bug de casamento
+    aproximado por barra já corrigido em `_match_pedido`
+    (importar_gestao_operacao.py — ver comentário lá).
+
+    Por que basta reprocessar o mesmo arquivo: na 1ª sincronização, uma linha
+    tipo "492/1" colidia (errado) com o pedido "492" já cadastrado e
+    SOBRESCREVIA os campos dele — "492" ficou no banco com os dados de
+    "492/1" (valor, término semanal etc.), e "492/1" nunca virou um registro
+    próprio. Rodando de novo, na MESMA ordem de linhas, com o casamento por
+    barra desativado: a linha "492" (que vem antes na planilha) bate exato de
+    novo no pedido "492" e devolve os campos dele ao normal; a linha "492/1"
+    não bate mais em nada por aproximação, então vira um PedidoOperacao NOVO,
+    com os dados que estavam perdidos. Sem duplicar nada: pedidos que já
+    batiam certo na 1ª sincronização continuam batendo exato e não mudam
+    (update sem diferença nenhuma).
+
+    Roda só uma vez (ControleSistema), e nunca lança exceção (mesmo padrão de
+    _sincronizar_gestao_operacao_03_09_2026 — um erro aqui não pode derrubar
+    o boot do site)."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_CORRECAO_COLISAO_BARRA_GO_04_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "sincronizacao_gestao_operacao_03_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from sincronizar_gestao_operacao import sincronizar_gestao_operacao
+
+    try:
+        stats = sincronizar_gestao_operacao(xlsx_path)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Correção de colisão por barra (Gestão Operação) falhou com erro inesperado.")
+        return
+
+    db.session.add(ControleSistema(chave=_CHAVE_CORRECAO_COLISAO_BARRA_GO_04_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Correção de colisão por barra (Gestão Operação) 04/09/2026: %d linhas | %d pedidos atualizados | "
+        "%d pedidos criados (eram os que tinham sumido, tipo NNN/1) | %d campos atualizados | "
+        "%d casamentos exatos | %d aproximados (deve ser 0 pra valores com barra) | %d sem match.",
+        stats["linhas_lidas"],
+        stats["pedidos_atualizados"],
+        stats["pedidos_criados"],
+        stats["campos_atualizados"],
+        stats["exato"],
+        stats["aproximado"],
+        stats["sem_match_pedido_venda"],
     )
 
 
