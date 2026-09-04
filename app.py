@@ -311,7 +311,21 @@ def create_app():
             STATUS_CHAO_LABELS=STATUS_CHAO_LABELS,
             STATUS_CHAO_CORES=STATUS_CHAO_CORES,
             GO_OTD_META_PERCENTUAL=GO_OTD_META_PERCENTUAL,
-            GO_SEMANAS_PCP=gerar_semanas_pcp(),
+            # Pedido do Bruno (04/09/2026): no filtro "Planejamento semanal
+            # (PCP)" da Listagem Geral de Produção, incluir também as semanas
+            # de meses mais antigos — "considerar de janeiro/2026 em diante".
+            # gerar_semanas_pcp() por padrão só olha 1 mês pra trás; aqui
+            # calculamos quantos meses atrás fica janeiro/2026 (cresce sozinho
+            # com o tempo, sempre alcançando jan/2026 mesmo daqui a alguns
+            # meses) e mantemos os 6 meses à frente já usados antes. Esse
+            # mesmo GO_SEMANAS_PCP também alimenta os dropdowns de
+            # "Planejamento semanal"/"Término Semanal PCP" nas telas de
+            # editar pedido (Produção e Gestão Operação) — ganhar mais opções
+            # antigas ali também é positivo, não só um efeito colateral.
+            GO_SEMANAS_PCP=gerar_semanas_pcp(
+                meses_atras=max(1, (date.today().year - 2026) * 12 + (date.today().month - 1)),
+                meses_frente=6,
+            ),
             GO_TIPO_PEDIDO_OPCOES=GO_TIPO_PEDIDO_OPCOES,
             GO_STATUS_PEDIDO_INFO_OPCOES=GO_STATUS_PEDIDO_INFO_OPCOES,
             GO_STATUS_PEDIDO_INFO_CORES=GO_STATUS_PEDIDO_INFO_CORES,
