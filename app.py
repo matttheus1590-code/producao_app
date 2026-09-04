@@ -286,6 +286,7 @@ def create_app():
         # "Resultados" novo) — depende só de PedidoOperacao já existir.
         _sincronizar_gestao_operacao_03_09_2026(app)
         _seed_usuario_pd_gustavo(app)
+        _seed_usuarios_pcp_fabiano_daniel(app)
 
     @app.context_processor
     def inject_globals():
@@ -1342,6 +1343,28 @@ def _seed_usuario_pd_gustavo(app):
     db.session.add(gustavo)
     db.session.commit()
     app.logger.info("Usuário gustavo.fugita (P&D) criado — troque a senha depois de conferir o acesso.")
+
+
+def _seed_usuarios_pcp_fabiano_daniel(app):
+    """Cria (uma única vez, cada um independente) os logins do Fabiano e do
+    Daniel, time de PCP — pedido do Bruno (04/09/2026): "acesso completo".
+    Papel "PCP" já existente (não é um papel novo como o "PD" do Gustavo) —
+    mesmo acesso que qualquer outro PCP: cadastra/edita pedidos, programação,
+    produção de qualquer estação, cadastros de estação/transportadora,
+    Gestão Operação (ver requer_role("ADMIN", "PCP") espalhado em app.py).
+    Idempotente pelo username, mesmo padrão de _seed_usuario_pd_gustavo."""
+    novos = [
+        ("Fabiano", "fabiano.pcp", "PCP@Fabiano2026!"),
+        ("Daniel", "daniel.pcp", "PCP@Daniel2026!"),
+    ]
+    for nome, username, senha in novos:
+        if Usuario.query.filter_by(username=username).first() is not None:
+            continue
+        usuario = Usuario(nome=nome, username=username, role="PCP", ativo=True)
+        usuario.set_senha(senha)
+        db.session.add(usuario)
+        db.session.commit()
+        app.logger.info("Usuário %s (PCP) criado — troque a senha depois de conferir o acesso.", username)
 
 
 def _pagina_inicial(usuario):
