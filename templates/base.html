@@ -18,6 +18,7 @@
       </div>
 
       <nav class="app-sidebar-nav">
+        {% if current_user.role != 'PD' %}
         <a class="app-nav-link {% if request.endpoint == 'painel' %}active{% endif %}" href="{{ url_for('painel') }}">
           <span>🎛️ Painel</span>
         </a>
@@ -38,17 +39,21 @@
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_resultados' %}active{% endif %}" href="{{ url_for('gestao_operacao_resultados') }}">
           <span>📈 Resultados</span>
         </a>
+        {% endif %}
 
         <div class="app-nav-section">🏭 Gestão Produção</div>
+        {% if current_user.role != 'PD' %}
         <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
           <span>➕ Novo pedido</span>
         </a>
         <a class="app-nav-link {% if request.endpoint in ('dashboard', 'detalhe_pedido', 'editar_pedido') %}active{% endif %}" href="{{ url_for('dashboard') }}">
           <span>📋 Listagem Geral</span>
         </a>
+        {% endif %}
         <a class="app-nav-link {% if request.endpoint in ('estacoes_lista', 'estacao_kanban') %}active{% endif %}" href="{{ url_for('estacoes_lista') }}">
-          <span>🗂️ Estações</span>
+          <span>🗂️ Estações{% if current_user.role == 'PD' %} (visualização){% endif %}</span>
         </a>
+        {% if current_user.role != 'PD' %}
         <a class="app-nav-link {% if request.endpoint == 'programacao_semana' %}active{% endif %}" href="{{ url_for('programacao_semana') }}">
           <span>🗓️ Programação</span>
         </a>
@@ -88,6 +93,7 @@
         <a class="app-nav-link {% if request.endpoint == 'rdim_dashboard' %}active{% endif %}" href="{{ url_for('rdim_dashboard') }}">
           <span>📊 Dashboard RDIM</span>
         </a>
+        {% endif %}
 
         <div class="app-nav-section">🧪 P&D</div>
         <a class="app-nav-link {% if request.endpoint == 'pd_dashboard' %}active{% endif %}" href="{{ url_for('pd_dashboard') }}">

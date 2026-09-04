@@ -1076,15 +1076,18 @@ body.col-resizing-ativo {
 }
 
 /* ---------------------------------------------------------------------
-   Painel — "Últimos apontamentos de Qualidade (RDIM + RNC)" (pedido do
-   Bruno, 03/09/2026): feed curto e clicável, com destaque pro que é novo
-   desde a última visita ao Painel.
+   Painel — feeds curtos e clicáveis (Qualidade RDIM+RNC, Pedidos incluídos
+   em Produção, Atualizações de P&D — pedido do Bruno, 03/09/2026, os 3 no
+   mesmo formato), com destaque pro que é novo desde a última visita ao
+   Painel. Classes genéricas ".notif-feed-*" (nasceram só pro feed de
+   Qualidade, generalizadas quando os outros 2 feeds pediram exatamente o
+   mesmo visual).
 --------------------------------------------------------------------- */
-.notif-qualidade-lista {
+.notif-feed-lista {
   max-height: 280px;
   overflow-y: auto;
 }
-.notif-qualidade-item {
+.notif-feed-item {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -1095,36 +1098,38 @@ body.col-resizing-ativo {
   text-decoration: none;
   color: inherit;
 }
-.notif-qualidade-linha1 {
+.notif-feed-linha1 {
   display: flex;
   align-items: center;
   gap: 0.6rem;
 }
-/* Detalhe do desvio (pedido do Bruno, 03/09/2026: "cite com detalhes o
-   desvio, ex: desvio dimensional, desvio espessura, mínimo e máximo era X,
-   e ficou com Y") — linha extra abaixo do título/badges, alinhada com o
-   início do título (depois do badge RDIM/RNC) pra ficar fácil de ler em
-   sequência. */
-.notif-qualidade-contexto {
-  padding-left: calc(3.4rem + 0.6rem);
+/* Linha extra abaixo do título/badges com o contexto do evento (detalhe do
+   desvio no feed de Qualidade, campos alterados no feed de P&D...).
+   "-indent" alinha com o início do título quando a linha1 tem um badge de
+   tipo (RDIM/RNC/NOVO/ATUALIZAÇÃO) antes dele; sem esse badge (feed de
+   Pedidos) o texto começa direto na margem. */
+.notif-feed-contexto {
   line-height: 1.3;
 }
-.notif-qualidade-item:last-child {
+.notif-feed-contexto-indent {
+  padding-left: calc(3.4rem + 0.6rem);
+}
+.notif-feed-item:last-child {
   border-bottom: none;
 }
-.notif-qualidade-item:hover {
+.notif-feed-item:hover {
   background-color: rgba(13, 110, 253, 0.06);
 }
-.notif-qualidade-item-novo {
+.notif-feed-item-novo {
   border-left-color: #dc3545;
   background-color: rgba(220, 53, 69, 0.04);
 }
-.notif-qualidade-tipo {
+.notif-feed-tipo {
   flex-shrink: 0;
   min-width: 3.4rem;
   text-align: center;
 }
-.notif-qualidade-titulo {
+.notif-feed-titulo {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1133,7 +1138,7 @@ body.col-resizing-ativo {
   font-weight: 500;
   color: #212529;
 }
-.notif-qualidade-tempo {
+.notif-feed-tempo {
   flex-shrink: 0;
   white-space: nowrap;
 }

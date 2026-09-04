@@ -6,7 +6,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from itertools import zip_longest
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -85,7 +85,7 @@ from models import (
     gerar_semanas_pcp,
     rotulo_estacao,
 )
-from permissoes import ROLES, ROLES_LABELS, pode_editar_estacao, requer_role
+from permissoes import ROLES, ROLES_LABELS, pode_acessar_endpoint, pode_editar_estacao, requer_role
 
 MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
@@ -285,6 +285,7 @@ def create_app():
         # que o Bruno mandou em 03/09 (mesmo layout de coluna, bloco
         # "Resultados" novo) — depende só de PedidoOperacao já existir.
         _sincronizar_gestao_operacao_03_09_2026(app)
+        _seed_usuario_pd_gustavo(app)
 
     @app.context_processor
     def inject_globals():
@@ -1326,6 +1327,33 @@ def _seed_rnc_qualidade(app):
     app.logger.info("Importação Qualidade/RNC: %d RNCs importados da planilha 31/08/2026.", total)
 
 
+def _seed_usuario_pd_gustavo(app):
+    """Cria (uma única vez) o login do Gustavo Fugita, líder de P&D — pedido
+    do Bruno (03/09/2026): acesso completo (visualização + edição) só na
+    área de P&D, e só visualização em Gestão Produção > Estações (papel
+    novo "PD" — ver permissoes.py, ENDPOINTS_PERMITIDOS_PD). Idempotente
+    pelo username, mesmo padrão de _seed_inicial (usuário admin padrão) —
+    se já existir (ex.: já rodou numa execução anterior, ou o Bruno já
+    trocou a senha depois), não mexe em nada."""
+    if Usuario.query.filter_by(username="gustavo.fugita").first() is not None:
+        return
+    gustavo = Usuario(nome="Gustavo Fugita", username="gustavo.fugita", role="PD", ativo=True)
+    gustavo.set_senha("PD@Fugita2026!")
+    db.session.add(gustavo)
+    db.session.commit()
+    app.logger.info("Usuário gustavo.fugita (P&D) criado — troque a senha depois de conferir o acesso.")
+
+
+def _pagina_inicial(usuario):
+    """Pra onde mandar o usuário logo após o login (e se ele visitar /login
+    já autenticado) — normalmente a Listagem Geral de Produção, mas o papel
+    PD (Líder de P&D, restrito só a P&D + Estações — ver permissoes.py)
+    bateria num 403 ali, então vai direto pro Dashboard de P&D."""
+    if usuario.role == "PD":
+        return url_for("pd_dashboard")
+    return url_for("dashboard")
+
+
 def _parse_data_form(valor):
     if not valor:
         return None
@@ -2342,6 +2370,146 @@ def _apontamentos_recentes_qualidade(desde=None, limite=15):
             "cor": RNC_SEVERIDADE_CORES.get(r.severidade, "secondary"),
             "link": url_for("qualidade_editar", rnc_id=r.id),
         })
+
+    eventos.sort(key=lambda e: e["criado_em"] or datetime.min, reverse=True)
+    eventos = eventos[:limite]
+    for e in eventos:
+        e["ha_quanto_tempo"] = _tempo_relativo(e["criado_em"])
+        e["novo"] = bool(desde and e["criado_em"] and e["criado_em"] > desde)
+    return eventos
+
+
+def _pedidos_recentes_producao(desde=None, limite=10):
+    """Últimos pedidos incluídos em Gestão Produção (+Novo pedido), mais
+    recentes primeiro — pedido do Bruno (03/09/2026), no mesmo formato do
+    feed de apontamentos de Qualidade acima: "todo pedido incluído... com
+    cliente, número, data de inclusão, data solicitada pelo cliente e valor,
+    passar o mouse pra ver mais informações". Ordenado por `criado_em`
+    (timestamp real de quando o registro foi gravado) — `data_inclusao_pedido`
+    é só um campo de texto/data digitado no formulário, pode não bater com a
+    ordem real de cadastro. O tooltip (atributo title, mesmo padrão já usado
+    em qualidade_rdim_lista.html) cobre o que não cabe na linha visível:
+    produtos, quantidade, vendedor, cidade/UF, prioridade."""
+    pedidos = (
+        Pedido.query
+        .options(selectinload(Pedido.itens))
+        .order_by(Pedido.criado_em.desc())
+        .limit(limite)
+        .all()
+    )
+
+    eventos = []
+    for p in pedidos:
+        tooltip_linhas = [
+            f"{p.quantidade_total:g} peça(s) · {p.descricao_resumo}",
+            f"Vendedor: {p.vendedor or '—'}",
+            f"Cidade/UF: {p.cidade or '—'}/{p.estado or '—'}",
+            f"Prioridade: {p.prioridade or '—'}",
+        ]
+        eventos.append({
+            "criado_em": p.criado_em,
+            "titulo": f"{p.pedido_venda or ('Pedido #' + str(p.id))} · {p.cliente}",
+            "data_inclusao": p.data_inclusao_pedido,
+            "data_cliente": p.data_cliente,
+            "valor": p.valor_total,
+            "tooltip": "\n".join(tooltip_linhas),
+            "link": url_for("detalhe_pedido", pedido_id=p.id),
+        })
+
+    eventos.sort(key=lambda e: e["criado_em"] or datetime.min, reverse=True)
+    eventos = eventos[:limite]
+    for e in eventos:
+        e["ha_quanto_tempo"] = _tempo_relativo(e["criado_em"])
+        e["novo"] = bool(desde and e["criado_em"] and e["criado_em"] > desde)
+    return eventos
+
+
+# Rótulos amigáveis pros campos de CAMPOS_HISTORICO_PD, usados só na
+# descrição compacta do feed de atualizações de P&D no Painel (abaixo) — o
+# histórico em si (tela de edição de cada projeto) já mostra o nome técnico
+# do campo, este dicionário é só pra deixar o feed do Painel mais legível.
+CAMPO_LABELS_PD = {
+    "etapa_atual": "Etapa",
+    "percentual_conclusao": "% concluído",
+    "prioridade": "Prioridade",
+    "responsavel": "Responsável",
+    "data_prevista_conclusao": "Previsão de conclusão",
+    "data_real_conclusao": "Conclusão real",
+    "custo_realizado": "Custo realizado",
+    "investimento_realizado": "Investimento realizado",
+    "economia_realizada": "Economia realizada",
+}
+
+
+def _descricao_mudanca_pd(h):
+    rotulo = CAMPO_LABELS_PD.get(h.campo, h.campo)
+    antigo = h.valor_anterior or "—"
+    novo = h.valor_novo or "—"
+    return f"{rotulo}: {antigo} → {novo}"
+
+
+def _atualizacoes_recentes_pd(desde=None, limite=15):
+    """Últimas atualizações de P&D (projeto novo cadastrado + avanço de
+    etapa/status ou qualquer outro campo acompanhado em CAMPOS_HISTORICO_PD)
+    — pedido do Bruno (03/09/2026): "qualquer atualização de cadastro ou
+    avanço de status/etapa do P&D também apareça pra mim", mesmo formato do
+    feed de Qualidade. Reaproveita HistoricoAlteracao (já gravado em todo
+    pd_editar/pd_mover_etapa) em vez de criar tabela nova — várias linhas de
+    histórico gravadas na mesma edição (ex.: mudou etapa E prioridade de
+    uma vez) são agrupadas num único evento no feed, pra não poluir a lista
+    com uma linha por campo."""
+    projetos_novos = ProjetoPD.query.order_by(ProjetoPD.criado_em.desc()).limit(limite).all()
+
+    historico = (
+        HistoricoAlteracao.query
+        .filter_by(entidade_tipo="projeto_pd")
+        .order_by(HistoricoAlteracao.criado_em.desc())
+        .limit(limite * 6)
+        .all()
+    )
+
+    eventos = []
+    for p in projetos_novos:
+        eventos.append({
+            "tipo": "NOVO",
+            "criado_em": p.criado_em,
+            "titulo": f"{p.codigo or ('#' + str(p.id))} · {p.nome}",
+            "detalhe": "Novo projeto cadastrado",
+            "etapa": p.etapa_atual,
+            "cor": PD_ETAPA_CORES.get(p.etapa_atual, "secondary"),
+            "link": url_for("pd_editar", projeto_id=p.id),
+        })
+
+    if historico:
+        ids_projetos = {h.entidade_id for h in historico}
+        projetos_por_id = {p.id: p for p in ProjetoPD.query.filter(ProjetoPD.id.in_(ids_projetos)).all()}
+
+        # Agrupa linhas de histórico da MESMA edição: mesmo projeto + mesmo
+        # segundo (uma edição só grava tudo dentro de um único commit, então
+        # os `criado_em` ficam praticamente idênticos — arredondar pro
+        # segundo é o bastante pra juntar sem precisar de um "id de edição").
+        grupos = {}
+        for h in historico:
+            chave = (h.entidade_id, h.criado_em.replace(microsecond=0) if h.criado_em else None)
+            grupos.setdefault(chave, []).append(h)
+
+        for (projeto_id, _), linhas in grupos.items():
+            projeto = projetos_por_id.get(projeto_id)
+            if projeto is None:
+                continue
+            linhas_ordenadas = sorted(linhas, key=lambda h: h.criado_em or datetime.min)
+            partes = [_descricao_mudanca_pd(h) for h in linhas_ordenadas[:3]]
+            if len(linhas_ordenadas) > 3:
+                partes.append(f"+{len(linhas_ordenadas) - 3} campo(s)")
+            eventos.append({
+                "tipo": "ATUALIZAÇÃO",
+                "criado_em": max((h.criado_em or datetime.min) for h in linhas_ordenadas),
+                "titulo": f"{projeto.codigo or ('#' + str(projeto.id))} · {projeto.nome}",
+                "detalhe": " · ".join(partes),
+                "etapa": projeto.etapa_atual,
+                "cor": PD_ETAPA_CORES.get(projeto.etapa_atual, "secondary"),
+                "link": url_for("pd_editar", projeto_id=projeto.id),
+            })
 
     eventos.sort(key=lambda e: e["criado_em"] or datetime.min, reverse=True)
     eventos = eventos[:limite]
@@ -4600,10 +4768,24 @@ def _construir_backup_pedidos_wb():
 
 
 def register_routes(app):
+    @app.before_request
+    def _restringir_acesso_por_papel():
+        """Papel PD (Líder de P&D): só pode acessar P&D + visualização de
+        Gestão Produção > Estações — ver ENDPOINTS_PERMITIDOS_PD em
+        permissoes.py. Todo o resto do sistema continua sem restrição de
+        visualização por papel (só edição é restrita, via requer_role)."""
+        if not current_user.is_authenticated:
+            return
+        endpoint = request.endpoint
+        if endpoint is None:
+            return
+        if not pode_acessar_endpoint(current_user, endpoint):
+            abort(403)
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if current_user.is_authenticated:
-            return redirect(url_for("dashboard"))
+            return redirect(_pagina_inicial(current_user))
 
         if request.method == "POST":
             username = request.form.get("username", "").strip()
@@ -4611,7 +4793,7 @@ def register_routes(app):
             usuario = Usuario.query.filter_by(username=username).first()
             if usuario and usuario.checar_senha(senha):
                 login_user(usuario)
-                destino = request.args.get("next") or url_for("dashboard")
+                destino = request.args.get("next") or _pagina_inicial(usuario)
                 return redirect(destino)
             flash("Usuário ou senha inválidos.", "danger")
 
@@ -4744,6 +4926,15 @@ def register_routes(app):
         ultima_visita = datetime.fromisoformat(ultima_visita_str) if ultima_visita_str else None
         apontamentos_qualidade = _apontamentos_recentes_qualidade(desde=ultima_visita)
         novos_apontamentos = sum(1 for a in apontamentos_qualidade if a["novo"])
+
+        # Últimos pedidos incluídos em Gestão Produção + últimas atualizações
+        # de P&D — pedido do Bruno (03/09/2026), mesmo formato/mesma "última
+        # visita" do feed de Qualidade acima.
+        pedidos_recentes_producao = _pedidos_recentes_producao(desde=ultima_visita)
+        novos_pedidos_producao = sum(1 for e in pedidos_recentes_producao if e["novo"])
+        atualizacoes_pd = _atualizacoes_recentes_pd(desde=ultima_visita)
+        novas_atualizacoes_pd = sum(1 for e in atualizacoes_pd if e["novo"])
+
         session["ultima_visita_painel"] = datetime.utcnow().isoformat()
 
         return render_template(
@@ -4771,6 +4962,10 @@ def register_routes(app):
             anos_disponiveis_graficos=anos_disponiveis_graficos,
             apontamentos_qualidade=apontamentos_qualidade,
             novos_apontamentos=novos_apontamentos,
+            pedidos_recentes_producao=pedidos_recentes_producao,
+            novos_pedidos_producao=novos_pedidos_producao,
+            atualizacoes_pd=atualizacoes_pd,
+            novas_atualizacoes_pd=novas_atualizacoes_pd,
         )
 
     @app.route("/kpis")

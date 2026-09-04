@@ -56,24 +56,96 @@
       </div>
     </div>
     {% if apontamentos_qualidade %}
-    <div class="notif-qualidade-lista">
+    <div class="notif-feed-lista">
       {% for a in apontamentos_qualidade %}
-      <a href="{{ a.link }}" class="notif-qualidade-item {% if a.novo %}notif-qualidade-item-novo{% endif %}">
-        <div class="notif-qualidade-linha1">
-          <span class="badge bg-{{ 'primary' if a.tipo == 'RDIM' else 'dark' }} notif-qualidade-tipo">{{ a.tipo }}</span>
-          <span class="notif-qualidade-titulo">{{ a.titulo }}</span>
+      <a href="{{ a.link }}" class="notif-feed-item {% if a.novo %}notif-feed-item-novo{% endif %}">
+        <div class="notif-feed-linha1">
+          <span class="badge bg-{{ 'primary' if a.tipo == 'RDIM' else 'dark' }} notif-feed-tipo">{{ a.tipo }}</span>
+          <span class="notif-feed-titulo">{{ a.titulo }}</span>
           <span class="badge bg-{{ a.cor }}">{{ a.detalhe }}</span>
           {% if a.novo %}<span class="badge bg-danger">NOVO</span>{% endif %}
-          <span class="notif-qualidade-tempo text-muted small">{{ a.ha_quanto_tempo }}</span>
+          <span class="notif-feed-tempo text-muted small">{{ a.ha_quanto_tempo }}</span>
         </div>
         {% if a.contexto %}
-        <div class="notif-qualidade-contexto text-muted small">{{ a.contexto }}</div>
+        <div class="notif-feed-contexto notif-feed-contexto-indent text-muted small">{{ a.contexto }}</div>
         {% endif %}
       </a>
       {% endfor %}
     </div>
     {% else %}
     <p class="text-muted small mb-0">Nenhum apontamento de Qualidade registrado ainda.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4 border-success-subtle">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">
+        <i class="bi bi-cart-plus"></i> Últimos pedidos incluídos (Gestão Produção)
+      </h6>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        {% if novos_pedidos_producao %}
+          <span class="badge bg-danger">{{ novos_pedidos_producao }} novo(s) desde sua última visita</span>
+        {% endif %}
+        <a href="{{ url_for('novo_pedido') }}" class="small"><i class="bi bi-plus-circle"></i> Novo pedido</a>
+        <a href="{{ url_for('dashboard') }}" class="small"><i class="bi bi-list-ul"></i> Listagem Geral</a>
+      </div>
+    </div>
+    {% if pedidos_recentes_producao %}
+    <div class="notif-feed-lista">
+      {% for e in pedidos_recentes_producao %}
+      <a href="{{ e.link }}" class="notif-feed-item {% if e.novo %}notif-feed-item-novo{% endif %}" title="{{ e.tooltip }}">
+        <div class="notif-feed-linha1">
+          <span class="notif-feed-titulo">{{ e.titulo }}</span>
+          <span class="badge bg-success">R$ {{ "{:,.2f}".format(e.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}</span>
+          {% if e.novo %}<span class="badge bg-danger">NOVO</span>{% endif %}
+          <span class="notif-feed-tempo text-muted small">{{ e.ha_quanto_tempo }}</span>
+        </div>
+        <div class="notif-feed-contexto text-muted small">
+          Incluído em {{ e.data_inclusao.strftime("%d/%m/%Y") if e.data_inclusao else "—" }}
+          · Solicitado pelo cliente em {{ e.data_cliente.strftime("%d/%m/%Y") if e.data_cliente else "—" }}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">Nenhum pedido cadastrado ainda.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4 border-primary-subtle">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">
+        <i class="bi bi-flask"></i> Últimas atualizações de P&D
+      </h6>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        {% if novas_atualizacoes_pd %}
+          <span class="badge bg-danger">{{ novas_atualizacoes_pd }} novo(s) desde sua última visita</span>
+        {% endif %}
+        <a href="{{ url_for('pd_novo') }}" class="small"><i class="bi bi-plus-circle"></i> Novo projeto</a>
+        <a href="{{ url_for('pd_lista') }}" class="small"><i class="bi bi-list-ul"></i> Projetos</a>
+      </div>
+    </div>
+    {% if atualizacoes_pd %}
+    <div class="notif-feed-lista">
+      {% for e in atualizacoes_pd %}
+      <a href="{{ e.link }}" class="notif-feed-item {% if e.novo %}notif-feed-item-novo{% endif %}">
+        <div class="notif-feed-linha1">
+          <span class="badge bg-{{ 'info' if e.tipo == 'NOVO' else 'secondary' }} notif-feed-tipo">{{ e.tipo }}</span>
+          <span class="notif-feed-titulo">{{ e.titulo }}</span>
+          <span class="badge bg-{{ e.cor }}">{{ e.etapa }}</span>
+          {% if e.novo %}<span class="badge bg-danger">NOVO</span>{% endif %}
+          <span class="notif-feed-tempo text-muted small">{{ e.ha_quanto_tempo }}</span>
+        </div>
+        <div class="notif-feed-contexto notif-feed-contexto-indent text-muted small">{{ e.detalhe }}</div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">Nenhum projeto de P&D cadastrado ainda.</p>
     {% endif %}
   </div>
 </div>
