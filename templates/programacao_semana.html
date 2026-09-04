@@ -38,12 +38,17 @@
     <div class="pcp-semana-dias">
       {% for coluna in range(7) %}
       {% set dia_data = semana.dias_datas[coluna] %}
-      <div class="pcp-dia-col {% if dia_data == hoje %}pcp-dia-hoje{% endif %} {% if dia_data.month != mes %}pcp-dia-fora-do-mes{% endif %}">
+      <div class="pcp-dia-col {% if dia_data == hoje %}pcp-dia-hoje{% endif %} {% if dia_data.month != mes %}pcp-dia-fora-do-mes{% endif %} {% if coluna == 0 or coluna == 6 %}pcp-dia-fim-semana{% endif %}">
         <div class="pcp-dia-col-titulo">
-          <span>{{ DIAS_SEMANA_LABELS[coluna][:3] }}</span>
-          <span>{{ dia_data.strftime('%d/%m') }}</span>
+          <span>{{ DIAS_SEMANA_LABELS[coluna][:3] }} <span class="pcp-dia-col-data">{{ dia_data.strftime('%d/%m') }}</span></span>
+          {% if semana.dias[coluna] %}
+          <span class="pcp-dia-contador">{{ semana.dias[coluna]|length }}</span>
+          {% endif %}
         </div>
         <div class="pcp-dia-col-corpo">
+          {% if not semana.dias[coluna] %}
+          <div class="pcp-dia-vazio">Sem pedidos</div>
+          {% endif %}
           {% for cartao in semana.dias[coluna] %}
           {% set pedido = cartao.pedido %}
           <div class="pcp-pedido-card {{ 'pcp-item-real' if cartao.confirmado else 'pcp-item-prevista' }}">
