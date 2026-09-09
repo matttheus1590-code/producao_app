@@ -2799,8 +2799,15 @@ def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
     Setembro (planejamento PCP)" — ou seja, essas quebras são sobre o que
     está PLANEJADO pra faturar no mês, não sobre o que já foi faturado até
     agora (que a esta altura do mês ainda é baixo e não conta a história
-    toda). `por_cliente`/`por_regiao`/`por_vendedor` (realizado) continuam
-    existindo do jeito que já estavam, sem mudança de comportamento."""
+    toda).
+
+    Atualização (pedido do Bruno, 09/09/2026): as 3 tabelas antigas
+    "Realizado por cliente/região/vendedor" saíram da tela — misturavam, sem
+    nenhum cruzamento entre si, o Realizado (poucos itens já faturados até
+    agora no mês) ao lado do Previsto (planejamento PCP do mês inteiro), o
+    que Bruno achou confuso porque os dois conjuntos de itens não
+    "confrontam" um com o outro. Ficam só os 3 números-resumo do topo
+    (Previsto/Realizado/Itens faturados) e as análises novas do Previsto."""
     inicio = date(ano, mes, 1)
     fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
 
@@ -2862,9 +2869,6 @@ def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
         "previsto_total": round(sum(i.valor_total for i in itens_previstos), 2),
         "realizado_total": round(sum(i.valor_faturamento_realizado for i in itens_realizados), 2),
         "itens_realizados": len(itens_realizados),
-        "por_cliente": _agrupar(itens_realizados, lambda i: i.pedido.cliente if i.pedido else None),
-        "por_regiao": _agrupar(itens_realizados, lambda i: REGIAO_POR_UF.get(i.pedido.estado) if i.pedido and i.pedido.estado else None),
-        "por_vendedor": _agrupar(itens_realizados, lambda i: i.pedido.vendedor if i.pedido else None),
         # --- Análises do Previsto (Planejamento PCP) — ver docstring acima ---
         "previsto_por_regiao": _agrupar(
             itens_previstos,

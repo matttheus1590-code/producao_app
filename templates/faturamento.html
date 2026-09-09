@@ -154,55 +154,6 @@
   </div>
 </div>
 
-<div class="d-flex align-items-center gap-2 mb-3">
-  <h5 class="mb-0"><i class="bi bi-cash-stack"></i> Realizado ({{ mes_label }})</h5>
-</div>
-
-<div class="row g-3">
-  <div class="col-lg-4">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Realizado por cliente</h6>
-        <table class="table table-sm mb-0">
-          {% for l in por_cliente %}
-          <tr><td>{{ l.chave }}</td><td class="text-end">R$ {{ "{:,.2f}".format(l.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}</td></tr>
-          {% else %}
-          <tr><td class="text-center text-muted py-3">Sem faturamento neste mês.</td></tr>
-          {% endfor %}
-        </table>
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-4">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Realizado por região</h6>
-        <table class="table table-sm mb-0">
-          {% for l in por_regiao %}
-          <tr><td>{{ l.chave }}</td><td class="text-end">R$ {{ "{:,.2f}".format(l.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}</td></tr>
-          {% else %}
-          <tr><td class="text-center text-muted py-3">Sem faturamento neste mês.</td></tr>
-          {% endfor %}
-        </table>
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-4">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Realizado por vendedor</h6>
-        <table class="table table-sm mb-0">
-          {% for l in por_vendedor %}
-          <tr><td>{{ l.chave }}</td><td class="text-end">R$ {{ "{:,.2f}".format(l.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}</td></tr>
-          {% else %}
-          <tr><td class="text-center text-muted py-3">Sem faturamento neste mês.</td></tr>
-          {% endfor %}
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
-
 {% endblock %}
 
 {% block scripts %}
