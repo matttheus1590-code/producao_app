@@ -70,6 +70,94 @@
   </div>
 </div>
 
+<div class="d-flex align-items-center gap-2 mb-3 mt-1">
+  <h5 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Previsto — diante do Planejamento PCP ({{ mes_label }})</h5>
+</div>
+<p class="text-muted small mb-3" style="margin-top: -0.5rem;">
+  Quebras calculadas sobre o que está planejado pelo PCP pra faturar em {{ mes_label }} — não sobre o que já foi faturado até agora.
+</p>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Previsto por região</h6>
+        {% if previsto_por_regiao %}
+        <canvas id="graficoPrevistoRegiao" height="140"></canvas>
+        {% else %}
+        <p class="text-muted text-center py-4 mb-0">Sem planejamento PCP pra {{ mes_label }} ainda.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Previsto por estação (tipo de produto)</h6>
+        {% if previsto_por_estacao %}
+        <canvas id="graficoPrevistoEstacao" height="140"></canvas>
+        {% else %}
+        <p class="text-muted text-center py-4 mb-0">Sem planejamento PCP pra {{ mes_label }} ainda.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+          <h6 class="text-uppercase text-muted small mb-0">Principais clientes — Curva 80/20 (Pareto)</h6>
+          {% if previsto_pareto_clientes.n_clientes %}
+          <span class="badge text-bg-primary">
+            {{ previsto_pareto_clientes.n_principais }} de {{ previsto_pareto_clientes.n_clientes }} clientes
+            ({{ previsto_pareto_clientes.pct_clientes_principais }}%) respondem por 80% do previsto
+          </span>
+          {% endif %}
+        </div>
+        {% if previsto_pareto_clientes.linhas %}
+        <canvas id="graficoParetoClientes" height="90"></canvas>
+        {% if previsto_pareto_clientes.linhas|length > 15 %}
+        <p class="text-muted small mt-2 mb-0">Gráfico mostra os 15 maiores clientes. Tabela completa abaixo.</p>
+        {% endif %}
+        <div class="table-responsive mt-3" style="max-height: 420px;">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr class="text-muted small">
+                <th>Cliente</th>
+                <th class="text-end">Previsto</th>
+                <th class="text-end">% do mês</th>
+                <th class="text-end">% acumulado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for l in previsto_pareto_clientes.linhas %}
+              <tr class="{% if l.principal %}table-warning{% endif %}">
+                <td>{{ l.chave }}</td>
+                <td class="text-end">R$ {{ "{:,.2f}".format(l.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+                <td class="text-end">{{ l.pct }}%</td>
+                <td class="text-end">{{ l.pct_acumulado }}%</td>
+                <td>{% if l.principal %}<span class="badge text-bg-warning">Top 80%</span>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center py-4 mb-0">Sem planejamento PCP pra {{ mes_label }} ainda.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="d-flex align-items-center gap-2 mb-3">
+  <h5 class="mb-0"><i class="bi bi-cash-stack"></i> Realizado ({{ mes_label }})</h5>
+</div>
+
 <div class="row g-3">
   <div class="col-lg-4">
     <div class="card h-100">
@@ -115,4 +203,71 @@
   </div>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  Chart.defaults.color = "#495057";
+  Chart.defaults.font.size = 12;
+
+  const previstoPorRegiao = {{ previsto_por_regiao | tojson }};
+  const previstoPorEstacao = {{ previsto_por_estacao | tojson }};
+  const paretoClientes = {{ previsto_pareto_clientes.linhas[:15] | tojson }};
+
+  const elRegiao = document.getElementById("graficoPrevistoRegiao");
+  if (elRegiao && previstoPorRegiao.length) {
+    new Chart(elRegiao, {
+      type: "bar",
+      data: {
+        labels: previstoPorRegiao.map(function (p) { return p.chave; }),
+        datasets: [{ label: "Previsto (R$)", data: previstoPorRegiao.map(function (p) { return p.valor; }), backgroundColor: "#6ea8fe" }],
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        indexAxis: "y",
+        scales: { x: { beginAtZero: true } },
+      },
+    });
+  }
+
+  const elEstacao = document.getElementById("graficoPrevistoEstacao");
+  if (elEstacao && previstoPorEstacao.length) {
+    new Chart(elEstacao, {
+      type: "bar",
+      data: {
+        labels: previstoPorEstacao.map(function (p) { return p.chave; }),
+        datasets: [{ label: "Previsto (R$)", data: previstoPorEstacao.map(function (p) { return p.valor; }), backgroundColor: "#6f42c1" }],
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        indexAxis: "y",
+        scales: { x: { beginAtZero: true } },
+      },
+    });
+  }
+
+  const elPareto = document.getElementById("graficoParetoClientes");
+  if (elPareto && paretoClientes.length) {
+    new Chart(elPareto, {
+      data: {
+        labels: paretoClientes.map(function (p) { return p.chave; }),
+        datasets: [
+          { type: "bar", label: "Previsto (R$)", data: paretoClientes.map(function (p) { return p.valor; }), backgroundColor: "#6ea8fe", yAxisID: "y" },
+          { type: "line", label: "% acumulado", data: paretoClientes.map(function (p) { return p.pct_acumulado; }), borderColor: "#dc3545", backgroundColor: "#dc3545", yAxisID: "y1", tension: 0.2 },
+        ],
+      },
+      options: {
+        plugins: { legend: { position: "bottom" } },
+        scales: {
+          x: { ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 } },
+          y: { type: "linear", position: "left", beginAtZero: true, title: { display: true, text: "R$" } },
+          y1: { type: "linear", position: "right", min: 0, max: 100, title: { display: true, text: "% acumulado" }, grid: { drawOnChartArea: false } },
+        },
+      },
+    });
+  }
+})();
+</script>
 {% endblock %}

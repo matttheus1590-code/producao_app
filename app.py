@@ -2789,7 +2789,18 @@ def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
     faturamento realizado contra a meta é o planejamento PCP, "diante do
     planejamento mensal/semanal PCP" — os dois podiam divergir bastante,
     porque Liberação prevista é preenchida item a item e nem sempre
-    acompanha o planejamento semanal que o PCP realmente definiu."""
+    acompanha o planejamento semanal que o PCP realmente definiu.
+
+    Análises novas (pedido do Bruno, 09/09/2026: "seja criativo... áreas
+    voltadas para faturamentos regionais, estações (tipo de produto),
+    principais clientes (regra 80/20)") — todas calculadas em cima do mesmo
+    `itens_previstos` acima (o planejamento PCP do mês em vista), porque o
+    pedido foi explícito: "considere os números voltados para o mês de
+    Setembro (planejamento PCP)" — ou seja, essas quebras são sobre o que
+    está PLANEJADO pra faturar no mês, não sobre o que já foi faturado até
+    agora (que a esta altura do mês ainda é baixo e não conta a história
+    toda). `por_cliente`/`por_regiao`/`por_vendedor` (realizado) continuam
+    existindo do jeito que já estavam, sem mudança de comportamento."""
     inicio = date(ano, mes, 1)
     fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
 
@@ -2812,14 +2823,40 @@ def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
         ItemPedido.liberacao_faturamento >= inicio, ItemPedido.liberacao_faturamento < fim
     ).all()
 
-    def _agrupar(itens, chave_fn):
+    def _agrupar(itens, chave_fn, valor_fn=lambda i: i.valor_faturamento_realizado):
         agrupado = {}
         for i in itens:
             chave = chave_fn(i) or "—"
-            agrupado[chave] = agrupado.get(chave, 0.0) + i.valor_faturamento_realizado
+            agrupado[chave] = agrupado.get(chave, 0.0) + valor_fn(i)
         linhas = [{"chave": k, "valor": round(v, 2)} for k, v in agrupado.items()]
         linhas.sort(key=lambda l: l["valor"], reverse=True)
         return linhas
+
+    def _curva_pareto_clientes(itens):
+        """Curva de Pareto (regra 80/20) do Previsto por cliente: ordena do
+        maior pro menor e marca como "principal" cada cliente até o ponto em
+        que o acumulado atinge 80% do total — o grupo enxuto de clientes que
+        concentra a maior parte do faturamento previsto do mês."""
+        linhas = _agrupar(itens, lambda i: i.pedido.cliente if i.pedido else None, valor_fn=lambda i: i.valor_total)
+        total = sum(l["valor"] for l in linhas)
+        curva = []
+        acumulado = 0.0
+        ja_atingiu_80 = False
+        for l in linhas:
+            principal = not ja_atingiu_80
+            acumulado += l["valor"]
+            pct = round(l["valor"] / total * 100, 1) if total else 0.0
+            pct_acumulado = round(acumulado / total * 100, 1) if total else 0.0
+            if pct_acumulado >= 80:
+                ja_atingiu_80 = True
+            curva.append({**l, "pct": pct, "pct_acumulado": pct_acumulado, "principal": principal})
+        n_principais = sum(1 for c in curva if c["principal"])
+        return {
+            "linhas": curva,
+            "n_clientes": len(curva),
+            "n_principais": n_principais,
+            "pct_clientes_principais": round(n_principais / len(curva) * 100, 1) if curva else 0.0,
+        }
 
     return {
         "previsto_total": round(sum(i.valor_total for i in itens_previstos), 2),
@@ -2828,6 +2865,18 @@ def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
         "por_cliente": _agrupar(itens_realizados, lambda i: i.pedido.cliente if i.pedido else None),
         "por_regiao": _agrupar(itens_realizados, lambda i: REGIAO_POR_UF.get(i.pedido.estado) if i.pedido and i.pedido.estado else None),
         "por_vendedor": _agrupar(itens_realizados, lambda i: i.pedido.vendedor if i.pedido else None),
+        # --- Análises do Previsto (Planejamento PCP) — ver docstring acima ---
+        "previsto_por_regiao": _agrupar(
+            itens_previstos,
+            lambda i: REGIAO_POR_UF.get(i.pedido.estado) if i.pedido and i.pedido.estado else None,
+            valor_fn=lambda i: i.valor_total,
+        ),
+        "previsto_por_estacao": _agrupar(
+            itens_previstos,
+            lambda i: rotulo_estacao(i.estacao) if i.estacao else None,
+            valor_fn=lambda i: i.valor_total,
+        ),
+        "previsto_pareto_clientes": _curva_pareto_clientes(itens_previstos),
         # lista "crua" dos itens realizados (não usada na tela, só na exportação
         # de relatório — mantida separada da contagem "itens_realizados" acima
         # pra não mudar o que a tela de Faturamento já espera receber)
