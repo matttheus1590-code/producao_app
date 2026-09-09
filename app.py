@@ -1824,16 +1824,25 @@ def _somar_meses(ano, mes, delta):
 # número de semanas diferente entre os dois padrões), por isso são
 # propositalmente independentes.
 def _semanas_calendario_pcp(ano, mes):
-    """Devolve as semanas (domingo a sábado) cujo domingo de início cai no
-    mês/ano dado, cada uma como {"numero", "inicio", "fim"}. Uma semana pode
-    terminar no mês seguinte (ex.: semana 5 de agosto/2026 vai até 05/09) —
-    isso é esperado, é só o card ficando "encostado" no mês seguinte."""
+    """Devolve as semanas (domingo a sábado) que cobrem todos os dias do
+    mês/ano dado, cada uma como {"numero", "inicio", "fim"} — igual ao grid
+    de qualquer calendário mensal padrão (Google Agenda, Outlook etc.):
+    semana 01 é a que contém o dia 1º do mês (mesmo que comece no mês
+    anterior) e a última semana é a que contém o último dia do mês (mesmo
+    que termine no mês seguinte). Pedido do Bruno (09/09/2026): antes a
+    semana 01 só começava a contar a partir do 1º domingo DENTRO do mês,
+    deixando de fora a semana "de fronteira" com o mês anterior — agora
+    fica igual ao calendário de verdade. Por isso a mesma semana de
+    fronteira aparece (igual, repetida) na visão dos dois meses vizinhos —
+    é o comportamento esperado de um calendário mensal comum."""
     primeiro_dia = date(ano, mes, 1)
-    dias_ate_domingo = (6 - primeiro_dia.weekday()) % 7  # weekday(): segunda=0 ... domingo=6
-    domingo = primeiro_dia + timedelta(days=dias_ate_domingo)
+    ano_seguinte, mes_seguinte = _somar_meses(ano, mes, 1)
+    ultimo_dia = date(ano_seguinte, mes_seguinte, 1) - timedelta(days=1)
+    dias_desde_domingo = (primeiro_dia.weekday() + 1) % 7  # weekday(): segunda=0 ... domingo=6
+    domingo = primeiro_dia - timedelta(days=dias_desde_domingo)
     semanas = []
     numero = 1
-    while domingo.year == ano and domingo.month == mes:
+    while domingo <= ultimo_dia:
         semanas.append({"numero": numero, "inicio": domingo, "fim": domingo + timedelta(days=6)})
         numero += 1
         domingo += timedelta(days=7)
