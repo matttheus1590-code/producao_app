@@ -1813,6 +1813,104 @@ def _somar_meses(ano, mes, delta):
     return (total // 12, total % 12 + 1)
 
 
+def _semanas_pcp_janela(hoje=None, semanas_atras=1, semanas_frente=4):
+    """Janela curta de rótulos "SEMANA NN / MÊS / ANO" (mesmo formato de
+    gerar_semanas_pcp) centrada na semana atual — `semanas_atras` rótulos
+    antes + a semana de hoje + `semanas_frente` rótulos depois, sempre em
+    ordem cronológica. Usada pela prévia horizontal do Planejamento PCP no
+    Painel (pedido do Bruno, 09/09/2026: "prévia... de bate pronto", não o
+    histórico/projeção inteira que já existe no quadro mensal do Painel)."""
+    hoje = hoje or date.today()
+    # meses_atras/meses_frente = 2 dá folga de sobra pra cobrir a janela de
+    # semanas mesmo perto de virada de mês/ano — gerar_semanas_pcp já cobre
+    # isso testado (ver docstring dela).
+    todas = gerar_semanas_pcp(meses_atras=2, meses_frente=2, hoje=hoje)
+    semana_atual_num = -(-hoje.day // 7)  # mesmo ceil(dia/7) de gerar_semanas_pcp
+    chave_hoje = (hoje.year, hoje.month, semana_atual_num)
+    indice_atual = next((i for i, s in enumerate(todas) if _chave_semana_pcp(s) == chave_hoje), None)
+    if indice_atual is None:
+        return todas[: semanas_atras + semanas_frente + 1]
+    inicio = max(0, indice_atual - semanas_atras)
+    fim = indice_atual + semanas_frente + 1
+    return todas[inicio:fim]
+
+
+def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=4):
+    """Prévia horizontal do Planejamento Semanal PCP pro Painel (pedido do
+    Bruno, 09/09/2026): "de bate pronto", como gestor, ele quer ver resumido
+    o que o PCP tem planejado nas semanas próximas — pedido, valor, data
+    solicitada pelo cliente, data prevista PCP, data efetiva de liberação,
+    frete e estado — os mesmos dados que já existem espalhados em Gestão
+    Produção/Consulta Pedido, só que resumidos aqui na tela principal, com
+    link direto pro contexto completo do pedido (Detalhe do Pedido).
+
+    Uma coluna por semana (`_semanas_pcp_janela`), um card por PEDIDO dentro
+    de cada semana — soma dos itens daquele pedido planejados pra aquela
+    semana especificamente (um pedido com itens em semanas diferentes
+    aparece em cada uma delas, com a soma da semana em questão). "Data
+    prevista PCP" e "Data efetiva de liberação" usam a mais recente entre os
+    itens do pedido naquela semana, mesmo critério já usado em
+    _liberacao_pcp_por_pedido_venda."""
+    hoje = hoje or date.today()
+    rotulos = _semanas_pcp_janela(hoje, semanas_atras=semanas_atras, semanas_frente=semanas_frente)
+    if not rotulos:
+        return {"semanas": []}
+
+    semana_atual_num = -(-hoje.day // 7)
+    chave_atual = (hoje.year, hoje.month, semana_atual_num)
+
+    itens = (
+        ItemPedido.query.options(selectinload(ItemPedido.pedido))
+        .join(Pedido, ItemPedido.pedido_id == Pedido.id)
+        .filter(ItemPedido.planejamento_semanal.in_(rotulos))
+        .all()
+    )
+
+    por_semana = {rotulo: {} for rotulo in rotulos}
+    for item in itens:
+        if not item.pedido or item.planejamento_semanal not in por_semana:
+            continue
+        grupo = por_semana[item.planejamento_semanal].setdefault(
+            item.pedido_id,
+            {
+                "pedido_id": item.pedido_id,
+                "pedido_venda": item.pedido.pedido_venda,
+                "cliente": item.pedido.cliente,
+                "valor": 0.0,
+                "data_solicitada_cliente": item.pedido.data_cliente,
+                "data_prevista_pcp": None,
+                "data_efetiva_liberacao": None,
+                "frete": item.pedido.frete,
+                "estado": item.pedido.estado,
+            },
+        )
+        grupo["valor"] += item.valor_total
+        if item.liberacao_prevista and (
+            grupo["data_prevista_pcp"] is None or item.liberacao_prevista > grupo["data_prevista_pcp"]
+        ):
+            grupo["data_prevista_pcp"] = item.liberacao_prevista
+        if item.liberacao_real and (
+            grupo["data_efetiva_liberacao"] is None or item.liberacao_real > grupo["data_efetiva_liberacao"]
+        ):
+            grupo["data_efetiva_liberacao"] = item.liberacao_real
+
+    semanas = []
+    for rotulo in rotulos:
+        pedidos = sorted(por_semana[rotulo].values(), key=lambda p: p["valor"], reverse=True)
+        for p in pedidos:
+            p["valor"] = round(p["valor"], 2)
+        semanas.append(
+            {
+                "rotulo": rotulo,
+                "rotulo_curto": rotulo.replace("SEMANA ", "S").replace(" / ", "/"),
+                "atual": _chave_semana_pcp(rotulo) == chave_atual,
+                "pedidos": pedidos,
+                "total": round(sum(p["valor"] for p in pedidos), 2),
+            }
+        )
+    return {"semanas": semanas}
+
+
 # ---------------------------------------------------------------------------
 # Calendário PCP da tela de Programação (pedido do Bruno, 31/08/2026) — semana
 # de verdade (domingo a sábado), só pra esta tela. NÃO usa nem mexe no padrão
@@ -5159,6 +5257,10 @@ def register_routes(app):
         atualizacoes_pd = _atualizacoes_recentes_pd(desde=ultima_visita)
         novas_atualizacoes_pd = sum(1 for e in atualizacoes_pd if e["novo"])
 
+        # Prévia horizontal do Planejamento Semanal PCP — pedido do Bruno
+        # (09/09/2026), logo abaixo de "Últimos pedidos incluídos".
+        preview_pcp_semanal = _preview_semanal_pcp_painel(hoje)
+
         session["ultima_visita_painel"] = datetime.utcnow().isoformat()
 
         return render_template(
@@ -5190,6 +5292,7 @@ def register_routes(app):
             novos_pedidos_producao=novos_pedidos_producao,
             atualizacoes_pd=atualizacoes_pd,
             novas_atualizacoes_pd=novas_atualizacoes_pd,
+            preview_pcp_semanal=preview_pcp_semanal,
         )
 
     @app.route("/kpis")

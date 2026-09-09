@@ -115,6 +115,58 @@
   </div>
 </div>
 
+<div class="card mb-4 border-secondary-subtle">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">
+        <i class="bi bi-calendar-week"></i> Planejamento Semanal PCP — prévia
+      </h6>
+      <a href="{{ url_for('gestao_operacao_pcp') }}" class="small"><i class="bi bi-diagram-3"></i> Gestão Operação · PCP</a>
+    </div>
+    <p class="text-muted small mb-2">Passe o mouse num pedido pra ver o contexto, ou clique pra abrir o Detalhe do Pedido.</p>
+    {% if preview_pcp_semanal.semanas %}
+    <div class="pcp-preview-scroll">
+      {% for s in preview_pcp_semanal.semanas %}
+      <div class="pcp-preview-coluna {% if s.atual %}pcp-preview-coluna-atual{% endif %}">
+        <div class="pcp-preview-coluna-header">
+          <span>{{ s.rotulo_curto }}</span>
+          {% if s.atual %}<span class="badge bg-primary">Atual</span>{% endif %}
+        </div>
+        <div class="pcp-preview-coluna-total text-muted small">
+          {{ s.pedidos|length }} pedido(s) · R$ {{ "{:,.0f}".format(s.total).replace(",", ".") }}
+        </div>
+        <div class="pcp-preview-coluna-corpo">
+          {% for p in s.pedidos %}
+          <a
+            href="{{ url_for('detalhe_pedido', pedido_id=p.pedido_id) }}"
+            class="pcp-preview-card"
+            data-bs-toggle="popover"
+            data-bs-trigger="hover focus"
+            data-bs-html="true"
+            data-bs-placement="auto"
+            data-bs-title="Pedido {{ p.pedido_venda or '—' }}"
+            data-bs-content="<div>{{ p.cliente }}</div><div>Valor: R$ {{ '{:,.2f}'.format(p.valor).replace(',', 'X').replace('.', ',').replace('X', '.') }}</div><div>Solicitado cliente: {{ p.data_solicitada_cliente.strftime('%d/%m/%Y') if p.data_solicitada_cliente else '—' }}</div><div>Previsto PCP: {{ p.data_prevista_pcp.strftime('%d/%m/%Y') if p.data_prevista_pcp else '—' }}</div><div>Liberação efetiva: {{ p.data_efetiva_liberacao.strftime('%d/%m/%Y') if p.data_efetiva_liberacao else '—' }}</div><div>Frete: {{ p.frete or '—' }} · Estado: {{ p.estado or '—' }}</div>"
+          >
+            <div class="pcp-preview-card-linha1">
+              <span class="fw-semibold">{{ p.pedido_venda or '—' }}</span>
+              <span class="text-success small">R$ {{ "{:,.0f}".format(p.valor).replace(",", ".") }}</span>
+            </div>
+            <div class="text-muted small text-truncate">{{ p.cliente }}</div>
+            <div class="text-muted" style="font-size: 0.7rem;">{{ p.estado or "—" }} · {{ p.frete or "—" }}</div>
+          </a>
+          {% else %}
+          <p class="text-muted small text-center py-3 mb-0">Sem pedidos planejados.</p>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">Nenhum planejamento semanal PCP cadastrado ainda.</p>
+    {% endif %}
+  </div>
+</div>
+
 <div class="card mb-4 border-primary-subtle">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
@@ -520,6 +572,16 @@
       },
     });
   }
+})();
+</script>
+<script>
+(function () {
+  // Popover de contexto ao passar o mouse nos cards de pedido da prévia
+  // semanal PCP (pedido do Bruno, 09/09/2026) — Bootstrap 5 não inicializa
+  // popover sozinho a partir dos atributos data-bs-*, precisa deste passo.
+  document.querySelectorAll('.pcp-preview-card[data-bs-toggle="popover"]').forEach(function (el) {
+    new bootstrap.Popover(el);
+  });
 })();
 </script>
 {% endblock %}
