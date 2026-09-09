@@ -3346,6 +3346,39 @@ def _data_cliente_por_pedido_venda(pedidos_venda):
     return mapa
 
 
+def _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao):
+    """Pedido do Bruno (09/09/2026, tela Consulta Pedido): 2 lead times em
+    dias corridos, sempre calculados a partir da Data de inclusão do
+    pedido — "lead time comercial" (inclusão -> data solicitada pelo
+    cliente, o prazo de entrega combinado) e "lead time de operação
+    completa" (inclusão -> liberação efetiva do PCP, quando o material de
+    fato ficou pronto/liberado). Usa exatamente as mesmas fontes de dado já
+    mostradas mais abaixo nessa tela (bloco Gestão Operação), com Produção
+    tendo prioridade sobre o campo digitado à mão em Operação quando os
+    dois existem — ver _liberacao_pcp_por_pedido_venda/_data_cliente_por_
+    pedido_venda logo acima. Qualquer conta que não dá pra fazer (falta uma
+    das duas datas) vem como None — o template mostra "—"."""
+    data_inclusao = pedido.data_inclusao_pedido if pedido else (go.data_inclusao_pedido if go else None)
+    data_solicitada_cliente = data_cliente_producao or (go.go_data_solicitada_cliente_retira if go else None)
+    data_liberacao_efetiva = (liberacao_pcp or {}).get("efetiva") or (go.go_data_efetiva_liberacao_pcp if go else None)
+
+    lead_time_comercial_dias = None
+    if data_inclusao and data_solicitada_cliente:
+        lead_time_comercial_dias = (data_solicitada_cliente - data_inclusao).days
+
+    lead_time_operacao_dias = None
+    if data_inclusao and data_liberacao_efetiva:
+        lead_time_operacao_dias = (data_liberacao_efetiva - data_inclusao).days
+
+    return {
+        "data_inclusao": data_inclusao,
+        "data_solicitada_cliente": data_solicitada_cliente,
+        "data_liberacao_efetiva": data_liberacao_efetiva,
+        "lead_time_comercial_dias": lead_time_comercial_dias,
+        "lead_time_operacao_dias": lead_time_operacao_dias,
+    }
+
+
 def _buscar_pedidos_para_status(termo, limite=12):
     """Pedido do Bruno (01/09/2026): canal único de busca no topo do Painel —
     "sou o PCP, comercial me cobrou de um pedido" — digita o nº do pedido de
@@ -4949,6 +4982,10 @@ def register_routes(app):
         situacao_entrega = _situacao_entrega_go(go, pedido)
         otd_pedido = _otd_do_pedido(go)
         etapas = _etapas_acompanhamento_pedido(pedido, go)
+        # Pedido do Bruno (09/09/2026): lead time em dias corridos, prazo
+        # comercial (inclusão -> solicitado cliente) e prazo de operação
+        # completa (inclusão -> liberação efetiva PCP) — ver _prazos_pedido.
+        prazos = _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao)
 
         # Qualidade (RDIM) — pedido do Bruno (02/09/2026): ver o processo de
         # qualidade item a item dentro do pedido, na mesma tela que já une
@@ -4963,6 +5000,7 @@ def register_routes(app):
             situacao_entrega=situacao_entrega, otd_pedido=otd_pedido,
             etapas=etapas, nao_encontrado=False,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
+            prazos=prazos,
         )
 
     @app.route("/consulta-pedido")

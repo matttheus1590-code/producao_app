@@ -113,6 +113,24 @@
         <div class="text-muted small">Data inclusão do pedido</div>
         <div class="fw-semibold">{{ data_inclusao_exibida.strftime("%d/%m/%Y") if data_inclusao_exibida else "—" }}</div>
       </div>
+      {# Pedido do Bruno (09/09/2026): lead time em dias corridos, calculado
+         automaticamente a partir da Data inclusão do pedido — sem precisar
+         digitar nada, atualiza sozinho conforme as datas de origem (Produção/
+         Operação) mudam. Ver _prazos_pedido em app.py. #}
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Solicitada cliente (prazo entrega)</div>
+        <div class="fw-semibold">{{ prazos.data_solicitada_cliente.strftime("%d/%m/%Y") if prazos.data_solicitada_cliente else "—" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Lead time comercial (dias corridos)</div>
+        <div class="fw-semibold">{{ prazos.lead_time_comercial_dias if prazos.lead_time_comercial_dias is not none else "—" }}</div>
+        <div class="text-muted" style="font-size: 0.72rem;">Inclusão → solicitado cliente</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Lead time operação completa (dias corridos)</div>
+        <div class="fw-semibold">{{ prazos.lead_time_operacao_dias if prazos.lead_time_operacao_dias is not none else "—" }}</div>
+        <div class="text-muted" style="font-size: 0.72rem;">Inclusão → liberação efetiva PCP</div>
+      </div>
     </div>
 
     {% if pedido %}
