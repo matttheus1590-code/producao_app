@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Faturamento · Gestão da Produção e Operação{% endblock %}
+{% block title %}Faturamento Projetado · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h4 class="mb-0"><i class="bi bi-cash-coin"></i> Faturamento — {{ mes_label }}</h4>
+  <h4 class="mb-0"><i class="bi bi-cash-coin"></i> Faturamento Projetado — {{ mes_label }}</h4>
   <div class="d-flex align-items-center gap-2">
     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('faturamento', ano=mes_anterior.ano, mes=mes_anterior.mes, **filtros) }}">
       <i class="bi bi-chevron-left"></i> Mês anterior
@@ -53,6 +53,7 @@
     <div class="card text-center h-100"><div class="card-body">
       <div class="text-muted small">Previsto no mês</div>
       <div class="fs-4 fw-semibold">R$ {{ "{:,.2f}".format(previsto_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</div>
+      <div class="text-muted" style="font-size: 0.72rem;">diante do planejamento mensal/semanal PCP</div>
     </div></div>
   </div>
   <div class="col-md-4">

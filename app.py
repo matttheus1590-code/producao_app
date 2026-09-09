@@ -2777,7 +2777,19 @@ def _gargalos_por_estacao():
 
 def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
     """Previsto × realizado de um mês específico, com o mesmo valor já
-    quebrado por cliente / região / vendedor — usado na tela de Faturamento."""
+    quebrado por cliente / região / vendedor — usado na tela de Faturamento
+    Projetado.
+
+    "Previsto" (pedido do Bruno, 09/09/2026): passou a espelhar o
+    Planejamento semanal/mensal (PCP) de cada item — campo
+    `planejamento_semanal` (texto "SEMANA NN / MÊS / ANO", mesma convenção
+    usada em Listagem Geral / editar pedido, ver GO_SEMANAS_PCP e
+    _mes_ano_da_semana_pcp) — em vez da Liberação prevista (uma data). Bruno
+    confirmou que o número que ele acompanha de verdade pra bater o
+    faturamento realizado contra a meta é o planejamento PCP, "diante do
+    planejamento mensal/semanal PCP" — os dois podiam divergir bastante,
+    porque Liberação prevista é preenchida item a item e nem sempre
+    acompanha o planejamento semanal que o PCP realmente definiu."""
     inicio = date(ano, mes, 1)
     fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
 
@@ -2791,7 +2803,11 @@ def _faturamento_detalhado(ano, mes, cliente=None, regiao=None, vendedor=None):
         if ufs_da_regiao:
             base = base.filter(Pedido.estado.in_(ufs_da_regiao))
 
-    itens_previstos = base.filter(ItemPedido.liberacao_prevista >= inicio, ItemPedido.liberacao_prevista < fim).all()
+    itens_com_planejamento_pcp = base.filter(ItemPedido.planejamento_semanal.isnot(None)).all()
+    itens_previstos = [
+        i for i in itens_com_planejamento_pcp
+        if _mes_ano_da_semana_pcp(i.planejamento_semanal) == (ano, mes)
+    ]
     itens_realizados = base.filter(
         ItemPedido.liberacao_faturamento >= inicio, ItemPedido.liberacao_faturamento < fim
     ).all()
