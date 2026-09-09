@@ -1824,25 +1824,35 @@ def _somar_meses(ano, mes, delta):
 # número de semanas diferente entre os dois padrões), por isso são
 # propositalmente independentes.
 def _semanas_calendario_pcp(ano, mes):
-    """Devolve as semanas (domingo a sábado) que cobrem todos os dias do
-    mês/ano dado, cada uma como {"numero", "inicio", "fim"} — igual ao grid
-    de qualquer calendário mensal padrão (Google Agenda, Outlook etc.):
-    semana 01 é a que contém o dia 1º do mês (mesmo que comece no mês
-    anterior) e a última semana é a que contém o último dia do mês (mesmo
-    que termine no mês seguinte). Pedido do Bruno (09/09/2026): antes a
-    semana 01 só começava a contar a partir do 1º domingo DENTRO do mês,
-    deixando de fora a semana "de fronteira" com o mês anterior — agora
-    fica igual ao calendário de verdade. Por isso a mesma semana de
-    fronteira aparece (igual, repetida) na visão dos dois meses vizinhos —
-    é o comportamento esperado de um calendário mensal comum."""
+    """Devolve as semanas (domingo a sábado) do mês/ano dado, cada uma como
+    {"numero", "inicio", "fim"} — regra de calendário impresso comum: uma
+    semana pertence ao mês que tem a MAIORIA dos seus 7 dias (equivalente a
+    olhar em que mês cai a quarta-feira daquela semana — o dia central de
+    domingo a sábado; como são 7 dias, nunca empata 3x4). Cada semana
+    aparece em UM mês só, nunca repetida em dois meses vizinhos.
+
+    Pedido do Bruno (09/09/2026): a 1ª versão desta função (só domingo a
+    sábado "cobrindo" o mês) fazia a semana de fronteira aparecer igual nos
+    dois meses vizinhos — Bruno testou e não é isso que ele quer. Confirmado
+    com 2 exemplos reais que ele mandou: Setembro/2026 tem que começar em
+    30/08 (a semana de 26/07-01/08 é de Julho, não de Agosto nem Setembro,
+    então nem aparece em Agosto) e Agosto/2026 tem só 4 semanas, 02/08 a
+    29/08 (a semana de 30/08-05/09 já é de Setembro). Essa regra de maioria
+    bate exatamente com os dois exemplos ao mesmo tempo."""
     primeiro_dia = date(ano, mes, 1)
-    ano_seguinte, mes_seguinte = _somar_meses(ano, mes, 1)
-    ultimo_dia = date(ano_seguinte, mes_seguinte, 1) - timedelta(days=1)
     dias_desde_domingo = (primeiro_dia.weekday() + 1) % 7  # weekday(): segunda=0 ... domingo=6
     domingo = primeiro_dia - timedelta(days=dias_desde_domingo)
+
+    def _quarta_e_do_mes(domingo_semana):
+        quarta = domingo_semana + timedelta(days=3)
+        return quarta.year == ano and quarta.month == mes
+
+    if not _quarta_e_do_mes(domingo):
+        domingo += timedelta(days=7)
+
     semanas = []
     numero = 1
-    while domingo <= ultimo_dia:
+    while _quarta_e_do_mes(domingo):
         semanas.append({"numero": numero, "inicio": domingo, "fim": domingo + timedelta(days=6)})
         numero += 1
         domingo += timedelta(days=7)
