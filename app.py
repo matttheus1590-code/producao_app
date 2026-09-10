@@ -88,6 +88,10 @@ from models import (
 from permissoes import ROLES, ROLES_LABELS, pode_acessar_endpoint, pode_editar_estacao, requer_role
 
 MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+MESES_PT_EXTENSO = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PAGE_SIZE = 25
@@ -3284,6 +3288,65 @@ def _filtrar_pedidos(args):
     return query, filtros
 
 
+def _quadrantes_planejamento_semanal(filtros, hoje=None):
+    """Quadrantes clicáveis no topo da Listagem Geral de Produção (pedido do
+    Bruno, 10/09/2026): 1 quadrante pro mês corrente inteiro + 1 por semana
+    dele, no espírito do "Faturamento por Semana" que já existe em Gestão
+    Operação — clicar já atualiza a listagem (mesmo link de sempre, sem
+    JS/AJAX, só reaproveita o próprio filtro de Planejamento Semanal/Mensal
+    PCP que a tela já tinha).
+
+    Sempre o mês ATUAL (não fica preso a setembro — troca sozinho quando o
+    mês virar, sem precisar mexer em nada aqui). O número de semanas também
+    é dinâmico: usa a mesma lista de rótulos "SEMANA NN / MÊS / ANO" de
+    gerar_semanas_pcp (semana N = dias (N-1)*7+1 a N*7, a última encurtada)
+    — a maioria dos meses tem 5 semanas nesse critério, alguns têm só 4
+    (nunca mais que 5, já que ceil(31/7)=5).
+
+    Cada quadrante já mostra quantos PEDIDOS distintos caem naquele período,
+    considerando os OUTROS filtros já ativos na tela (cliente, vendedor,
+    status, estação, busca etc.) — só ignora o Planejamento Semanal/Mensal
+    atual, senão a contagem de cada quadrante ficaria igual à do que já
+    estiver selecionado, em vez do total real daquele período. Reaproveita
+    _filtrar_pedidos (mesma regra de sempre) pra nunca divergir da lógica
+    que a tabela abaixo usa."""
+    hoje = hoje or date.today()
+    ano, mes = hoje.year, hoje.month
+    dias_no_mes = monthrange(ano, mes)[1]
+    rotulos_semana = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=hoje)
+
+    filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="")
+
+    def contar(**override):
+        query, _ = _filtrar_pedidos(dict(filtros_outros, **override))
+        return query.count()
+
+    valor_mes = f"{ano}-{mes:02d}"
+    mes_atual = {
+        "titulo": MESES_PT_EXTENSO[mes - 1].upper(),
+        "subtitulo": f"01/{mes:02d} – {dias_no_mes:02d}/{mes:02d}",
+        "total": contar(planejamento_mensal=valor_mes),
+        "ativo": filtros.get("planejamento_mensal") == valor_mes,
+        "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes),
+    }
+
+    semanas = []
+    for n, rotulo in enumerate(rotulos_semana, start=1):
+        dia_inicio = (n - 1) * 7 + 1
+        dia_fim = min(n * 7, dias_no_mes)
+        semanas.append(
+            {
+                "titulo": f"SEMANA {n:02d}",
+                "subtitulo": f"{dia_inicio:02d}/{mes:02d} – {dia_fim:02d}/{mes:02d}",
+                "total": contar(planejamento_semanal=rotulo),
+                "ativo": filtros.get("planejamento_semanal") == rotulo,
+                "filtros_link": dict(filtros_outros, planejamento_semanal=rotulo),
+            }
+        )
+
+    return {"mes_atual": mes_atual, "semanas": semanas}
+
+
 class _LinhaListagemGeral:
     """Uma linha da Listagem Geral = 1 pedido + 1 item (produto) dele — o
     mesmo número de pedido pode aparecer em várias linhas, uma por produto
@@ -5785,6 +5848,10 @@ def register_routes(app):
         # de qualidade por item, direto na Listagem Geral.
         inspecoes_rdim = _inspecoes_rdim_por_item([l.item_id for l in linhas_pagina])
 
+        # Quadrantes de Planejamento Semanal/Mensal PCP (pedido do Bruno,
+        # 10/09/2026) — ver _quadrantes_planejamento_semanal.
+        quadrantes_pcp = _quadrantes_planejamento_semanal(filtros)
+
         return render_template(
             "dashboard.html",
             linhas=linhas_pagina,
@@ -5798,6 +5865,7 @@ def register_routes(app):
             sort=sort,
             dir_ordenacao=dir_ordenacao,
             inspecoes_rdim=inspecoes_rdim,
+            quadrantes_pcp=quadrantes_pcp,
         )
 
     @app.route("/pedidos/novo", methods=["GET", "POST"])

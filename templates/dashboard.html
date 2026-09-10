@@ -112,6 +112,20 @@
   </div>
 </form>
 
+<p class="text-muted small mb-2">
+  <i class="bi bi-calendar3"></i> Planejamento PCP do mês — clique num quadrante pra filtrar a listagem por aquele período.
+</p>
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-4 col-lg-2">
+    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="primary") }}
+  </div>
+  {% for semana in quadrantes_pcp.semanas %}
+  <div class="col-6 col-md-4 col-lg-2">
+    {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, link=url_for('dashboard', **semana.filtros_link), ativo=semana.ativo) }}
+  </div>
+  {% endfor %}
+</div>
+
 <div class="d-flex justify-content-end align-items-center gap-2 mb-3">
   <button type="button" id="btnResetLargurasColunas" class="btn btn-outline-secondary btn-sm" title="Redefinir a largura de todas as colunas para o padrão">
     <i class="bi bi-arrows-angle-contract"></i> Redefinir colunas
