@@ -144,6 +144,21 @@ body.col-resizing-ativo {
   background-color: #fbe9c6;
 }
 
+/* Operação 360 (pedido do Bruno, 10/09/2026): linha inteira fica verde
+   quando o pedido já foi entregue ao cliente (go_data_entregue_cliente
+   preenchida) — mesmo padrão de override via --bs-table-bg já usado acima
+   pras cores por pedido da Listagem Geral de Produção, só que aqui é
+   condicional a 1 campo (não alternado), então uma classe só chega. */
+.tabela-operacao-360 > tbody > tr.linha-op360-finalizada > * {
+  --bs-table-bg: #e3f6e8;
+  background-color: #e3f6e8;
+}
+
+.tabela-operacao-360.table-hover > tbody > tr.linha-op360-finalizada:hover > * {
+  --bs-table-bg: #cdedd6;
+  background-color: #cdedd6;
+}
+
 .normal-case {
   text-transform: none;
 }

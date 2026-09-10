@@ -1,19 +1,20 @@
 {% extends "base.html" %}
 {% from "_macros.html" import stat_card %}
-{% block title %}Gestão Operação · Listagem Geral · Gestão da Produção e Operação{% endblock %}
+{% block title %}Gestão Operação · Operação 360 · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
 {% include "_gestao_operacao_subnav.html" with context %}
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-  <h4 class="mb-0"><i class="bi bi-list-ul"></i> Listagem Geral</h4>
+  <h4 class="mb-0"><i class="bi bi-list-ul"></i> Operação 360</h4>
   <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
 </div>
 <p class="text-muted small mb-3">
-  Visão geral, 1 linha por pedido. Passe o mouse (ou toque, no celular) em cima do <strong>nome do cliente</strong>
-  pra ver os produtos e quantidades já preenchidos em Gestão Produção pelo PCP — a lista casa pelo nº de pedido de
-  venda; se o pedido ainda não foi lançado em Gestão Produção (ou o número não bate), aparece "Sem itens em Gestão
-  Produção".
+  Visão de ponta a ponta do pedido — inclusão, solicitação, produção, expedição e entrega, com os 3 lead times e o
+  OTD. Passe o mouse (ou toque, no celular) em cima do <strong>nome do cliente</strong> pra ver os produtos e
+  quantidades já preenchidos em Gestão Produção pelo PCP — a lista casa pelo nº de pedido de venda; se o pedido
+  ainda não foi lançado em Gestão Produção (ou o número não bate), aparece "Sem itens em Gestão Produção". Passe o
+  mouse em cima do <strong>Estado</strong> pra ver cidade e país.
 </p>
 
 <form class="row g-2 align-items-end mb-3" method="get">
@@ -73,22 +74,54 @@
   {% endfor %}
 </div>
 
-<div class="table-responsive go-listagem-wrap">
-  <table class="table table-hover table-sm align-middle bg-white">
+<div class="d-flex justify-content-end align-items-center gap-2 mb-2">
+  <button type="button" id="btnResetLargurasOperacao360" class="btn btn-outline-secondary btn-sm" title="Redefinir a largura de todas as colunas para o padrão">
+    <i class="bi bi-arrows-angle-contract"></i> Redefinir colunas
+  </button>
+</div>
+<p class="text-muted small mb-2">
+  <i class="bi bi-arrows"></i> Dica: arraste a borda direita de qualquer coluna pra ajustar a largura — o site lembra do ajuste da próxima vez que você abrir esta tela. Linha verde = pedido já entregue ao cliente.
+</p>
+
+<div class="table-responsive tabela-listagem-geral-wrap">
+  <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral tabela-operacao-360" id="tabelaOperacao360">
+    <colgroup>
+      <col style="width:85px">
+      <col style="width:190px">
+      <col style="width:92px">
+      <col style="width:92px">
+      <col style="width:100px">
+      <col style="width:92px">
+      <col style="width:92px">
+      <col style="width:64px">
+      <col style="width:64px">
+      <col style="width:64px">
+      <col style="width:66px">
+      <col style="width:105px">
+      <col style="width:58px">
+      <col style="width:55px">
+      <col style="width:100px">
+      <col style="width:120px">
+      <col style="width:56px">
+    </colgroup>
     <thead class="table-light">
       <tr>
         <th>Pedido</th>
         <th>Cliente</th>
-        <th>Valor total pedido</th>
         <th>Data inclusão</th>
-        <th>Data solic. cliente</th>
-        <th>Prazo total (dias corridos)</th>
+        <th>Data solicitada</th>
+        <th>Conclusão produção</th>
+        <th>Expedido em</th>
+        <th>Real entrega</th>
+        <th title="Lead time comercial: Data solicitada − Data inclusão">LT comercial</th>
+        <th title="Lead time produção: Conclusão produção − Data inclusão">LT produção</th>
+        <th title="Lead time operação: Real entrega − Data inclusão">LT operação</th>
+        <th>OTD</th>
+        <th>Valor pedido</th>
         <th>Frete</th>
-        <th>País</th>
-        <th>UF</th>
-        <th>Cidade</th>
-        <th>Proposta comercial</th>
+        <th>Estado</th>
         <th>Qualidade</th>
+        <th>Semanal PCP</th>
         <th></th>
       </tr>
     </thead>
@@ -97,9 +130,8 @@
       {% set chave_pv = (p.pedido_venda or "").strip() %}
       {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
       {% set rdim = rdim_por_pedido_venda.get(chave_pv) %}
-      {% set data_cliente_p = data_cliente_por_pedido_venda.get(chave_pv) %}
-      {% set solicitada_exibida = data_cliente_p or p.go_data_solicitada_entrega %}
-      <tr>
+      {% set m = metricas_operacao_360.get(p.id, {}) %}
+      <tr class="{% if p.go_data_entregue_cliente %}linha-op360-finalizada{% endif %}">
         <td>{{ p.pedido_venda or "—" }}</td>
         <td>
           <div class="go-itens-wrap">
@@ -130,23 +162,30 @@
             </div>
           </div>
         </td>
+        <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
+        <td title="{{ 'Automático — direto da Data do cliente em Gestão Produção' if m.solicitada_automatica else '' }}">{{ m.solicitada.strftime("%d/%m/%Y") if m.solicitada else "—" }}</td>
+        <td title="{{ 'Automático — direto da Liberação real em Gestão Produção' if m.conclusao_producao_automatica else '' }}">{{ m.conclusao_producao.strftime("%d/%m/%Y") if m.conclusao_producao else "—" }}</td>
+        <td>{{ p.go_data_pedido_expedido.strftime("%d/%m/%Y") if p.go_data_pedido_expedido else "—" }}</td>
+        <td>{{ p.go_data_entregue_cliente.strftime("%d/%m/%Y") if p.go_data_entregue_cliente else "—" }}</td>
+        <td>{{ (m.lead_comercial_dias ~ "d") if m.lead_comercial_dias is not none else "—" }}</td>
+        <td>{{ (m.lead_producao_dias ~ "d") if m.lead_producao_dias is not none else "—" }}</td>
+        <td>{{ (m.lead_operacao_dias ~ "d") if m.lead_operacao_dias is not none else "—" }}</td>
+        <td>
+          {% if p.go_otd_realizado == "SIM" %}
+            <span class="badge bg-success">SIM</span>
+          {% elif p.go_otd_realizado == "NÃO" %}
+            <span class="badge bg-danger">NÃO</span>
+          {% else %}
+            <span class="badge bg-secondary" title="OTD ainda não registrado">—</span>
+          {% endif %}
+        </td>
         <td>
           {% if p.go_valor_pedido_operacao is not none %}
             R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
           {% else %}—{% endif %}
         </td>
-        <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
-        <td title="{{ 'Automático — direto da Data do cliente em Gestão Produção' if data_cliente_p else '' }}">{{ solicitada_exibida.strftime("%d/%m/%Y") if solicitada_exibida else "—" }}</td>
-        <td>
-          {% if p.prazo_total_dias_corridos is not none %}
-            {{ p.prazo_total_dias_corridos }}d
-          {% else %}—{% endif %}
-        </td>
         <td>{{ p.frete or "—" }}</td>
-        <td>{{ p.pais or "—" }}</td>
-        <td>{{ p.estado or "—" }}</td>
-        <td class="text-truncate" style="max-width: 160px;" title="{{ p.cidade or '' }}">{{ p.cidade or "—" }}</td>
-        <td>{{ p.go_proposta or "—" }}</td>
+        <td title="{{ p.cidade or '' }}{% if p.cidade and p.pais %} · {% endif %}{{ p.pais or '' }}">{{ p.estado or "—" }}</td>
         <td>
           {% if rdim and rdim.reprovadas + rdim.com_desvio > 0 %}
             <a href="{{ url_for('rdim_lista', busca=p.pedido_venda, resultado=['REPROVADO', 'APROVADO_COM_DESVIO']) }}"
@@ -158,6 +197,7 @@
             <span class="text-muted">—</span>
           {% endif %}
         </td>
+        <td class="text-truncate" title="{{ 'Automático — direto do Planejamento semanal em Gestão Produção' if m.termino_semanal_automatico else (m.termino_semanal or '') }}">{{ m.termino_semanal or "—" }}</td>
         <td class="text-end">
           <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary" title="Editar">
             <i class="bi bi-pencil-square"></i>
@@ -165,7 +205,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="13" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="17" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -187,8 +227,101 @@
 {% block scripts %}
 <script>
 (function () {
+  // Larguras de coluna ajustáveis na Operação 360 (pedido do Bruno,
+  // 10/09/2026: "quero que todas as colunas sejam ajustáveis na largura, e
+  // ao máximo você maximize as colunas em campo de visão só") — MESMO
+  // mecanismo já usado na Listagem Geral de Gestão Produção (ver
+  // dashboard.html), só com id/chave de localStorage próprios pra não
+  // conflitar com aquela tabela.
+  const CHAVE_LARGURAS = "4pipe_operacao360_colWidths_v1";
+  const LARGURA_MINIMA = 42;
+
+  const tabela = document.getElementById("tabelaOperacao360");
+  if (!tabela) return;
+  const colgroup = tabela.querySelector("colgroup");
+  const cols = colgroup ? Array.from(colgroup.children) : [];
+  const thsCabecalho = Array.from(tabela.querySelectorAll("thead th"));
+  const largurasPadrao = cols.map(function(col) { return parseInt(col.style.width, 10) || 100; });
+
+  function carregarLargurasSalvas() {
+    try {
+      const salvo = JSON.parse(localStorage.getItem(CHAVE_LARGURAS) || "null");
+      if (Array.isArray(salvo) && salvo.length === cols.length) {
+        salvo.forEach(function(w, i) {
+          if (typeof w === "number" && w >= LARGURA_MINIMA) {
+            cols[i].style.width = w + "px";
+          }
+        });
+      }
+    } catch (e) {
+      // localStorage indisponível (ex.: modo privado) — segue com o padrão, sem quebrar a tela.
+    }
+  }
+
+  function salvarLargurasAtuais() {
+    try {
+      const larguras = cols.map(function(col) { return parseInt(col.style.width, 10) || 100; });
+      localStorage.setItem(CHAVE_LARGURAS, JSON.stringify(larguras));
+    } catch (e) {
+      // sem storage disponível — ajuste continua funcionando só nesta visita.
+    }
+  }
+
+  function redefinirLarguras() {
+    cols.forEach(function(col, i) { col.style.width = largurasPadrao[i] + "px"; });
+    try { localStorage.removeItem(CHAVE_LARGURAS); } catch (e) {}
+  }
+
+  carregarLargurasSalvas();
+
+  thsCabecalho.forEach(function(th, index) {
+    if (!cols[index]) return;
+    th.classList.add("th-redimensionavel");
+    const alca = document.createElement("div");
+    alca.className = "col-resize-handle";
+    th.appendChild(alca);
+
+    let arrastando = false;
+    let xInicial = 0;
+    let larguraInicial = 0;
+
+    alca.addEventListener("pointerdown", function(e) {
+      arrastando = true;
+      xInicial = e.clientX;
+      larguraInicial = cols[index].getBoundingClientRect().width;
+      alca.classList.add("resizing");
+      document.body.classList.add("col-resizing-ativo");
+      alca.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+
+    alca.addEventListener("pointermove", function(e) {
+      if (!arrastando) return;
+      const novaLargura = Math.max(LARGURA_MINIMA, larguraInicial + (e.clientX - xInicial));
+      cols[index].style.width = novaLargura + "px";
+    });
+
+    function finalizarArraste(e) {
+      if (!arrastando) return;
+      arrastando = false;
+      alca.classList.remove("resizing");
+      document.body.classList.remove("col-resizing-ativo");
+      salvarLargurasAtuais();
+    }
+
+    alca.addEventListener("pointerup", finalizarArraste);
+    alca.addEventListener("pointercancel", finalizarArraste);
+  });
+
+  const btnReset = document.getElementById("btnResetLargurasOperacao360");
+  if (btnReset) {
+    btnReset.addEventListener("click", redefinirLarguras);
+  }
+})();
+
+(function () {
   // O popover não pode ficar só no CSS (:hover) porque mora dentro de um
-  // contêiner com rolagem horizontal (.go-listagem-wrap) — na prática, todo
+  // contêiner com rolagem (.tabela-listagem-geral-wrap) — na prática, todo
   // navegador ignora "overflow-y: visible" quando overflow-x já é "auto" no
   // mesmo elemento, cortando o popover das últimas linhas da tabela. Por
   // isso o JS calcula a posição em coordenadas de TELA (getBoundingClientRect)

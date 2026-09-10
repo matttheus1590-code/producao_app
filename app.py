@@ -3880,6 +3880,55 @@ def _data_cliente_por_pedido_venda(pedidos_venda):
     return mapa
 
 
+def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda):
+    """"Operação 360" — Listagem Geral de Gestão Operação (pedido do Bruno,
+    10/09/2026): "quero que contemple as principais informações dos
+    pedidos... data inclusão, data solicitada, data conclusão produção,
+    expedido em, real entrega, lead time comercial, lead time produção
+    (inclusão x liberação pcp), lead time operação (inclusão x real
+    entrega), otd, valor pedido, frete, estado, qualidade, semanal
+    planejamento pcp". Reúne, por PedidoOperacao.id, tudo que a nova tabela
+    precisa além do que o próprio objeto já expõe — reaproveitando os
+    MESMOS dados ao vivo de Produção já usados no resto de Gestão Operação
+    (liberação PCP, data do cliente — ver _liberacao_pcp_por_pedido_venda/
+    _data_cliente_por_pedido_venda), sem nenhuma sincronização nova.
+
+    "Real entrega"/lead time operação usam go_data_entregue_cliente (seção
+    Resultados/OTD) — a MESMA data que já alimenta o OTD e a property
+    go_lead_time_operacao_dias do próprio modelo — não go_data_real_entrega
+    (Logística/NF), que é um passo anterior no processo (confirmação de
+    coleta/entrega pela transportadora, não necessariamente o recebimento
+    pelo cliente).
+
+    Cada lead time é em dias corridos, sempre a partir de Data de inclusão
+    (campo próprio de PedidoOperacao — mesma referência que a coluna "Data
+    inclusão" já mostrava nesta tela antes); None quando falta uma das duas
+    datas (o template mostra "—")."""
+    metricas = {}
+    for p in pedidos:
+        chave = (p.pedido_venda or "").strip()
+        liberacao_p = liberacao_pcp_por_pedido_venda.get(chave) or {}
+        data_cliente_p = data_cliente_por_pedido_venda.get(chave)
+
+        data_inclusao = p.data_inclusao_pedido
+        solicitada = data_cliente_p or p.go_data_solicitada_entrega
+        conclusao_producao = liberacao_p.get("efetiva") or p.go_data_efetiva_liberacao_pcp
+        termino_semanal = liberacao_p.get("termino_semanal") or p.go_termino_semanal_pcp
+
+        metricas[p.id] = {
+            "solicitada": solicitada,
+            "solicitada_automatica": bool(data_cliente_p),
+            "conclusao_producao": conclusao_producao,
+            "conclusao_producao_automatica": bool(liberacao_p.get("efetiva")),
+            "termino_semanal": termino_semanal,
+            "termino_semanal_automatico": bool(liberacao_p.get("termino_semanal")),
+            "lead_comercial_dias": (solicitada - data_inclusao).days if (data_inclusao and solicitada) else None,
+            "lead_producao_dias": (conclusao_producao - data_inclusao).days if (data_inclusao and conclusao_producao) else None,
+            "lead_operacao_dias": p.go_lead_time_operacao_dias,
+        }
+    return metricas
+
+
 def _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao):
     """Pedido do Bruno (09/09/2026, tela Consulta Pedido): 2 lead times em
     dias corridos, sempre calculados a partir da Data de inclusão do
@@ -6389,12 +6438,16 @@ def register_routes(app):
     @app.route("/gestao-operacao/listagem-geral")
     @login_required
     def gestao_operacao_listagem_geral():
-        """"Listagem Geral" de Gestão Operação (pedido do Bruno) — 1 linha por
-        PEDIDO (não por produto, diferente da Listagem Geral de Gestão
-        Produção), com as colunas comerciais principais; passar o mouse (ou
-        clicar, no touch) sobre "Itens" mostra os produtos/quantidades já
-        preenchidos em Gestão Produção pelo PCP, casando pelo nº de pedido de
-        venda — sem criar nenhum vínculo real entre as duas tabelas."""
+        """"Operação 360" (pedido do Bruno, 10/09/2026 — antes "Listagem
+        Geral"; nome da aba mudou, endpoint/URL continuam os mesmos pra não
+        quebrar link nenhum) — 1 linha por PEDIDO (não por produto, diferente
+        da Listagem Geral de Gestão Produção), com as principais informações
+        do pedido de ponta a ponta: inclusão -> solicitação -> produção ->
+        expedição -> entrega, os 3 lead times (comercial/produção/operação),
+        OTD e qualidade. Passar o mouse (ou clicar, no touch) sobre "Itens"
+        mostra os produtos/quantidades já preenchidos em Gestão Produção pelo
+        PCP, casando pelo nº de pedido de venda — sem criar nenhum vínculo
+        real entre as duas tabelas."""
         pedidos, page, total_paginas, total_filtrado, filtros, _query_operacao = _linhas_gestao_operacao(request.args)
         itens_por_pedido_venda = _itens_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
         # Qualidade (RDIM) — pedido do Bruno (02/09/2026): indicador simples
@@ -6404,12 +6457,18 @@ def register_routes(app):
         # "Data solic. cliente" também acompanha ao vivo a "Data do cliente"
         # de Gestão Produção — pedido do Bruno (03/09/2026).
         data_cliente_por_pedido_venda = _data_cliente_por_pedido_venda([p.pedido_venda for p in pedidos])
+        # "Data conclusão produção"/"Semanal planejamento PCP" também
+        # acompanham ao vivo a Liberação real/Planejamento semanal de Gestão
+        # Produção — pedido do Bruno (10/09/2026, "Operação 360").
+        liberacao_pcp_por_pedido_venda = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
         # Quadrantes de Planejamento Semanal/Mensal PCP (pedido do Bruno,
         # 10/09/2026): "quero que todo o grupo gestão operação esteja 100%
         # sincronizado com o gestão produção... principalmente listagem e
         # pcp" — mesmo recurso que já existe na Listagem Geral de Produção,
         # ver _quadrantes_planejamento_semanal_operacao.
         quadrantes_pcp = _quadrantes_planejamento_semanal_operacao(filtros)
+        # Datas/lead times/OTD da "Operação 360" — ver _metricas_operacao_360.
+        metricas_operacao_360 = _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda)
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -6418,6 +6477,7 @@ def register_routes(app):
             rdim_por_pedido_venda=rdim_por_pedido_venda,
             data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
             quadrantes_pcp=quadrantes_pcp,
+            metricas_operacao_360=metricas_operacao_360,
         )
 
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
