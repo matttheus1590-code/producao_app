@@ -3880,18 +3880,51 @@ def _data_cliente_por_pedido_venda(pedidos_venda):
     return mapa
 
 
-def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda):
+def _pedidos_producao_por_pedido_venda(pedidos_venda):
+    """dict pedido_venda (trim) -> Pedido (Gestão Produção), com os itens já
+    carregados. Usado quando precisamos do objeto Pedido inteiro (não só os
+    itens/status já resumidos por _itens_producao_por_pedido_venda) — ex.
+    pra reaproveitar _indice_etapa_pedido sem duplicar sua lógica em outro
+    lugar. Mesmo casamento por texto (trim, exato, nunca aproximado) de
+    sempre."""
+    valores = sorted({v.strip() for v in pedidos_venda if v and v.strip()})
+    if not valores:
+        return {}
+    pedidos = (
+        Pedido.query.options(selectinload(Pedido.itens))
+        .filter(func.trim(Pedido.pedido_venda).in_(valores))
+        .all()
+    )
+    mapa = {}
+    for pedido in pedidos:
+        chave = (pedido.pedido_venda or "").strip()
+        if chave and chave not in mapa:
+            mapa[chave] = pedido
+    return mapa
+
+
+# Emoji por etapa do "Acompanhamento do pedido" (pedido do Bruno, 10/09/2026,
+# coluna "Status pedido" da Operação 360: "use emoções pra sinalizar") — na
+# mesma ordem/índice de _ETAPAS_ACOMPANHAMENTO_PEDIDO (definida mais abaixo,
+# junto com _indice_etapa_pedido — reaproveitados aqui, não duplicados).
+_ETAPA_EMOJI = ["📥", "⚙️", "📋", "🚚", "✅"]
+
+
+def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda, pedidos_producao_por_pedido_venda):
     """"Operação 360" — Listagem Geral de Gestão Operação (pedido do Bruno,
     10/09/2026): "quero que contemple as principais informações dos
     pedidos... data inclusão, data solicitada, data conclusão produção,
     expedido em, real entrega, lead time comercial, lead time produção
     (inclusão x liberação pcp), lead time operação (inclusão x real
     entrega), otd, valor pedido, frete, estado, qualidade, semanal
-    planejamento pcp". Reúne, por PedidoOperacao.id, tudo que a nova tabela
-    precisa além do que o próprio objeto já expõe — reaproveitando os
-    MESMOS dados ao vivo de Produção já usados no resto de Gestão Operação
-    (liberação PCP, data do cliente — ver _liberacao_pcp_por_pedido_venda/
-    _data_cliente_por_pedido_venda), sem nenhuma sincronização nova.
+    planejamento pcp"; ampliada no mesmo dia com "nº NF, data emissão NF,
+    status pedido (Pedido Recebido/Produção/Inspeção-Expedição/Em
+    transporte/Entrega Realizada), com emoji e descrição no hover". Reúne,
+    por PedidoOperacao.id, tudo que a nova tabela precisa além do que o
+    próprio objeto já expõe — reaproveitando os MESMOS dados ao vivo de
+    Produção já usados no resto de Gestão Operação (liberação PCP, data do
+    cliente — ver _liberacao_pcp_por_pedido_venda/_data_cliente_por_pedido_
+    venda), sem nenhuma sincronização nova.
 
     "Real entrega"/lead time operação usam go_data_entregue_cliente (seção
     Resultados/OTD) — a MESMA data que já alimenta o OTD e a property
@@ -3903,17 +3936,28 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
     Cada lead time é em dias corridos, sempre a partir de Data de inclusão
     (campo próprio de PedidoOperacao — mesma referência que a coluna "Data
     inclusão" já mostrava nesta tela antes); None quando falta uma das duas
-    datas (o template mostra "—")."""
+    datas (o template mostra "—").
+
+    "Status pedido" reaproveita EXATAMENTE a mesma lógica de 5 etapas já
+    usada no painel "Acompanhamento do pedido" de Consulta Pedido
+    (_indice_etapa_pedido/_ETAPAS_ACOMPANHAMENTO_PEDIDO) — pra nunca
+    divergir do que aquela tela mostra pro mesmo pedido — só que aqui
+    compactado num badge com emoji (a trilha visual completa de lá não cabe
+    numa célula de tabela)."""
     metricas = {}
     for p in pedidos:
         chave = (p.pedido_venda or "").strip()
         liberacao_p = liberacao_pcp_por_pedido_venda.get(chave) or {}
         data_cliente_p = data_cliente_por_pedido_venda.get(chave)
+        pedido_producao = pedidos_producao_por_pedido_venda.get(chave)
 
         data_inclusao = p.data_inclusao_pedido
         solicitada = data_cliente_p or p.go_data_solicitada_entrega
         conclusao_producao = liberacao_p.get("efetiva") or p.go_data_efetiva_liberacao_pcp
         termino_semanal = liberacao_p.get("termino_semanal") or p.go_termino_semanal_pcp
+
+        etapa_idx = _indice_etapa_pedido(pedido_producao, p)
+        etapa_base = _ETAPAS_ACOMPANHAMENTO_PEDIDO[etapa_idx - 1]
 
         metricas[p.id] = {
             "solicitada": solicitada,
@@ -3925,6 +3969,9 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
             "lead_comercial_dias": (solicitada - data_inclusao).days if (data_inclusao and solicitada) else None,
             "lead_producao_dias": (conclusao_producao - data_inclusao).days if (data_inclusao and conclusao_producao) else None,
             "lead_operacao_dias": p.go_lead_time_operacao_dias,
+            "status_pedido_emoji": _ETAPA_EMOJI[etapa_idx - 1],
+            "status_pedido_label": etapa_base["label"],
+            "status_pedido_descricao": etapa_base["descricao"],
         }
     return metricas
 
@@ -6467,8 +6514,15 @@ def register_routes(app):
         # pcp" — mesmo recurso que já existe na Listagem Geral de Produção,
         # ver _quadrantes_planejamento_semanal_operacao.
         quadrantes_pcp = _quadrantes_planejamento_semanal_operacao(filtros)
-        # Datas/lead times/OTD da "Operação 360" — ver _metricas_operacao_360.
-        metricas_operacao_360 = _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda)
+        # "Status pedido" (coluna com emoji, pedido do Bruno 10/09/2026)
+        # reaproveita _indice_etapa_pedido, que precisa do Pedido inteiro
+        # (não só os itens já resumidos acima) — ver
+        # _pedidos_producao_por_pedido_venda.
+        pedidos_producao_por_pedido_venda = _pedidos_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
+        # Datas/lead times/OTD/status da "Operação 360" — ver _metricas_operacao_360.
+        metricas_operacao_360 = _metricas_operacao_360(
+            pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda, pedidos_producao_por_pedido_venda,
+        )
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
