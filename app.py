@@ -10,7 +10,7 @@ from flask import Flask, Response, abort, flash, jsonify, redirect, render_templ
 from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from sqlalchemy import and_, extract, false, func, inspect, or_, text
+from sqlalchemy import and_, extract, false, func, inspect, not_, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -3574,6 +3574,71 @@ def _pedidos_venda_com_planejamento_semanal(rotulos):
     return [linha[0] for linha in linhas if linha[0]]
 
 
+def _pedidos_venda_finalizados_producao():
+    """Conjunto de `pedido_venda` (trim) de Gestão Produção cujo
+    status_producao é FINALIZADO — usado só por
+    _aplicar_filtro_status_pedido_operacao (etapa 3 do "Status pedido"),
+    pra reproduzir em SQL a mesma condição que _indice_etapa_pedido já
+    calcula em Python (`pedido.status_producao == "FINALIZADO"`)."""
+    linhas = (
+        db.session.query(func.trim(Pedido.pedido_venda))
+        .filter(Pedido.status_producao == "FINALIZADO", Pedido.pedido_venda.isnot(None))
+        .distinct()
+        .all()
+    )
+    return {linha[0] for linha in linhas if linha[0]}
+
+
+def _pedidos_venda_em_producao():
+    """Conjunto de `pedido_venda` (trim) de Gestão Produção com pelo menos 1
+    item cujo `inicio_producao` está preenchido — usado só por
+    _aplicar_filtro_status_pedido_operacao (etapa 2 do "Status pedido"),
+    reproduzindo em SQL a mesma condição de _indice_etapa_pedido
+    (`any(item.inicio_producao for item in pedido.itens)`)."""
+    linhas = (
+        db.session.query(func.trim(Pedido.pedido_venda))
+        .join(ItemPedido, ItemPedido.pedido_id == Pedido.id)
+        .filter(ItemPedido.inicio_producao.isnot(None), Pedido.pedido_venda.isnot(None))
+        .distinct()
+        .all()
+    )
+    return {linha[0] for linha in linhas if linha[0]}
+
+
+def _aplicar_filtro_status_pedido_operacao(query, etapa_idx):
+    """Filtra `query` (PedidoOperacao) pela MESMA classificação de 5 etapas
+    já usada em _indice_etapa_pedido/_metricas_operacao_360 — pedido do
+    Bruno (10/09/2026, quadrantes "Status pedidos" da Operação 360).
+    Reimplementada em SQL (em vez de reaproveitar a função Python direto)
+    porque aqui precisamos FILTRAR e paginar no banco, não só calcular a
+    etapa de pedidos já carregados; a ordem de precedência é a mesma (5
+    entregue > 4 expedido > 3 liberado PCP/produção finalizada > 2 em
+    produção > 1 recebido — cada etapa exclui as de número maior, igual ao
+    if/elif em cadeia de _indice_etapa_pedido)."""
+    finalizados_pv = _pedidos_venda_finalizados_producao()
+    em_producao_pv = _pedidos_venda_em_producao()
+    pv_trim = func.trim(PedidoOperacao.pedido_venda)
+
+    cond5 = or_(PedidoOperacao.go_data_entregue_cliente.isnot(None), PedidoOperacao.go_data_real_entrega.isnot(None))
+    cond4 = PedidoOperacao.go_data_pedido_expedido.isnot(None)
+    cond3_base = or_(
+        pv_trim.in_(finalizados_pv) if finalizados_pv else false(),
+        PedidoOperacao.go_data_efetiva_liberacao_pcp.isnot(None),
+    )
+    cond2_base = pv_trim.in_(em_producao_pv) if em_producao_pv else false()
+
+    if etapa_idx == 5:
+        return query.filter(cond5)
+    if etapa_idx == 4:
+        return query.filter(and_(cond4, not_(cond5)))
+    if etapa_idx == 3:
+        return query.filter(and_(cond3_base, not_(cond4), not_(cond5)))
+    if etapa_idx == 2:
+        return query.filter(and_(cond2_base, not_(cond3_base), not_(cond4), not_(cond5)))
+    # etapa 1 ("Pedido recebido"): nenhuma das condições acima bate.
+    return query.filter(and_(not_(cond2_base), not_(cond3_base), not_(cond4), not_(cond5)))
+
+
 def _filtrar_pedidos_operacao(args):
     """Filtros das 4 sub-abas de Gestão Operação (Comercial/PCP/Logística/
     Resultados). Independente de _filtrar_pedidos (Gestão Produção) — opera só
@@ -3607,7 +3672,16 @@ def _filtrar_pedidos_operacao(args):
     "Término semanal" da tela PCP (ver _liberacao_pcp_por_pedido_venda).
 
     `data_inicio`/`data_fim` (mesmo pedido): intervalo de Data de inclusão,
-    mesmo campo/rótulo do filtro equivalente em Gestão Produção."""
+    mesmo campo/rótulo do filtro equivalente em Gestão Produção.
+
+    `status_pedido`/`otd`/`frete`/`nf_mes_atual` (pedido do Bruno,
+    10/09/2026 — quadrantes/painel da Operação 360, no lugar dos
+    quadrantes semanais/mensais de PCP removidos desta tela): `status_pedido`
+    é "1".."5" (mesma classificação de _indice_etapa_pedido, ver
+    _aplicar_filtro_status_pedido_operacao); `otd` é "SIM"/"NAO"/"PENDENTE"
+    (PENDENTE = go_otd_realizado ainda vazio); `frete` é um valor de
+    FRETE_OPCOES ou "NAO_INFORMADO" (vazio ou fora da lista); `nf_mes_atual`
+    ="1" filtra go_data_emissao_nf dentro do mês corrente."""
     query = PedidoOperacao.query
 
     cliente = args.get("cliente", "").strip()
@@ -3619,6 +3693,10 @@ def _filtrar_pedidos_operacao(args):
     planejamento_mensal = args.get("planejamento_mensal", "").strip()
     data_inicio = args.get("data_inicio", "").strip()
     data_fim = args.get("data_fim", "").strip()
+    status_pedido = args.get("status_pedido", "").strip()
+    otd = args.get("otd", "").strip().upper()
+    frete_filtro = args.get("frete", "").strip()
+    nf_mes_atual = args.get("nf_mes_atual", "").strip()
 
     if cliente:
         query = query.filter(PedidoOperacao.cliente.ilike(f"%{cliente}%"))
@@ -3674,12 +3752,46 @@ def _filtrar_pedidos_operacao(args):
     else:
         segmento = ""
 
+    if status_pedido in {"1", "2", "3", "4", "5"}:
+        query = _aplicar_filtro_status_pedido_operacao(query, int(status_pedido))
+    else:
+        status_pedido = ""
+
+    if otd == "SIM":
+        query = query.filter(PedidoOperacao.go_otd_realizado == "SIM")
+    elif otd == "NAO":
+        query = query.filter(PedidoOperacao.go_otd_realizado == "NÃO")
+    elif otd == "PENDENTE":
+        query = query.filter(or_(PedidoOperacao.go_otd_realizado.is_(None), PedidoOperacao.go_otd_realizado == ""))
+    else:
+        otd = ""
+
+    if frete_filtro == "NAO_INFORMADO":
+        query = query.filter(
+            or_(
+                PedidoOperacao.frete.is_(None),
+                PedidoOperacao.frete == "",
+                not_(func.upper(func.trim(PedidoOperacao.frete)).in_(FRETE_OPCOES)),
+            )
+        )
+    elif frete_filtro:
+        query = query.filter(func.upper(func.trim(PedidoOperacao.frete)) == frete_filtro.upper())
+
+    if nf_mes_atual == "1":
+        hoje_filtro = date.today()
+        primeiro_dia_filtro = hoje_filtro.replace(day=1)
+        ultimo_dia_filtro = date(hoje_filtro.year, hoje_filtro.month, monthrange(hoje_filtro.year, hoje_filtro.month)[1])
+        query = query.filter(PedidoOperacao.go_data_emissao_nf.between(primeiro_dia_filtro, ultimo_dia_filtro))
+    else:
+        nf_mes_atual = ""
+
     query = query.order_by(PedidoOperacao.data_inclusao_pedido.desc().nullslast(), PedidoOperacao.id.desc())
 
     filtros = dict(
         cliente=cliente, vendedor=vendedor, busca=busca, segmento=segmento,
         planejamento_semanal=planejamento_semanal, planejamento_mensal=planejamento_mensal,
         data_inicio=data_inicio, data_fim=data_fim,
+        status_pedido=status_pedido, otd=otd, frete=frete_filtro, nf_mes_atual=nf_mes_atual,
     )
     return query, filtros
 
@@ -3982,11 +4094,144 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
             "lead_comercial_dias": (solicitada - data_inclusao).days if (data_inclusao and solicitada) else None,
             "lead_producao_dias": (conclusao_producao - data_inclusao).days if (data_inclusao and conclusao_producao) else None,
             "lead_operacao_dias": p.go_lead_time_operacao_dias,
+            "status_pedido_idx": etapa_idx,
             "status_pedido_emoji": _ETAPA_EMOJI[etapa_idx - 1],
             "status_pedido_label": etapa_base["label"],
             "status_pedido_descricao": etapa_base["descricao"],
         }
     return metricas
+
+
+def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
+    """Quadrantes "Status pedidos" / "OTD" / "Tipo de frete" / "NFs emitidas
+    no mês" + painel dinâmico de valores/faturamento/lead time médio
+    (pedido do Bruno, 10/09/2026) — substituem, nesta tela, os quadrantes
+    semanais/mensais de PCP (que ficam só na Listagem Geral de Gestão
+    Produção, como já estabelecido; o filtro por planejamento semanal/
+    mensal continua disponível aqui, só sem o card visual).
+
+    Calculado sobre o conjunto TOTAL filtrado (`pedidos_filtrados`, a query
+    inteira sem paginação) — não só a página atual — pra sempre refletir o
+    total real de cada quadrante, e reage a cada mudança de filtro (por
+    isso "dinâmico"). `metricas_filtrados` é o retorno de
+    _metricas_operacao_360 pro MESMO conjunto — reaproveitado aqui pra não
+    duplicar o cálculo de etapa/lead time (só soma o que já foi calculado
+    lá)."""
+    def link(**overrides):
+        base = dict(filtros)
+        base.update(overrides)
+        return base
+
+    contagem_status = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    contagem_otd = {"SIM": 0, "NAO": 0, "PENDENTE": 0}
+    contagem_frete = {op: 0 for op in FRETE_OPCOES}
+    contagem_frete_nao_informado = 0
+
+    hoje = date.today()
+    primeiro_dia_mes = hoje.replace(day=1)
+    ultimo_dia_mes = date(hoje.year, hoje.month, monthrange(hoje.year, hoje.month)[1])
+    nfs_mes = 0
+
+    valor_total, n_valor = 0.0, 0
+    faturamento_total, n_faturamento = 0.0, 0
+    soma_lead_comercial = soma_lead_producao = soma_lead_operacao = 0
+    n_lead_comercial = n_lead_producao = n_lead_operacao = 0
+
+    for p in pedidos_filtrados:
+        m = metricas_filtrados.get(p.id, {})
+        etapa_idx = m.get("status_pedido_idx")
+        if etapa_idx in contagem_status:
+            contagem_status[etapa_idx] += 1
+
+        if p.go_otd_realizado == "SIM":
+            contagem_otd["SIM"] += 1
+        elif p.go_otd_realizado == "NÃO":
+            contagem_otd["NAO"] += 1
+        else:
+            contagem_otd["PENDENTE"] += 1
+
+        frete_valor = (p.frete or "").strip().upper()
+        if frete_valor in contagem_frete:
+            contagem_frete[frete_valor] += 1
+        else:
+            contagem_frete_nao_informado += 1
+
+        if p.go_data_emissao_nf and primeiro_dia_mes <= p.go_data_emissao_nf <= ultimo_dia_mes:
+            nfs_mes += 1
+
+        if p.go_valor_pedido_operacao is not None:
+            valor_total += p.go_valor_pedido_operacao
+            n_valor += 1
+        if p.go_valor_nf_emitida is not None:
+            faturamento_total += p.go_valor_nf_emitida
+            n_faturamento += 1
+
+        lc = m.get("lead_comercial_dias")
+        if lc is not None:
+            soma_lead_comercial += lc
+            n_lead_comercial += 1
+        lp = m.get("lead_producao_dias")
+        if lp is not None:
+            soma_lead_producao += lp
+            n_lead_producao += 1
+        lo = m.get("lead_operacao_dias")
+        if lo is not None:
+            soma_lead_operacao += lo
+            n_lead_operacao += 1
+
+    cards_status = [
+        {
+            "titulo": f"{_ETAPA_EMOJI[idx - 1]} {etapa['label']}",
+            "total": contagem_status[idx],
+            "ativo": filtros.get("status_pedido") == str(idx),
+            "filtros_link": link(status_pedido=str(idx)),
+        }
+        for idx, etapa in enumerate(_ETAPAS_ACOMPANHAMENTO_PEDIDO, start=1)
+    ]
+
+    cards_otd = [
+        {"titulo": "OTD — Sim", "total": contagem_otd["SIM"], "ativo": filtros.get("otd") == "SIM", "filtros_link": link(otd="SIM"), "borda": "success"},
+        {"titulo": "OTD — Não", "total": contagem_otd["NAO"], "ativo": filtros.get("otd") == "NAO", "filtros_link": link(otd="NAO"), "borda": "danger"},
+        {"titulo": "OTD — Pendente", "total": contagem_otd["PENDENTE"], "ativo": filtros.get("otd") == "PENDENTE", "filtros_link": link(otd="PENDENTE"), "borda": "secondary"},
+    ]
+
+    cards_frete = [
+        {"titulo": op, "total": contagem_frete[op], "ativo": filtros.get("frete") == op, "filtros_link": link(frete=op)}
+        for op in FRETE_OPCOES
+    ]
+    cards_frete.append({
+        "titulo": "Não informado",
+        "total": contagem_frete_nao_informado,
+        "ativo": filtros.get("frete") == "NAO_INFORMADO",
+        "filtros_link": link(frete="NAO_INFORMADO"),
+    })
+
+    card_nf_mes = {
+        "titulo": f"NFs emitidas em {MESES_PT_EXTENSO[hoje.month - 1]}",
+        "total": nfs_mes,
+        "ativo": filtros.get("nf_mes_atual") == "1",
+        "filtros_link": link(nf_mes_atual="1"),
+    }
+
+    dinamico = {
+        "total_pedidos": len(pedidos_filtrados),
+        "valor_total": valor_total,
+        "n_valor": n_valor,
+        "faturamento_total": faturamento_total,
+        "n_faturamento": n_faturamento,
+        "lead_comercial_medio": round(soma_lead_comercial / n_lead_comercial, 1) if n_lead_comercial else None,
+        "lead_producao_medio": round(soma_lead_producao / n_lead_producao, 1) if n_lead_producao else None,
+        "lead_operacao_medio": round(soma_lead_operacao / n_lead_operacao, 1) if n_lead_operacao else None,
+    }
+
+    return {
+        "status": cards_status,
+        "otd": cards_otd,
+        "frete": cards_frete,
+        "nf_mes": card_nf_mes,
+        "dinamico": dinamico,
+        "limpar_filtros": link(status_pedido="", otd="", frete="", nf_mes_atual=""),
+    }
 
 
 def _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao):
@@ -6508,7 +6753,7 @@ def register_routes(app):
         mostra os produtos/quantidades já preenchidos em Gestão Produção pelo
         PCP, casando pelo nº de pedido de venda — sem criar nenhum vínculo
         real entre as duas tabelas."""
-        pedidos, page, total_paginas, total_filtrado, filtros, _query_operacao = _linhas_gestao_operacao(request.args)
+        pedidos, page, total_paginas, total_filtrado, filtros, query_operacao = _linhas_gestao_operacao(request.args)
         itens_por_pedido_venda = _itens_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
         # Qualidade (RDIM) — pedido do Bruno (02/09/2026): indicador simples
         # (pedido-level, sem granularidade de item/estação) de "contém
@@ -6521,21 +6766,35 @@ def register_routes(app):
         # acompanham ao vivo a Liberação real/Planejamento semanal de Gestão
         # Produção — pedido do Bruno (10/09/2026, "Operação 360").
         liberacao_pcp_por_pedido_venda = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
-        # Quadrantes de Planejamento Semanal/Mensal PCP (pedido do Bruno,
-        # 10/09/2026): "quero que todo o grupo gestão operação esteja 100%
-        # sincronizado com o gestão produção... principalmente listagem e
-        # pcp" — mesmo recurso que já existe na Listagem Geral de Produção,
-        # ver _quadrantes_planejamento_semanal_operacao.
-        quadrantes_pcp = _quadrantes_planejamento_semanal_operacao(filtros)
         # "Status pedido" (coluna com emoji, pedido do Bruno 10/09/2026)
         # reaproveita _indice_etapa_pedido, que precisa do Pedido inteiro
         # (não só os itens já resumidos acima) — ver
         # _pedidos_producao_por_pedido_venda.
         pedidos_producao_por_pedido_venda = _pedidos_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
         # Datas/lead times/OTD/status da "Operação 360" — ver _metricas_operacao_360.
+        # (calculado só pra página atual — o que aparece na tabela).
         metricas_operacao_360 = _metricas_operacao_360(
             pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda, pedidos_producao_por_pedido_venda,
         )
+
+        # Quadrantes "Status pedidos"/OTD/Tipo de frete/NFs emitidas no mês +
+        # painel dinâmico de valores/faturamento/lead time (pedido do Bruno,
+        # 10/09/2026) — no lugar dos quadrantes semanais/mensais de PCP, que
+        # saíram desta tela e continuam só na Listagem Geral de Produção,
+        # como já estabelecido. Precisa do conjunto TOTAL filtrado (não só a
+        # página atual), por isso recalcula liberação PCP/data cliente/
+        # Pedido de Produção pra TODOS os pedidos filtrados — ver
+        # _painel_operacao_360.
+        pedidos_filtrados_completo = query_operacao.all()
+        pedidos_venda_completo = [p.pedido_venda for p in pedidos_filtrados_completo]
+        liberacao_pcp_completo = _liberacao_pcp_por_pedido_venda(pedidos_venda_completo)
+        data_cliente_completo = _data_cliente_por_pedido_venda(pedidos_venda_completo)
+        pedidos_producao_completo = _pedidos_producao_por_pedido_venda(pedidos_venda_completo)
+        metricas_completo = _metricas_operacao_360(
+            pedidos_filtrados_completo, liberacao_pcp_completo, data_cliente_completo, pedidos_producao_completo,
+        )
+        painel_operacao_360 = _painel_operacao_360(filtros, pedidos_filtrados_completo, metricas_completo)
+
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -6543,8 +6802,8 @@ def register_routes(app):
             itens_por_pedido_venda=itens_por_pedido_venda,
             rdim_por_pedido_venda=rdim_por_pedido_venda,
             data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
-            quadrantes_pcp=quadrantes_pcp,
             metricas_operacao_360=metricas_operacao_360,
+            painel_operacao_360=painel_operacao_360,
         )
 
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])

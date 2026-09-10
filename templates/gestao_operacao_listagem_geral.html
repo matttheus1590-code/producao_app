@@ -18,13 +18,9 @@
 </p>
 
 <form class="row g-2 align-items-end mb-3" method="get">
-  <div class="col-md-3">
+  <div class="col-md-4">
     <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Cliente</label>
-    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
   </div>
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Vendedor</label>
@@ -61,17 +57,67 @@
 </form>
 
 <p class="text-muted small mb-2">
-  <i class="bi bi-calendar3"></i> Planejamento PCP do mês (mesmo dado ao vivo de Gestão Produção) — clique num quadrante pra filtrar por aquele período.
+  <i class="bi bi-columns-gap"></i> Quadrantes — clique pra filtrar por status do pedido, OTD ou tipo de frete (o planejamento semanal/mensal de PCP em quadrante fica só na Listagem Geral de Produção; aqui continua disponível como filtro acima).
 </p>
-<div class="row g-2 mb-3">
+
+<div class="row g-2 mb-2">
+  {% for card in painel_operacao_360.status %}
   <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, link=url_for('gestao_operacao_listagem_geral', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="primary") }}
-  </div>
-  {% for semana in quadrantes_pcp.semanas %}
-  <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, link=url_for('gestao_operacao_listagem_geral', **semana.filtros_link), ativo=semana.ativo, piscante=semana.atual) }}
+    {{ stat_card(card.titulo, card.total, link=url_for('gestao_operacao_listagem_geral', **card.filtros_link), ativo=card.ativo) }}
   </div>
   {% endfor %}
+</div>
+
+<div class="row g-2 mb-2">
+  {% for card in painel_operacao_360.otd %}
+  <div class="col-6 col-md-3 col-lg-2">
+    {{ stat_card(card.titulo, card.total, link=url_for('gestao_operacao_listagem_geral', **card.filtros_link), ativo=card.ativo, borda=card.borda) }}
+  </div>
+  {% endfor %}
+  <div class="col-6 col-md-3 col-lg-2">
+    {{ stat_card(painel_operacao_360.nf_mes.titulo, painel_operacao_360.nf_mes.total, link=url_for('gestao_operacao_listagem_geral', **painel_operacao_360.nf_mes.filtros_link), ativo=painel_operacao_360.nf_mes.ativo, cor="info") }}
+  </div>
+</div>
+
+<div class="row g-2 mb-2">
+  {% for card in painel_operacao_360.frete %}
+  <div class="col-6 col-md-4 col-lg-2">
+    {{ stat_card(card.titulo, card.total, link=url_for('gestao_operacao_listagem_geral', **card.filtros_link), ativo=card.ativo) }}
+  </div>
+  {% endfor %}
+</div>
+
+{% if filtros.status_pedido or filtros.otd or filtros.frete or filtros.nf_mes_atual %}
+<div class="mb-3">
+  <a href="{{ url_for('gestao_operacao_listagem_geral', **painel_operacao_360.limpar_filtros) }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-x-circle"></i> Limpar filtros de quadrante
+  </a>
+</div>
+{% endif %}
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="text-muted small mb-2">
+      <i class="bi bi-graph-up"></i> Painel dinâmico — valores, faturamento e lead time médio (Produção e Operação) do conjunto filtrado acima ({{ painel_operacao_360.dinamico.total_pedidos }} pedido(s))
+    </div>
+    <div class="row g-2">
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("Valor total pedidos", "R$ " ~ "{:,.2f}".format(painel_operacao_360.dinamico.valor_total).replace(",", "X").replace(".", ",").replace("X", "."), sufixo=painel_operacao_360.dinamico.n_valor ~ " pedido(s) com valor") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("Faturamento (NF emitida)", "R$ " ~ "{:,.2f}".format(painel_operacao_360.dinamico.faturamento_total).replace(",", "X").replace(".", ",").replace("X", "."), sufixo=painel_operacao_360.dinamico.n_faturamento ~ " NF(s) emitida(s)") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("LT comercial médio", (painel_operacao_360.dinamico.lead_comercial_medio ~ " dias") if painel_operacao_360.dinamico.lead_comercial_medio is not none else "—", sufixo="Solicitada − inclusão") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("LT produção médio", (painel_operacao_360.dinamico.lead_producao_medio ~ " dias") if painel_operacao_360.dinamico.lead_producao_medio is not none else "—", sufixo="Conclusão − inclusão") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("LT operação médio", (painel_operacao_360.dinamico.lead_operacao_medio ~ " dias") if painel_operacao_360.dinamico.lead_operacao_medio is not none else "—", sufixo="Real entrega − inclusão") }}
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="d-flex justify-content-end align-items-center gap-2 mb-2">
