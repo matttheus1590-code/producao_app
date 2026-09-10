@@ -17,71 +17,89 @@
   mouse em cima do <strong>Estado</strong> pra ver cidade e país.
 </p>
 
-<form class="row g-2 align-items-end mb-3" method="get">
-  <div class="col-md-4">
-    <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
-    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Vendedor</label>
-    <input type="text" class="form-control" name="vendedor" value="{{ filtros.vendedor }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Incluído de</label>
-    <input type="date" class="form-control" name="data_inicio" value="{{ filtros.data_inicio }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Incluído até</label>
-    <input type="date" class="form-control" name="data_fim" value="{{ filtros.data_fim }}">
-  </div>
-  <div class="col-md-1 d-grid">
-    <button class="btn btn-primary" type="submit" title="Filtrar"><i class="bi bi-search"></i></button>
+<form method="get">
+  <div class="row g-2 align-items-end mb-2">
+    <div class="col-md-4">
+      <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
+      <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-1">Vendedor</label>
+      <input type="text" class="form-control" name="vendedor" value="{{ filtros.vendedor }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-1">Incluído de</label>
+      <input type="date" class="form-control" name="data_inicio" value="{{ filtros.data_inicio }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-1">Incluído até</label>
+      <input type="date" class="form-control" name="data_fim" value="{{ filtros.data_fim }}">
+    </div>
+    <div class="col-md-1 d-grid">
+      <button class="btn btn-primary" type="submit" title="Filtrar"><i class="bi bi-search"></i></button>
+    </div>
   </div>
 
-  <div class="col-md-3">
-    <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
-    <select class="form-select" name="planejamento_semanal">
-      <option value="">Todas as semanas</option>
-      {% for semana in GO_SEMANAS_PCP %}
-        <option value="{{ semana }}" {% if filtros.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
-      {% endfor %}
-    </select>
+  <!-- Linha curta (campos de 1 linha só) — separada da linha das listas
+       multi-seleção abaixo de propósito (pedido do Bruno, 10/09/2026:
+       "aproveite mais o espaço... deixe os campos mais justos... suba mais
+       o painel dinâmico"): juntar campos de altura tão diferente (select de
+       1 linha vs. lista de 5 linhas) na MESMA linha com align-items-end
+       empurra o rótulo dos campos curtos pra baixo pra alinhar o fundo com
+       os campos altos — 2 linhas curtas e enxutas ocupam menos altura no
+       total do que 1 linha "torta" tentando caber tudo junto. -->
+  <div class="row g-2 align-items-end mb-2">
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
+      <select class="form-select" name="planejamento_semanal">
+        <option value="">Todas as semanas</option>
+        {% for semana in GO_SEMANAS_PCP %}
+          <option value="{{ semana }}" {% if filtros.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-1">Planejamento mensal (PCP)</label>
+      <input type="month" class="form-control" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-1">Mês NF emitida</label>
+      <input type="month" class="form-control" name="nf_mes" value="{{ filtros.nf_mes }}">
+    </div>
   </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Planejamento mensal (PCP)</label>
-    <input type="month" class="form-control" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Mês NF emitida</label>
-    <input type="month" class="form-control" name="nf_mes" value="{{ filtros.nf_mes }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Status produção</label>
-    <select class="form-select" name="status_pedido" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
-      {% for op in status_pedido_opcoes %}
-        <option value="{{ op.valor }}" {% if op.valor in filtros.status_pedido %}selected{% endif %}>{{ op.emoji }} {{ op.label }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">OTD</label>
-    <select class="form-select" name="otd" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
-      <option value="SIM" {% if "SIM" in filtros.otd %}selected{% endif %}>Sim</option>
-      <option value="NAO" {% if "NAO" in filtros.otd %}selected{% endif %}>Não</option>
-      <option value="PENDENTE" {% if "PENDENTE" in filtros.otd %}selected{% endif %}>Pendente</option>
-    </select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Modalidade de frete</label>
-    <select class="form-select" name="frete" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
-      {% for op in FRETE_OPCOES %}
-        <option value="{{ op }}" {% if op in filtros.frete %}selected{% endif %}>{{ op }}</option>
-      {% endfor %}
-      <option value="NAO_INFORMADO" {% if "NAO_INFORMADO" in filtros.frete %}selected{% endif %}>Não informado</option>
-    </select>
-  </div>
-  <div class="col-md-1 d-grid">
-    <a href="{{ url_for('gestao_operacao_listagem_geral') }}" class="btn btn-outline-secondary" title="Limpar todos os filtros"><i class="bi bi-eraser"></i></a>
+
+  <!-- Listas multi-seleção — Modalidade de frete ao lado do OTD, de
+       propósito (pedido do Bruno, 10/09/2026), aproveitando o espaço que
+       sobrou das duas linhas curtas acima. -->
+  <div class="row g-2 align-items-start">
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Status produção</label>
+      <select class="form-select" name="status_pedido" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
+        {% for op in status_pedido_opcoes %}
+          <option value="{{ op.valor }}" {% if op.valor in filtros.status_pedido %}selected{% endif %}>{{ op.emoji }} {{ op.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-1">OTD</label>
+      <select class="form-select" name="otd" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
+        <option value="SIM" {% if "SIM" in filtros.otd %}selected{% endif %}>Sim</option>
+        <option value="NAO" {% if "NAO" in filtros.otd %}selected{% endif %}>Não</option>
+        <option value="PENDENTE" {% if "PENDENTE" in filtros.otd %}selected{% endif %}>Pendente</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label small text-muted mb-1">Modalidade de frete</label>
+      <select class="form-select" name="frete" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
+        {% for op in FRETE_OPCOES %}
+          <option value="{{ op }}" {% if op in filtros.frete %}selected{% endif %}>{{ op }}</option>
+        {% endfor %}
+        <option value="NAO_INFORMADO" {% if "NAO_INFORMADO" in filtros.frete %}selected{% endif %}>Não informado</option>
+      </select>
+    </div>
+    <div class="col-md-1 d-grid pt-4">
+      <a href="{{ url_for('gestao_operacao_listagem_geral') }}" class="btn btn-outline-secondary" title="Limpar todos os filtros"><i class="bi bi-eraser"></i></a>
+    </div>
   </div>
 </form>
 
