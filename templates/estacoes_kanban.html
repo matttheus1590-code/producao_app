@@ -17,16 +17,28 @@
   </div>
 </div>
 
+<div class="mb-3">
+  <div class="input-group input-group-sm kanban-busca-input" style="max-width: 440px;">
+    <span class="input-group-text"><i class="bi bi-search"></i></span>
+    <input type="text" id="buscaEstacao" class="form-control" placeholder="Buscar por produto ou nº do pedido...">
+    <button class="btn btn-outline-secondary" type="button" id="buscaEstacaoLimpar" title="Limpar busca">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+  <div class="form-text small" id="buscaEstacaoResultado"></div>
+</div>
+
 <div class="kanban-board">
   {% for etapa in STATUS_CHAO_OPCOES %}
   <div class="kanban-coluna">
     <div class="kanban-coluna-titulo bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }} bg-opacity-25">
       {{ STATUS_CHAO_LABELS.get(etapa, etapa) }}
-      <span class="badge bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }}">{{ colunas[etapa] | length }}</span>
+      <span class="badge bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }}" id="badge-{{ etapa }}" data-total="{{ colunas[etapa] | length }}">{{ colunas[etapa] | length }}</span>
     </div>
-    <div class="kanban-coluna-corpo">
+    <div class="kanban-coluna-corpo" id="coluna-corpo-{{ etapa }}">
       {% for pedido, itens_pedido in colunas_agrupadas[etapa] %}
-      <div class="kanban-grupo-pedido mb-2">
+      {% set busca_texto = (pedido.pedido_venda or ('#' + pedido.id|string)) ~ ' ' ~ (pedido.cliente or '') ~ ' ' ~ (itens_pedido | map(attribute='descricao_produto') | join(' ')) %}
+      <div class="kanban-grupo-pedido mb-2" data-busca="{{ busca_texto }}">
         <div class="kanban-grupo-header">
           <div class="kanban-grupo-titulo">
             <span class="kanban-grupo-pedido-num">Pedido {{ pedido.pedido_venda or ('#' + pedido.id|string) }}</span>
@@ -82,9 +94,84 @@
       {% else %}
       <div class="text-muted small text-center py-3">Vazio</div>
       {% endfor %}
+      <div class="text-muted small text-center py-3 kanban-sem-resultado-busca" hidden>
+        <i class="bi bi-search"></i> Nenhum resultado para essa busca
+      </div>
     </div>
   </div>
   {% endfor %}
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  // Busca/rastreamento de produto ou pedido dentro das Estações (pedido do
+  // Bruno, 10/09/2026): filtro 100% client-side sobre os grupos já
+  // renderizados, pra funcionar instantaneamente nas 3 colunas sem reload —
+  // esse template é compartilhado por /estacoes/<nome>, então já vale pra
+  // "todas as estações" automaticamente.
+  var input = document.getElementById("buscaEstacao");
+  if (!input) return;
+
+  var btnLimpar = document.getElementById("buscaEstacaoLimpar");
+  var resultadoInfo = document.getElementById("buscaEstacaoResultado");
+  var etapas = {{ STATUS_CHAO_OPCOES | tojson }};
+
+  function normalizar(txt) {
+    return (txt || "")
+      .toString()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+  }
+
+  function aplicarBusca() {
+    var termo = normalizar(input.value);
+    var totalVisivel = 0;
+
+    etapas.forEach(function (etapa) {
+      var corpo = document.getElementById("coluna-corpo-" + etapa);
+      if (!corpo) return;
+      var grupos = corpo.querySelectorAll(".kanban-grupo-pedido");
+      var visiveisNaColuna = 0;
+
+      grupos.forEach(function (grupo) {
+        var texto = normalizar(grupo.getAttribute("data-busca"));
+        var bate = !termo || texto.indexOf(termo) !== -1;
+        grupo.hidden = !bate;
+        if (bate) visiveisNaColuna++;
+      });
+
+      totalVisivel += visiveisNaColuna;
+
+      var semResultado = corpo.querySelector(".kanban-sem-resultado-busca");
+      if (semResultado) {
+        semResultado.hidden = !(termo && grupos.length > 0 && visiveisNaColuna === 0);
+      }
+
+      var badge = document.getElementById("badge-" + etapa);
+      if (badge) {
+        var totalOriginal = badge.getAttribute("data-total");
+        badge.textContent = termo ? visiveisNaColuna + " / " + totalOriginal : totalOriginal;
+      }
+    });
+
+    if (resultadoInfo) {
+      resultadoInfo.textContent = termo ? totalVisivel + " pedido(s) encontrado(s)" : "";
+    }
+  }
+
+  input.addEventListener("input", aplicarBusca);
+  if (btnLimpar) {
+    btnLimpar.addEventListener("click", function () {
+      input.value = "";
+      aplicarBusca();
+      input.focus();
+    });
+  }
+})();
+</script>
 {% endblock %}
