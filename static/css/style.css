@@ -150,17 +150,19 @@ body.col-resizing-ativo {
    (m.status_pedido_idx — a MESMA etapa mostrada no badge dessa coluna, pra
    nunca divergir), não mais só go_data_entregue_cliente isolado. Mesmo
    padrão de override via --bs-table-bg já usado acima pras cores por
-   pedido da Listagem Geral de Produção. Cores = tons padrão do Bootstrap
-   pra success/danger (mesmas de .table-success/.table-danger), por já
-   serem um vocabulário de cor conhecido no resto do site. */
+   pedido da Listagem Geral de Produção. Vermelho continua no tom padrão do
+   Bootstrap (.table-danger); verde trocado pro pedido do Bruno (10/09/2026:
+   "quero um verde mais visual, tipo um verde bandeira") — verde puro e mais
+   saturado, no lugar do tom pastel de antes, texto escuro padrão da tabela
+   continua legível em cima dele. */
 .tabela-operacao-360 > tbody > tr.linha-op360-entregue > * {
-  --bs-table-bg: #d1e7dd;
-  background-color: #d1e7dd;
+  --bs-table-bg: #7ee495;
+  background-color: #7ee495;
 }
 
 .tabela-operacao-360.table-hover > tbody > tr.linha-op360-entregue:hover > * {
-  --bs-table-bg: #a3cfbb;
-  background-color: #a3cfbb;
+  --bs-table-bg: #4cc773;
+  background-color: #4cc773;
 }
 
 .tabela-operacao-360 > tbody > tr.linha-op360-pendente > * {
