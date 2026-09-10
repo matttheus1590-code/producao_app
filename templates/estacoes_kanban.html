@@ -71,7 +71,7 @@
             </a>
           </div>
           {% if pode_editar and etapa != 'FINALIZADO' %}
-          <form method="post" action="{{ url_for('estacao_kanban_mover', nome=estacao.nome) }}" class="mt-2">
+          <form method="post" action="{{ url_for('estacao_kanban_mover', nome=estacao.nome) }}" class="mt-1">
             <input type="hidden" name="item_id" value="{{ item.id }}">
             <button type="submit" class="btn btn-sm btn-primary w-100">Avançar ▶</button>
           </form>

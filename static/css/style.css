@@ -444,20 +444,26 @@ body.col-resizing-ativo {
 }
 
 .kanban-card {
-  border-width: 2px;
+  border-width: 1.5px;
 }
 
+/* Cards mais justos (pedido do Bruno, 10/09/2026: "os quadrantes tá muito
+   grande, sobrando muito espaço vazio dentro dele") — reduzido o padding e
+   as fontes que antes tinham sido aumentadas, pra caber mais pedido visível
+   por coluna sem precisar rolar tanto. As colunas continuam usando toda a
+   altura vertical disponível (.kanban-coluna já tinha isso, não mudou). */
 .kanban-card .card-body {
-  padding: 1.1rem !important;
+  padding: 0.55rem 0.65rem !important;
 }
 
 .kanban-card .text-muted.small {
-  font-size: 1rem !important;
+  font-size: 0.72rem !important;
 }
 
 .kanban-card .fw-semibold.small {
-  font-size: 1.15rem !important;
-  line-height: 1.3;
+  font-size: 0.85rem !important;
+  line-height: 1.2;
+  margin-bottom: 0.3rem !important;
 }
 
 /* Cada card do Kanban divide a área de informação em duas colunas: à
@@ -468,22 +474,23 @@ body.col-resizing-ativo {
 .kanban-card-info-row {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
+  gap: 0.6rem;
+  margin-bottom: 0.3rem !important;
 }
 
 /* Linhas de dados (quantidade, datas) dentro de cada card do Kanban */
 .kanban-card-datas {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  font-size: 0.95rem !important;
-  line-height: 1.35;
+  gap: 0.05rem;
+  font-size: 0.72rem !important;
+  line-height: 1.25;
   flex: 1 1 55%;
   min-width: 0;
 }
 
 .kanban-card-datas i {
-  width: 1.1rem;
+  width: 0.95rem;
   text-align: center;
   color: #9aa4b2;
 }
@@ -491,17 +498,17 @@ body.col-resizing-ativo {
 .kanban-card-pedido-info {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  font-size: 0.95rem !important;
-  line-height: 1.35;
+  gap: 0.05rem;
+  font-size: 0.72rem !important;
+  line-height: 1.25;
   flex: 1 1 45%;
   min-width: 0;
   border-left: 1px solid #dde2e8;
-  padding-left: 0.65rem;
+  padding-left: 0.55rem;
 }
 
 .kanban-card-pedido-titulo {
-  font-size: 0.78rem !important;
+  font-size: 0.62rem !important;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -510,25 +517,24 @@ body.col-resizing-ativo {
 }
 
 .kanban-card-pedido-info i {
-  width: 1.1rem;
+  width: 0.95rem;
   text-align: center;
   color: #9aa4b2;
 }
 
 .kanban-card .badge {
-  font-size: 0.9rem;
-  padding: 0.4em 0.7em;
+  font-size: 0.7rem;
+  padding: 0.3em 0.5em;
 }
 
 .kanban-card .btn-outline-secondary {
-  font-size: 1.05rem;
-  padding: 0.3rem 0.6rem !important;
+  font-size: 0.85rem;
+  padding: 0.15rem 0.4rem !important;
 }
 
 .kanban-card .btn-primary {
-  font-size: 1.05rem;
-  padding: 0.55rem !important;
-  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  padding: 0.3rem !important;
 }
 
 @media (max-width: 991.98px) {
