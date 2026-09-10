@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat_card %}
 {% block title %}Gestão Operação · Listagem Geral · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
@@ -20,18 +21,57 @@
     <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
   </div>
-  <div class="col-md-3">
+  <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Cliente</label>
     <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
   </div>
-  <div class="col-md-3">
+  <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Vendedor</label>
     <input type="text" class="form-control" name="vendedor" value="{{ filtros.vendedor }}">
   </div>
-  <div class="col-md-2 d-grid">
-    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Incluído de</label>
+    <input type="date" class="form-control" name="data_inicio" value="{{ filtros.data_inicio }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Incluído até</label>
+    <input type="date" class="form-control" name="data_fim" value="{{ filtros.data_fim }}">
+  </div>
+  <div class="col-md-1 d-grid">
+    <button class="btn btn-primary" type="submit" title="Filtrar"><i class="bi bi-search"></i></button>
+  </div>
+
+  <div class="col-md-4">
+    <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
+    <select class="form-select" name="planejamento_semanal">
+      <option value="">Todas as semanas</option>
+      {% for semana in GO_SEMANAS_PCP %}
+        <option value="{{ semana }}" {% if filtros.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Planejamento mensal (PCP)</label>
+    <input type="month" class="form-control" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
+  </div>
+  <div class="col-md-1 d-grid">
+    <a href="{{ url_for('gestao_operacao_listagem_geral') }}" class="btn btn-outline-secondary" title="Limpar todos os filtros"><i class="bi bi-eraser"></i></a>
   </div>
 </form>
+
+<p class="text-muted small mb-2">
+  <i class="bi bi-calendar3"></i> Planejamento PCP do mês (mesmo dado ao vivo de Gestão Produção) — clique num quadrante pra filtrar por aquele período.
+</p>
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-4 col-lg-2">
+    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, link=url_for('gestao_operacao_listagem_geral', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="primary") }}
+  </div>
+  {% for semana in quadrantes_pcp.semanas %}
+  <div class="col-6 col-md-4 col-lg-2">
+    {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, link=url_for('gestao_operacao_listagem_geral', **semana.filtros_link), ativo=semana.ativo, piscante=semana.atual) }}
+  </div>
+  {% endfor %}
+</div>
 
 <div class="table-responsive go-listagem-wrap">
   <table class="table table-hover table-sm align-middle bg-white">

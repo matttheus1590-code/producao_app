@@ -3547,10 +3547,40 @@ SORT_PADRAO = "data_inclusao"
 DIR_PADRAO = "desc"
 
 
+def _pedidos_venda_com_planejamento_semanal(rotulos):
+    """Lista de `pedido_venda` (trim) de Gestão Produção cujos itens têm
+    `planejamento_semanal` dentro de `rotulos` (1 rótulo, ou vários — ex. os
+    rótulos de um mês inteiro). Pedido do Bruno (10/09/2026): "quero que
+    todo o grupo gestão operação esteja 100% sincronizado com o gestão
+    produção... principalmente listagem e pcp" — leva os mesmos quadrantes/
+    filtro de Planejamento Semanal (PCP) da Listagem Geral de Produção pra
+    Gestão Operação. PedidoOperacao é tabela independente (sem FK) — o único
+    jeito de aplicar esse filtro lá é via IN nesse texto, seguindo o MESMO
+    casamento por pedido_venda (trim, exato, nunca aproximado) já usado por
+    _itens_producao_por_pedido_venda e as outras funções "ao vivo" desta
+    seção."""
+    if isinstance(rotulos, str):
+        rotulos = [rotulos]
+    rotulos = [r for r in rotulos if r]
+    if not rotulos:
+        return []
+    linhas = (
+        db.session.query(func.trim(Pedido.pedido_venda))
+        .join(ItemPedido, ItemPedido.pedido_id == Pedido.id)
+        .filter(ItemPedido.planejamento_semanal.in_(rotulos), Pedido.pedido_venda.isnot(None))
+        .distinct()
+        .all()
+    )
+    return [linha[0] for linha in linhas if linha[0]]
+
+
 def _filtrar_pedidos_operacao(args):
     """Filtros das 4 sub-abas de Gestão Operação (Comercial/PCP/Logística/
     Resultados). Independente de _filtrar_pedidos (Gestão Produção) — opera só
-    em PedidoOperacao, sem nenhum join com Pedido/ItemPedido/estação.
+    em PedidoOperacao, sem nenhum join com Pedido/ItemPedido/estação — com 2
+    exceções pontuais abaixo (planejamento_semanal/mensal), que fazem uma
+    consulta à parte só pra achar QUAIS pedido_venda bater, sem criar
+    nenhuma relação/FK real entre as tabelas.
 
     `segmento` + `periodo` (pedido do Bruno, 03/09/2026 — tela Resultados/
     OTD: "quero ver todos os pedidos de julho faturados ou dentro do
@@ -3564,7 +3594,20 @@ def _filtrar_pedidos_operacao(args):
       - "faturados": o mesmo conjunto acima, restrito a quem já tem Valor NF
         Emitida preenchido (equivalente ao "Qtd/Valor faturado").
     Sem `segmento`, nenhum filtro de período é aplicado — comportamento
-    antigo, todos os pedidos."""
+    antigo, todos os pedidos.
+
+    `planejamento_semanal`/`planejamento_mensal` (pedido do Bruno,
+    10/09/2026): MESMO filtro/convenção de Gestão Produção
+    (ItemPedido.planejamento_semanal, "SEMANA NN / MÊS / ANO"), usado pelos
+    quadrantes de PCP em Listagem Geral e PCP de Gestão Operação — ver
+    _quadrantes_planejamento_semanal_operacao. Deliberadamente NÃO usa
+    PedidoOperacao.go_termino_semanal_pcp (campo próprio, digitado/
+    importado à parte) — o objetivo aqui é filtrar pelo dado real de
+    planejamento da fábrica, o mesmo que já aparece ao vivo na coluna
+    "Término semanal" da tela PCP (ver _liberacao_pcp_por_pedido_venda).
+
+    `data_inicio`/`data_fim` (mesmo pedido): intervalo de Data de inclusão,
+    mesmo campo/rótulo do filtro equivalente em Gestão Produção."""
     query = PedidoOperacao.query
 
     cliente = args.get("cliente", "").strip()
@@ -3572,6 +3615,10 @@ def _filtrar_pedidos_operacao(args):
     busca = args.get("busca", "").strip()
     segmento = args.get("segmento", "").strip()
     periodo_str = args.get("periodo", "").strip()
+    planejamento_semanal = args.get("planejamento_semanal", "").strip()
+    planejamento_mensal = args.get("planejamento_mensal", "").strip()
+    data_inicio = args.get("data_inicio", "").strip()
+    data_fim = args.get("data_fim", "").strip()
 
     if cliente:
         query = query.filter(PedidoOperacao.cliente.ilike(f"%{cliente}%"))
@@ -3585,6 +3632,39 @@ def _filtrar_pedidos_operacao(args):
                 PedidoOperacao.cliente.ilike(like),
             )
         )
+    if data_inicio:
+        data_inicio_parsed = _parse_data_form(data_inicio)
+        if data_inicio_parsed:
+            query = query.filter(PedidoOperacao.data_inclusao_pedido >= data_inicio_parsed)
+    if data_fim:
+        data_fim_parsed = _parse_data_form(data_fim)
+        if data_fim_parsed:
+            query = query.filter(PedidoOperacao.data_inclusao_pedido <= data_fim_parsed)
+    if planejamento_semanal:
+        pedidos_venda_match = _pedidos_venda_com_planejamento_semanal(planejamento_semanal)
+        if pedidos_venda_match:
+            query = query.filter(func.trim(PedidoOperacao.pedido_venda).in_(pedidos_venda_match))
+        else:
+            query = query.filter(false())
+    if planejamento_mensal:
+        mes_ano = _parse_mes_ano_form(planejamento_mensal, None)
+        if mes_ano:
+            semanas_do_mes = [
+                s for (s,) in db.session.query(ItemPedido.planejamento_semanal)
+                .filter(ItemPedido.planejamento_semanal.isnot(None))
+                .distinct()
+                if _mes_ano_da_semana_pcp(s) == mes_ano
+            ]
+            pedidos_venda_match = _pedidos_venda_com_planejamento_semanal(semanas_do_mes)
+            if pedidos_venda_match:
+                query = query.filter(func.trim(PedidoOperacao.pedido_venda).in_(pedidos_venda_match))
+            else:
+                # Mês escolhido não tem nenhum planejamento semanal preenchido
+                # ainda (ou nenhum pedido de Produção bate) — não deve
+                # mostrar nada, mesmo comportamento de _filtrar_pedidos.
+                query = query.filter(false())
+        else:
+            query = query.filter(false())
 
     if segmento in ("planejamento", "faturados"):
         tipo_p, ano_p, valor_p, _ = _parse_periodo(periodo_str)
@@ -3596,8 +3676,67 @@ def _filtrar_pedidos_operacao(args):
 
     query = query.order_by(PedidoOperacao.data_inclusao_pedido.desc().nullslast(), PedidoOperacao.id.desc())
 
-    filtros = dict(cliente=cliente, vendedor=vendedor, busca=busca, segmento=segmento)
+    filtros = dict(
+        cliente=cliente, vendedor=vendedor, busca=busca, segmento=segmento,
+        planejamento_semanal=planejamento_semanal, planejamento_mensal=planejamento_mensal,
+        data_inicio=data_inicio, data_fim=data_fim,
+    )
     return query, filtros
+
+
+def _quadrantes_planejamento_semanal_operacao(filtros, hoje=None):
+    """Versão de _quadrantes_planejamento_semanal (Gestão Produção) pra
+    Gestão Operação — pedido do Bruno (10/09/2026): "quero que todo o grupo
+    gestão operação esteja 100% sincronizado com o gestão produção...
+    principalmente listagem e pcp". Mesmo cartão de mês + 1 por semana, MESMO
+    rótulo cronológico ("SEMANA NN / MÊS / ANO", de gerar_semanas_pcp) e MESMA
+    data de calendário exibida em cada card (domingo a sábado) — só a
+    CONTAGEM muda de fonte: em vez de contar ItemPedido/Pedido, conta
+    PedidoOperacao cujo pedido_venda bate com algum item de Produção
+    planejado pra aquele período (ver _pedidos_venda_com_planejamento_
+    semanal) — assim os números batem com o que a pessoa vê em Gestão
+    Produção, mesmo as duas tabelas sendo independentes.
+
+    Ver docstring completa em _quadrantes_planejamento_semanal — mesma
+    lógica de data, só reaproveitando _filtrar_pedidos_operacao pra contar."""
+    hoje = hoje or date.today()
+    ano, mes = hoje.year, hoje.month
+    dias_no_mes = monthrange(ano, mes)[1]
+    rotulos_semana = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=hoje)
+
+    primeiro_dia_mes = date(ano, mes, 1)
+    domingo_semana_01 = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
+
+    filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="")
+
+    def contar(**override):
+        query, _ = _filtrar_pedidos_operacao(dict(filtros_outros, **override))
+        return query.count()
+
+    valor_mes = f"{ano}-{mes:02d}"
+    mes_atual = {
+        "titulo": MESES_PT_EXTENSO[mes - 1].upper(),
+        "subtitulo": f"01/{mes:02d} – {dias_no_mes:02d}/{mes:02d}",
+        "total": contar(planejamento_mensal=valor_mes),
+        "ativo": filtros.get("planejamento_mensal") == valor_mes,
+        "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes),
+    }
+
+    semanas = []
+    for n, rotulo in enumerate(rotulos_semana, start=1):
+        inicio_semana = domingo_semana_01 + timedelta(days=7 * (n - 1))
+        fim_semana = inicio_semana + timedelta(days=6)
+        semanas.append(
+            {
+                "titulo": f"SEMANA {n:02d}",
+                "subtitulo": f"{inicio_semana.strftime('%d/%m')} a {fim_semana.strftime('%d/%m')}",
+                "total": contar(planejamento_semanal=rotulo),
+                "ativo": filtros.get("planejamento_semanal") == rotulo,
+                "filtros_link": dict(filtros_outros, planejamento_semanal=rotulo),
+                "atual": inicio_semana <= hoje <= fim_semana,
+            }
+        )
+    return {"mes_atual": mes_atual, "semanas": semanas}
 
 
 def _linhas_gestao_operacao(args):
@@ -6172,6 +6311,10 @@ def register_routes(app):
         # "Solicitada cliente/retira" também acompanha ao vivo a "Data do
         # cliente" de Gestão Produção — pedido do Bruno (03/09/2026).
         data_cliente_por_pedido_venda = _data_cliente_por_pedido_venda([p.pedido_venda for p in pedidos])
+        # Quadrantes de Planejamento Semanal/Mensal PCP (pedido do Bruno,
+        # 10/09/2026) — mesmo recurso da Listagem Geral de Produção, ver
+        # _quadrantes_planejamento_semanal_operacao.
+        quadrantes_pcp = _quadrantes_planejamento_semanal_operacao(filtros)
         return render_template(
             "gestao_operacao_pcp.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -6179,6 +6322,7 @@ def register_routes(app):
             status_real_por_pedido_venda=status_real_por_pedido_venda,
             liberacao_pcp_por_pedido_venda=liberacao_pcp_por_pedido_venda,
             data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
+            quadrantes_pcp=quadrantes_pcp,
         )
 
     @app.route("/gestao-operacao/logistica")
@@ -6260,6 +6404,12 @@ def register_routes(app):
         # "Data solic. cliente" também acompanha ao vivo a "Data do cliente"
         # de Gestão Produção — pedido do Bruno (03/09/2026).
         data_cliente_por_pedido_venda = _data_cliente_por_pedido_venda([p.pedido_venda for p in pedidos])
+        # Quadrantes de Planejamento Semanal/Mensal PCP (pedido do Bruno,
+        # 10/09/2026): "quero que todo o grupo gestão operação esteja 100%
+        # sincronizado com o gestão produção... principalmente listagem e
+        # pcp" — mesmo recurso que já existe na Listagem Geral de Produção,
+        # ver _quadrantes_planejamento_semanal_operacao.
+        quadrantes_pcp = _quadrantes_planejamento_semanal_operacao(filtros)
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -6267,6 +6417,7 @@ def register_routes(app):
             itens_por_pedido_venda=itens_por_pedido_venda,
             rdim_por_pedido_venda=rdim_por_pedido_venda,
             data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
+            quadrantes_pcp=quadrantes_pcp,
         )
 
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
