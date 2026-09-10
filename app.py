@@ -3605,38 +3605,63 @@ def _pedidos_venda_em_producao():
     return {linha[0] for linha in linhas if linha[0]}
 
 
-def _aplicar_filtro_status_pedido_operacao(query, etapa_idx):
-    """Filtra `query` (PedidoOperacao) pela MESMA classificação de 5 etapas
-    já usada em _indice_etapa_pedido/_metricas_operacao_360 — pedido do
-    Bruno (10/09/2026, quadrantes "Status pedidos" da Operação 360).
-    Reimplementada em SQL (em vez de reaproveitar a função Python direto)
-    porque aqui precisamos FILTRAR e paginar no banco, não só calcular a
-    etapa de pedidos já carregados; a ordem de precedência é a mesma (5
-    entregue > 4 expedido > 3 liberado PCP/produção finalizada > 2 em
-    produção > 1 recebido — cada etapa exclui as de número maior, igual ao
-    if/elif em cadeia de _indice_etapa_pedido)."""
+def _condicoes_etapa_pedido_operacao():
+    """As 5 condições SQL (mutuamente exclusivas, MESMA ordem de precedência
+    de _indice_etapa_pedido/_metricas_operacao_360) usadas pelo filtro
+    "Status produção" (lista multi-seleção) da Operação 360 — pedido do
+    Bruno (10/09/2026). Reimplementada em SQL (em vez de reaproveitar a
+    função Python direto) porque aqui precisamos FILTRAR e paginar no banco,
+    não só calcular a etapa de pedidos já carregados; a precedência é a
+    mesma (5 entregue > 4 expedido > 3 liberado PCP/produção finalizada > 2
+    em produção > 1 pendente produção — cada etapa exclui as de número
+    maior, igual ao if/elif em cadeia de _indice_etapa_pedido)."""
     finalizados_pv = _pedidos_venda_finalizados_producao()
     em_producao_pv = _pedidos_venda_em_producao()
     pv_trim = func.trim(PedidoOperacao.pedido_venda)
 
     cond5 = or_(PedidoOperacao.go_data_entregue_cliente.isnot(None), PedidoOperacao.go_data_real_entrega.isnot(None))
-    cond4 = PedidoOperacao.go_data_pedido_expedido.isnot(None)
+    cond4 = and_(PedidoOperacao.go_data_pedido_expedido.isnot(None), not_(cond5))
     cond3_base = or_(
         pv_trim.in_(finalizados_pv) if finalizados_pv else false(),
         PedidoOperacao.go_data_efetiva_liberacao_pcp.isnot(None),
     )
+    cond3 = and_(cond3_base, not_(cond4), not_(cond5))
     cond2_base = pv_trim.in_(em_producao_pv) if em_producao_pv else false()
+    cond2 = and_(cond2_base, not_(cond3_base), not_(cond4), not_(cond5))
+    # etapa 1 ("Pendente produção"): nenhuma das condições acima bate.
+    cond1 = and_(not_(cond2_base), not_(cond3_base), not_(cond4), not_(cond5))
+    return {1: cond1, 2: cond2, 3: cond3, 4: cond4, 5: cond5}
 
-    if etapa_idx == 5:
-        return query.filter(cond5)
-    if etapa_idx == 4:
-        return query.filter(and_(cond4, not_(cond5)))
-    if etapa_idx == 3:
-        return query.filter(and_(cond3_base, not_(cond4), not_(cond5)))
-    if etapa_idx == 2:
-        return query.filter(and_(cond2_base, not_(cond3_base), not_(cond4), not_(cond5)))
-    # etapa 1 ("Pedido recebido"): nenhuma das condições acima bate.
-    return query.filter(and_(not_(cond2_base), not_(cond3_base), not_(cond4), not_(cond5)))
+
+def _aplicar_filtro_status_pedido_operacao(query, etapas_idx):
+    """Filtra `query` (PedidoOperacao) por 1 OU MAIS etapas selecionadas
+    (multi-seleção, pedido do Bruno 10/09/2026: "quero que essas listas
+    seja possível selecionar mais de uma opção... ex: selecionar status
+    produção e inspeção/expedição") — OR entre as condições de cada etapa
+    marcada, ver _condicoes_etapa_pedido_operacao."""
+    condicoes = _condicoes_etapa_pedido_operacao()
+    selecionadas = [condicoes[i] for i in etapas_idx if i in condicoes]
+    if not selecionadas:
+        return query
+    return query.filter(or_(*selecionadas))
+
+
+def _getlist_seguro(args, chave):
+    """Mesmo que `args.getlist(chave)`, mas também aceita um dict Python
+    comum no lugar de request.args (MultiDict) — necessário porque
+    _quadrantes_planejamento_semanal_operacao chama _filtrar_pedidos_
+    operacao com um dict puro (`dict(filtros_outros, **override)`), que não
+    tem método `.getlist()`. Um valor já em lista (como `filtros["status_
+    pedido"]`, que vem de outra chamada a este mesmo filtro) passa direto;
+    um valor único vira lista de 1 item."""
+    if hasattr(args, "getlist"):
+        return args.getlist(chave)
+    valor = args.get(chave)
+    if valor is None:
+        return []
+    if isinstance(valor, (list, tuple, set)):
+        return list(valor)
+    return [valor]
 
 
 def _filtrar_pedidos_operacao(args):
@@ -3674,14 +3699,18 @@ def _filtrar_pedidos_operacao(args):
     `data_inicio`/`data_fim` (mesmo pedido): intervalo de Data de inclusão,
     mesmo campo/rótulo do filtro equivalente em Gestão Produção.
 
-    `status_pedido`/`otd`/`frete`/`nf_mes_atual` (pedido do Bruno,
-    10/09/2026 — quadrantes/painel da Operação 360, no lugar dos
-    quadrantes semanais/mensais de PCP removidos desta tela): `status_pedido`
-    é "1".."5" (mesma classificação de _indice_etapa_pedido, ver
-    _aplicar_filtro_status_pedido_operacao); `otd` é "SIM"/"NAO"/"PENDENTE"
-    (PENDENTE = go_otd_realizado ainda vazio); `frete` é um valor de
-    FRETE_OPCOES ou "NAO_INFORMADO" (vazio ou fora da lista); `nf_mes_atual`
-    ="1" filtra go_data_emissao_nf dentro do mês corrente."""
+    `status_pedido`/`otd`/`frete` (pedido do Bruno, 10/09/2026, na 1ª volta
+    como quadrantes; ampliado no mesmo dia pra "quero em formato de listas...
+    seja possível selecionar mais de uma opção" — agora são listas
+    multi-seleção, mesmo padrão de `resultado`/`categoria_desvio` em
+    _filtrar_inspecoes_finais): `status_pedido` é uma lista de "1".."5"
+    (mesma classificação de _indice_etapa_pedido, OR entre as selecionadas —
+    ver _aplicar_filtro_status_pedido_operacao); `otd` é uma lista com
+    "SIM"/"NAO"/"PENDENTE" (PENDENTE = go_otd_realizado ainda vazio); `frete`
+    é uma lista com valores de FRETE_OPCOES e/ou "NAO_INFORMADO" (vazio ou
+    fora da lista). `nf_mes_atual` continua um quadrante simples (não virou
+    lista — não fazia parte do pedido de mudança) — ="1" filtra
+    go_data_emissao_nf dentro do mês corrente."""
     query = PedidoOperacao.query
 
     cliente = args.get("cliente", "").strip()
@@ -3693,9 +3722,9 @@ def _filtrar_pedidos_operacao(args):
     planejamento_mensal = args.get("planejamento_mensal", "").strip()
     data_inicio = args.get("data_inicio", "").strip()
     data_fim = args.get("data_fim", "").strip()
-    status_pedido = args.get("status_pedido", "").strip()
-    otd = args.get("otd", "").strip().upper()
-    frete_filtro = args.get("frete", "").strip()
+    status_pedido = [v for v in _getlist_seguro(args, "status_pedido") if v in {"1", "2", "3", "4", "5"}]
+    otd = [v.upper() for v in _getlist_seguro(args, "otd") if v.upper() in {"SIM", "NAO", "PENDENTE"}]
+    frete_filtro = [v for v in _getlist_seguro(args, "frete") if v]
     nf_mes_atual = args.get("nf_mes_atual", "").strip()
 
     if cliente:
@@ -3752,30 +3781,33 @@ def _filtrar_pedidos_operacao(args):
     else:
         segmento = ""
 
-    if status_pedido in {"1", "2", "3", "4", "5"}:
-        query = _aplicar_filtro_status_pedido_operacao(query, int(status_pedido))
-    else:
-        status_pedido = ""
+    if status_pedido:
+        query = _aplicar_filtro_status_pedido_operacao(query, [int(v) for v in status_pedido])
 
-    if otd == "SIM":
-        query = query.filter(PedidoOperacao.go_otd_realizado == "SIM")
-    elif otd == "NAO":
-        query = query.filter(PedidoOperacao.go_otd_realizado == "NÃO")
-    elif otd == "PENDENTE":
-        query = query.filter(or_(PedidoOperacao.go_otd_realizado.is_(None), PedidoOperacao.go_otd_realizado == ""))
-    else:
-        otd = ""
+    if otd:
+        condicoes_otd = []
+        if "SIM" in otd:
+            condicoes_otd.append(PedidoOperacao.go_otd_realizado == "SIM")
+        if "NAO" in otd:
+            condicoes_otd.append(PedidoOperacao.go_otd_realizado == "NÃO")
+        if "PENDENTE" in otd:
+            condicoes_otd.append(or_(PedidoOperacao.go_otd_realizado.is_(None), PedidoOperacao.go_otd_realizado == ""))
+        query = query.filter(or_(*condicoes_otd))
 
-    if frete_filtro == "NAO_INFORMADO":
-        query = query.filter(
-            or_(
-                PedidoOperacao.frete.is_(None),
-                PedidoOperacao.frete == "",
-                not_(func.upper(func.trim(PedidoOperacao.frete)).in_(FRETE_OPCOES)),
+    if frete_filtro:
+        condicoes_frete = []
+        valores_frete_opcoes = [v.upper() for v in frete_filtro if v != "NAO_INFORMADO"]
+        if valores_frete_opcoes:
+            condicoes_frete.append(func.upper(func.trim(PedidoOperacao.frete)).in_(valores_frete_opcoes))
+        if "NAO_INFORMADO" in frete_filtro:
+            condicoes_frete.append(
+                or_(
+                    PedidoOperacao.frete.is_(None),
+                    PedidoOperacao.frete == "",
+                    not_(func.upper(func.trim(PedidoOperacao.frete)).in_(FRETE_OPCOES)),
+                )
             )
-        )
-    elif frete_filtro:
-        query = query.filter(func.upper(func.trim(PedidoOperacao.frete)) == frete_filtro.upper())
+        query = query.filter(or_(*condicoes_frete))
 
     if nf_mes_atual == "1":
         hoje_filtro = date.today()
@@ -4103,29 +4135,26 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
 
 
 def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
-    """Quadrantes "Status pedidos" / "OTD" / "Tipo de frete" / "NFs emitidas
-    no mês" + painel dinâmico de valores/faturamento/lead time médio
-    (pedido do Bruno, 10/09/2026) — substituem, nesta tela, os quadrantes
-    semanais/mensais de PCP (que ficam só na Listagem Geral de Gestão
-    Produção, como já estabelecido; o filtro por planejamento semanal/
-    mensal continua disponível aqui, só sem o card visual).
+    """Quadrante "NFs emitidas no mês" + painel dinâmico de valores/
+    faturamento/lead time médio (pedido do Bruno, 10/09/2026) — no lugar dos
+    quadrantes semanais/mensais de PCP removidos desta tela (continuam só
+    na Listagem Geral de Gestão Produção). "Status produção"/"OTD"/
+    "Modalidade de frete" deixaram de ser quadrante nesta mesma tarefa
+    (viraram listas multi-seleção no formulário de filtro, ver template —
+    pedido do Bruno: "não quero como quadrante, quero em formato de
+    listas... selecionar mais de uma opção"), por isso não têm mais
+    contagem calculada aqui.
 
     Calculado sobre o conjunto TOTAL filtrado (`pedidos_filtrados`, a query
     inteira sem paginação) — não só a página atual — pra sempre refletir o
-    total real de cada quadrante, e reage a cada mudança de filtro (por
-    isso "dinâmico"). `metricas_filtrados` é o retorno de
-    _metricas_operacao_360 pro MESMO conjunto — reaproveitado aqui pra não
-    duplicar o cálculo de etapa/lead time (só soma o que já foi calculado
-    lá)."""
+    total real, e reage a cada mudança de filtro (por isso "dinâmico").
+    `metricas_filtrados` é o retorno de _metricas_operacao_360 pro MESMO
+    conjunto — reaproveitado aqui pra não duplicar o cálculo de lead time
+    (só soma o que já foi calculado lá)."""
     def link(**overrides):
         base = dict(filtros)
         base.update(overrides)
         return base
-
-    contagem_status = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-    contagem_otd = {"SIM": 0, "NAO": 0, "PENDENTE": 0}
-    contagem_frete = {op: 0 for op in FRETE_OPCOES}
-    contagem_frete_nao_informado = 0
 
     hoje = date.today()
     primeiro_dia_mes = hoje.replace(day=1)
@@ -4139,22 +4168,6 @@ def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
 
     for p in pedidos_filtrados:
         m = metricas_filtrados.get(p.id, {})
-        etapa_idx = m.get("status_pedido_idx")
-        if etapa_idx in contagem_status:
-            contagem_status[etapa_idx] += 1
-
-        if p.go_otd_realizado == "SIM":
-            contagem_otd["SIM"] += 1
-        elif p.go_otd_realizado == "NÃO":
-            contagem_otd["NAO"] += 1
-        else:
-            contagem_otd["PENDENTE"] += 1
-
-        frete_valor = (p.frete or "").strip().upper()
-        if frete_valor in contagem_frete:
-            contagem_frete[frete_valor] += 1
-        else:
-            contagem_frete_nao_informado += 1
 
         if p.go_data_emissao_nf and primeiro_dia_mes <= p.go_data_emissao_nf <= ultimo_dia_mes:
             nfs_mes += 1
@@ -4179,33 +4192,6 @@ def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
             soma_lead_operacao += lo
             n_lead_operacao += 1
 
-    cards_status = [
-        {
-            "titulo": f"{_ETAPA_EMOJI[idx - 1]} {etapa['label']}",
-            "total": contagem_status[idx],
-            "ativo": filtros.get("status_pedido") == str(idx),
-            "filtros_link": link(status_pedido=str(idx)),
-        }
-        for idx, etapa in enumerate(_ETAPAS_ACOMPANHAMENTO_PEDIDO, start=1)
-    ]
-
-    cards_otd = [
-        {"titulo": "OTD — Sim", "total": contagem_otd["SIM"], "ativo": filtros.get("otd") == "SIM", "filtros_link": link(otd="SIM"), "borda": "success"},
-        {"titulo": "OTD — Não", "total": contagem_otd["NAO"], "ativo": filtros.get("otd") == "NAO", "filtros_link": link(otd="NAO"), "borda": "danger"},
-        {"titulo": "OTD — Pendente", "total": contagem_otd["PENDENTE"], "ativo": filtros.get("otd") == "PENDENTE", "filtros_link": link(otd="PENDENTE"), "borda": "secondary"},
-    ]
-
-    cards_frete = [
-        {"titulo": op, "total": contagem_frete[op], "ativo": filtros.get("frete") == op, "filtros_link": link(frete=op)}
-        for op in FRETE_OPCOES
-    ]
-    cards_frete.append({
-        "titulo": "Não informado",
-        "total": contagem_frete_nao_informado,
-        "ativo": filtros.get("frete") == "NAO_INFORMADO",
-        "filtros_link": link(frete="NAO_INFORMADO"),
-    })
-
     card_nf_mes = {
         "titulo": f"NFs emitidas em {MESES_PT_EXTENSO[hoje.month - 1]}",
         "total": nfs_mes,
@@ -4225,12 +4211,8 @@ def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
     }
 
     return {
-        "status": cards_status,
-        "otd": cards_otd,
-        "frete": cards_frete,
         "nf_mes": card_nf_mes,
         "dinamico": dinamico,
-        "limpar_filtros": link(status_pedido="", otd="", frete="", nf_mes_atual=""),
     }
 
 
@@ -4438,8 +4420,14 @@ def _otd_do_pedido(go):
 # complemento visual "em que pé exatamente está".
 _ETAPAS_ACOMPANHAMENTO_PEDIDO = [
     {
-        "label": "Pedido recebido",
-        "descricao": "Pedido de venda recebido e registrado no sistema.",
+        # Rótulo trocado de "Pedido recebido" pra "Pendente produção" a
+        # pedido do Bruno (10/09/2026, junto com a troca dos quadrantes de
+        # Status pedidos da Operação 360 por uma lista multi-seleção) — vale
+        # em TODO lugar que reaproveita esta etapa (Consulta Pedido, coluna
+        # "Status pedido" da Operação 360, filtro "Status produção"), de
+        # propósito, pra nunca divergir.
+        "label": "Pendente produção",
+        "descricao": "Pedido registrado, aguardando início da produção.",
         "icone": "bi-receipt",
         "cor": "#0d6efd",
         "cor_fraca": "rgba(13, 110, 253, .18)",
@@ -6777,14 +6765,13 @@ def register_routes(app):
             pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda, pedidos_producao_por_pedido_venda,
         )
 
-        # Quadrantes "Status pedidos"/OTD/Tipo de frete/NFs emitidas no mês +
-        # painel dinâmico de valores/faturamento/lead time (pedido do Bruno,
-        # 10/09/2026) — no lugar dos quadrantes semanais/mensais de PCP, que
-        # saíram desta tela e continuam só na Listagem Geral de Produção,
-        # como já estabelecido. Precisa do conjunto TOTAL filtrado (não só a
-        # página atual), por isso recalcula liberação PCP/data cliente/
-        # Pedido de Produção pra TODOS os pedidos filtrados — ver
-        # _painel_operacao_360.
+        # Quadrante "NFs emitidas no mês" + painel dinâmico de valores/
+        # faturamento/lead time (pedido do Bruno, 10/09/2026) — no lugar dos
+        # quadrantes semanais/mensais de PCP, que saíram desta tela e
+        # continuam só na Listagem Geral de Produção, como já estabelecido.
+        # Precisa do conjunto TOTAL filtrado (não só a página atual), por
+        # isso recalcula liberação PCP/data cliente/Pedido de Produção pra
+        # TODOS os pedidos filtrados — ver _painel_operacao_360.
         pedidos_filtrados_completo = query_operacao.all()
         pedidos_venda_completo = [p.pedido_venda for p in pedidos_filtrados_completo]
         liberacao_pcp_completo = _liberacao_pcp_por_pedido_venda(pedidos_venda_completo)
@@ -6795,6 +6782,16 @@ def register_routes(app):
         )
         painel_operacao_360 = _painel_operacao_360(filtros, pedidos_filtrados_completo, metricas_completo)
 
+        # Opções do filtro "Status produção" (lista multi-seleção, pedido do
+        # Bruno 10/09/2026) — reaproveita _ETAPAS_ACOMPANHAMENTO_PEDIDO/
+        # _ETAPA_EMOJI (privados a este módulo, por isso montados aqui em vez
+        # de expostos via inject_globals) pra nunca divergir dos rótulos já
+        # usados na coluna "Status pedido" e em Consulta Pedido.
+        status_pedido_opcoes = [
+            {"valor": str(idx), "label": etapa["label"], "emoji": _ETAPA_EMOJI[idx - 1]}
+            for idx, etapa in enumerate(_ETAPAS_ACOMPANHAMENTO_PEDIDO, start=1)
+        ]
+
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -6804,6 +6801,7 @@ def register_routes(app):
             data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
             metricas_operacao_360=metricas_operacao_360,
             painel_operacao_360=painel_operacao_360,
+            status_pedido_opcoes=status_pedido_opcoes,
         )
 
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])

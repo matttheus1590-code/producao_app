@@ -38,7 +38,7 @@
     <button class="btn btn-primary" type="submit" title="Filtrar"><i class="bi bi-search"></i></button>
   </div>
 
-  <div class="col-md-4">
+  <div class="col-md-3">
     <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
     <select class="form-select" name="planejamento_semanal">
       <option value="">Todas as semanas</option>
@@ -51,49 +51,35 @@
     <label class="form-label small text-muted mb-1">Planejamento mensal (PCP)</label>
     <input type="month" class="form-control" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
   </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Status produção</label>
+    <select class="form-select" name="status_pedido" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
+      {% for op in status_pedido_opcoes %}
+        <option value="{{ op.valor }}" {% if op.valor in filtros.status_pedido %}selected{% endif %}>{{ op.emoji }} {{ op.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">OTD</label>
+    <select class="form-select" name="otd" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
+      <option value="SIM" {% if "SIM" in filtros.otd %}selected{% endif %}>Sim</option>
+      <option value="NAO" {% if "NAO" in filtros.otd %}selected{% endif %}>Não</option>
+      <option value="PENDENTE" {% if "PENDENTE" in filtros.otd %}selected{% endif %}>Pendente</option>
+    </select>
+  </div>
+  <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Modalidade de frete</label>
+    <select class="form-select" name="frete" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
+      {% for op in FRETE_OPCOES %}
+        <option value="{{ op }}" {% if op in filtros.frete %}selected{% endif %}>{{ op }}</option>
+      {% endfor %}
+      <option value="NAO_INFORMADO" {% if "NAO_INFORMADO" in filtros.frete %}selected{% endif %}>Não informado</option>
+    </select>
+  </div>
   <div class="col-md-1 d-grid">
     <a href="{{ url_for('gestao_operacao_listagem_geral') }}" class="btn btn-outline-secondary" title="Limpar todos os filtros"><i class="bi bi-eraser"></i></a>
   </div>
 </form>
-
-<p class="text-muted small mb-2">
-  <i class="bi bi-columns-gap"></i> Quadrantes — clique pra filtrar por status do pedido, OTD ou tipo de frete (o planejamento semanal/mensal de PCP em quadrante fica só na Listagem Geral de Produção; aqui continua disponível como filtro acima).
-</p>
-
-<div class="row g-2 mb-2">
-  {% for card in painel_operacao_360.status %}
-  <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(card.titulo, card.total, link=url_for('gestao_operacao_listagem_geral', **card.filtros_link), ativo=card.ativo) }}
-  </div>
-  {% endfor %}
-</div>
-
-<div class="row g-2 mb-2">
-  {% for card in painel_operacao_360.otd %}
-  <div class="col-6 col-md-3 col-lg-2">
-    {{ stat_card(card.titulo, card.total, link=url_for('gestao_operacao_listagem_geral', **card.filtros_link), ativo=card.ativo, borda=card.borda) }}
-  </div>
-  {% endfor %}
-  <div class="col-6 col-md-3 col-lg-2">
-    {{ stat_card(painel_operacao_360.nf_mes.titulo, painel_operacao_360.nf_mes.total, link=url_for('gestao_operacao_listagem_geral', **painel_operacao_360.nf_mes.filtros_link), ativo=painel_operacao_360.nf_mes.ativo, cor="info") }}
-  </div>
-</div>
-
-<div class="row g-2 mb-2">
-  {% for card in painel_operacao_360.frete %}
-  <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(card.titulo, card.total, link=url_for('gestao_operacao_listagem_geral', **card.filtros_link), ativo=card.ativo) }}
-  </div>
-  {% endfor %}
-</div>
-
-{% if filtros.status_pedido or filtros.otd or filtros.frete or filtros.nf_mes_atual %}
-<div class="mb-3">
-  <a href="{{ url_for('gestao_operacao_listagem_geral', **painel_operacao_360.limpar_filtros) }}" class="btn btn-outline-secondary btn-sm">
-    <i class="bi bi-x-circle"></i> Limpar filtros de quadrante
-  </a>
-</div>
-{% endif %}
 
 <div class="card mb-3">
   <div class="card-body">
@@ -115,6 +101,9 @@
       </div>
       <div class="col-6 col-md-4 col-lg-2">
         {{ stat_card("LT operação médio", (painel_operacao_360.dinamico.lead_operacao_medio ~ " dias") if painel_operacao_360.dinamico.lead_operacao_medio is not none else "—", sufixo="Real entrega − inclusão") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card(painel_operacao_360.nf_mes.titulo, painel_operacao_360.nf_mes.total, link=url_for('gestao_operacao_listagem_geral', **painel_operacao_360.nf_mes.filtros_link), ativo=painel_operacao_360.nf_mes.ativo, cor="info") }}
       </div>
     </div>
   </div>
