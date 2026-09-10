@@ -87,30 +87,36 @@
   <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral tabela-operacao-360" id="tabelaOperacao360">
     <colgroup>
       <col style="width:85px">
-      <col style="width:190px">
+      <col style="width:180px">
+      <col style="width:132px">
+      <col style="width:90px">
+      <col style="width:90px">
+      <col style="width:98px">
+      <col style="width:80px">
       <col style="width:92px">
-      <col style="width:92px">
+      <col style="width:90px">
+      <col style="width:90px">
+      <col style="width:62px">
+      <col style="width:62px">
+      <col style="width:62px">
+      <col style="width:64px">
       <col style="width:100px">
-      <col style="width:92px">
-      <col style="width:92px">
-      <col style="width:64px">
-      <col style="width:64px">
-      <col style="width:64px">
-      <col style="width:66px">
-      <col style="width:105px">
-      <col style="width:58px">
-      <col style="width:55px">
-      <col style="width:100px">
-      <col style="width:120px">
       <col style="width:56px">
+      <col style="width:52px">
+      <col style="width:96px">
+      <col style="width:115px">
+      <col style="width:54px">
     </colgroup>
     <thead class="table-light">
       <tr>
         <th>Pedido</th>
         <th>Cliente</th>
+        <th>Status pedido</th>
         <th>Data inclusão</th>
         <th>Data solicitada</th>
         <th>Conclusão produção</th>
+        <th>Nº NF</th>
+        <th>Emissão NF</th>
         <th>Expedido em</th>
         <th>Real entrega</th>
         <th title="Lead time comercial: Data solicitada − Data inclusão">LT comercial</th>
@@ -162,9 +168,16 @@
             </div>
           </div>
         </td>
+        <td>
+          <span class="badge bg-light text-dark border" title="{{ m.status_pedido_descricao }}">
+            {{ m.status_pedido_emoji }} {{ m.status_pedido_label }}
+          </span>
+        </td>
         <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
         <td title="{{ 'Automático — direto da Data do cliente em Gestão Produção' if m.solicitada_automatica else '' }}">{{ m.solicitada.strftime("%d/%m/%Y") if m.solicitada else "—" }}</td>
         <td title="{{ 'Automático — direto da Liberação real em Gestão Produção' if m.conclusao_producao_automatica else '' }}">{{ m.conclusao_producao.strftime("%d/%m/%Y") if m.conclusao_producao else "—" }}</td>
+        <td class="text-truncate" title="{{ p.go_numero_nf or '' }}">{{ p.go_numero_nf or "—" }}</td>
+        <td>{{ p.go_data_emissao_nf.strftime("%d/%m/%Y") if p.go_data_emissao_nf else "—" }}</td>
         <td>{{ p.go_data_pedido_expedido.strftime("%d/%m/%Y") if p.go_data_pedido_expedido else "—" }}</td>
         <td>{{ p.go_data_entregue_cliente.strftime("%d/%m/%Y") if p.go_data_entregue_cliente else "—" }}</td>
         <td>{{ (m.lead_comercial_dias ~ "d") if m.lead_comercial_dias is not none else "—" }}</td>
@@ -205,7 +218,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="17" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="20" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>
