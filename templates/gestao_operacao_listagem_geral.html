@@ -52,6 +52,10 @@
     <input type="month" class="form-control" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
   </div>
   <div class="col-md-2">
+    <label class="form-label small text-muted mb-1">Mês NF emitida</label>
+    <input type="month" class="form-control" name="nf_mes" value="{{ filtros.nf_mes }}">
+  </div>
+  <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Status produção</label>
     <select class="form-select" name="status_pedido" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
       {% for op in status_pedido_opcoes %}
@@ -135,6 +139,7 @@
       <col style="width:62px">
       <col style="width:62px">
       <col style="width:62px">
+      <col style="width:110px">
       <col style="width:64px">
       <col style="width:100px">
       <col style="width:56px">
@@ -159,6 +164,7 @@
         <th title="Lead time comercial: Data solicitada − Data inclusão">LT comercial</th>
         <th title="Lead time produção: Conclusão produção − Data inclusão">LT produção</th>
         <th title="Lead time operação: Real entrega − Data inclusão">LT operação</th>
+        <th title="Positivo = entregue depois do solicitado (atraso); negativo = antes (antecipação)">Dias atraso/antecip.</th>
         <th>OTD</th>
         <th>Valor pedido</th>
         <th>Frete</th>
@@ -222,6 +228,13 @@
         <td>{{ (m.lead_producao_dias ~ "d") if m.lead_producao_dias is not none else "—" }}</td>
         <td>{{ (m.lead_operacao_dias ~ "d") if m.lead_operacao_dias is not none else "—" }}</td>
         <td>
+          {% set dias_atraso = p.go_dias_atraso_antecipacao %}
+          {% if dias_atraso is none %}—
+          {% elif dias_atraso > 0 %}<span class="text-danger">{{ dias_atraso }}d atraso</span>
+          {% elif dias_atraso < 0 %}<span class="text-success">{{ -dias_atraso }}d antecipado</span>
+          {% else %}no dia{% endif %}
+        </td>
+        <td>
           {% if p.go_otd_realizado == "SIM" %}
             <span class="badge bg-success">SIM</span>
           {% elif p.go_otd_realizado == "NÃO" %}
@@ -256,7 +269,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="21" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="22" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

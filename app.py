@@ -3710,7 +3710,14 @@ def _filtrar_pedidos_operacao(args):
     é uma lista com valores de FRETE_OPCOES e/ou "NAO_INFORMADO" (vazio ou
     fora da lista). `nf_mes_atual` continua um quadrante simples (não virou
     lista — não fazia parte do pedido de mudança) — ="1" filtra
-    go_data_emissao_nf dentro do mês corrente."""
+    go_data_emissao_nf dentro do mês corrente.
+
+    `nf_mes` (pedido do Bruno, 10/09/2026, ao lado do Planejamento semanal/
+    mensal de PCP): igual "Planejamento mensal (PCP)", mas pra Emissão de
+    NF — <input type="month"> ("AAAA-MM"), filtra go_data_emissao_nf dentro
+    de QUALQUER mês escolhido (não só o mês corrente, diferente do quadrante
+    `nf_mes_atual` acima — os dois convivem, um é atalho rápido pro mês de
+    hoje, o outro escolhe qualquer mês)."""
     query = PedidoOperacao.query
 
     cliente = args.get("cliente", "").strip()
@@ -3726,6 +3733,7 @@ def _filtrar_pedidos_operacao(args):
     otd = [v.upper() for v in _getlist_seguro(args, "otd") if v.upper() in {"SIM", "NAO", "PENDENTE"}]
     frete_filtro = [v for v in _getlist_seguro(args, "frete") if v]
     nf_mes_atual = args.get("nf_mes_atual", "").strip()
+    nf_mes = args.get("nf_mes", "").strip()
 
     if cliente:
         query = query.filter(PedidoOperacao.cliente.ilike(f"%{cliente}%"))
@@ -3817,6 +3825,16 @@ def _filtrar_pedidos_operacao(args):
     else:
         nf_mes_atual = ""
 
+    if nf_mes:
+        mes_ano_nf = _parse_mes_ano_form(nf_mes, None)
+        if mes_ano_nf:
+            ano_nf, mes_nf = mes_ano_nf
+            primeiro_dia_nf = date(ano_nf, mes_nf, 1)
+            ultimo_dia_nf = date(ano_nf, mes_nf, monthrange(ano_nf, mes_nf)[1])
+            query = query.filter(PedidoOperacao.go_data_emissao_nf.between(primeiro_dia_nf, ultimo_dia_nf))
+        else:
+            query = query.filter(false())
+
     query = query.order_by(PedidoOperacao.data_inclusao_pedido.desc().nullslast(), PedidoOperacao.id.desc())
 
     filtros = dict(
@@ -3824,6 +3842,7 @@ def _filtrar_pedidos_operacao(args):
         planejamento_semanal=planejamento_semanal, planejamento_mensal=planejamento_mensal,
         data_inicio=data_inicio, data_fim=data_fim,
         status_pedido=status_pedido, otd=otd, frete=frete_filtro, nf_mes_atual=nf_mes_atual,
+        nf_mes=nf_mes,
     )
     return query, filtros
 
