@@ -5646,16 +5646,26 @@ def register_routes(app):
         manhã, "sem eu precisar colocar a mão no site". NÃO é uma tela do
         site (sem link em lugar nenhum da interface, sem @login_required) —
         quem chama é uma tarefa agendada fora do navegador, então a
-        autenticação é por token compartilhado (header X-Report-Key, contra
-        a variável de ambiente RELATORIO_DIARIO_TOKEN no Render) em vez de
-        sessão de usuário. Sem essa variável configurada no ambiente, a rota
-        fica sempre bloqueada — nunca fica aberta por acidente em produção.
+        autenticação é por token compartilhado contra a variável de ambiente
+        RELATORIO_DIARIO_TOKEN no Render, em vez de sessão de usuário. Sem
+        essa variável configurada no ambiente, a rota fica sempre bloqueada
+        — nunca fica aberta por acidente em produção.
+
+        Token aceito de 2 formas: header X-Report-Key (preferível — não fica
+        em log nenhum) OU querystring ?chave=... (10/09/2026: a automação
+        precisou trocar de um Bash/curl com header pra um fetch de página
+        sem suporte a header customizado, por causa de uma restrição de
+        rede de saída do ambiente onde a automação roda — sem acesso ao
+        plano Team/Enterprise do Bruno pra liberar isso nas configurações
+        da organização. Ele confirmou ciente do trade-off: o token pode
+        aparecer em logs de acesso do Render dessa forma).
 
         `?dia=AAAA-MM-DD` (opcional) força um dia específico, pra testar;
         sem o parâmetro, usa "ontem" no fuso de Brasília (uso normal, pela
         tarefa agendada)."""
         token_esperado = os.environ.get("RELATORIO_DIARIO_TOKEN")
-        if not token_esperado or request.headers.get("X-Report-Key") != token_esperado:
+        token_recebido = request.headers.get("X-Report-Key") or request.args.get("chave")
+        if not token_esperado or token_recebido != token_esperado:
             abort(403)
         dia_brt = None
         dia_str = request.args.get("dia", "").strip()
