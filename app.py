@@ -3299,9 +3299,22 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     Sempre o mês ATUAL (não fica preso a setembro — troca sozinho quando o
     mês virar, sem precisar mexer em nada aqui). O número de semanas também
     é dinâmico: usa a mesma lista de rótulos "SEMANA NN / MÊS / ANO" de
-    gerar_semanas_pcp (semana N = dias (N-1)*7+1 a N*7, a última encurtada)
-    — a maioria dos meses tem 5 semanas nesse critério, alguns têm só 4
-    (nunca mais que 5, já que ceil(31/7)=5).
+    gerar_semanas_pcp — a maioria dos meses tem 5 semanas nesse critério,
+    alguns têm só 4 (nunca mais que 5, já que ceil(31/7)=5). O que CONTA pra
+    cada quadrante (e o que o clique filtra) continua sendo exatamente esse
+    rótulo — "baseado no planejamento PCP" como o Bruno pediu (10/09/2026) —
+    então nada aqui muda quais pedidos aparecem, só como o card é rotulado.
+
+    O texto do período mostrado em cada card de semana, porém, é a semana de
+    CALENDÁRIO de verdade (domingo a sábado) que contém aquele bloco de dias
+    — ajustado a pedido do Bruno (10/09/2026): "quero as datas de cada
+    quadrante assim: SEMANA 01: 30/08 A 05/09..." — mesmo espírito calendário
+    já usado em Programação (_semanas_calendario_pcp), só que aqui é sempre
+    exatamente 1 semana por rótulo de gerar_semanas_pcp (não a grade cheia do
+    mês), ancorada no domingo igual ou anterior ao dia 1 do mês. Cada card
+    de semana também carrega `atual` — True só pro card cuja semana de
+    calendário contém a data de hoje — pro pisca-pisca visual (pedido do
+    Bruno, 10/09/2026) que mostra em qual semana estamos agora.
 
     Cada quadrante já mostra quantos PEDIDOS distintos caem naquele período,
     considerando os OUTROS filtros já ativos na tela (cliente, vendedor,
@@ -3314,6 +3327,11 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     ano, mes = hoje.year, hoje.month
     dias_no_mes = monthrange(ano, mes)[1]
     rotulos_semana = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=hoje)
+
+    # Domingo igual ou anterior ao dia 1 do mês — âncora da "semana 01" no
+    # calendário (weekday(): 0=segunda ... 6=domingo).
+    primeiro_dia_mes = date(ano, mes, 1)
+    domingo_semana_01 = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
 
     filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="")
 
@@ -3332,15 +3350,16 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
 
     semanas = []
     for n, rotulo in enumerate(rotulos_semana, start=1):
-        dia_inicio = (n - 1) * 7 + 1
-        dia_fim = min(n * 7, dias_no_mes)
+        inicio_semana = domingo_semana_01 + timedelta(days=7 * (n - 1))
+        fim_semana = inicio_semana + timedelta(days=6)
         semanas.append(
             {
                 "titulo": f"SEMANA {n:02d}",
-                "subtitulo": f"{dia_inicio:02d}/{mes:02d} – {dia_fim:02d}/{mes:02d}",
+                "subtitulo": f"{inicio_semana.strftime('%d/%m')} a {fim_semana.strftime('%d/%m')}",
                 "total": contar(planejamento_semanal=rotulo),
                 "ativo": filtros.get("planejamento_semanal") == rotulo,
                 "filtros_link": dict(filtros_outros, planejamento_semanal=rotulo),
+                "atual": inicio_semana <= hoje <= fim_semana,
             }
         )
 

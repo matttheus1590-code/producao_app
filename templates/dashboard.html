@@ -121,7 +121,7 @@
   </div>
   {% for semana in quadrantes_pcp.semanas %}
   <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, link=url_for('dashboard', **semana.filtros_link), ativo=semana.ativo) }}
+    {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, link=url_for('dashboard', **semana.filtros_link), ativo=semana.ativo, piscante=semana.atual) }}
   </div>
   {% endfor %}
 </div>

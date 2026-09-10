@@ -173,6 +173,44 @@ body.col-resizing-ativo {
   background-color: rgba(0, 0, 0, 0.02);
 }
 
+/* Selo "Atual" com bolinha pulsando (pedido do Bruno, 10/09/2026) — sinaliza
+   qual quadrante de Planejamento PCP (Listagem Geral) corresponde à semana
+   de hoje, sem depender de qual quadrante está selecionado/filtrado. */
+.stat-card-selo-atual {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #b45309;
+}
+
+.stat-card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #ffc107;
+  box-shadow: 0 0 0 rgba(255, 193, 7, 0.7);
+  animation: stat-card-dot-pulsar 1.6s infinite;
+}
+
+@keyframes stat-card-dot-pulsar {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(255, 193, 7, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 193, 7, 0);
+  }
+}
+
 /* Cabeçalho de cada uma das 3 colunas da tela de monitoramento de Estações
    (/estacoes) — pedido do Bruno (03/09/2026): agrupar por processo (Espumagem/
    Silicone, Poliuretano Cast, Outros) de um jeito visualmente claro, no mesmo
