@@ -3919,7 +3919,10 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
     entrega), otd, valor pedido, frete, estado, qualidade, semanal
     planejamento pcp"; ampliada no mesmo dia com "nº NF, data emissão NF,
     status pedido (Pedido Recebido/Produção/Inspeção-Expedição/Em
-    transporte/Entrega Realizada), com emoji e descrição no hover". Reúne,
+    transporte/Entrega Realizada), com emoji e descrição no hover"; e de
+    novo, ainda no mesmo dia, com "expectativa PCP" entre Data solicitada e
+    Conclusão produção (Previsão de liberação do PCP — a data PREVISTA,
+    complementando a Conclusão produção que é a data REAL). Reúne,
     por PedidoOperacao.id, tudo que a nova tabela precisa além do que o
     próprio objeto já expõe — reaproveitando os MESMOS dados ao vivo de
     Produção já usados no resto de Gestão Operação (liberação PCP, data do
@@ -3953,6 +3956,14 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
 
         data_inclusao = p.data_inclusao_pedido
         solicitada = data_cliente_p or p.go_data_solicitada_entrega
+        # "Expectativa PCP" (pedido do Bruno, 10/09/2026, entre "Data
+        # solicitada" e "Conclusão produção"): mesma Previsão de liberação
+        # do PCP já mostrada na tela PCP de Gestão Operação — ao vivo de
+        # Gestão Produção (liberacao_prevista dos itens), com o campo
+        # próprio de PedidoOperacao como fallback enquanto o pedido não foi
+        # lançado em Produção. Data PREVISTA, não a real (essa é a
+        # "Conclusão produção" logo ao lado).
+        expectativa_pcp = liberacao_p.get("previsao") or p.go_previsao_liberacao_pcp
         conclusao_producao = liberacao_p.get("efetiva") or p.go_data_efetiva_liberacao_pcp
         termino_semanal = liberacao_p.get("termino_semanal") or p.go_termino_semanal_pcp
 
@@ -3962,6 +3973,8 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
         metricas[p.id] = {
             "solicitada": solicitada,
             "solicitada_automatica": bool(data_cliente_p),
+            "expectativa_pcp": expectativa_pcp,
+            "expectativa_pcp_automatica": bool(liberacao_p.get("previsao")),
             "conclusao_producao": conclusao_producao,
             "conclusao_producao_automatica": bool(liberacao_p.get("efetiva")),
             "termino_semanal": termino_semanal,

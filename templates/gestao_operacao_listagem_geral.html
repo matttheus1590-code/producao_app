@@ -91,6 +91,7 @@
       <col style="width:132px">
       <col style="width:90px">
       <col style="width:90px">
+      <col style="width:92px">
       <col style="width:98px">
       <col style="width:80px">
       <col style="width:92px">
@@ -114,6 +115,7 @@
         <th>Status pedido</th>
         <th>Data inclusão</th>
         <th>Data solicitada</th>
+        <th>Expectativa PCP</th>
         <th>Conclusão produção</th>
         <th>Nº NF</th>
         <th>Emissão NF</th>
@@ -175,6 +177,7 @@
         </td>
         <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
         <td title="{{ 'Automático — direto da Data do cliente em Gestão Produção' if m.solicitada_automatica else '' }}">{{ m.solicitada.strftime("%d/%m/%Y") if m.solicitada else "—" }}</td>
+        <td title="{{ 'Automático — direto da Liberação prevista em Gestão Produção' if m.expectativa_pcp_automatica else '' }}">{{ m.expectativa_pcp.strftime("%d/%m/%Y") if m.expectativa_pcp else "—" }}</td>
         <td title="{{ 'Automático — direto da Liberação real em Gestão Produção' if m.conclusao_producao_automatica else '' }}">{{ m.conclusao_producao.strftime("%d/%m/%Y") if m.conclusao_producao else "—" }}</td>
         <td class="text-truncate" title="{{ p.go_numero_nf or '' }}">{{ p.go_numero_nf or "—" }}</td>
         <td>{{ p.go_data_emissao_nf.strftime("%d/%m/%Y") if p.go_data_emissao_nf else "—" }}</td>
@@ -218,7 +221,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="20" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="21" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>
