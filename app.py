@@ -10,7 +10,7 @@ from flask import Flask, Response, abort, flash, jsonify, redirect, render_templ
 from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from sqlalchemy import and_, extract, false, func, inspect, not_, or_, text
+from sqlalchemy import and_, case, extract, false, func, inspect, not_, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -294,6 +294,16 @@ def create_app():
         _corrigir_colisao_barra_gestao_operacao(app)
         _seed_usuario_pd_gustavo(app)
         _seed_usuarios_pcp_fabiano_daniel(app)
+
+    # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
+    # mesma normalização usada no casamento Produção<->Operação em Python
+    # (_normalizar_pedido_venda), disponível nos templates pra 2 coisas — (1)
+    # montar a MESMA chave usada pelos dicts *_por_pedido_venda passados pro
+    # template (ex. status_real_por_pedido_venda.get(p.pedido_venda |
+    # normalizar_pedido_venda)) e (2) exibir o nº do pedido sem zero à
+    # esquerda (ex. "000872" -> "872") — ele reclamou vendo o número com
+    # zero antes na coluna "Pedido" da Operação 360.
+    app.jinja_env.filters["normalizar_pedido_venda"] = _normalizar_pedido_venda
 
     @app.context_processor
     def inject_globals():
@@ -3547,6 +3557,45 @@ SORT_PADRAO = "data_inclusao"
 DIR_PADRAO = "desc"
 
 
+def _normalizar_pedido_venda(valor):
+    """Normaliza um texto de "nº pedido de venda" pro casamento entre Gestão
+    Produção e Gestão Operação (tabelas sem FK, ligadas só por esse texto
+    digitado em cada lado) — pedido do Bruno (10/09/2026): "tenho vários
+    pedidos com divergência dos status pra realidade" + "não quero número
+    zero antes" (reparou pedidos aparecendo como "000872" na listagem).
+    Rastreado até aqui: até agora o casamento só tirava espaço (func.trim/
+    .strip()) — quando o mesmo pedido é digitado como "872" em Gestão
+    Produção e "000872" em Gestão Operação (ou vice-versa), os dois textos
+    NUNCA batiam, e o pedido ficava "órfão" pro outro lado — daí o status
+    mostrado (calculado só com os dados do lado que bateu) divergindo do
+    real. Corrigido tirando também os zeros à esquerda dos dois lados,
+    sempre, em todo lugar que casa as duas tabelas — nunca só de um lado.
+    "0"/"000"/"" viram "0" (nunca string vazia, pra não virar chave "" e
+    colidir com pedidos sem número nenhum)."""
+    if not valor:
+        return ""
+    base = valor.strip()
+    if not base:
+        return ""
+    return base.lstrip("0") or "0"
+
+
+def _pedido_venda_normalizado_sql(coluna):
+    """Equivalente em SQL de _normalizar_pedido_venda (mesmo critério, pros
+    dois lados nunca divergirem) — usado em TODO filtro/JOIN "manual" entre
+    Pedido/PedidoOperacao no lugar de func.trim() sozinho. ltrim(texto,
+    caracteres) existe tanto em SQLite (dev local) quanto em Postgres
+    (produção) com esse segundo argumento de conjunto de caracteres a
+    remover — portátil nos dois bancos."""
+    base = func.trim(coluna)
+    sem_zeros = func.ltrim(base, "0")
+    return case(
+        (base == "", ""),
+        (sem_zeros == "", "0"),
+        else_=sem_zeros,
+    )
+
+
 def _pedidos_venda_com_planejamento_semanal(rotulos):
     """Lista de `pedido_venda` (trim) de Gestão Produção cujos itens têm
     `planejamento_semanal` dentro de `rotulos` (1 rótulo, ou vários — ex. os
@@ -3565,7 +3614,7 @@ def _pedidos_venda_com_planejamento_semanal(rotulos):
     if not rotulos:
         return []
     linhas = (
-        db.session.query(func.trim(Pedido.pedido_venda))
+        db.session.query(_pedido_venda_normalizado_sql(Pedido.pedido_venda))
         .join(ItemPedido, ItemPedido.pedido_id == Pedido.id)
         .filter(ItemPedido.planejamento_semanal.in_(rotulos), Pedido.pedido_venda.isnot(None))
         .distinct()
@@ -3581,7 +3630,7 @@ def _pedidos_venda_finalizados_producao():
     pra reproduzir em SQL a mesma condição que _indice_etapa_pedido já
     calcula em Python (`pedido.status_producao == "FINALIZADO"`)."""
     linhas = (
-        db.session.query(func.trim(Pedido.pedido_venda))
+        db.session.query(_pedido_venda_normalizado_sql(Pedido.pedido_venda))
         .filter(Pedido.status_producao == "FINALIZADO", Pedido.pedido_venda.isnot(None))
         .distinct()
         .all()
@@ -3596,7 +3645,7 @@ def _pedidos_venda_em_producao():
     reproduzindo em SQL a mesma condição de _indice_etapa_pedido
     (`any(item.inicio_producao for item in pedido.itens)`)."""
     linhas = (
-        db.session.query(func.trim(Pedido.pedido_venda))
+        db.session.query(_pedido_venda_normalizado_sql(Pedido.pedido_venda))
         .join(ItemPedido, ItemPedido.pedido_id == Pedido.id)
         .filter(ItemPedido.inicio_producao.isnot(None), Pedido.pedido_venda.isnot(None))
         .distinct()
@@ -3617,7 +3666,7 @@ def _condicoes_etapa_pedido_operacao():
     maior, igual ao if/elif em cadeia de _indice_etapa_pedido)."""
     finalizados_pv = _pedidos_venda_finalizados_producao()
     em_producao_pv = _pedidos_venda_em_producao()
-    pv_trim = func.trim(PedidoOperacao.pedido_venda)
+    pv_trim = _pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda)
 
     cond5 = or_(PedidoOperacao.go_data_entregue_cliente.isnot(None), PedidoOperacao.go_data_real_entrega.isnot(None))
     cond4 = and_(PedidoOperacao.go_data_pedido_expedido.isnot(None), not_(cond5))
@@ -3758,7 +3807,7 @@ def _filtrar_pedidos_operacao(args):
     if planejamento_semanal:
         pedidos_venda_match = _pedidos_venda_com_planejamento_semanal(planejamento_semanal)
         if pedidos_venda_match:
-            query = query.filter(func.trim(PedidoOperacao.pedido_venda).in_(pedidos_venda_match))
+            query = query.filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda).in_(pedidos_venda_match))
         else:
             query = query.filter(false())
     if planejamento_mensal:
@@ -3772,7 +3821,7 @@ def _filtrar_pedidos_operacao(args):
             ]
             pedidos_venda_match = _pedidos_venda_com_planejamento_semanal(semanas_do_mes)
             if pedidos_venda_match:
-                query = query.filter(func.trim(PedidoOperacao.pedido_venda).in_(pedidos_venda_match))
+                query = query.filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda).in_(pedidos_venda_match))
             else:
                 # Mês escolhido não tem nenhum planejamento semanal preenchido
                 # ainda (ou nenhum pedido de Produção bate) — não deve
@@ -3927,7 +3976,7 @@ def _itens_producao_por_pedido_venda(pedidos_venda):
     numa dica visual, e uma correspondência errada mostraria os itens do
     pedido errado. Uma única query com IN (nunca N+1) — recebe a lista de
     pedido_venda já normalizada da página atual."""
-    valores = sorted({v.strip() for v in pedidos_venda if v and v.strip()})
+    valores = sorted({_normalizar_pedido_venda(v) for v in pedidos_venda if v and v.strip()})
     if not valores:
         return {}
     pedidos = (
@@ -3936,12 +3985,12 @@ def _itens_producao_por_pedido_venda(pedidos_venda):
         # vezes tem espaço a mais (import antigo de planilha) — sem isso, a
         # igualdade exata falharia por causa só do espaço, escondendo itens
         # que na prática são do mesmo pedido.
-        .filter(func.trim(Pedido.pedido_venda).in_(valores))
+        .filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda).in_(valores))
         .all()
     )
     mapa = {}
     for pedido in pedidos:
-        chave = (pedido.pedido_venda or "").strip()
+        chave = _normalizar_pedido_venda(pedido.pedido_venda)
         if not chave:
             continue
         mapa.setdefault(chave, []).extend(pedido.itens)
@@ -4027,17 +4076,17 @@ def _data_cliente_por_pedido_venda(pedidos_venda):
     venda. Os campos próprios de PedidoOperacao continuam valendo como
     fallback editável manualmente enquanto o pedido não tiver sido lançado
     em Gestão Produção."""
-    valores = sorted({v.strip() for v in pedidos_venda if v and v.strip()})
+    valores = sorted({_normalizar_pedido_venda(v) for v in pedidos_venda if v and v.strip()})
     if not valores:
         return {}
     pedidos = (
         Pedido.query
-        .filter(func.trim(Pedido.pedido_venda).in_(valores), Pedido.data_cliente.isnot(None))
+        .filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda).in_(valores), Pedido.data_cliente.isnot(None))
         .all()
     )
     mapa = {}
     for pedido in pedidos:
-        chave = (pedido.pedido_venda or "").strip()
+        chave = _normalizar_pedido_venda(pedido.pedido_venda)
         if chave:
             mapa[chave] = pedido.data_cliente
     return mapa
@@ -4050,17 +4099,17 @@ def _pedidos_producao_por_pedido_venda(pedidos_venda):
     pra reaproveitar _indice_etapa_pedido sem duplicar sua lógica em outro
     lugar. Mesmo casamento por texto (trim, exato, nunca aproximado) de
     sempre."""
-    valores = sorted({v.strip() for v in pedidos_venda if v and v.strip()})
+    valores = sorted({_normalizar_pedido_venda(v) for v in pedidos_venda if v and v.strip()})
     if not valores:
         return {}
     pedidos = (
         Pedido.query.options(selectinload(Pedido.itens))
-        .filter(func.trim(Pedido.pedido_venda).in_(valores))
+        .filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda).in_(valores))
         .all()
     )
     mapa = {}
     for pedido in pedidos:
-        chave = (pedido.pedido_venda or "").strip()
+        chave = _normalizar_pedido_venda(pedido.pedido_venda)
         if chave and chave not in mapa:
             mapa[chave] = pedido
     return mapa
@@ -4112,7 +4161,7 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
     numa célula de tabela)."""
     metricas = {}
     for p in pedidos:
-        chave = (p.pedido_venda or "").strip()
+        chave = _normalizar_pedido_venda(p.pedido_venda)
         liberacao_p = liberacao_pcp_por_pedido_venda.get(chave) or {}
         data_cliente_p = data_cliente_por_pedido_venda.get(chave)
         pedido_producao = pedidos_producao_por_pedido_venda.get(chave)
@@ -4292,7 +4341,7 @@ def _buscar_pedidos_para_status(termo, limite=12):
     pedidos = (
         Pedido.query.filter(
             Pedido.pedido_venda.isnot(None),
-            func.trim(Pedido.pedido_venda) != "",
+            _pedido_venda_normalizado_sql(Pedido.pedido_venda) != "",
             or_(Pedido.pedido_venda.ilike(padrao), Pedido.cliente.ilike(padrao)),
         )
         .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
@@ -4300,7 +4349,7 @@ def _buscar_pedidos_para_status(termo, limite=12):
         .all()
     )
     for p in pedidos:
-        chave = (p.pedido_venda or "").strip()
+        chave = _normalizar_pedido_venda(p.pedido_venda)
         if not chave or chave in candidatos:
             continue
         candidatos[chave] = {"pedido_venda": chave, "cliente": p.cliente, "tem_producao": True}
@@ -4309,7 +4358,7 @@ def _buscar_pedidos_para_status(termo, limite=12):
         pedidos_operacao = (
             PedidoOperacao.query.filter(
                 PedidoOperacao.pedido_venda.isnot(None),
-                func.trim(PedidoOperacao.pedido_venda) != "",
+                _pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) != "",
                 or_(PedidoOperacao.pedido_venda.ilike(padrao), PedidoOperacao.cliente.ilike(padrao)),
             )
             .order_by(PedidoOperacao.data_inclusao_pedido.desc().nullslast())
@@ -4317,7 +4366,7 @@ def _buscar_pedidos_para_status(termo, limite=12):
             .all()
         )
         for go in pedidos_operacao:
-            chave = (go.pedido_venda or "").strip()
+            chave = _normalizar_pedido_venda(go.pedido_venda)
             if not chave or chave in candidatos:
                 continue
             candidatos[chave] = {"pedido_venda": chave, "cliente": go.cliente, "tem_producao": False}
@@ -5191,18 +5240,18 @@ def _rdim_resumo_por_pedido_venda(pedidos_venda):
     texto (sem FK, trim() nos dois lados) já usado por
     _itens_producao_por_pedido_venda — só pra exibir uma dica visual, nunca
     aproximado."""
-    valores = sorted({v.strip() for v in pedidos_venda if v and v.strip()})
+    valores = sorted({_normalizar_pedido_venda(v) for v in pedidos_venda if v and v.strip()})
     if not valores:
         return {}
     inspecoes = (
         InspecaoFinal.query.join(ItemPedido).join(Pedido)
         .options(selectinload(InspecaoFinal.item).selectinload(ItemPedido.pedido))
-        .filter(func.trim(Pedido.pedido_venda).in_(valores))
+        .filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda).in_(valores))
         .all()
     )
     mapa = {}
     for insp in inspecoes:
-        chave = (insp.pedido_venda or "").strip()
+        chave = _normalizar_pedido_venda(insp.pedido_venda)
         if not chave:
             continue
         d = mapa.setdefault(chave, {"total": 0, "reprovadas": 0, "com_desvio": 0, "quantidade_com_desvio": 0})
@@ -5858,16 +5907,16 @@ def register_routes(app):
         """Status completo de UM pedido (Produção + Operação, cruzados por
         pedido_venda) — devolve o fragmento HTML do painel de detalhe,
         aberto ao clicar numa sugestão/atalho da aba Consulta Pedido."""
-        chave = (request.args.get("pedido_venda", "") or "").strip()
+        chave = _normalizar_pedido_venda(request.args.get("pedido_venda", ""))
         if not chave:
             return "", 204
 
         pedido = (
             Pedido.query.options(selectinload(Pedido.itens))
-            .filter(func.trim(Pedido.pedido_venda) == chave)
+            .filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda) == chave)
             .first()
         )
-        go = PedidoOperacao.query.filter(func.trim(PedidoOperacao.pedido_venda) == chave).first()
+        go = PedidoOperacao.query.filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave).first()
 
         if pedido is None and go is None:
             return render_template("_consulta_pedido_detalhe.html", nao_encontrado=True, pedido_venda=chave)
@@ -6855,7 +6904,7 @@ def register_routes(app):
                 # usuário ter mexido nele (o formulário nem mostra mais um
                 # <input> pra esses campos nesse caso — ver
                 # gestao_operacao_editar.html).
-                chave_pv = (pedido.pedido_venda or "").strip()
+                chave_pv = _normalizar_pedido_venda(pedido.pedido_venda)
                 liberacao_real_pcp = _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get(chave_pv) or {}
                 data_cliente_real = _data_cliente_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
                 campos_secao = [
@@ -6870,7 +6919,7 @@ def register_routes(app):
                 # (pedido do Bruno, 03/09/2026: "quero que todos os dados
                 # dentro da gestão operação seja extraída automaticamente da
                 # gestão produção").
-                chave_pv = (pedido.pedido_venda or "").strip()
+                chave_pv = _normalizar_pedido_venda(pedido.pedido_venda)
                 data_cliente_real = _data_cliente_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
                 campos_secao = [
                     c for c in campos_secao
@@ -6893,7 +6942,7 @@ def register_routes(app):
             flash(f"Gestão Operação ({GO_SECAO_LABEL[secao]}) do pedido atualizada com sucesso.", "success")
             return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id, secao=secao))
 
-        chave_pv = (pedido.pedido_venda or "").strip()
+        chave_pv = _normalizar_pedido_venda(pedido.pedido_venda)
         status_real = _status_producao_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
         liberacao_real = _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get(chave_pv) or {}
         data_cliente_real = _data_cliente_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)

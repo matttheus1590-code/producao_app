@@ -137,7 +137,7 @@
   </button>
 </div>
 <p class="text-muted small mb-2">
-  <i class="bi bi-arrows"></i> Dica: arraste a borda direita de qualquer coluna pra ajustar a largura — o site lembra do ajuste da próxima vez que você abrir esta tela. Linha verde = pedido já entregue ao cliente.
+  <i class="bi bi-arrows"></i> Dica: arraste a borda direita de qualquer coluna pra ajustar a largura — o site lembra do ajuste da próxima vez que você abrir esta tela. Linha verde = entrega realizada. Linha vermelha = pendente produção.
 </p>
 
 <div class="table-responsive tabela-listagem-geral-wrap">
@@ -194,12 +194,12 @@
     </thead>
     <tbody>
       {% for p in pedidos %}
-      {% set chave_pv = (p.pedido_venda or "").strip() %}
+      {% set chave_pv = p.pedido_venda | normalizar_pedido_venda %}
       {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
       {% set rdim = rdim_por_pedido_venda.get(chave_pv) %}
       {% set m = metricas_operacao_360.get(p.id, {}) %}
-      <tr class="{% if p.go_data_entregue_cliente %}linha-op360-finalizada{% endif %}">
-        <td>{{ p.pedido_venda or "—" }}</td>
+      <tr class="{% if m.status_pedido_idx == 5 %}linha-op360-entregue{% elif m.status_pedido_idx == 1 %}linha-op360-pendente{% endif %}">
+        <td>{{ (p.pedido_venda | normalizar_pedido_venda) or "—" }}</td>
         <td>
           <div class="go-itens-wrap">
             <span class="go-itens-badge {% if not itens %}go-itens-badge-vazio{% endif %}" title="{{ p.cliente }}">

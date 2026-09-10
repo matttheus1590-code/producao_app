@@ -81,18 +81,19 @@
     </thead>
     <tbody>
       {% for p in pedidos %}
-      {% set status_exibido = status_real_por_pedido_venda.get((p.pedido_venda or "").strip(), p.status_producao) %}
-      {% set liberacao_p = liberacao_pcp_por_pedido_venda.get((p.pedido_venda or "").strip(), {}) %}
+      {% set chave_pv = p.pedido_venda | normalizar_pedido_venda %}
+      {% set status_exibido = status_real_por_pedido_venda.get(chave_pv, p.status_producao) %}
+      {% set liberacao_p = liberacao_pcp_por_pedido_venda.get(chave_pv, {}) %}
       {% set previsao_exibida = liberacao_p.get("previsao") or p.go_previsao_liberacao_pcp %}
       {% set efetiva_exibida = liberacao_p.get("efetiva") or p.go_data_efetiva_liberacao_pcp %}
-      {% set data_cliente_p = data_cliente_por_pedido_venda.get((p.pedido_venda or "").strip()) %}
+      {% set data_cliente_p = data_cliente_por_pedido_venda.get(chave_pv) %}
       {% set solicitada_exibida = data_cliente_p or p.go_data_solicitada_cliente_retira %}
       {% set termino_exibido = liberacao_p.get("termino_semanal") or p.go_termino_semanal_pcp %}
       <tr>
-        <td>{{ p.pedido_venda or "—" }}</td>
+        <td>{{ (p.pedido_venda | normalizar_pedido_venda) or "—" }}</td>
         <td>{{ p.cliente }}</td>
         <td>
-          <span class="badge bg-{{ STATUS_CORES.get(status_exibido, 'secondary') }}" title="{{ 'Status real, direto da estação em Gestão Produção' if (p.pedido_venda or '').strip() in status_real_por_pedido_venda else 'Pedido ainda não lançado em Gestão Produção — status calculado só pelos dados da Operação' }}">{{ status_exibido }}</span>
+          <span class="badge bg-{{ STATUS_CORES.get(status_exibido, 'secondary') }}" title="{{ 'Status real, direto da estação em Gestão Produção' if chave_pv in status_real_por_pedido_venda else 'Pedido ainda não lançado em Gestão Produção — status calculado só pelos dados da Operação' }}">{{ status_exibido }}</span>
         </td>
         <td title="{{ 'Automático — direto da Liberação prevista em Gestão Produção' if liberacao_p.get('previsao') else '' }}">{{ previsao_exibida.strftime("%d/%m/%Y") if previsao_exibida else "—" }}</td>
         <td title="{{ 'Automático — direto da Liberação real em Gestão Produção' if liberacao_p.get('efetiva') else '' }}">{{ efetiva_exibida.strftime("%d/%m/%Y") if efetiva_exibida else "—" }}</td>
