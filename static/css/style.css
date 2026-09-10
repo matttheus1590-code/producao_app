@@ -1212,18 +1212,22 @@ body.col-resizing-ativo {
 /* ---------------------------------------------------------------------
    Painel — prévia horizontal do Planejamento Semanal PCP (pedido do Bruno,
    09/09/2026, logo abaixo de "Últimos pedidos incluídos"): 1 coluna por
-   semana (rolagem horizontal quando não cabem todas), cards de pedido
-   dentro de cada coluna com popover de contexto ao passar o mouse e link
-   pro Detalhe do Pedido ao clicar.
+   semana, distribuídas ocupando toda a largura disponível (ajuste do
+   Bruno, mesmo dia, depois de ver a 1ª versão com colunas de largura fixa
+   e rolagem horizontal — "aproveite os espaços"), cards de pedido dentro
+   de cada coluna com popover de contexto ao passar o mouse e link pro
+   Detalhe do Pedido ao clicar. Em telas estreitas as colunas quebram em
+   linha (min-width evita ficarem ilegíveis).
 --------------------------------------------------------------------- */
 .pcp-preview-scroll {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
-  overflow-x: auto;
   padding-bottom: 0.25rem;
 }
 .pcp-preview-coluna {
-  flex: 0 0 220px;
+  flex: 1 1 180px;
+  min-width: 180px;
   border: 1px solid #eef0f2;
   border-radius: 0.375rem;
   background-color: #fafbfc;
@@ -1273,4 +1277,20 @@ body.col-resizing-ativo {
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
+}
+/* Pedido finalizado (todos os itens com status_producao = FINALIZADO) —
+   pedido do Bruno (09/09/2026): "deixe cor verde forte" pra destacar de
+   cara, sem precisar ler o texto, o que já está pronto. */
+.pcp-preview-card-finalizado,
+.pcp-preview-card-finalizado .text-muted,
+.pcp-preview-card-finalizado .text-success {
+  color: #fff !important;
+}
+.pcp-preview-card-finalizado {
+  background-color: #198754;
+  border-color: #146c43;
+}
+.pcp-preview-card-finalizado:hover {
+  background-color: #157347;
+  border-color: #0f5132;
 }

@@ -1813,13 +1813,18 @@ def _somar_meses(ano, mes, delta):
     return (total // 12, total % 12 + 1)
 
 
-def _semanas_pcp_janela(hoje=None, semanas_atras=1, semanas_frente=4):
+def _semanas_pcp_janela(hoje=None, semanas_atras=1, semanas_frente=3):
     """Janela curta de rótulos "SEMANA NN / MÊS / ANO" (mesmo formato de
     gerar_semanas_pcp) centrada na semana atual — `semanas_atras` rótulos
     antes + a semana de hoje + `semanas_frente` rótulos depois, sempre em
     ordem cronológica. Usada pela prévia horizontal do Planejamento PCP no
     Painel (pedido do Bruno, 09/09/2026: "prévia... de bate pronto", não o
-    histórico/projeção inteira que já existe no quadro mensal do Painel)."""
+    histórico/projeção inteira que já existe no quadro mensal do Painel).
+
+    5 colunas por padrão (1 atrás + atual + 3 à frente) — Bruno pediu
+    (09/09/2026) pra excluir a coluna que ainda cai no mês seguinte (tinha 6
+    colunas, a última quase sempre vazia) e distribuir as colunas restantes
+    ocupando toda a largura disponível."""
     hoje = hoje or date.today()
     # meses_atras/meses_frente = 2 dá folga de sobra pra cobrir a janela de
     # semanas mesmo perto de virada de mês/ano — gerar_semanas_pcp já cobre
@@ -1835,7 +1840,7 @@ def _semanas_pcp_janela(hoje=None, semanas_atras=1, semanas_frente=4):
     return todas[inicio:fim]
 
 
-def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=4):
+def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=3):
     """Prévia horizontal do Planejamento Semanal PCP pro Painel (pedido do
     Bruno, 09/09/2026): "de bate pronto", como gestor, ele quer ver resumido
     o que o PCP tem planejado nas semanas próximas — pedido, valor, data
@@ -1850,7 +1855,14 @@ def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=4):
     aparece em cada uma delas, com a soma da semana em questão). "Data
     prevista PCP" e "Data efetiva de liberação" usam a mais recente entre os
     itens do pedido naquela semana, mesmo critério já usado em
-    _liberacao_pcp_por_pedido_venda."""
+    _liberacao_pcp_por_pedido_venda.
+
+    Ajustes do Bruno (09/09/2026, depois de ver a 1ª versão ao vivo):
+    - cards ordenados por "Data solicitada cliente" (prazo de entrega mais
+      curto primeiro) em vez de valor — sem data fica por último;
+    - card marcado como `finalizado` (verde forte no template) quando TODOS
+      os itens do pedido naquela semana já estão com status_producao =
+      FINALIZADO — mesmo campo "confiável" já usado no Kanban de Estações."""
     hoje = hoje or date.today()
     rotulos = _semanas_pcp_janela(hoje, semanas_atras=semanas_atras, semanas_frente=semanas_frente)
     if not rotulos:
@@ -1882,9 +1894,12 @@ def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=4):
                 "data_efetiva_liberacao": None,
                 "frete": item.pedido.frete,
                 "estado": item.pedido.estado,
+                "finalizado": True,
             },
         )
         grupo["valor"] += item.valor_total
+        if item.status_producao != "FINALIZADO":
+            grupo["finalizado"] = False
         if item.liberacao_prevista and (
             grupo["data_prevista_pcp"] is None or item.liberacao_prevista > grupo["data_prevista_pcp"]
         ):
@@ -1896,7 +1911,10 @@ def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=4):
 
     semanas = []
     for rotulo in rotulos:
-        pedidos = sorted(por_semana[rotulo].values(), key=lambda p: p["valor"], reverse=True)
+        pedidos = sorted(
+            por_semana[rotulo].values(),
+            key=lambda p: (p["data_solicitada_cliente"] is None, p["data_solicitada_cliente"]),
+        )
         for p in pedidos:
             p["valor"] = round(p["valor"], 2)
         semanas.append(
@@ -2637,6 +2655,124 @@ def _pedidos_recentes_producao(desde=None, limite=10):
         e["ha_quanto_tempo"] = _tempo_relativo(e["criado_em"])
         e["novo"] = bool(desde and e["criado_em"] and e["criado_em"] > desde)
     return eventos
+
+
+def _janela_utc_do_dia_brt(dia_brt):
+    """Início/fim (UTC, intervalo [início, fim)) do dia `dia_brt` no fuso de
+    Brasília (UTC-3, sem horário de verão) — todo `criado_em`/`atualizado_em`
+    do banco é gravado em UTC, então filtrar "o dia de ontem" (no fuso do
+    Bruno) precisa dessa conversão. Usado só pelo Relatório Diário
+    automático abaixo (pedido do Bruno, 09/09/2026)."""
+    inicio_utc = datetime(dia_brt.year, dia_brt.month, dia_brt.day) + timedelta(hours=3)
+    return inicio_utc, inicio_utc + timedelta(days=1)
+
+
+def _relatorio_diario_dados(dia_brt=None):
+    """Relatório Diário automático (pedido do Bruno, 09/09/2026): "todo dia
+    às 8h, sem eu precisar colocar a mão no site" — desvios de Qualidade
+    (RDIM com desvio + RNC) e pedidos incluídos/finalizados de UM dia
+    específico (por padrão, ontem no fuso de Brasília). Alimenta a rota
+    /api/relatorio-diario, consumida por uma tarefa agendada no Claude que
+    manda a notificação pro Bruno — não tem link em nenhuma tela do site.
+
+    "Finalizado no dia" = item com status_producao FINALIZADO cujo
+    atualizado_em (carimbo automático de última alteração) caiu dentro do
+    dia — não existe campo próprio de "quando finalizou", então esse é o
+    melhor proxy disponível (mesmo espírito do Kanban de Estações, que já
+    trata status_producao como o campo "confiável" de progresso)."""
+    dia_brt = dia_brt or (date.today() - timedelta(days=1))
+    inicio_utc, fim_utc = _janela_utc_do_dia_brt(dia_brt)
+
+    rdims = (
+        InspecaoFinal.query
+        .options(selectinload(InspecaoFinal.pecas_desvio), selectinload(InspecaoFinal.medicoes))
+        .filter(InspecaoFinal.criado_em >= inicio_utc, InspecaoFinal.criado_em < fim_utc)
+        .filter(InspecaoFinal.resultado != "APROVADO")
+        .order_by(InspecaoFinal.criado_em)
+        .all()
+    )
+    rncs = (
+        RncQualidade.query
+        .filter(RncQualidade.criado_em >= inicio_utc, RncQualidade.criado_em < fim_utc)
+        .order_by(RncQualidade.criado_em)
+        .all()
+    )
+    pedidos_incluidos = (
+        Pedido.query
+        .filter(Pedido.criado_em >= inicio_utc, Pedido.criado_em < fim_utc)
+        .order_by(Pedido.criado_em)
+        .all()
+    )
+    itens_finalizados = (
+        ItemPedido.query
+        .options(selectinload(ItemPedido.pedido))
+        .join(Pedido, ItemPedido.pedido_id == Pedido.id)
+        .filter(
+            ItemPedido.status_producao == "FINALIZADO",
+            ItemPedido.atualizado_em >= inicio_utc,
+            ItemPedido.atualizado_em < fim_utc,
+        )
+        .order_by(ItemPedido.atualizado_em)
+        .all()
+    )
+    pedidos_finalizados = {}
+    for item in itens_finalizados:
+        if not item.pedido:
+            continue
+        grupo = pedidos_finalizados.setdefault(
+            item.pedido_id,
+            {
+                "pedido_id": item.pedido_id,
+                "pedido_venda": item.pedido.pedido_venda,
+                "cliente": item.pedido.cliente,
+                "itens": [],
+            },
+        )
+        grupo["itens"].append(item.descricao_produto)
+
+    return {
+        "dia": dia_brt.isoformat(),
+        "desvios_rdim": [
+            {
+                "pedido_venda": i.pedido_venda,
+                "cliente": i.cliente,
+                "resultado": RDIM_RESULTADO_LABELS.get(i.resultado, i.resultado),
+                "detalhe": _contexto_desvio_rdim(i),
+                "link": url_for("rdim_editar", inspecao_id=i.id, _external=True),
+            }
+            for i in rdims
+        ],
+        "rncs": [
+            {
+                "numero_rnc": r.numero_rnc,
+                "cliente_projeto": r.cliente_projeto,
+                "tipo_nc": r.tipo_nc,
+                "severidade": r.severidade,
+                "detalhe": _contexto_rnc(r),
+                "link": url_for("qualidade_editar", rnc_id=r.id, _external=True),
+            }
+            for r in rncs
+        ],
+        "pedidos_incluidos": [
+            {
+                "pedido_venda": p.pedido_venda,
+                "cliente": p.cliente,
+                "valor": p.valor_total,
+                "vendedor": p.vendedor,
+                "link": url_for("detalhe_pedido", pedido_id=p.id, _external=True),
+            }
+            for p in pedidos_incluidos
+        ],
+        "pedidos_finalizados": [
+            {
+                "pedido_venda": g["pedido_venda"],
+                "cliente": g["cliente"],
+                "itens": g["itens"],
+                "link": url_for("detalhe_pedido", pedido_id=g["pedido_id"], _external=True),
+            }
+            for g in pedidos_finalizados.values()
+        ],
+    }
 
 
 # Rótulos amigáveis pros campos de CAMPOS_HISTORICO_PD, usados só na
@@ -5502,6 +5638,33 @@ def register_routes(app):
     def relatorios():
         hoje = date.today()
         return render_template("relatorios.html", hoje=hoje)
+
+    @app.route("/api/relatorio-diario")
+    def api_relatorio_diario():
+        """Relatório Diário (Qualidade + Produção) pra automação externa —
+        pedido do Bruno (09/09/2026): notificação automática todo dia de
+        manhã, "sem eu precisar colocar a mão no site". NÃO é uma tela do
+        site (sem link em lugar nenhum da interface, sem @login_required) —
+        quem chama é uma tarefa agendada fora do navegador, então a
+        autenticação é por token compartilhado (header X-Report-Key, contra
+        a variável de ambiente RELATORIO_DIARIO_TOKEN no Render) em vez de
+        sessão de usuário. Sem essa variável configurada no ambiente, a rota
+        fica sempre bloqueada — nunca fica aberta por acidente em produção.
+
+        `?dia=AAAA-MM-DD` (opcional) força um dia específico, pra testar;
+        sem o parâmetro, usa "ontem" no fuso de Brasília (uso normal, pela
+        tarefa agendada)."""
+        token_esperado = os.environ.get("RELATORIO_DIARIO_TOKEN")
+        if not token_esperado or request.headers.get("X-Report-Key") != token_esperado:
+            abort(403)
+        dia_brt = None
+        dia_str = request.args.get("dia", "").strip()
+        if dia_str:
+            try:
+                dia_brt = datetime.strptime(dia_str, "%Y-%m-%d").date()
+            except ValueError:
+                dia_brt = None
+        return jsonify(_relatorio_diario_dados(dia_brt))
 
     @app.route("/relatorios/listagem.csv")
     @login_required

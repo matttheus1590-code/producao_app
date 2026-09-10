@@ -139,20 +139,23 @@
           {% for p in s.pedidos %}
           <a
             href="{{ url_for('detalhe_pedido', pedido_id=p.pedido_id) }}"
-            class="pcp-preview-card"
+            class="pcp-preview-card {% if p.finalizado %}pcp-preview-card-finalizado{% endif %}"
             data-bs-toggle="popover"
             data-bs-trigger="hover focus"
             data-bs-html="true"
             data-bs-placement="auto"
-            data-bs-title="Pedido {{ p.pedido_venda or '—' }}"
+            data-bs-title="Pedido {{ p.pedido_venda or '—' }}{% if p.finalizado %} · Finalizado{% endif %}"
             data-bs-content="<div>{{ p.cliente }}</div><div>Valor: R$ {{ '{:,.2f}'.format(p.valor).replace(',', 'X').replace('.', ',').replace('X', '.') }}</div><div>Solicitado cliente: {{ p.data_solicitada_cliente.strftime('%d/%m/%Y') if p.data_solicitada_cliente else '—' }}</div><div>Previsto PCP: {{ p.data_prevista_pcp.strftime('%d/%m/%Y') if p.data_prevista_pcp else '—' }}</div><div>Liberação efetiva: {{ p.data_efetiva_liberacao.strftime('%d/%m/%Y') if p.data_efetiva_liberacao else '—' }}</div><div>Frete: {{ p.frete or '—' }} · Estado: {{ p.estado or '—' }}</div>"
           >
             <div class="pcp-preview-card-linha1">
-              <span class="fw-semibold">{{ p.pedido_venda or '—' }}</span>
-              <span class="text-success small">R$ {{ "{:,.0f}".format(p.valor).replace(",", ".") }}</span>
+              <span class="fw-semibold">{{ p.pedido_venda or '—' }}{% if p.finalizado %} <i class="bi bi-check-circle-fill"></i>{% endif %}</span>
+              <span class="small {% if not p.finalizado %}text-success{% endif %}">R$ {{ "{:,.0f}".format(p.valor).replace(",", ".") }}</span>
             </div>
-            <div class="text-muted small text-truncate">{{ p.cliente }}</div>
-            <div class="text-muted" style="font-size: 0.7rem;">{{ p.estado or "—" }} · {{ p.frete or "—" }}</div>
+            <div class="small text-truncate {% if not p.finalizado %}text-muted{% endif %}">{{ p.cliente }}</div>
+            <div style="font-size: 0.7rem;" class="{% if not p.finalizado %}text-muted{% endif %}">
+              {{ p.data_solicitada_cliente.strftime("%d/%m") if p.data_solicitada_cliente else "sem prazo" }}
+              · {{ p.estado or "—" }} · {{ p.frete or "—" }}
+            </div>
           </a>
           {% else %}
           <p class="text-muted small text-center py-3 mb-0">Sem pedidos planejados.</p>
