@@ -25,58 +25,59 @@
       <span class="badge bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }}">{{ colunas[etapa] | length }}</span>
     </div>
     <div class="kanban-coluna-corpo">
-      {% for item in colunas[etapa] %}
-      {% set cor, dias = item.semaforo %}
-      <div class="card kanban-card mb-2 border-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">
-        <div class="card-body p-2">
-          <div class="small text-muted">
-            Pedido {{ item.pedido.pedido_venda or ('#' + item.pedido.id|string) }} — {{ item.pedido.cliente }}
+      {% for pedido, itens_pedido in colunas_agrupadas[etapa] %}
+      <div class="kanban-grupo-pedido mb-2">
+        <div class="kanban-grupo-header">
+          <div class="kanban-grupo-titulo">
+            <span class="kanban-grupo-pedido-num">Pedido {{ pedido.pedido_venda or ('#' + pedido.id|string) }}</span>
+            <span class="kanban-grupo-cliente" title="{{ pedido.cliente }}">{{ pedido.cliente }}</span>
           </div>
-          <div class="fw-semibold small mb-1">{{ item.descricao_produto }}</div>
-          <div class="kanban-card-info-row mb-1">
-            <div class="kanban-card-datas small text-muted">
-              <div><i class="bi bi-box-seam"></i> {{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s)</div>
-              <div><i class="bi bi-calendar-plus"></i> Incluído {{ item.pedido.data_inclusao_pedido.strftime("%d/%m/%Y") if item.pedido.data_inclusao_pedido else "—" }}</div>
-              <div><i class="bi bi-calendar-event"></i> Solicitado {{ item.pedido.data_cliente.strftime("%d/%m/%Y") if item.pedido.data_cliente else "—" }}</div>
-              <div class="{% if cor == 'vermelho' %}text-danger fw-semibold{% elif cor == 'amarelo' %}text-warning fw-semibold{% endif %}">
-                <i class="bi bi-flag"></i> Previsto {{ item.liberacao_prevista.strftime("%d/%m/%Y") if item.liberacao_prevista else "—" }}
-              </div>
-              {% if etapa in ("EM_PRODUCAO", "FINALIZADO") %}
-              <div><i class="bi bi-play-circle"></i> Início produção {{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</div>
-              {% endif %}
-              {% if etapa == "FINALIZADO" %}
-              <div><i class="bi bi-check-circle"></i> Finalizado {{ item.termino_inspecao.strftime("%d/%m/%Y") if item.termino_inspecao else "—" }}</div>
-              {% if item.lt_producao_dias is not none %}
-              <div><i class="bi bi-stopwatch"></i> Levou {{ item.lt_producao_dias }} dia(s) na produção</div>
-              {% endif %}
-              {% endif %}
-            </div>
-            <div class="kanban-card-pedido-info small text-muted">
-              <div class="kanban-card-pedido-titulo">Pedido</div>
-              <div><i class="bi bi-truck"></i> {{ item.pedido.frete or "—" }}</div>
-              <div class="text-truncate" title="{{ item.pedido.estado or item.pedido.pais or '' }}">
-                <i class="bi bi-geo-alt"></i> {{ item.pedido.estado or item.pedido.pais or "—" }}
-              </div>
-              <div class="text-truncate" title="{{ item.pedido.cidade or '' }}">
-                <i class="bi bi-building"></i> {{ item.pedido.cidade or "—" }}
-              </div>
-            </div>
+          <div class="kanban-grupo-meta">
+            <span class="badge bg-white text-dark border">{{ itens_pedido | length }} {{ "item" if itens_pedido | length == 1 else "itens" }}</span>
+            <span title="Frete"><i class="bi bi-truck"></i>{{ pedido.frete or "—" }}</span>
+            <span class="text-truncate" title="{{ pedido.estado or pedido.pais or '' }}"><i class="bi bi-geo-alt"></i>{{ pedido.estado or pedido.pais or "—" }}</span>
+            <span class="text-truncate" title="{{ pedido.cidade or '' }}"><i class="bi bi-building"></i>{{ pedido.cidade or "—" }}</span>
           </div>
-          <div class="d-flex justify-content-between align-items-center">
+        </div>
+        {% for item in itens_pedido %}
+        {% set cor, dias = item.semaforo %}
+        <div class="kanban-item border-start border-3 border-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">
+          <div class="kanban-item-titulo">{{ item.descricao_produto }}</div>
+          <div class="kanban-item-meta">
+            <span><i class="bi bi-box-seam"></i>{{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s)</span>
+            <span><i class="bi bi-calendar-plus"></i>Incluído {{ pedido.data_inclusao_pedido.strftime("%d/%m/%Y") if pedido.data_inclusao_pedido else "—" }}</span>
+            <span><i class="bi bi-calendar-event"></i>Solicitado {{ pedido.data_cliente.strftime("%d/%m/%Y") if pedido.data_cliente else "—" }}</span>
+            <span class="{% if cor == 'vermelho' %}text-danger fw-semibold{% elif cor == 'amarelo' %}text-warning fw-semibold{% endif %}">
+              <i class="bi bi-flag"></i>Previsto {{ item.liberacao_prevista.strftime("%d/%m/%Y") if item.liberacao_prevista else "—" }}
+            </span>
+            {% if etapa in ("EM_PRODUCAO", "FINALIZADO") %}
+            <span><i class="bi bi-play-circle"></i>Início {{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</span>
+            {% endif %}
+            {% if etapa == "FINALIZADO" %}
+            <span><i class="bi bi-check-circle"></i>Finalizado {{ item.termino_inspecao.strftime("%d/%m/%Y") if item.termino_inspecao else "—" }}</span>
+            {% if item.lt_producao_dias is not none %}
+            <span><i class="bi bi-stopwatch"></i>{{ item.lt_producao_dias }}d na produção</span>
+            {% endif %}
+            {% endif %}
+          </div>
+          <div class="kanban-item-rodape">
             <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
               {% if dias is none %}sem prazo{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
             </span>
-            <a href="{{ url_for('detalhe_pedido', pedido_id=item.pedido_id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Ver pedido">
-              <i class="bi bi-eye"></i>
-            </a>
+            <div class="d-flex align-items-center gap-1">
+              <a href="{{ url_for('detalhe_pedido', pedido_id=item.pedido_id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Ver pedido">
+                <i class="bi bi-eye"></i>
+              </a>
+              {% if pode_editar and etapa != 'FINALIZADO' %}
+              <form method="post" action="{{ url_for('estacao_kanban_mover', nome=estacao.nome) }}">
+                <input type="hidden" name="item_id" value="{{ item.id }}">
+                <button type="submit" class="btn btn-sm btn-primary" title="Avançar pra próxima etapa">Avançar ▶</button>
+              </form>
+              {% endif %}
+            </div>
           </div>
-          {% if pode_editar and etapa != 'FINALIZADO' %}
-          <form method="post" action="{{ url_for('estacao_kanban_mover', nome=estacao.nome) }}" class="mt-1">
-            <input type="hidden" name="item_id" value="{{ item.id }}">
-            <button type="submit" class="btn btn-sm btn-primary w-100">Avançar ▶</button>
-          </form>
-          {% endif %}
         </div>
+        {% endfor %}
       </div>
       {% else %}
       <div class="text-muted small text-center py-3">Vazio</div>

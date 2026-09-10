@@ -7113,11 +7113,39 @@ def register_routes(app):
         # previsto deixa de ser o que importa pra essa coluna.
         colunas["FINALIZADO"].sort(key=lambda i: (i.atualizado_em or datetime.min, i.id), reverse=True)
 
+        def _agrupar_por_pedido(itens_ordenados):
+            """Agrupa os itens (já ordenados pelo critério da coluna acima) por
+            PEDIDO — pedido do Bruno (10/09/2026): "agrupe os itens da
+            novelis... agrupe também os do pedido 873" — cards soltos
+            repetindo cliente/frete/UF/cidade em cada item viravam ruído
+            visual quando o mesmo pedido tinha vários produtos na mesma
+            coluna.
+
+            A posição de cada GRUPO na coluna é a do seu item mais urgente —
+            o primeiro que aparece na lista já ordenada — então a ordem de
+            prioridade da coluna continua valendo, só que por pedido; dentro
+            do grupo, os itens mantêm a ordem relativa que já vinham
+            (também por urgência). Um pedido com produtos em estações
+            diferentes só agrupa os itens QUE ESTÃO nesta estação — não
+            mistura com itens de outras estações."""
+            grupos = {}
+            ordem_pedidos = []
+            for item in itens_ordenados:
+                pid = item.pedido_id
+                if pid not in grupos:
+                    grupos[pid] = []
+                    ordem_pedidos.append(pid)
+                grupos[pid].append(item)
+            return [(grupos[pid][0].pedido, grupos[pid]) for pid in ordem_pedidos]
+
+        colunas_agrupadas = {chave: _agrupar_por_pedido(colunas[chave]) for chave in STATUS_CHAO_OPCOES}
+
         return render_template(
             "estacoes_kanban.html",
             estacao=estacao,
             rotulo=rotulo_estacao(estacao.nome),
             colunas=colunas,
+            colunas_agrupadas=colunas_agrupadas,
             pode_editar=pode_editar_estacao(current_user, nome),
         )
 

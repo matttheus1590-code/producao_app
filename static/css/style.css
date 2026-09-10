@@ -537,6 +537,121 @@ body.col-resizing-ativo {
   padding: 0.3rem !important;
 }
 
+/* ---------------------------------------------------------------------
+   Kanban de Estações agrupado por PEDIDO (pedido do Bruno, 10/09/2026):
+   "agrupe os itens da novelis... agrupe também os do pedido 873" — cada
+   grupo é 1 pedido, com cabeçalho mostrando os dados do PEDIDO (cliente,
+   frete, UF/país, cidade) uma vez só, e um item por produto dentro dele —
+   antes cada produto repetia esses mesmos dados em cards soltos. Não mexe
+   em .kanban-card (ainda usado pelo Kanban de P&D, que não é agrupado).
+--------------------------------------------------------------------- */
+.kanban-grupo-pedido {
+  background-color: #fff;
+  border: 1px solid #dde2e8;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.kanban-grupo-header {
+  padding: 0.4rem 0.6rem;
+  background-color: #f3f5f8;
+  border-bottom: 1px solid #dde2e8;
+}
+
+.kanban-grupo-titulo {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.kanban-grupo-pedido-num {
+  font-weight: 700;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  color: #384152;
+}
+
+.kanban-grupo-cliente {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #384152;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.kanban-grupo-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.1rem 0.6rem;
+  margin-top: 0.15rem;
+  font-size: 0.66rem;
+  color: #8089a0;
+}
+
+.kanban-grupo-meta i {
+  color: #9aa4b2;
+  margin-right: 0.1rem;
+}
+
+.kanban-grupo-meta .badge {
+  font-size: 0.62rem;
+  padding: 0.22em 0.45em;
+  font-weight: 600;
+}
+
+.kanban-item {
+  padding: 0.45rem 0.6rem;
+  border-top: 1px solid #eef1f5;
+}
+
+.kanban-item:first-child {
+  border-top: none;
+}
+
+.kanban-item-titulo {
+  font-weight: 600;
+  font-size: 0.8rem;
+  line-height: 1.25;
+  margin-bottom: 0.25rem;
+}
+
+.kanban-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.1rem 0.65rem;
+  font-size: 0.7rem;
+  color: #6b7685;
+  margin-bottom: 0.35rem;
+}
+
+.kanban-item-meta i {
+  color: #9aa4b2;
+  margin-right: 0.1rem;
+}
+
+.kanban-item-rodape {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.kanban-item-rodape .badge {
+  font-size: 0.7rem;
+  padding: 0.3em 0.5em;
+}
+
+.kanban-item-rodape .btn {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.45rem;
+  line-height: 1.4;
+}
+
 @media (max-width: 991.98px) {
   .app-sidebar {
     transform: translateX(-100%);
