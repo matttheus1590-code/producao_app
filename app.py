@@ -6113,6 +6113,193 @@ def _gerar_pdf_risco_otd(linhas, resumo, filtros):
 
 
 # ----------------------------------------------------------------------
+# Estações — relatório PDF por estação (pedido do Bruno, 11/09/2026): "dentro
+# de cada estação" ele quer gerar um PDF voltado pra Pendente (fila), Em
+# produção, ou os dois juntos — visão rápida pra imprimir/levar pro chão de
+# fábrica sem precisar abrir o sistema.
+# ----------------------------------------------------------------------
+RELATORIO_ESTACAO_STATUS_INFO = {
+    "pendente": {"label": "Fila (pendente)", "titulo": "Pendente — fila"},
+    "em_producao": {"label": "Em produção", "titulo": "Em produção"},
+    "ambos": {"label": "Fila + Em produção", "titulo": "Fila + Em produção"},
+}
+
+
+def _itens_relatorio_estacao(nome, status_filtro):
+    """Busca os itens de UMA estação pro relatório PDF, já filtrados pelo
+    status escolhido — mesmo split PENDENTE (fila) vs demais (em produção,
+    exceto FINALIZADO) que _linha() já usa na tela de Estações, pra nunca
+    divergir do que o card mostra. Mesma ordenação por prazo (mais urgente
+    primeiro) do Kanban (_chave_prazo em estacao_kanban)."""
+    query = ItemPedido.query.options(selectinload(ItemPedido.pedido)).filter(ItemPedido.estacao == nome)
+    if status_filtro == "pendente":
+        query = query.filter(ItemPedido.status_producao == "PENDENTE")
+    elif status_filtro == "em_producao":
+        query = query.filter(ItemPedido.status_producao.notin_(["FINALIZADO", "PENDENTE"]))
+    else:  # "ambos"
+        query = query.filter(ItemPedido.status_producao != "FINALIZADO")
+    itens = query.all()
+
+    def _chave_prazo(item):
+        return (item.liberacao_prevista is None, item.liberacao_prevista or date.max, item.id)
+
+    itens.sort(key=_chave_prazo)
+    return itens
+
+
+def _gerar_pdf_estacao(estacao, itens, status_filtro):
+    """Relatório PDF de UMA estação (pedido do Bruno, 11/09/2026) — mesmo
+    estilo claro/print-friendly do relatório da Torre de Controle OTD
+    (_gerar_pdf_risco_otd): cabeçalho em azul claro, letras maiores, cores
+    de linha reaproveitando o semáforo de prazo que já aparece no Kanban."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    COR_SEMAFORO_BG = {
+        "vermelho": colors.HexColor("#f8d7da"),
+        "amarelo": colors.HexColor("#fff3cd"),
+        "verde": colors.white,
+        "cinza": colors.HexColor("#f1f3f5"),
+    }
+
+    info_filtro = RELATORIO_ESTACAO_STATUS_INFO.get(status_filtro, RELATORIO_ESTACAO_STATUS_INFO["ambos"])
+    rotulo = rotulo_estacao(estacao.nome)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title=f"{rotulo} — Relatório de Produção",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8.5, leading=10.5)
+    estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+    COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
+    COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula_bold, fontSize=9, leading=11, textColor=COR_CABECALHO_TEXTO,
+    )
+
+    elementos = [
+        Paragraph(f"{rotulo} — Relatório de Produção", estilos["Title"]),
+        Paragraph(
+            f'Filtro: {info_filtro["titulo"]} · Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")}',
+            estilos["Normal"],
+        ),
+        Spacer(1, 6 * mm),
+    ]
+
+    def _kpi(valor, rotulo_kpi):
+        return [
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=17, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8.5, alignment=1)),
+        ]
+
+    hoje = date.today()
+    total_itens = len(itens)
+    total_pecas = sum(item.quantidade or 0 for item in itens)
+    total_pecas_txt = int(total_pecas) if total_pecas == int(total_pecas) else total_pecas
+    na_fila = sum(1 for item in itens if item.status_producao == "PENDENTE")
+    em_producao = total_itens - na_fila
+    criticos = sum(
+        1 for item in itens
+        if item.liberacao_prevista is not None and item.liberacao_prevista < hoje
+    )
+
+    kpis = [
+        _kpi(total_itens, "OP/produto no relatório"),
+        _kpi(total_pecas_txt, "Total de peças"),
+        _kpi(na_fila, "Na fila"),
+        _kpi(em_producao, "Em produção"),
+        _kpi(criticos, "Críticos (atrasados)"),
+    ]
+    largura_kpi = (landscape(A4)[0] - 20 * mm) / len(kpis)
+    tabela_kpis = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
+    estilo_kpis = [
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("BACKGROUND", (4, 0), (4, -1), colors.HexColor("#f8d7da") if criticos else colors.white),
+    ]
+    tabela_kpis.setStyle(TableStyle(estilo_kpis))
+    elementos.append(tabela_kpis)
+    elementos.append(Spacer(1, 6 * mm))
+
+    cabecalho = [
+        "Pedido", "Cliente", "Produto", "Qtd", "Status", "Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo",
+    ]
+    dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+    cores_linhas = [COR_CABECALHO_BG]
+
+    for item in itens:
+        pedido = item.pedido
+        cor, dias = item.semaforo
+        if dias is None:
+            prazo_txt = "sem prazo"
+        elif dias < 0:
+            prazo_txt = f"{-dias}d atrasado"
+        else:
+            prazo_txt = f"{dias}d"
+        qtd = item.quantidade or 0
+        qtd_txt = int(qtd) if qtd == int(qtd) else qtd
+
+        linha_tabela = [
+            Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_celula),
+            Paragraph((pedido.cliente if pedido else None) or "—", estilo_celula),
+            Paragraph(item.descricao_produto or "—", estilo_celula),
+            Paragraph(str(qtd_txt), estilo_celula),
+            Paragraph("Pendente" if item.status_producao == "PENDENTE" else "Em produção", estilo_celula_bold),
+            Paragraph((_formatar_data_br(pedido.data_inclusao_pedido) if pedido else "") or "—", estilo_celula),
+            Paragraph((_formatar_data_br(pedido.data_cliente) if pedido else "") or "—", estilo_celula),
+            Paragraph(_formatar_data_br(item.liberacao_prevista) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(item.inicio_producao) or "—", estilo_celula),
+            Paragraph(prazo_txt, estilo_celula),
+        ]
+        dados_tabela.append(linha_tabela)
+        cores_linhas.append(COR_SEMAFORO_BG.get(cor, colors.white))
+
+    pesos = [12, 16, 22, 6, 11, 10, 10, 10, 10, 11]
+    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    soma_pesos = sum(pesos)
+    larguras_mm = [p / soma_pesos * largura_disponivel for p in pesos]
+
+    tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
+    estilo_tabela = [
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+    ]
+    for i, cor in enumerate(cores_linhas):
+        if i == 0:
+            continue
+        estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor))
+    tabela.setStyle(TableStyle(estilo_tabela))
+    elementos.append(tabela)
+
+    if not itens:
+        elementos.append(Spacer(1, 6 * mm))
+        elementos.append(Paragraph("Nenhum item encontrado com o filtro aplicado.", estilos["Normal"]))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"estacao_{estacao.nome}_{status_filtro}_{date.today().isoformat()}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+# ----------------------------------------------------------------------
 # P&D — Pesquisa e Desenvolvimento (Fase 14). Segue o mesmo padrão de
 # Qualidade/RNC acima: tabela própria, controle manual, funções auxiliares
 # separadas de filtro/listagem/dashboard/form pra não misturar com nenhuma
@@ -8802,7 +8989,23 @@ def register_routes(app):
             colunas=colunas,
             colunas_agrupadas=colunas_agrupadas,
             pode_editar=pode_editar_estacao(current_user, nome),
+            RELATORIO_ESTACAO_STATUS_INFO=RELATORIO_ESTACAO_STATUS_INFO,
         )
+
+    @app.route("/estacoes/<nome>/relatorio.pdf")
+    @login_required
+    def estacao_relatorio_pdf(nome):
+        estacao = Estacao.query.filter_by(nome=nome).first()
+        if estacao is None:
+            flash("Estação não encontrada.", "danger")
+            return redirect(url_for("estacoes_lista"))
+
+        status_filtro = request.args.get("status", "ambos")
+        if status_filtro not in RELATORIO_ESTACAO_STATUS_INFO:
+            status_filtro = "ambos"
+
+        itens = _itens_relatorio_estacao(nome, status_filtro)
+        return _gerar_pdf_estacao(estacao, itens, status_filtro)
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
     @login_required

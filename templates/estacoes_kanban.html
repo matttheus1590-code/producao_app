@@ -11,6 +11,30 @@
     {% if not pode_editar %}
     <span class="badge bg-secondary">Somente leitura</span>
     {% endif %}
+    <div class="dropdown">
+      <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+        <i class="bi bi-file-earmark-pdf"></i> Relatório PDF
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><h6 class="dropdown-header">Gerar relatório voltado para</h6></li>
+        <li>
+          <a class="dropdown-item" href="{{ url_for('estacao_relatorio_pdf', nome=estacao.nome, status='pendente') }}">
+            <span class="luz-piscando luz-vermelha d-inline-block me-1"></span> {{ RELATORIO_ESTACAO_STATUS_INFO.pendente.label }}
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{{ url_for('estacao_relatorio_pdf', nome=estacao.nome, status='em_producao') }}">
+            <span class="luz-piscando luz-amarela d-inline-block me-1"></span> {{ RELATORIO_ESTACAO_STATUS_INFO.em_producao.label }}
+          </a>
+        </li>
+        <li><hr class="dropdown-divider"></li>
+        <li>
+          <a class="dropdown-item" href="{{ url_for('estacao_relatorio_pdf', nome=estacao.nome, status='ambos') }}">
+            <i class="bi bi-collection"></i> {{ RELATORIO_ESTACAO_STATUS_INFO.ambos.label }}
+          </a>
+        </li>
+      </ul>
+    </div>
     <a href="{{ url_for('estacoes_lista') }}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-arrow-left"></i> Voltar
     </a>
