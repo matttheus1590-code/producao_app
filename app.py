@@ -3107,6 +3107,59 @@ def _tendencia_kpis(meses=6):
     return resultado
 
 
+def _lead_times_estacao(nome, meses_historico=3):
+    """Lead time médio de 1 estação, quebrado em 3 etapas (pedido do Bruno,
+    11/09/2026): "fila" (inclusão do pedido -> início da OP), "chão de
+    fábrica" (início -> conclusão da OP) e "total" (inclusão -> conclusão).
+    Olha TODO item que já começou nessa estação (não só os ainda abertos),
+    porque lead time é uma métrica histórica de desempenho, não de fila
+    atual — mesma fonte de dados de _gargalos_por_estacao. Devolve também o
+    histórico mensal (últimos N meses, pelo mês de CONCLUSÃO da OP) do lead
+    time total, mesmo padrão de _tendencia_kpis, pra ver se a estação está
+    melhorando ou piorando com o tempo."""
+    itens = (
+        ItemPedido.query.options(selectinload(ItemPedido.pedido))
+        .filter(ItemPedido.estacao == nome, ItemPedido.inicio_producao.isnot(None))
+        .all()
+    )
+
+    def _media(valores):
+        return round(sum(valores) / len(valores), 1) if valores else None
+
+    fila = _media([
+        (i.inicio_producao - i.pedido.data_inclusao_pedido).days
+        for i in itens if i.pedido and i.pedido.data_inclusao_pedido
+    ])
+    chao = _media([(i.termino_inspecao - i.inicio_producao).days for i in itens if i.termino_inspecao])
+    total = _media([
+        (i.termino_inspecao - i.pedido.data_inclusao_pedido).days
+        for i in itens if i.termino_inspecao and i.pedido and i.pedido.data_inclusao_pedido
+    ])
+
+    hoje = date.today()
+    pontos = []
+    ano, mes = hoje.year, hoje.month
+    for _ in range(meses_historico):
+        pontos.append((ano, mes))
+        mes -= 1
+        if mes == 0:
+            mes, ano = 12, ano - 1
+    pontos.reverse()
+
+    historico = []
+    for ano, mes in pontos:
+        inicio = date(ano, mes, 1)
+        fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
+        valores = [
+            (i.termino_inspecao - i.pedido.data_inclusao_pedido).days
+            for i in itens
+            if i.termino_inspecao and inicio <= i.termino_inspecao < fim and i.pedido and i.pedido.data_inclusao_pedido
+        ]
+        historico.append({"mes": f"{MESES_PT[mes - 1]}/{ano}", "lead_total_medio": _media(valores), "finalizados": len(valores)})
+
+    return {"fila": fila, "chao": chao, "total": total, "historico": historico}
+
+
 def _gargalos_por_estacao():
     """Ranking de estações por "quanto está travado ali": fila, atraso, tempo
     de espera médio, lead time médio e valor parado (não finalizado).
@@ -8612,21 +8665,12 @@ def register_routes(app):
                 ItemPedido.liberacao_prevista.isnot(None),
                 ItemPedido.liberacao_prevista < hoje,
             ).count()
-            itens_lt = ItemPedido.query.filter(
-                ItemPedido.estacao == e.nome,
-                ItemPedido.inicio_producao.isnot(None),
-                ItemPedido.termino_inspecao.isnot(None),
-            ).all()
-            lt_medio = (
-                round(sum((i.termino_inspecao - i.inicio_producao).days for i in itens_lt) / len(itens_lt), 1)
-                if itens_lt
-                else None
-            )
+            lead_times = _lead_times_estacao(e.nome)
             return {
                 "estacao": e, "rotulo": rotulo_estacao(e.nome),
                 "fila": fila_op, "fila_itens": fila_itens,
                 "em_producao": producao_op, "em_producao_itens": producao_itens,
-                "criticos": criticos, "lt_medio": lt_medio,
+                "criticos": criticos, "lt_medio": lead_times["chao"], "lead_times": lead_times,
             }
 
         # 3 colunas fixas (pedido do Bruno, 03/09/2026) — ver

@@ -229,6 +229,51 @@ body.col-resizing-ativo {
   box-shadow: 0 0.35rem 0.9rem rgba(0, 0, 0, 0.12);
 }
 
+/* Estações (/estacoes) monta o card sem envolver tudo num único <a> (o botão
+   "Ver lead time detalhado" abre um modal e não pode ficar aninhado dentro
+   de um link) — hover direto no card pra manter o mesmo efeito "vivo". */
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.35rem 0.9rem rgba(0, 0, 0, 0.12);
+}
+
+/* "Luzes" piscando nos cards de Estações (pedido do Bruno, 11/09/2026):
+   vermelha em itens na fila, amarela em itens em produção — só aparecem
+   quando a contagem é > 0, pra não soar alarme falso numa estação zerada. */
+.luz-piscando {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+  animation: luz-piscando-pulsar 1.2s infinite;
+}
+
+.luz-vermelha {
+  background-color: #dc3545;
+  box-shadow: 0 0 0 rgba(220, 53, 69, 0.7);
+  animation-name: luz-piscando-pulsar-vermelha;
+}
+
+.luz-amarela {
+  background-color: #ffc107;
+  box-shadow: 0 0 0 rgba(255, 193, 7, 0.7);
+  animation-name: luz-piscando-pulsar-amarela;
+}
+
+@keyframes luz-piscando-pulsar-vermelha {
+  0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(220, 53, 69, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+}
+
+@keyframes luz-piscando-pulsar-amarela {
+  0% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(255, 193, 7, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); }
+}
+
 .stat-card-active {
   box-shadow: 0 0 0 2px currentColor inset;
   background-color: rgba(0, 0, 0, 0.02);

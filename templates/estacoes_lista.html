@@ -20,32 +20,97 @@
     <div class="estacoes-grupo-titulo">{{ grupo.titulo }}</div>
     <div class="d-flex flex-column gap-2">
       {% for l in grupo.linhas %}
-      <a class="stat-card-link" href="{{ url_for('estacao_kanban', nome=l.estacao.nome) }}">
-        <div class="card stat-card h-100 {% if l.criticos > 0 %}border-danger{% endif %}">
-          <div class="card-body">
+      <div class="card stat-card h-100 {% if l.criticos > 0 %}border-danger{% endif %}">
+        <div class="card-body">
+          <a class="text-decoration-none text-reset d-block" href="{{ url_for('estacao_kanban', nome=l.estacao.nome) }}">
             <div class="d-flex justify-content-between align-items-center mb-2">
               <h6 class="mb-0">{{ l.rotulo }}</h6>
               {% if l.criticos > 0 %}<span class="badge bg-danger">{{ l.criticos }} crítico(s)</span>{% endif %}
             </div>
             <div class="row text-center">
               <div class="col-4">
-                <div class="fs-4 fw-semibold">{{ l.fila }}</div>
-                <div class="text-muted small">OP/produto na fila</div>
+                <div class="fs-4 fw-semibold">
+                  {{ l.fila }}
+                  {% if l.fila > 0 %}<span class="luz-piscando luz-vermelha" title="Itens aguardando início"></span>{% endif %}
+                </div>
+                <div class="text-muted small">🔴 OP/produto na fila</div>
                 <div class="small fw-semibold text-body mt-1">{{ l.fila_itens }} <span class="text-muted fw-normal">itens</span></div>
               </div>
               <div class="col-4">
-                <div class="fs-4 fw-semibold">{{ l.em_producao }}</div>
-                <div class="text-muted small">OP/produto em produção</div>
+                <div class="fs-4 fw-semibold">
+                  {{ l.em_producao }}
+                  {% if l.em_producao > 0 %}<span class="luz-piscando luz-amarela" title="Itens em produção"></span>{% endif %}
+                </div>
+                <div class="text-muted small">🟡 OP/produto em produção</div>
                 <div class="small fw-semibold text-body mt-1">{{ l.em_producao_itens }} <span class="text-muted fw-normal">itens</span></div>
               </div>
               <div class="col-4">
                 <div class="fs-4 fw-semibold">{{ l.lt_medio if l.lt_medio is not none else "—" }}</div>
-                <div class="text-muted small">lead time médio (d)</div>
+                <div class="text-muted small">📊 lead time médio (d)</div>
               </div>
+            </div>
+          </a>
+          <button type="button" class="btn btn-outline-secondary btn-sm w-100 mt-2"
+                  data-bs-toggle="modal" data-bs-target="#modalLeadTime{{ l.estacao.id }}">
+            <i class="bi bi-graph-up"></i> Ver lead time detalhado
+          </button>
+        </div>
+      </div>
+
+      <!-- Modal de lead time detalhado (pedido do Bruno, 11/09/2026): fila
+           (inclusão do pedido -> início da OP), chão de fábrica (início ->
+           conclusão) e total (inclusão -> conclusão), + histórico mensal do
+           lead time total dos últimos 3 meses. -->
+      <div class="modal fade" id="modalLeadTime{{ l.estacao.id }}" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title"><i class="bi bi-graph-up"></i> {{ l.rotulo }} — Lead time detalhado</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+              <div class="row g-2 text-center mb-3">
+                <div class="col-4">
+                  <div class="border rounded p-2 h-100">
+                    <div class="fs-5 fw-semibold">{{ l.lead_times.fila if l.lead_times.fila is not none else "—" }}</div>
+                    <div class="text-muted small">⏳ Fila (d)</div>
+                    <div class="text-muted" style="font-size: 0.7rem;">Inclusão do pedido → início da OP</div>
+                  </div>
+                </div>
+                <div class="col-4">
+                  <div class="border rounded p-2 h-100">
+                    <div class="fs-5 fw-semibold">{{ l.lead_times.chao if l.lead_times.chao is not none else "—" }}</div>
+                    <div class="text-muted small">🏭 Chão de fábrica (d)</div>
+                    <div class="text-muted" style="font-size: 0.7rem;">Início da OP → conclusão</div>
+                  </div>
+                </div>
+                <div class="col-4">
+                  <div class="border rounded p-2 h-100 bg-light">
+                    <div class="fs-5 fw-semibold">{{ l.lead_times.total if l.lead_times.total is not none else "—" }}</div>
+                    <div class="text-muted small">📊 Total (d)</div>
+                    <div class="text-muted" style="font-size: 0.7rem;">Inclusão do pedido → conclusão</div>
+                  </div>
+                </div>
+              </div>
+              <h6 class="text-uppercase text-muted small mb-2">Histórico do lead time total (últimos 3 meses)</h6>
+              <table class="table table-sm mb-0">
+                <thead class="table-light">
+                  <tr><th>Mês</th><th class="text-end">Lead time total médio (d)</th><th class="text-end">Finalizados</th></tr>
+                </thead>
+                <tbody>
+                  {% for h in l.lead_times.historico %}
+                  <tr>
+                    <td>{{ h.mes }}</td>
+                    <td class="text-end">{{ h.lead_total_medio if h.lead_total_medio is not none else "—" }}</td>
+                    <td class="text-end">{{ h.finalizados }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
-      </a>
+      </div>
       {% else %}
       <div class="text-muted small text-center py-4 border rounded">Nenhuma estação ativa neste grupo.</div>
       {% endfor %}
