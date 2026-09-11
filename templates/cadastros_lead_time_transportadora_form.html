@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}{{ "Editar lead time" if linha else "Novo lead time" }} · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">
+    <i class="bi bi-clock-history"></i> {{ "Editar lead time" if linha else "Novo lead time" }}
+  </h4>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('cadastros_lead_time_transportadora') }}">
+    <i class="bi bi-arrow-left"></i> Voltar
+  </a>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">Origem</label>
+          <input type="text" class="form-control" name="origem"
+            value="{{ form.get('origem', linha.origem if linha else '') }}">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label small text-muted mb-1">UF (destino)</label>
+          <select class="form-select" name="uf" required>
+            <option value="">Selecione</option>
+            {% for uf in UFS_BRASIL %}
+              <option value="{{ uf }}" {% if form.get('uf', linha.uf if linha else '') == uf %}selected{% endif %}>{{ uf }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">A região é preenchida automaticamente a partir do estado.</div>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Modalidade</label>
+          <select class="form-select" name="modalidade" required>
+            <option value="">Selecione</option>
+            {% for m in LEAD_TIME_MODALIDADE_OPCOES %}
+              <option value="{{ m }}" {% if form.get('modalidade', linha.modalidade if linha else '') == m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Unidade do prazo</label>
+          <select class="form-select" name="unidade_prazo" required>
+            {% for u in LEAD_TIME_UNIDADE_OPCOES %}
+              <option value="{{ u }}" {% if form.get('unidade_prazo', linha.unidade_prazo if linha else 'Dias úteis') == u %}selected{% endif %}>{{ u }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Prazo mínimo</label>
+          <input type="number" step="0.5" min="0" class="form-control" name="prazo_minimo" required
+            value="{{ form.get('prazo_minimo', linha.prazo_minimo if linha else '') }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Prazo máximo</label>
+          <input type="number" step="0.5" min="0" class="form-control" name="prazo_maximo"
+            value="{{ form.get('prazo_maximo', linha.prazo_maximo if linha and linha.prazo_maximo else '') }}">
+          <div class="form-text">Deixe em branco quando o prazo for um valor fixo (não uma faixa).</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label small text-muted mb-1">Observação</label>
+          <input type="text" class="form-control" name="observacao" maxlength="200"
+            value="{{ form.get('observacao', linha.observacao if linha and linha.observacao else '') }}">
+        </div>
+
+        {% if linha %}
+        <div class="col-12">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="ativo" id="campoAtivo" value="1" {% if linha.ativo %}checked{% endif %}>
+            <label class="form-check-label" for="campoAtivo">Lead time ativo</label>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="mt-4 d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Salvar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

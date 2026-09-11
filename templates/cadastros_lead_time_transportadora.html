@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Lead time Transportadora · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h4 class="mb-0"><i class="bi bi-clock-history"></i> Lead time Transportadora</h4>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('cadastros_transportadoras') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Voltar
+    </a>
+    <a href="{{ url_for('cadastros_lead_time_transportadora_novo') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-circle"></i> Novo lead time
+    </a>
+  </div>
+</div>
+<p class="text-muted small mb-3">
+  Prazo de entrega por UF/modalidade, simulando frete saindo de <strong>{{ origem_padrao }}</strong>. Prazos em dias úteis, exceto onde indicado (RJ/SP em horas).
+</p>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Região</th>
+        <th>UF</th>
+        <th>Modalidade</th>
+        <th>Prazo</th>
+        <th>Observação</th>
+        <th>Situação</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% set regiao_anterior = namespace(valor=None) %}
+      {% for l in linhas %}
+      {% if l.regiao != regiao_anterior.valor %}
+        {% set regiao_anterior.valor = l.regiao %}
+        <tr class="table-light">
+          <td colspan="7" class="fw-semibold text-uppercase small">{{ l.regiao }}</td>
+        </tr>
+      {% endif %}
+      <tr>
+        <td></td>
+        <td class="fw-semibold">{{ l.uf }}</td>
+        <td>
+          {% if l.modalidade == "Aéreo" %}<i class="bi bi-airplane"></i>{% else %}<i class="bi bi-truck"></i>{% endif %}
+          {{ l.modalidade }}
+        </td>
+        <td class="fw-semibold">{{ l.prazo_formatado }}</td>
+        <td class="text-muted">{{ l.observacao or "—" }}</td>
+        <td>
+          {% if l.ativo %}<span class="badge bg-success">Ativo</span>{% else %}<span class="badge bg-secondary">Inativo</span>{% endif %}
+        </td>
+        <td class="text-end">
+          <a href="{{ url_for('cadastros_lead_time_transportadora_editar', linha_id=l.id) }}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-4">Nenhum lead time cadastrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

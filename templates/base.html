@@ -123,6 +123,9 @@
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('cadastros_transportadoras') %}active{% endif %}" href="{{ url_for('cadastros_transportadoras') }}">
           <span>🚛 Transportadoras</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('cadastros_lead_time_transportadora') %}active{% endif %}" href="{{ url_for('cadastros_lead_time_transportadora') }}">
+          <span>🕒 Lead time Transportadora</span>
+        </a>
         {% endif %}
 
         {% if current_user.role == 'ADMIN' %}

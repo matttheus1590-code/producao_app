@@ -119,6 +119,12 @@ REGIAO_POR_UF = {
     "PR": "Sul", "RS": "Sul", "SC": "Sul",
 }
 REGIOES_OPCOES = ["Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul"]
+UFS_BRASIL = sorted(REGIAO_POR_UF.keys())
+
+# Cadastro "Lead time Transportadora" (pedido do Bruno, 11/09/2026): prazo de
+# entrega por UF/modalidade, pra simular frete saindo de Pindamonhangaba-SP.
+LEAD_TIME_MODALIDADE_OPCOES = ["Rodoviário", "Aéreo"]
+LEAD_TIME_UNIDADE_OPCOES = ["Dias úteis", "Horas"]
 
 PRIORIDADE_OPCOES = ["BAIXA", "MÉDIA", "ALTA"]
 
@@ -451,6 +457,53 @@ class Transportadora(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(120), unique=True, nullable=False)
     ativo = db.Column(db.Boolean, nullable=False, default=True)
+
+
+class LeadTimeTransportadora(db.Model):
+    """Cadastro "Lead time Transportadora" (pedido do Bruno, 11/09/2026): uma
+    tabela de referência de prazo de entrega por UF/modalidade — ele mandou
+    uma tabela de um parceiro logístico (saindo de São Paulo capital) e pediu
+    pra cadastrar/parametrizar tudo aqui, simulando frete saindo de
+    Pindamonhangaba-SP. Ele avisou que tem "outra ideia" pra usar isso em
+    breve — por isso 1 linha por UF/modalidade (não texto solto agrupado por
+    região como na tabela original), pra dar pra consultar/calcular
+    automaticamente depois sem precisar remodelar.
+
+    `regiao` é sempre derivada de `uf` via REGIAO_POR_UF (nunca digitada à
+    mão), pra nunca divergir. `prazo_maximo` fica None quando o prazo é um
+    valor fixo (não faixa) — só as 3 linhas de faixa da tabela original
+    (RJ/SP, MG/ES e SC/PR/RS por Rodoviário) usam os dois campos."""
+
+    __tablename__ = "lead_time_transportadora"
+    __table_args__ = (
+        db.UniqueConstraint("origem", "uf", "modalidade", name="uq_lead_time_transportadora_rota"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    origem = db.Column(db.String(120), nullable=False, default="Pindamonhangaba - SP")
+    uf = db.Column(db.String(2), nullable=False)
+    regiao = db.Column(db.String(20), nullable=False)
+    modalidade = db.Column(db.String(20), nullable=False)
+    prazo_minimo = db.Column(db.Float, nullable=False)
+    prazo_maximo = db.Column(db.Float, nullable=True)
+    unidade_prazo = db.Column(db.String(20), nullable=False, default="Dias úteis")
+    observacao = db.Column(db.String(200), nullable=True)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
+
+    @property
+    def prazo_formatado(self):
+        def fmt(n):
+            return str(int(n)) if float(n).is_integer() else str(n).replace(".", ",")
+
+        sufixo = "h" if self.unidade_prazo == "Horas" else None
+        if sufixo:
+            if self.prazo_maximo and self.prazo_maximo != self.prazo_minimo:
+                return f"{fmt(self.prazo_minimo)}{sufixo} – {fmt(self.prazo_maximo)}{sufixo}"
+            return f"{fmt(self.prazo_minimo)}{sufixo}"
+        if self.prazo_maximo and self.prazo_maximo != self.prazo_minimo:
+            return f"{fmt(self.prazo_minimo)} – {fmt(self.prazo_maximo)} dias úteis"
+        rotulo = "dia útil" if self.prazo_minimo == 1 else "dias úteis"
+        return f"{fmt(self.prazo_minimo)} {rotulo}"
 
 
 class Pedido(db.Model):

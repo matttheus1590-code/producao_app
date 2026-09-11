@@ -23,6 +23,8 @@ from models import (
     GO_STATUS_PEDIDO_INFO_CORES,
     GO_STATUS_PEDIDO_INFO_OPCOES,
     GO_TIPO_PEDIDO_OPCOES,
+    LEAD_TIME_MODALIDADE_OPCOES,
+    LEAD_TIME_UNIDADE_OPCOES,
     PD_CATEGORIA_OPCOES,
     PD_ETAPA_CORES,
     PD_ETAPA_OPCOES,
@@ -66,11 +68,13 @@ from models import (
     STATUS_CHAO_OPCOES,
     STATUS_CORES,
     STATUS_OPCOES,
+    UFS_BRASIL,
     ControleSistema,
     Estacao,
     HistoricoAlteracao,
     InspecaoFinal,
     ItemPedido,
+    LeadTimeTransportadora,
     Pedido,
     PedidoOperacao,
     Programacao,
@@ -294,6 +298,7 @@ def create_app():
         _corrigir_colisao_barra_gestao_operacao(app)
         _seed_usuario_pd_gustavo(app)
         _seed_usuarios_pcp_fabiano_daniel(app)
+        _seed_lead_time_transportadora(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -343,6 +348,9 @@ def create_app():
             GO_TIPO_PEDIDO_OPCOES=GO_TIPO_PEDIDO_OPCOES,
             GO_STATUS_PEDIDO_INFO_OPCOES=GO_STATUS_PEDIDO_INFO_OPCOES,
             GO_STATUS_PEDIDO_INFO_CORES=GO_STATUS_PEDIDO_INFO_CORES,
+            UFS_BRASIL=UFS_BRASIL,
+            LEAD_TIME_MODALIDADE_OPCOES=LEAD_TIME_MODALIDADE_OPCOES,
+            LEAD_TIME_UNIDADE_OPCOES=LEAD_TIME_UNIDADE_OPCOES,
             RNC_EMITENTE_OPCOES=RNC_EMITENTE_OPCOES,
             RNC_SETOR_OPCOES=RNC_SETOR_OPCOES,
             RNC_ORIGEM_OPCOES=RNC_ORIGEM_OPCOES,
@@ -1454,6 +1462,108 @@ def _seed_usuarios_pcp_fabiano_daniel(app):
         db.session.add(usuario)
         db.session.commit()
         app.logger.info("Usuário %s (PCP) criado — troque a senha depois de conferir o acesso.", username)
+
+
+_CHAVE_SEED_LEAD_TIME_TRANSPORTADORA_11_09_2026 = "seed_lead_time_transportadora_pindamonhangaba_11_09_2026"
+_LEAD_TIME_ORIGEM_PADRAO = "Pindamonhangaba - SP"
+
+# Tabela de prazos que o Bruno anexou (11/09/2026) — prazo de entrega por UF/
+# modalidade de um parceiro logístico (a tabela original tinha "São Paulo
+# (SP)" como referência de saída; ele pediu pra simular saindo de
+# Pindamonhangaba-SP com os MESMOS prazos, sem recalcular nada). 1 linha por
+# (uf, modalidade, prazo_minimo, prazo_maximo, unidade, observacao) — Bahia
+# já entra como exceção própria (7d rodoviário / 4d aéreo), por isso as
+# outras linhas do Nordeste não carregam mais a nota "BA: Xd" que a tabela
+# original tinha (fica redundante com a linha própria da BA).
+#
+# Nota: a tabela original não lista Tocantins (TO) na região Norte — apesar
+# de TO fazer parte do Norte no restante do sistema (REGIAO_POR_UF), ele NÃO
+# foi cadastrado aqui pra não inventar um prazo que a tabela do Bruno não
+# informou. Fica faltando de propósito — ver aviso no relatório de entrega.
+_LEAD_TIME_TRANSPORTADORA_SEED = [
+    # UF,  modalidade,   min, max,  unidade,       observação
+    ("RJ", "Rodoviário", 48, 72, "Horas", None),
+    ("SP", "Rodoviário", 48, 72, "Horas", None),
+    ("MG", "Rodoviário", 5, 7, "Dias úteis", None),
+    ("MG", "Aéreo", 4, None, "Dias úteis", None),
+    ("ES", "Rodoviário", 5, 7, "Dias úteis", None),
+    ("ES", "Aéreo", 4, None, "Dias úteis", None),
+    ("SC", "Rodoviário", 5, 7, "Dias úteis", None),
+    ("SC", "Aéreo", 4, None, "Dias úteis", None),
+    ("PR", "Rodoviário", 5, 7, "Dias úteis", None),
+    ("PR", "Aéreo", 4, None, "Dias úteis", None),
+    ("RS", "Rodoviário", 5, 7, "Dias úteis", None),
+    ("RS", "Aéreo", 4, None, "Dias úteis", None),
+    ("GO", "Rodoviário", 10, None, "Dias úteis", None),
+    ("GO", "Aéreo", 4, None, "Dias úteis", None),
+    ("MT", "Rodoviário", 10, None, "Dias úteis", None),
+    ("MT", "Aéreo", 4, None, "Dias úteis", None),
+    ("MS", "Rodoviário", 10, None, "Dias úteis", None),
+    ("MS", "Aéreo", 4, None, "Dias úteis", None),
+    ("DF", "Rodoviário", 10, None, "Dias úteis", None),
+    ("DF", "Aéreo", 4, None, "Dias úteis", None),
+    ("AC", "Rodoviário", 22, None, "Dias úteis", None),
+    ("AC", "Aéreo", 12, None, "Dias úteis", None),
+    ("AP", "Rodoviário", 22, None, "Dias úteis", None),
+    ("AP", "Aéreo", 12, None, "Dias úteis", None),
+    ("AM", "Rodoviário", 22, None, "Dias úteis", None),
+    ("AM", "Aéreo", 12, None, "Dias úteis", None),
+    ("PA", "Rodoviário", 22, None, "Dias úteis", None),
+    ("PA", "Aéreo", 12, None, "Dias úteis", None),
+    ("RO", "Rodoviário", 22, None, "Dias úteis", None),
+    ("RO", "Aéreo", 12, None, "Dias úteis", None),
+    ("RR", "Rodoviário", 22, None, "Dias úteis", None),
+    ("RR", "Aéreo", 12, None, "Dias úteis", None),
+    ("AL", "Rodoviário", 15, None, "Dias úteis", None),
+    ("AL", "Aéreo", 7, None, "Dias úteis", None),
+    ("CE", "Rodoviário", 15, None, "Dias úteis", None),
+    ("CE", "Aéreo", 7, None, "Dias úteis", None),
+    ("MA", "Rodoviário", 15, None, "Dias úteis", None),
+    ("MA", "Aéreo", 7, None, "Dias úteis", None),
+    ("PB", "Rodoviário", 15, None, "Dias úteis", None),
+    ("PB", "Aéreo", 7, None, "Dias úteis", None),
+    ("PE", "Rodoviário", 15, None, "Dias úteis", None),
+    ("PE", "Aéreo", 7, None, "Dias úteis", None),
+    ("PI", "Rodoviário", 15, None, "Dias úteis", None),
+    ("PI", "Aéreo", 7, None, "Dias úteis", None),
+    ("RN", "Rodoviário", 15, None, "Dias úteis", None),
+    ("RN", "Aéreo", 7, None, "Dias úteis", None),
+    ("SE", "Rodoviário", 15, None, "Dias úteis", None),
+    ("SE", "Aéreo", 7, None, "Dias úteis", None),
+    ("BA", "Rodoviário", 7, None, "Dias úteis", "Exceção Nordeste"),
+    ("BA", "Aéreo", 4, None, "Dias úteis", "Exceção Nordeste"),
+]
+
+
+def _seed_lead_time_transportadora(app):
+    """Importa (uma única vez) a tabela de prazos de entrega por UF/
+    modalidade que o Bruno anexou (11/09/2026), pro novo cadastro "Lead time
+    Transportadora" — simulando frete saindo de Pindamonhangaba-SP. Guardado
+    por `ControleSistema` (mesmo padrão de _seed_rnc_qualidade): roda
+    exatamente uma vez — depois disso, os prazos ficam livres pra ele editar
+    pela tela de cadastro sem risco de um próximo boot sobrescrever o ajuste."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_LEAD_TIME_TRANSPORTADORA_11_09_2026).first() is not None:
+        return
+
+    total = 0
+    for uf, modalidade, minimo, maximo, unidade, observacao in _LEAD_TIME_TRANSPORTADORA_SEED:
+        db.session.add(
+            LeadTimeTransportadora(
+                origem=_LEAD_TIME_ORIGEM_PADRAO,
+                uf=uf,
+                regiao=REGIAO_POR_UF.get(uf, ""),
+                modalidade=modalidade,
+                prazo_minimo=minimo,
+                prazo_maximo=maximo,
+                unidade_prazo=unidade,
+                observacao=observacao,
+                ativo=True,
+            )
+        )
+        total += 1
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_LEAD_TIME_TRANSPORTADORA_11_09_2026))
+    db.session.commit()
+    app.logger.info("Lead time Transportadora: %d linhas cadastradas (origem %s).", total, _LEAD_TIME_ORIGEM_PADRAO)
 
 
 def _pagina_inicial(usuario):
@@ -6229,6 +6339,125 @@ def register_routes(app):
             return redirect(url_for("cadastros_transportadoras"))
 
         return render_template("cadastros_transportadoras_form.html", transportadora=transportadora, form={})
+
+    # ------------------------------------------------------------------
+    # Cadastro "Lead time Transportadora" (pedido do Bruno, 11/09/2026):
+    # prazo de entrega por UF/modalidade, simulando frete saindo de
+    # Pindamonhangaba-SP — ver _seed_lead_time_transportadora (dados
+    # iniciais) e LeadTimeTransportadora (models.py).
+    # ------------------------------------------------------------------
+    _LEAD_TIME_ORDEM_REGIAO = ["Sudeste", "Sul", "Centro-Oeste", "Norte", "Nordeste"]
+
+    def _ordenar_lead_time(linhas):
+        def chave(linha):
+            posicao_regiao = (
+                _LEAD_TIME_ORDEM_REGIAO.index(linha.regiao)
+                if linha.regiao in _LEAD_TIME_ORDEM_REGIAO
+                else len(_LEAD_TIME_ORDEM_REGIAO)
+            )
+            posicao_modalidade = (
+                LEAD_TIME_MODALIDADE_OPCOES.index(linha.modalidade)
+                if linha.modalidade in LEAD_TIME_MODALIDADE_OPCOES
+                else len(LEAD_TIME_MODALIDADE_OPCOES)
+            )
+            return (posicao_regiao, linha.uf, posicao_modalidade)
+
+        return sorted(linhas, key=chave)
+
+    def _validar_lead_time_form(f, ignorar_id=None):
+        """Valida/normaliza o formulário de Lead time Transportadora — devolve
+        (dados, None) se ok, ou (None, mensagem_erro) se algo não bater.
+        Compartilhado entre novo/editar pra nunca divergir a validação."""
+        origem = f.get("origem", "").strip() or _LEAD_TIME_ORIGEM_PADRAO
+        uf = f.get("uf", "").strip().upper()
+        modalidade = f.get("modalidade", "").strip()
+        unidade_prazo = f.get("unidade_prazo", "").strip()
+        observacao = f.get("observacao", "").strip() or None
+        prazo_minimo = _parse_float_form(f.get("prazo_minimo"), default=None)
+        prazo_maximo = _parse_float_form(f.get("prazo_maximo"), default=None)
+
+        if uf not in UFS_BRASIL:
+            return None, "Selecione um estado (UF) válido."
+        if modalidade not in LEAD_TIME_MODALIDADE_OPCOES:
+            return None, "Selecione a modalidade (Rodoviário ou Aéreo)."
+        if unidade_prazo not in LEAD_TIME_UNIDADE_OPCOES:
+            return None, "Selecione a unidade do prazo (Dias úteis ou Horas)."
+        if prazo_minimo is None or prazo_minimo <= 0:
+            return None, "Informe um prazo mínimo válido (maior que zero)."
+        if prazo_maximo is not None and prazo_maximo < prazo_minimo:
+            return None, "O prazo máximo não pode ser menor que o prazo mínimo."
+
+        conflito = LeadTimeTransportadora.query.filter_by(origem=origem, uf=uf, modalidade=modalidade)
+        if ignorar_id is not None:
+            conflito = conflito.filter(LeadTimeTransportadora.id != ignorar_id)
+        if conflito.first() is not None:
+            return None, f"Já existe um lead time cadastrado para {uf} / {modalidade} (origem {origem})."
+
+        return {
+            "origem": origem,
+            "uf": uf,
+            "regiao": REGIAO_POR_UF.get(uf, ""),
+            "modalidade": modalidade,
+            "prazo_minimo": prazo_minimo,
+            "prazo_maximo": prazo_maximo,
+            "unidade_prazo": unidade_prazo,
+            "observacao": observacao,
+        }, None
+
+    @app.route("/cadastros/lead-time-transportadora")
+    @requer_role("ADMIN", "PCP")
+    def cadastros_lead_time_transportadora():
+        linhas = _ordenar_lead_time(LeadTimeTransportadora.query.all())
+        return render_template(
+            "cadastros_lead_time_transportadora.html",
+            linhas=linhas,
+            origem_padrao=_LEAD_TIME_ORIGEM_PADRAO,
+        )
+
+    @app.route("/cadastros/lead-time-transportadora/novo", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def cadastros_lead_time_transportadora_novo():
+        if request.method == "POST":
+            f = request.form
+            dados, erro = _validar_lead_time_form(f)
+            if erro:
+                flash(erro, "danger")
+                return render_template("cadastros_lead_time_transportadora_form.html", linha=None, form=f)
+
+            nova = LeadTimeTransportadora(ativo=True, **dados)
+            db.session.add(nova)
+            db.session.commit()
+            flash(f"Lead time {nova.uf} / {nova.modalidade} cadastrado com sucesso.", "success")
+            return redirect(url_for("cadastros_lead_time_transportadora"))
+
+        return render_template(
+            "cadastros_lead_time_transportadora_form.html", linha=None,
+            form={"origem": _LEAD_TIME_ORIGEM_PADRAO, "unidade_prazo": "Dias úteis"},
+        )
+
+    @app.route("/cadastros/lead-time-transportadora/<int:linha_id>/editar", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def cadastros_lead_time_transportadora_editar(linha_id):
+        linha = db.session.get(LeadTimeTransportadora, linha_id)
+        if linha is None:
+            flash("Lead time não encontrado.", "danger")
+            return redirect(url_for("cadastros_lead_time_transportadora"))
+
+        if request.method == "POST":
+            f = request.form
+            dados, erro = _validar_lead_time_form(f, ignorar_id=linha.id)
+            if erro:
+                flash(erro, "danger")
+                return render_template("cadastros_lead_time_transportadora_form.html", linha=linha, form=f)
+
+            for campo, valor in dados.items():
+                setattr(linha, campo, valor)
+            linha.ativo = bool(f.get("ativo"))
+            db.session.commit()
+            flash(f"Lead time {linha.uf} / {linha.modalidade} atualizado com sucesso.", "success")
+            return redirect(url_for("cadastros_lead_time_transportadora"))
+
+        return render_template("cadastros_lead_time_transportadora_form.html", linha=linha, form={})
 
     @app.route("/alertas")
     @login_required
