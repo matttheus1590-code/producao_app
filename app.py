@@ -8582,6 +8582,16 @@ def register_routes(app):
         hoje = date.today()
         estacoes_por_nome = {e.nome: e for e in Estacao.query.all()}
 
+        def _op_e_itens(*filtros):
+            """(nº de OP/produto, soma de itens) — pedido do Bruno (11/09/2026):
+            cada ItemPedido é 1 linha de OP/produto no pedido, e o campo
+            quantidade é o total de peças físicas daquela linha. Uma query só
+            (count + sum) pra não duplicar ida ao banco por estação/bucket."""
+            op, itens = db.session.query(
+                func.count(ItemPedido.id), func.coalesce(func.sum(ItemPedido.quantidade), 0)
+            ).filter(*filtros).one()
+            return op, int(round(itens))
+
         def _linha(e):
             # Correção (pedido do Bruno, 11/09/2026): "na fila" contava TODO
             # item não finalizado (inclusive os que já estavam em produção),
@@ -8589,14 +8599,13 @@ def register_routes(app):
             # aparecia com itens "na fila". Agora "fila" é só PENDENTE (ainda
             # não começou) e "em produção" é ANDAMENTO/EM TRATATIVA (já
             # começou, mesma régua do status_chao usado no Kanban da
-            # estação, pra nunca mais divergir).
-            fila = ItemPedido.query.filter(
-                ItemPedido.estacao == e.nome, ItemPedido.status_producao == "PENDENTE"
-            ).count()
-            em_producao = ItemPedido.query.filter(
-                ItemPedido.estacao == e.nome,
-                ItemPedido.status_producao.notin_(["FINALIZADO", "PENDENTE"]),
-            ).count()
+            # estação, pra nunca mais divergir). Cada bucket mostra 2
+            # números: quantas OPs/produtos (linhas de ItemPedido) e o
+            # total de itens (soma de quantidade) dentro delas.
+            fila_op, fila_itens = _op_e_itens(ItemPedido.estacao == e.nome, ItemPedido.status_producao == "PENDENTE")
+            producao_op, producao_itens = _op_e_itens(
+                ItemPedido.estacao == e.nome, ItemPedido.status_producao.notin_(["FINALIZADO", "PENDENTE"])
+            )
             criticos = ItemPedido.query.filter(
                 ItemPedido.estacao == e.nome,
                 ItemPedido.status_producao != "FINALIZADO",
@@ -8614,7 +8623,9 @@ def register_routes(app):
                 else None
             )
             return {
-                "estacao": e, "rotulo": rotulo_estacao(e.nome), "fila": fila, "em_producao": em_producao,
+                "estacao": e, "rotulo": rotulo_estacao(e.nome),
+                "fila": fila_op, "fila_itens": fila_itens,
+                "em_producao": producao_op, "em_producao_itens": producao_itens,
                 "criticos": criticos, "lt_medio": lt_medio,
             }
 
