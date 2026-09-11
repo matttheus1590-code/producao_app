@@ -3114,9 +3114,11 @@ def _lead_times_estacao(nome, meses_historico=3):
     Olha TODO item que já começou nessa estação (não só os ainda abertos),
     porque lead time é uma métrica histórica de desempenho, não de fila
     atual — mesma fonte de dados de _gargalos_por_estacao. Devolve também o
-    histórico mensal (últimos N meses, pelo mês de CONCLUSÃO da OP) do lead
-    time total, mesmo padrão de _tendencia_kpis, pra ver se a estação está
-    melhorando ou piorando com o tempo."""
+    histórico mensal (últimos N meses, pelo mês de CONCLUSÃO da OP), mesmo
+    padrão de _tendencia_kpis, com os 3 lead times médios (fila/chão de
+    fábrica/total) de cada mês — pra ver se a estação está melhorando ou
+    piorando com o tempo — e a produção mais longa/mais curta (lead time
+    total) de cada mês, pedido do Bruno (11/09/2026)."""
     itens = (
         ItemPedido.query.options(selectinload(ItemPedido.pedido))
         .filter(ItemPedido.estacao == nome, ItemPedido.inicio_producao.isnot(None))
@@ -3146,16 +3148,43 @@ def _lead_times_estacao(nome, meses_historico=3):
             mes, ano = 12, ano - 1
     pontos.reverse()
 
+    def _producao(i, dias):
+        """Dados de 1 OP/produto pra identificar a produção mais longa/curta
+        do mês — pedido do Bruno (11/09/2026)."""
+        return {
+            "pedido_venda": i.pedido.pedido_venda if i.pedido else None,
+            "produto": i.descricao_produto,
+            "dias": dias,
+        }
+
     historico = []
     for ano, mes in pontos:
         inicio = date(ano, mes, 1)
         fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
-        valores = [
-            (i.termino_inspecao - i.pedido.data_inclusao_pedido).days
-            for i in itens
+        itens_mes = [
+            i for i in itens
             if i.termino_inspecao and inicio <= i.termino_inspecao < fim and i.pedido and i.pedido.data_inclusao_pedido
         ]
-        historico.append({"mes": f"{MESES_PT[mes - 1]}/{ano}", "lead_total_medio": _media(valores), "finalizados": len(valores)})
+        valores_fila = [(i.inicio_producao - i.pedido.data_inclusao_pedido).days for i in itens_mes]
+        valores_chao = [(i.termino_inspecao - i.inicio_producao).days for i in itens_mes]
+        producoes = [_producao(i, (i.termino_inspecao - i.pedido.data_inclusao_pedido).days) for i in itens_mes]
+
+        mais_longa = max(producoes, key=lambda p: p["dias"]) if producoes else None
+        mais_curta = min(producoes, key=lambda p: p["dias"]) if producoes else None
+        # Se só tem 1 produção no mês, "mais longa" e "mais curta" seriam a
+        # mesma linha duas vezes — mostra só uma vez pra não confundir.
+        if producoes and len(producoes) == 1:
+            mais_curta = None
+
+        historico.append({
+            "mes": f"{MESES_PT[mes - 1]}/{ano}",
+            "lead_fila_medio": _media(valores_fila),
+            "lead_chao_medio": _media(valores_chao),
+            "lead_total_medio": _media([p["dias"] for p in producoes]),
+            "finalizados": len(itens_mes),
+            "mais_longa": mais_longa,
+            "mais_curta": mais_curta,
+        })
 
     return {"fila": fila, "chao": chao, "total": total, "historico": historico}
 
