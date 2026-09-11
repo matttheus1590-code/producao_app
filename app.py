@@ -5739,6 +5739,269 @@ def _pedidos_risco_otd(args):
     return linhas, _resumo_risco_otd(linhas)
 
 
+def _formatar_data_br(d):
+    return d.strftime("%d/%m/%Y") if d else ""
+
+
+def _texto_filtros_risco_otd(filtros):
+    """Descrição legível dos filtros aplicados (busca/status) — usada no
+    cabeçalho dos relatórios Excel/PDF da Gestão de Risco, pra deixar claro
+    pro Bruno (ou quem abrir o arquivo depois) que o relatório reflete só o
+    que estava filtrado na tela, não a base inteira."""
+    partes = []
+    if filtros.get("busca"):
+        partes.append(f'Busca: "{filtros["busca"]}"')
+    if filtros.get("status"):
+        labels = [RISCO_OTD_STATUS_INFO[s]["label"] for s in filtros["status"] if s in RISCO_OTD_STATUS_INFO]
+        partes.append("Status: " + ", ".join(labels))
+    return " · ".join(partes) if partes else "Nenhum filtro aplicado (todos os pedidos CIF em aberto)"
+
+
+def _linhas_export_risco_otd(linhas):
+    """Detalhamento completo (1 linha por pedido) pro relatório da Gestão de
+    Risco — pedido do Bruno (11/09/2026): "relatório completo com todas as
+    informações que consta na aba". Reaproveita os MESMOS dicts que já
+    alimentam a tabela da tela (_pedidos_risco_otd), sem recalcular nada."""
+    cabecalho = [
+        "Pedido", "Cliente", "UF", "Região", "Transportadora",
+        "Prazo comercial", "Previsão de produção", "Produção real?",
+        "Lead transporte rodoviário (dias)", "Lead transporte aéreo (dias)",
+        "Previsão de entrega", "Data máxima para produção",
+        "Folga (dias)", "Atraso projetado (dias)",
+        "Status", "Descrição do status", "Gargalo principal", "Ação recomendada", "Alternativas",
+    ]
+    linhas_export = [
+        [
+            l["pedido_venda"], l["cliente"], l["uf"] or "", l["regiao"] or "", l["transportadora"] or "",
+            _formatar_data_br(l["prazo_comercial_data"]), _formatar_data_br(l["producao_previsao_data"]),
+            "Sim" if l["producao_e_real"] else "Não (previsão PCP)",
+            l["transporte_rodoviario_dias"] if l["transporte_rodoviario_dias"] is not None else "",
+            l["transporte_aereo_dias"] if l["transporte_aereo_dias"] is not None else "",
+            _formatar_data_br(l["data_prevista_entrega"]), _formatar_data_br(l["data_maxima_producao"]),
+            l["folga_dias"] if l["folga_dias"] is not None else "",
+            l["atraso_projetado_dias"] if l["atraso_projetado_dias"] is not None else "",
+            l["status_info"]["label"], l["status_info"]["descricao"],
+            l["gargalo"] or "", l["acao_recomendada"] or "", "; ".join(l["alternativas"]),
+        ]
+        for l in linhas
+    ]
+    return cabecalho, linhas_export
+
+
+def _gerar_excel_risco_otd(linhas, resumo, filtros):
+    """Relatório Excel completo da Gestão de Risco (pedido do Bruno,
+    11/09/2026) — 2 abas: "Resumo" (os mesmos KPIs da tela) e "Pedidos em
+    risco" (detalhamento linha a linha, ver _linhas_export_risco_otd).
+    Estrutura de múltiplas abas -> monta o Workbook na mão (mesmo padrão de
+    _construir_backup_pedidos_wb), não dá pra reaproveitar _responder_xlsx
+    (que é sempre 1 aba só)."""
+    wb = Workbook()
+
+    ws_resumo = wb.active
+    ws_resumo.title = "Resumo"
+    linhas_resumo = [
+        ("Torre de Controle OTD — Relatório de Risco", ""),
+        ("Gerado em", datetime.now().strftime("%d/%m/%Y %H:%M")),
+        ("Filtros aplicados", _texto_filtros_risco_otd(filtros)),
+        ("", ""),
+        ("Total de pedidos CIF em aberto", resumo["total"]),
+        ("Pedidos em risco hoje (Risco + Inviável)", resumo["em_risco_hoje"]),
+        ("Menor folga de prazo (dias)", resumo["menor_folga_dias"] if resumo["menor_folga_dias"] is not None else ""),
+        ("Dias médios de folga", resumo["dias_medios_folga"] if resumo["dias_medios_folga"] is not None else ""),
+        ("OTD projetado (%)", resumo["otd_projetado_percentual"] if resumo["otd_projetado_percentual"] is not None else ""),
+        ("Pedidos com atraso projetado", resumo["pedidos_com_atraso_projetado"]),
+        ("", ""),
+    ]
+    for chave in RISCO_OTD_STATUS_INFO:
+        info = RISCO_OTD_STATUS_INFO[chave]
+        linhas_resumo.append((f'{info["emoji"]} {info["label"]}', resumo["por_status"].get(chave, 0)))
+    for linha in linhas_resumo:
+        ws_resumo.append(linha)
+    ws_resumo["A1"].font = Font(bold=True, size=14)
+    for i in (2, 3, 5, 6, 7, 8, 9, 10):
+        ws_resumo.cell(row=i, column=1).font = Font(bold=True)
+    for i in range(12, 12 + len(RISCO_OTD_STATUS_INFO)):
+        ws_resumo.cell(row=i, column=1).font = Font(bold=True)
+    ws_resumo.column_dimensions["A"].width = 42
+    ws_resumo.column_dimensions["B"].width = 40
+
+    ws_pedidos = wb.create_sheet("Pedidos em risco")
+    cabecalho, linhas_export = _linhas_export_risco_otd(linhas)
+    ws_pedidos.append(cabecalho)
+    for celula in ws_pedidos[1]:
+        celula.font = Font(bold=True)
+    for linha in linhas_export:
+        ws_pedidos.append(linha)
+    for coluna in ws_pedidos.columns:
+        valores = [len(str(c.value)) for c in coluna if c.value is not None]
+        largura = max(valores) if valores else 10
+        ws_pedidos.column_dimensions[coluna[0].column_letter].width = min(largura + 2, 45)
+    ws_pedidos.freeze_panes = "A2"
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    resposta = Response(
+        buffer.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    nome_arquivo = f"torre_controle_otd_{date.today().isoformat()}.xlsx"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+def _gerar_pdf_risco_otd(linhas, resumo, filtros):
+    """Relatório PDF completo da Gestão de Risco (pedido do Bruno,
+    11/09/2026) — paisagem A4, mesmos KPIs + a mesma tabela por pedido que
+    aparecem na tela (inclusive as cores de status, pro relatório impresso
+    continuar batendo com o que se vê no navegador). Único PDF do sistema
+    até aqui -> usa reportlab (só lib pura Python da lista de dependências
+    que gera PDF sem precisar de biblioteca de sistema, ao contrário de
+    weasyprint/wkhtmltopdf — importante porque o deploy é via gunicorn no
+    Render, sem controle sobre pacotes do SO)."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    # Mesmas cores de fundo por status já usadas na tela (style.css:
+    # .linha-risco-inviavel/risco/atencao/sem_dado) — pro PDF bater
+    # visualmente com o navegador.
+    COR_LINHA_STATUS = {
+        "INVIAVEL": colors.HexColor("#f8d7da"),
+        "RISCO": colors.HexColor("#ffe5d0"),
+        "ATENCAO": colors.HexColor("#fff8e1"),
+        "VIAVEL": colors.white,
+        "SEM_DADO": colors.HexColor("#f1f3f5"),
+    }
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title="Torre de Controle OTD — Relatório de Risco",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=7, leading=8.5)
+    estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+
+    elementos = [
+        Paragraph("Torre de Controle OTD — Relatório de Risco", estilos["Title"]),
+        Paragraph(
+            f'Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")} · {_texto_filtros_risco_otd(filtros)}',
+            estilos["Normal"],
+        ),
+        Spacer(1, 6 * mm),
+    ]
+
+    def _kpi(valor, rotulo):
+        return [Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=14, fontName="Helvetica-Bold", alignment=1)),
+                Paragraph(rotulo, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=7, alignment=1))]
+
+    kpis_gerais = [
+        _kpi(resumo["total"], "Total"),
+        _kpi(resumo["em_risco_hoje"], "Em risco hoje"),
+        _kpi(resumo["menor_folga_dias"] if resumo["menor_folga_dias"] is not None else "—", "Menor folga (dias)"),
+        _kpi(f'{resumo["otd_projetado_percentual"]}%' if resumo["otd_projetado_percentual"] is not None else "—", "OTD projetado"),
+        _kpi(resumo["dias_medios_folga"] if resumo["dias_medios_folga"] is not None else "—", "Dias médios de folga"),
+        _kpi(resumo["pedidos_com_atraso_projetado"], "Com atraso projetado"),
+    ]
+    # Fontes padrão (Helvetica) do reportlab não têm os glyphs coloridos de
+    # emoji (🔴🟠🟡🟢⚪) — renderizavam como quadrado preto ("tofu"). Em vez
+    # do emoji no texto, usa só o rótulo e pinta o fundo da célula do KPI
+    # com a MESMA cor da linha da tabela principal (COR_LINHA_STATUS), pra
+    # manter o código de cor sem depender de glyph não suportado.
+    kpis_status = [(chave, _kpi(resumo["por_status"].get(chave, 0), RISCO_OTD_STATUS_INFO[chave]["label"])) for chave in RISCO_OTD_STATUS_INFO]
+    kpis = kpis_gerais + [k for _, k in kpis_status]
+
+    largura_kpi = (landscape(A4)[0] - 20 * mm) / len(kpis)
+    tabela_kpis = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
+    estilo_kpis = [
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
+    for i, (chave, _) in enumerate(kpis_status):
+        col = len(kpis_gerais) + i
+        estilo_kpis.append(("BACKGROUND", (col, 0), (col, -1), COR_LINHA_STATUS.get(chave, colors.white)))
+    tabela_kpis.setStyle(TableStyle(estilo_kpis))
+    elementos.append(tabela_kpis)
+    elementos.append(Spacer(1, 6 * mm))
+
+    cabecalho = [
+        "Pedido", "Cliente", "UF/Região", "Transportadora", "Prazo comercial", "Previsão produção",
+        "Lead transp.", "Previsão entrega", "Data máx. produção", "Folga/Atraso", "Status", "Gargalo", "Ação recomendada",
+    ]
+    dados_tabela = [[Paragraph(c, estilo_celula_bold) for c in cabecalho]]
+    cores_linhas = [colors.HexColor("#212529")]
+
+    for l in linhas:
+        uf_regiao = (l["uf"] or "—") + (f' ({l["regiao"]})' if l["regiao"] else "")
+        producao_txt = _formatar_data_br(l["producao_previsao_data"]) or "—"
+        if l["producao_previsao_data"]:
+            producao_txt += " (real)" if l["producao_e_real"] else " (previsão)"
+        if l["folga_dias"] is None:
+            folga_txt = "—"
+        elif l["folga_dias"] < 0:
+            folga_txt = f'{-l["folga_dias"]}d de atraso'
+        else:
+            folga_txt = f'{l["folga_dias"]}d de folga'
+        acao_txt = l["acao_recomendada"] or "—"
+        if l["alternativas"]:
+            acao_txt += "<br/>" + "<br/>".join(f"• {a}" for a in l["alternativas"])
+
+        linha_tabela = [
+            Paragraph(l["pedido_venda"] or "—", estilo_celula),
+            Paragraph(l["cliente"] or "—", estilo_celula),
+            Paragraph(uf_regiao, estilo_celula),
+            Paragraph(l["transportadora"] or "—", estilo_celula),
+            Paragraph(_formatar_data_br(l["prazo_comercial_data"]) or "—", estilo_celula),
+            Paragraph(producao_txt, estilo_celula),
+            Paragraph(f'{l["transporte_rodoviario_dias"]}d' if l["transporte_rodoviario_dias"] is not None else "—", estilo_celula),
+            Paragraph(_formatar_data_br(l["data_prevista_entrega"]) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(l["data_maxima_producao"]) or "—", estilo_celula),
+            Paragraph(folga_txt, estilo_celula),
+            Paragraph(l["status_info"]["label"], estilo_celula_bold),
+            Paragraph(l["gargalo"] or "—", estilo_celula),
+            Paragraph(acao_txt, estilo_celula),
+        ]
+        dados_tabela.append(linha_tabela)
+        cores_linhas.append(COR_LINHA_STATUS.get(l["status"], colors.white))
+
+    larguras = [16, 24, 20, 22, 16, 20, 14, 18, 18, 16, 24, 20, 40]
+    larguras_mm = [v * mm * 0.72 for v in larguras]
+
+    tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
+    estilo_tabela = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#212529")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for i, cor in enumerate(cores_linhas):
+        if i == 0:
+            continue
+        estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor))
+    tabela.setStyle(TableStyle(estilo_tabela))
+    elementos.append(tabela)
+
+    if not linhas:
+        elementos.append(Spacer(1, 6 * mm))
+        elementos.append(Paragraph("Nenhum pedido encontrado com o filtro aplicado.", estilos["Normal"]))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"torre_controle_otd_{date.today().isoformat()}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
 # ----------------------------------------------------------------------
 # P&D — Pesquisa e Desenvolvimento (Fase 14). Segue o mesmo padrão de
 # Qualidade/RNC acima: tabela própria, controle manual, funções auxiliares
@@ -7566,6 +7829,26 @@ def register_routes(app):
             linhas=linhas, resumo=resumo, filtros=filtros,
             RISCO_OTD_STATUS_INFO=RISCO_OTD_STATUS_INFO,
         )
+
+    @app.route("/gestao-risco/relatorio.xlsx")
+    @login_required
+    def gestao_risco_xlsx():
+        linhas, resumo = _pedidos_risco_otd(request.args)
+        filtros = {
+            "busca": (request.args.get("busca", "") or "").strip(),
+            "status": [v for v in _getlist_seguro(request.args, "status") if v in RISCO_OTD_STATUS_INFO],
+        }
+        return _gerar_excel_risco_otd(linhas, resumo, filtros)
+
+    @app.route("/gestao-risco/relatorio.pdf")
+    @login_required
+    def gestao_risco_pdf():
+        linhas, resumo = _pedidos_risco_otd(request.args)
+        filtros = {
+            "busca": (request.args.get("busca", "") or "").strip(),
+            "status": [v for v in _getlist_seguro(request.args, "status") if v in RISCO_OTD_STATUS_INFO],
+        }
+        return _gerar_pdf_risco_otd(linhas, resumo, filtros)
 
     # ------------------------------------------------------------------
     # Qualidade — RNC (Relatório de Não Conformidade). Área nova (31/08/2026),

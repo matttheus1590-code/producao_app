@@ -5,7 +5,17 @@
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <h4 class="mb-0"><i class="bi bi-broadcast-pin"></i> Torre de Controle OTD</h4>
-  <span class="text-muted small">{{ resumo.total }} pedido(s) CIF em aberto</span>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">{{ resumo.total }} pedido(s) CIF em aberto</span>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('gestao_risco_xlsx', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-file-earmark-excel"></i> Excel
+      </a>
+      <a href="{{ url_for('gestao_risco_pdf', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-file-earmark-pdf"></i> PDF
+      </a>
+    </div>
+  </div>
 </div>
 <p class="text-muted small mb-3">
   Mapa de risco operacional dos pedidos <strong>CIF</strong> ainda não entregues — cruza, ao vivo, o prazo comercial
