@@ -3138,9 +3138,16 @@ def _lead_times_estacao(nome, meses_historico=3):
         for i in itens if i.termino_inspecao and i.pedido and i.pedido.data_inclusao_pedido
     ])
 
+    # Pedido do Bruno (11/09/2026): o histórico começa no mês ANTERIOR, não
+    # no atual — o mês corrente já aparece "ao vivo" nos 3 cartões de cima
+    # (fila/chão/total), então repeti-lo aqui na lista de meses seria
+    # redundante e ainda ficaria incompleto (mês em andamento).
     hoje = date.today()
-    pontos = []
     ano, mes = hoje.year, hoje.month
+    mes -= 1
+    if mes == 0:
+        mes, ano = 12, ano - 1
+    pontos = []
     for _ in range(meses_historico):
         pontos.append((ano, mes))
         mes -= 1
