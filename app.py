@@ -3150,9 +3150,11 @@ def _lead_times_estacao(nome, meses_historico=3):
 
     def _producao(i, dias):
         """Dados de 1 OP/produto pra identificar a produção mais longa/curta
-        do mês — pedido do Bruno (11/09/2026)."""
+        do mês — pedido do Bruno (11/09/2026), com cliente e pedido pra dar
+        contexto de quem é (pedido dele, 11/09/2026 seguinte)."""
         return {
             "pedido_venda": i.pedido.pedido_venda if i.pedido else None,
+            "cliente": i.pedido.cliente if i.pedido else None,
             "produto": i.descricao_produto,
             "dias": dias,
         }

@@ -115,13 +115,13 @@
                   </div>
                 </div>
                 {% if h.mais_longa %}
-                <div class="small text-danger text-truncate" title="{{ h.mais_longa.produto }}">
-                  🐢 Mais longa: {{ h.mais_longa.pedido_venda or "—" }} — {{ h.mais_longa.produto }} ({{ h.mais_longa.dias }}d)
+                <div class="small text-danger text-truncate" title="{{ h.mais_longa.cliente }} — {{ h.mais_longa.produto }}">
+                  🐢 Mais longa: Pedido {{ h.mais_longa.pedido_venda or "—" }} · {{ h.mais_longa.cliente or "—" }} — {{ h.mais_longa.produto }} ({{ h.mais_longa.dias }}d)
                 </div>
                 {% endif %}
                 {% if h.mais_curta %}
-                <div class="small text-success text-truncate" title="{{ h.mais_curta.produto }}">
-                  🐇 Mais curta: {{ h.mais_curta.pedido_venda or "—" }} — {{ h.mais_curta.produto }} ({{ h.mais_curta.dias }}d)
+                <div class="small text-success text-truncate" title="{{ h.mais_curta.cliente }} — {{ h.mais_curta.produto }}">
+                  🐇 Mais curta: Pedido {{ h.mais_curta.pedido_venda or "—" }} · {{ h.mais_curta.cliente or "—" }} — {{ h.mais_curta.produto }} ({{ h.mais_curta.dias }}d)
                 </div>
                 {% endif %}
                 {% if not h.mais_longa %}
