@@ -8583,8 +8583,19 @@ def register_routes(app):
         estacoes_por_nome = {e.nome: e for e in Estacao.query.all()}
 
         def _linha(e):
+            # Correção (pedido do Bruno, 11/09/2026): "na fila" contava TODO
+            # item não finalizado (inclusive os que já estavam em produção),
+            # então uma estação sem nada esperando pra começar ainda assim
+            # aparecia com itens "na fila". Agora "fila" é só PENDENTE (ainda
+            # não começou) e "em produção" é ANDAMENTO/EM TRATATIVA (já
+            # começou, mesma régua do status_chao usado no Kanban da
+            # estação, pra nunca mais divergir).
             fila = ItemPedido.query.filter(
-                ItemPedido.estacao == e.nome, ItemPedido.status_producao != "FINALIZADO"
+                ItemPedido.estacao == e.nome, ItemPedido.status_producao == "PENDENTE"
+            ).count()
+            em_producao = ItemPedido.query.filter(
+                ItemPedido.estacao == e.nome,
+                ItemPedido.status_producao.notin_(["FINALIZADO", "PENDENTE"]),
             ).count()
             criticos = ItemPedido.query.filter(
                 ItemPedido.estacao == e.nome,
@@ -8602,7 +8613,10 @@ def register_routes(app):
                 if itens_lt
                 else None
             )
-            return {"estacao": e, "rotulo": rotulo_estacao(e.nome), "fila": fila, "criticos": criticos, "lt_medio": lt_medio}
+            return {
+                "estacao": e, "rotulo": rotulo_estacao(e.nome), "fila": fila, "em_producao": em_producao,
+                "criticos": criticos, "lt_medio": lt_medio,
+            }
 
         # 3 colunas fixas (pedido do Bruno, 03/09/2026) — ver
         # ESTACOES_GRUPOS_MONITORAMENTO em models.py. Só entram estações
