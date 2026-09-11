@@ -1,5 +1,6 @@
 import csv
 import io
+import math
 import os
 import re
 from calendar import monthrange
@@ -5375,6 +5376,285 @@ def _rdim_resumo_por_pedido_venda(pedidos_venda):
 
 
 # ----------------------------------------------------------------------
+# Gestão de Risco / Torre de Controle de OTD (pedido do Bruno, 11/09/2026):
+# camada de PREVISÃO sobre a Gestão Operação já existente — pra todo pedido
+# CIF ainda não entregue, cruza o prazo comercial prometido (Comercial), o
+# lead time de produção (Produção/PCP, "ao vivo" igual _metricas_operacao_
+# 360 já faz) com o lead time de transporte JÁ CADASTRADO em Cadastros >
+# Lead time Transportadora (fonte única — nunca duplicado aqui, sempre
+# consultado ao vivo) e projeta se o pedido vai entregar dentro do prazo.
+#
+# NADA fica gravado no banco: todo o risco é recalculado a cada carregamento
+# da tela, a partir do estado ATUAL de Produção/Operação/Cadastros — por
+# isso "recalcula automaticamente sempre que qualquer variável relevante
+# mudar" já sai de graça: não existe um campo "risco" salvo que possa ficar
+# desatualizado, é sempre a leitura mais recente, igual o resto da Gestão
+# Operação (status pedido, leads times, etc. — nenhum é armazenado).
+#
+# Duas simplificações conscientes, registradas aqui pra ficar rastreável:
+# 1) O cadastro de Lead time Transportadora tem 1 prazo por UF/modalidade
+#    (não por transportadora) — essa 3ª dimensão não existe cadastrada em
+#    lugar nenhum do sistema hoje. O cálculo usa só UF + modalidade; a
+#    transportadora do pedido (quando preenchida em Gestão Operação >
+#    Logística) aparece como informação de contexto, não como parte da
+#    consulta de prazo — evita inventar/duplicar dado que o Bruno não
+#    cadastrou.
+# 2) Nenhum pedido guarda hoje a modalidade de transporte (rodoviário/
+#    aéreo) escolhida — só existe esse conceito no cadastro de lead time.
+#    O cálculo BASE sempre assume Rodoviário (modo padrão) e usa o Aéreo só
+#    como alternativa de recuperação sugerida quando ajuda a cumprir o
+#    prazo — nunca como suposição automática do que já está em curso.
+# ----------------------------------------------------------------------
+
+RISCO_OTD_LIMITE_RISCO_DIAS = 2
+RISCO_OTD_LIMITE_ATENCAO_DIAS = 5
+
+RISCO_OTD_STATUS_INFO = {
+    "INVIAVEL": {"label": "Inviável", "emoji": "🔴", "cor": "danger", "ordem": 0,
+                 "descricao": "A previsão de entrega ultrapassa o prazo comercial."},
+    "RISCO": {"label": "Risco", "emoji": "🟠", "cor": "risco", "ordem": 1,
+              "descricao": "Margem insuficiente — alguma variável operacional ameaça o prazo."},
+    "ATENCAO": {"label": "Atenção", "emoji": "🟡", "cor": "warning", "ordem": 2,
+                "descricao": "Prazo próximo do limite."},
+    "VIAVEL": {"label": "Viável", "emoji": "🟢", "cor": "success", "ordem": 3,
+               "descricao": "Existe margem segura para atendimento."},
+    "SEM_DADO": {"label": "Sem dado suficiente", "emoji": "⚪", "cor": "secondary", "ordem": 4,
+                 "descricao": "Falta prazo comercial, dado de produção ou lead time cadastrado pra UF — "
+                              "não dá pra projetar ainda."},
+}
+
+
+def _mapa_lead_time_transportadora():
+    """dict (uf, modalidade) -> LeadTimeTransportadora — fonte ÚNICA de lead
+    time de transporte pra Gestão de Risco (pedido do Bruno, 11/09/2026:
+    "não duplicar... consultar automaticamente os parâmetros existentes em
+    Cadastros"). Só linhas ativas. Como hoje só existe 1 origem cadastrada
+    (Pindamonhangaba-SP), a chave não inclui origem — se um dia existir mais
+    de uma origem, revisitar aqui."""
+    linhas = LeadTimeTransportadora.query.filter_by(ativo=True).all()
+    mapa = {}
+    for linha in linhas:
+        mapa.setdefault((linha.uf, linha.modalidade), linha)
+    return mapa
+
+
+def _lead_time_transporte_dias(linha):
+    """Converte 1 linha de LeadTimeTransportadora num nº de dias corridos
+    pra somar no cálculo de previsão — usa sempre o prazo MÁXIMO (mais
+    conservador, "pior caso") quando é uma faixa; quando a unidade é Horas
+    (só RJ/SP hoje), converte pra dias arredondando pra cima (48h=2d,
+    72h=3d)."""
+    if linha is None:
+        return None
+    valor = linha.prazo_maximo if linha.prazo_maximo else linha.prazo_minimo
+    if linha.unidade_prazo == "Horas":
+        return math.ceil(valor / 24)
+    return math.ceil(valor)
+
+
+def _calcular_risco_pedido(go, m, pedido_producao, rdim_resumo, gargalos_por_estacao, mapa_lead_time):
+    """Projeta o risco de atraso de UM pedido (Gestão Operação, CIF) —
+    cruza: prazo comercial prometido (m["solicitada"], mesma fonte "ao
+    vivo" da coluna "Data solicitada" da Operação 360); lead time de
+    produção (conclusão REAL quando já existe, senão a PREVISÃO do PCP —
+    m["conclusao_producao"]/m["expectativa_pcp"], os mesmos campos "ao
+    vivo" já usados em toda a Gestão Operação); lead time de transporte
+    (consulta o cadastro de Lead time Transportadora pelo Estado do
+    pedido, modalidade Rodoviário — ver cabeçalho da seção). Nunca grava
+    nada, só calcula em cima do que já existe."""
+    hoje = date.today()
+    uf = (go.estado or (pedido_producao.estado if pedido_producao else None) or "").strip().upper()
+
+    prazo_comercial_data = m.get("solicitada")
+    producao_data = m.get("conclusao_producao") or m.get("expectativa_pcp")
+    producao_e_real = m.get("conclusao_producao") is not None
+
+    linha_rodoviario = mapa_lead_time.get((uf, "Rodoviário"))
+    linha_aereo = mapa_lead_time.get((uf, "Aéreo"))
+    transporte_rodoviario_dias = _lead_time_transporte_dias(linha_rodoviario)
+    transporte_aereo_dias = _lead_time_transporte_dias(linha_aereo)
+
+    data_prevista_entrega = None
+    if producao_data and transporte_rodoviario_dias is not None:
+        data_prevista_entrega = producao_data + timedelta(days=transporte_rodoviario_dias)
+
+    data_maxima_producao = None
+    if prazo_comercial_data and transporte_rodoviario_dias is not None:
+        data_maxima_producao = prazo_comercial_data - timedelta(days=transporte_rodoviario_dias)
+
+    folga_dias = None
+    if prazo_comercial_data and data_prevista_entrega:
+        folga_dias = (prazo_comercial_data - data_prevista_entrega).days
+
+    # --- Classificação ---------------------------------------------------
+    if prazo_comercial_data is None or producao_data is None or transporte_rodoviario_dias is None:
+        status = "SEM_DADO"
+    elif folga_dias < 0:
+        status = "INVIAVEL"
+    elif folga_dias <= RISCO_OTD_LIMITE_RISCO_DIAS:
+        status = "RISCO"
+    elif folga_dias <= RISCO_OTD_LIMITE_ATENCAO_DIAS:
+        status = "ATENCAO"
+    else:
+        status = "VIAVEL"
+
+    # --- Gargalo principal + ação recomendada -----------------------------
+    gargalo = None
+    acao_recomendada = None
+    alternativas = []
+    atraso_projetado = max(0, -folga_dias) if folga_dias is not None else None
+
+    tem_qualidade_pendente = bool(rdim_resumo and (rdim_resumo.get("reprovadas") or rdim_resumo.get("com_desvio")))
+
+    itens_em_gargalo = []
+    if pedido_producao:
+        for item in pedido_producao.itens:
+            if item.status_producao != "FINALIZADO":
+                g = gargalos_por_estacao.get(item.estacao)
+                if g and (g["fila"] > 0 or g["atraso"] > 0):
+                    itens_em_gargalo.append(g)
+
+    if status in ("RISCO", "INVIAVEL"):
+        resolve_com_aereo = bool(
+            transporte_aereo_dias is not None and prazo_comercial_data and producao_data
+            and (prazo_comercial_data - producao_data).days >= transporte_aereo_dias
+        )
+
+        if tem_qualidade_pendente:
+            gargalo = "Qualidade"
+            acao_recomendada = "Verificar reinspeção/reprocesso dos itens com desvio (RDIM) antes de liberar."
+        elif m.get("status_pedido_idx") == 1:
+            gargalo = "PCP / Fila"
+            acao_recomendada = "Priorizar entrada em produção deste pedido no PCP."
+        elif itens_em_gargalo:
+            pior = max(itens_em_gargalo, key=lambda g: (g["atraso"], g["fila"]))
+            gargalo = "Produção"
+            acao_recomendada = f'Estação "{pior["estacao"]}" com fila/atraso — priorizar este pedido lá.'
+        elif resolve_com_aereo:
+            gargalo = "Transporte"
+            economia = transporte_rodoviario_dias - transporte_aereo_dias
+            acao_recomendada = f"Alterar modalidade para aéreo (economiza ~{economia}d de transporte)."
+        elif atraso_projetado:
+            gargalo = "Produção"
+            acao_recomendada = f"Antecipar produção em {atraso_projetado} dia(s)."
+        else:
+            gargalo = "Prazo comercial"
+            acao_recomendada = "Margem apertada desde a origem — considerar renegociar prazo comercial."
+
+        # Alternativas extras, quando houver mais de uma alavanca possível
+        # (pedido do Bruno: "apresentar as opções de recuperação possíveis").
+        if resolve_com_aereo and gargalo != "Transporte":
+            economia = transporte_rodoviario_dias - transporte_aereo_dias
+            alternativas.append(f"Alterar modalidade para aéreo (economiza ~{economia}d).")
+        if atraso_projetado and gargalo != "Produção":
+            alternativas.append(f"Antecipar produção em {atraso_projetado} dia(s).")
+        if gargalo not in ("Prazo comercial", None) and folga_dias is not None and folga_dias < 0:
+            alternativas.append("Renegociar prazo comercial com o cliente.")
+
+    return {
+        "go": go,
+        "pedido_id": go.id,
+        "pedido_venda": go.pedido_venda,
+        "cliente": go.cliente,
+        "uf": uf or None,
+        "regiao": REGIAO_POR_UF.get(uf),
+        "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
+        "prazo_comercial_data": prazo_comercial_data,
+        "prazo_comercial_dias": m.get("lead_comercial_dias"),
+        "producao_previsao_data": producao_data,
+        "producao_e_real": producao_e_real,
+        "lead_producao_dias": m.get("lead_producao_dias"),
+        "transporte_rodoviario_dias": transporte_rodoviario_dias,
+        "transporte_aereo_dias": transporte_aereo_dias,
+        "data_prevista_entrega": data_prevista_entrega,
+        "data_maxima_producao": data_maxima_producao,
+        "folga_dias": folga_dias,
+        "atraso_projetado_dias": atraso_projetado,
+        "status": status,
+        "status_info": RISCO_OTD_STATUS_INFO[status],
+        "gargalo": gargalo,
+        "acao_recomendada": acao_recomendada,
+        "alternativas": alternativas,
+    }
+
+
+def _resumo_risco_otd(linhas):
+    """KPIs do topo da Gestão de Risco — sobre o MESMO conjunto (já
+    filtrado) exibido na tabela abaixo."""
+    total = len(linhas)
+    por_status = {chave: 0 for chave in RISCO_OTD_STATUS_INFO}
+    for l in linhas:
+        por_status[l["status"]] += 1
+
+    com_folga = [l["folga_dias"] for l in linhas if l["folga_dias"] is not None]
+    projetaveis = [l for l in linhas if l["status"] != "SEM_DADO"]
+    no_prazo = [l for l in projetaveis if l["status"] in ("VIAVEL", "ATENCAO")]
+    com_atraso = [l for l in linhas if l["atraso_projetado_dias"]]
+
+    return {
+        "total": total,
+        "por_status": por_status,
+        "em_risco_hoje": por_status["RISCO"] + por_status["INVIAVEL"],
+        "menor_folga_dias": min(com_folga) if com_folga else None,
+        "dias_medios_folga": round(sum(com_folga) / len(com_folga), 1) if com_folga else None,
+        "otd_projetado_percentual": round(len(no_prazo) / len(projetaveis) * 100, 1) if projetaveis else None,
+        "pedidos_com_atraso_projetado": len(com_atraso),
+    }
+
+
+def _pedidos_risco_otd(args):
+    """Monta a lista de risco de OTD pra Gestão de Risco: todo pedido CIF de
+    Gestão Operação ainda não entregue, com o cálculo de
+    _calcular_risco_pedido pra cada um. Reaproveita TUDO que já existe —
+    _metricas_operacao_360, _liberacao_pcp_por_pedido_venda,
+    _data_cliente_por_pedido_venda, _pedidos_producao_por_pedido_venda,
+    _rdim_resumo_por_pedido_venda, _gargalos_por_estacao — só adiciona a
+    camada de lead time de transporte (Cadastros) e a projeção por cima.
+    Devolve (linhas, resumo) já ordenado do mais urgente pro menos urgente."""
+    busca = (args.get("busca", "") or "").strip()
+    status_filtro = [v for v in _getlist_seguro(args, "status") if v in RISCO_OTD_STATUS_INFO]
+
+    query = PedidoOperacao.query.filter(
+        PedidoOperacao.frete == "CIF",
+        PedidoOperacao.go_data_entregue_cliente.is_(None),
+        PedidoOperacao.go_data_real_entrega.is_(None),
+    )
+    if busca:
+        like = f"%{busca}%"
+        query = query.filter(or_(PedidoOperacao.pedido_venda.ilike(like), PedidoOperacao.cliente.ilike(like)))
+
+    pedidos_go = query.order_by(PedidoOperacao.data_inclusao_pedido.desc().nullslast()).all()
+    if not pedidos_go:
+        return [], _resumo_risco_otd([])
+
+    pedidos_venda = [g.pedido_venda for g in pedidos_go]
+    liberacao_pcp = _liberacao_pcp_por_pedido_venda(pedidos_venda)
+    data_cliente = _data_cliente_por_pedido_venda(pedidos_venda)
+    pedidos_producao = _pedidos_producao_por_pedido_venda(pedidos_venda)
+    metricas = _metricas_operacao_360(pedidos_go, liberacao_pcp, data_cliente, pedidos_producao)
+    rdim_por_pedido = _rdim_resumo_por_pedido_venda(pedidos_venda)
+    mapa_lead_time = _mapa_lead_time_transportadora()
+    gargalos = {g["estacao"]: g for g in _gargalos_por_estacao()}
+
+    linhas = []
+    for go in pedidos_go:
+        chave = _normalizar_pedido_venda(go.pedido_venda)
+        m = metricas.get(go.id, {})
+        pedido_producao = pedidos_producao.get(chave)
+        rdim_resumo = rdim_por_pedido.get(chave)
+        linhas.append(_calcular_risco_pedido(go, m, pedido_producao, rdim_resumo, gargalos, mapa_lead_time))
+
+    if status_filtro:
+        linhas = [l for l in linhas if l["status"] in status_filtro]
+
+    linhas.sort(key=lambda l: (
+        RISCO_OTD_STATUS_INFO[l["status"]]["ordem"],
+        l["folga_dias"] if l["folga_dias"] is not None else 9999,
+    ))
+    return linhas, _resumo_risco_otd(linhas)
+
+
+# ----------------------------------------------------------------------
 # P&D — Pesquisa e Desenvolvimento (Fase 14). Segue o mesmo padrão de
 # Qualidade/RNC acima: tabela própria, controle manual, funções auxiliares
 # separadas de filtro/listagem/dashboard/form pra não misturar com nenhuma
@@ -7180,6 +7460,25 @@ def register_routes(app):
             "gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras,
             secao=secao, GO_SECOES=GO_SECOES, GO_SECAO_ENDPOINT=GO_SECAO_ENDPOINT, GO_SECAO_LABEL=GO_SECAO_LABEL,
             status_real=status_real, liberacao_real=liberacao_real, data_cliente_real=data_cliente_real,
+        )
+
+    # ------------------------------------------------------------------
+    # Gestão de Risco / Torre de Controle de OTD (pedido do Bruno,
+    # 11/09/2026) — ver cabeçalho de _pedidos_risco_otd (app.py) pro
+    # desenho completo. Só pedidos CIF, sempre calculado ao vivo.
+    # ------------------------------------------------------------------
+    @app.route("/gestao-risco")
+    @login_required
+    def gestao_risco():
+        linhas, resumo = _pedidos_risco_otd(request.args)
+        filtros = {
+            "busca": (request.args.get("busca", "") or "").strip(),
+            "status": [v for v in _getlist_seguro(request.args, "status") if v in RISCO_OTD_STATUS_INFO],
+        }
+        return render_template(
+            "gestao_risco.html",
+            linhas=linhas, resumo=resumo, filtros=filtros,
+            RISCO_OTD_STATUS_INFO=RISCO_OTD_STATUS_INFO,
         )
 
     # ------------------------------------------------------------------

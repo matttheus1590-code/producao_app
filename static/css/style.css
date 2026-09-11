@@ -175,6 +175,36 @@ body.col-resizing-ativo {
   background-color: #f1aeb5;
 }
 
+/* Gestão de Risco (pedido do Bruno, 11/09/2026): 4 níveis de risco de OTD —
+   viável/atenção/risco/inviável — mas o Bootstrap padrão só tem 3 cores de
+   status (success/warning/danger). Falta um 4º nível "risco" (laranja),
+   entre o amarelo de atenção e o vermelho de inviável — usa o mesmo laranja
+   ($orange) já usado pela paleta do Bootstrap, só sem vir como utilitário
+   pronto por padrão. */
+.text-risco { color: #fd7e14; }
+.bg-risco { background-color: #fd7e14; color: #fff; }
+.border-risco { border-color: #fd7e14 !important; }
+
+.tabela-risco-otd > tbody > tr.linha-risco-inviavel > * {
+  --bs-table-bg: #f8d7da;
+  background-color: #f8d7da;
+}
+
+.tabela-risco-otd > tbody > tr.linha-risco-risco > * {
+  --bs-table-bg: #ffe5d0;
+  background-color: #ffe5d0;
+}
+
+.tabela-risco-otd > tbody > tr.linha-risco-atencao > * {
+  --bs-table-bg: #fff8e1;
+  background-color: #fff8e1;
+}
+
+.tabela-risco-otd > tbody > tr.linha-risco-sem_dado > * {
+  --bs-table-bg: #f1f3f5;
+  background-color: #f1f3f5;
+}
+
 .normal-case {
   text-transform: none;
 }

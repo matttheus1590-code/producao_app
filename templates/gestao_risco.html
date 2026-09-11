@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat_card %}
+{% block title %}Gestão de Risco · Torre de Controle OTD · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-broadcast-pin"></i> Torre de Controle OTD</h4>
+  <span class="text-muted small">{{ resumo.total }} pedido(s) CIF em aberto</span>
+</div>
+<p class="text-muted small mb-3">
+  Mapa de risco operacional dos pedidos <strong>CIF</strong> ainda não entregues — cruza, ao vivo, o prazo comercial
+  prometido, a previsão de produção (Gestão Produção/PCP) e o lead time de transporte já cadastrado em
+  <strong>Cadastros → Lead time Transportadora</strong>. Nada aqui fica salvo: a classificação é recalculada a cada
+  carregamento da página, então qualquer mudança em produção, PCP, qualidade ou nos lead times cadastrados já
+  aparece na próxima vez que a tela for aberta.
+</p>
+
+<form method="get">
+  <div class="row g-2 align-items-end mb-3">
+    <div class="col-md-4">
+      <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
+      <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label small text-muted mb-1">Status de risco</label>
+      <select class="form-select" name="status" multiple size="5" title="Ctrl+clique (ou Cmd, no Mac) pra selecionar mais de uma opção">
+        {% for chave, info in RISCO_OTD_STATUS_INFO.items() %}
+          <option value="{{ chave }}" {% if chave in filtros.status %}selected{% endif %}>{{ info.emoji }} {{ info.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-1 d-grid">
+      <button class="btn btn-primary" type="submit" title="Filtrar"><i class="bi bi-search"></i></button>
+    </div>
+    <div class="col-md-1 d-grid">
+      <a href="{{ url_for('gestao_risco') }}" class="btn btn-outline-secondary" title="Limpar filtros"><i class="bi bi-eraser"></i></a>
+    </div>
+  </div>
+</form>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="row g-2 mb-2">
+      <div class="col-6 col-md-3">
+        {{ stat_card("🔥 Pedidos em risco hoje", resumo.em_risco_hoje, cor="danger" if resumo.em_risco_hoje else None) }}
+      </div>
+      <div class="col-6 col-md-3">
+        {{ stat_card("⏱️ Menor folga de prazo", (resumo.menor_folga_dias ~ " dia(s)") if resumo.menor_folga_dias is not none else "—", cor="danger" if (resumo.menor_folga_dias is not none and resumo.menor_folga_dias < 0) else None) }}
+      </div>
+      <div class="col-6 col-md-3">
+        {{ stat_card("OTD projetado", (resumo.otd_projetado_percentual ~ "%") if resumo.otd_projetado_percentual is not none else "—", sufixo="Do que já dá pra projetar") }}
+      </div>
+      <div class="col-6 col-md-3">
+        {{ stat_card("Atraso projetado", resumo.pedidos_com_atraso_projetado, sufixo="pedido(s) com atraso projetado") }}
+      </div>
+    </div>
+    <div class="row g-2">
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("Total", resumo.total) }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card(RISCO_OTD_STATUS_INFO.VIAVEL.emoji ~ " Viáveis", resumo.por_status.VIAVEL, cor="success") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card(RISCO_OTD_STATUS_INFO.ATENCAO.emoji ~ " Atenção", resumo.por_status.ATENCAO, cor="warning") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card(RISCO_OTD_STATUS_INFO.RISCO.emoji ~ " Risco", resumo.por_status.RISCO, cor="risco") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card(RISCO_OTD_STATUS_INFO.INVIAVEL.emoji ~ " Inviáveis", resumo.por_status.INVIAVEL, cor="danger") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("Dias médios de folga", resumo.dias_medios_folga if resumo.dias_medios_folga is not none else "—") }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white tabela-risco-otd">
+    <thead class="table-light">
+      <tr>
+        <th>Pedido</th>
+        <th>Cliente</th>
+        <th>UF / Região</th>
+        <th>Transportadora</th>
+        <th>Prazo comercial</th>
+        <th>Previsão produção</th>
+        <th>Lead transporte</th>
+        <th>Previsão entrega</th>
+        <th>Data máx. produção</th>
+        <th>Folga / Atraso</th>
+        <th>Status</th>
+        <th>Gargalo</th>
+        <th>Ação recomendada</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in linhas %}
+      <tr class="linha-risco-{{ l.status | lower }}">
+        <td class="fw-semibold">
+          <a href="{{ url_for('consulta_pedido', busca=l.pedido_venda) }}">{{ l.pedido_venda | normalizar_pedido_venda }}</a>
+        </td>
+        <td>{{ l.cliente or "—" }}</td>
+        <td>{{ l.uf or "—" }}{% if l.regiao %}<div class="text-muted small">{{ l.regiao }}</div>{% endif %}</td>
+        <td>{{ l.transportadora or "—" }}</td>
+        <td>{{ l.prazo_comercial_data.strftime("%d/%m/%Y") if l.prazo_comercial_data else "—" }}</td>
+        <td>
+          {{ l.producao_previsao_data.strftime("%d/%m/%Y") if l.producao_previsao_data else "—" }}
+          {% if l.producao_previsao_data %}
+            <div class="text-muted small">{{ "Real" if l.producao_e_real else "Previsão PCP" }}</div>
+          {% endif %}
+        </td>
+        <td>{{ (l.transporte_rodoviario_dias ~ "d rodoviário") if l.transporte_rodoviario_dias is not none else "—" }}</td>
+        <td>{{ l.data_prevista_entrega.strftime("%d/%m/%Y") if l.data_prevista_entrega else "—" }}</td>
+        <td>{{ l.data_maxima_producao.strftime("%d/%m/%Y") if l.data_maxima_producao else "—" }}</td>
+        <td>
+          {% if l.folga_dias is not none %}
+            {% if l.folga_dias < 0 %}
+              <span class="text-danger fw-semibold">{{ -l.folga_dias }}d de atraso</span>
+            {% else %}
+              <span class="text-success">{{ l.folga_dias }}d de folga</span>
+            {% endif %}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge bg-{{ l.status_info.cor }}" title="{{ l.status_info.descricao }}">
+            {{ l.status_info.emoji }} {{ l.status_info.label }}
+          </span>
+        </td>
+        <td>{{ l.gargalo or "—" }}</td>
+        <td>
+          {% if l.acao_recomendada %}
+            <div>{{ l.acao_recomendada }}</div>
+            {% if l.alternativas %}
+              <ul class="text-muted small mb-0 ps-3">
+                {% for alt in l.alternativas %}
+                  <li>{{ alt }}</li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="13" class="text-center text-muted py-4">Nenhum pedido CIF em aberto encontrado com esse filtro.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

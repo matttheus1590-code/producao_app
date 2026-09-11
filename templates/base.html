@@ -39,6 +39,11 @@
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_resultados' %}active{% endif %}" href="{{ url_for('gestao_operacao_resultados') }}">
           <span>📈 Resultados</span>
         </a>
+
+        <div class="app-nav-section">🔥 Gestão de Risco</div>
+        <a class="app-nav-link {% if request.endpoint == 'gestao_risco' %}active{% endif %}" href="{{ url_for('gestao_risco') }}">
+          <span>🗼 Torre de Controle OTD</span>
+        </a>
         {% endif %}
 
         <div class="app-nav-section">🏭 Gestão Produção</div>
