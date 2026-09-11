@@ -5883,8 +5883,17 @@ def _gerar_pdf_risco_otd(linhas, resumo, filtros):
         title="Torre de Controle OTD — Relatório de Risco",
     )
     estilos = getSampleStyleSheet()
-    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=7, leading=8.5)
+    # Pedido do Bruno (11/09/2026): letras maiores e cabeçalho em cor clara
+    # (fundo escuro consome muita tinta e prejudica a leitura quando
+    # impresso) — cabeçalho da tabela usa um azul claro com texto escuro,
+    # em vez do preto/branco original.
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8.5, leading=10.5)
     estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+    COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
+    COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula_bold, fontSize=9, leading=11, textColor=COR_CABECALHO_TEXTO,
+    )
 
     elementos = [
         Paragraph("Torre de Controle OTD — Relatório de Risco", estilos["Title"]),
@@ -5896,8 +5905,8 @@ def _gerar_pdf_risco_otd(linhas, resumo, filtros):
     ]
 
     def _kpi(valor, rotulo):
-        return [Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=14, fontName="Helvetica-Bold", alignment=1)),
-                Paragraph(rotulo, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=7, alignment=1))]
+        return [Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=17, fontName="Helvetica-Bold", alignment=1)),
+                Paragraph(rotulo, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8.5, alignment=1))]
 
     kpis_gerais = [
         _kpi(resumo["total"], "Total"),
@@ -5935,8 +5944,8 @@ def _gerar_pdf_risco_otd(linhas, resumo, filtros):
         "Pedido", "Cliente", "UF/Região", "Transportadora", "Prazo comercial", "Previsão produção",
         "Lead transp.", "Previsão entrega", "Data máx. produção", "Folga/Atraso", "Status", "Gargalo", "Ação recomendada",
     ]
-    dados_tabela = [[Paragraph(c, estilo_celula_bold) for c in cabecalho]]
-    cores_linhas = [colors.HexColor("#212529")]
+    dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+    cores_linhas = [COR_CABECALHO_BG]
 
     for l in linhas:
         uf_regiao = (l["uf"] or "—") + (f' ({l["regiao"]})' if l["regiao"] else "")
@@ -5971,17 +5980,27 @@ def _gerar_pdf_risco_otd(linhas, resumo, filtros):
         dados_tabela.append(linha_tabela)
         cores_linhas.append(COR_LINHA_STATUS.get(l["status"], colors.white))
 
-    larguras = [16, 24, 20, 22, 16, 20, 14, 18, 18, 16, 24, 20, 40]
-    larguras_mm = [v * mm * 0.72 for v in larguras]
+    # Pesos relativos de cada coluna — escalados pra ocupar a LARGURA TOTAL
+    # disponível da página (paisagem A4 menos as margens laterais), em vez
+    # de um valor fixo menor que sobrava espaço em branco na folha e
+    # forçava quebra de palavra no meio (ex.: "Prazo come|rcial"). Pedido
+    # do Bruno (11/09/2026): distribuir melhor as colunas na página.
+    pesos = [10, 15, 11, 10, 13, 14, 9, 12, 12, 11, 13, 14, 24]
+    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    soma_pesos = sum(pesos)
+    larguras_mm = [p / soma_pesos * largura_disponivel for p in pesos]
 
     tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
     estilo_tabela = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#212529")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
     ]
     for i, cor in enumerate(cores_linhas):
         if i == 0:
