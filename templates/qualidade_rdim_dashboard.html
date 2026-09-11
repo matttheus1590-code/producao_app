@@ -84,6 +84,18 @@
       </div>
     </div>
   </div>
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Componentes com mais desvio (PIG LBD/LUN/SUPERFLEX)</h6>
+        {% if dados.por_componente_desvio %}
+        <canvas id="graficoComponentes" height="110"></canvas>
+        {% else %}
+        <p class="text-muted text-center py-4 mb-0">Sem desvio por componente registrado ainda.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="row g-3">
@@ -159,6 +171,7 @@
   const evolucao = {{ dados.evolucao | tojson }};
   const desvios = {{ dados.por_categoria_desvio | tojson }};
   const subcategorias = {{ dados.por_subcategoria_desvio | tojson }};
+  const componentes = {{ dados.por_componente_desvio | tojson }};
 
   const elEvolucao = document.getElementById("graficoEvolucao");
   if (elEvolucao && evolucao.length) {
@@ -194,6 +207,18 @@
       data: {
         labels: subcategorias.map(function (p) { return p.chave; }),
         datasets: [{ label: "Ocorrências", data: subcategorias.map(function (p) { return p.total; }), backgroundColor: "#6f42c1" }],
+      },
+      options: { plugins: { legend: { display: false } }, indexAxis: "y", scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
+    });
+  }
+
+  const elComponentes = document.getElementById("graficoComponentes");
+  if (elComponentes && componentes.length) {
+    new Chart(elComponentes, {
+      type: "bar",
+      data: {
+        labels: componentes.map(function (p) { return p.chave; }),
+        datasets: [{ label: "Ocorrências", data: componentes.map(function (p) { return p.total; }), backgroundColor: "#0dcaf0" }],
       },
       options: { plugins: { legend: { display: false } }, indexAxis: "y", scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
     });

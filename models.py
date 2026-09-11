@@ -280,6 +280,42 @@ RDIM_GRANDEZAS_PADRAO = [
     "Dureza Shore A",
 ]
 
+# Tipo de produto a ser inspecionado — pedido do Bruno (11/09/2026, RDIM Fase
+# 5): Discos e FlexPig (HLFlex/Discflex) continuam no modelo já existente
+# (categoria/subcategoria de desvio + apontamento peça a peça, acima); PIG
+# LBD/LUN/SUPERFLEX é montado por vários componentes (disco selo, disco guia,
+# bumper etc.) e o desvio precisa ser apontado POR COMPONENTE, não só pro lote
+# como um todo — daí a tela de Nova Inspeção mudar de modelo conforme este
+# campo (ver RDIM_COMPONENTE_LBD_OPCOES/RdimComponenteDesvio abaixo). Default
+# "DISCOS" no formulário (não no banco: inspeções antigas ficam com esse
+# campo em branco, não é feito backfill).
+RDIM_TIPO_PRODUTO_OPCOES = ["DISCOS", "FLEXPIG", "PIG_LBD_LUN_SUPERFLEX"]
+RDIM_TIPO_PRODUTO_LABELS = {
+    "DISCOS": "Discos",
+    "FLEXPIG": "FlexPig (HLFlex/Discflex)",
+    "PIG_LBD_LUN_SUPERFLEX": "PIG LBD/LUN/SUPERFLEX",
+}
+
+# Componentes do PIG LBD/LUN/SUPERFLEX — lista fechada passada pelo Bruno
+# (11/09/2026): "preciso apontar desvios... porém o desvio se encontra
+# somente no disco selo e não no disco guia... quero a possibilidade de
+# inserir para a inspeção e apontamento somente o componente em específico".
+# Ordem preservada exatamente como o Bruno mandou (usada também pra ordenar
+# a tela de Nova Inspeção e o dashboard).
+RDIM_COMPONENTE_LBD_OPCOES = [
+    "DISCO SELO",
+    "DISCO GUIA",
+    "DISCO ESPAÇADOR",
+    "BUMPER",
+    "ESCOVA ELC (AÇO CARBONO)",
+    "ESCOVA PP (POLIPROPILENO)",
+    "PLACA CALIBRADORA",
+    "CINTA MAGNÉTICA",
+    "COPO PISTÃO",
+    "COPO CÔNICO",
+    "EIXO PU",
+]
+
 # ---------------------------------------------------------------------------
 # P&D — Pesquisa e Desenvolvimento (Fase 14, 01/09/2026). Nova área pedida
 # pelo Bruno: "Central de Gestão de Projetos de Desenvolvimento, Inovação e
@@ -1175,6 +1211,15 @@ class InspecaoFinal(db.Model):
     observacao = db.Column(db.Text, nullable=True)
     resultado = db.Column(db.String(24), nullable=True)
 
+    # Tipo de produto inspecionado (Discos / FlexPig / PIG LBD-LUN-SUPERFLEX)
+    # — pedido do Bruno (11/09/2026, RDIM Fase 5). Decide qual modelo de tela
+    # a Nova Inspeção mostra (ver RDIM_TIPO_PRODUTO_OPCOES em models.py).
+    # Coluna nova em tabela que já existe em produção -> precisa de migração
+    # em app.py (ALTER TABLE), mesmo caso de subcategoria_desvio antes.
+    # Nullable e sem valor no banco pra inspeções antigas (nenhum backfill) —
+    # a tela sempre pede a escolha em toda inspeção NOVA daqui pra frente.
+    tipo_produto_inspecionado = db.Column(db.String(30), nullable=True)
+
     # Quantitativo de peças do lote (item.quantidade) que apresentaram
     # desvio — pedido do Bruno (02/09/2026): "lote total contém 5 peças, mas
     # dessas 2 unidades ficou com desvio". Sempre em relação ao lote inteiro
@@ -1208,6 +1253,41 @@ class InspecaoFinal(db.Model):
         cascade="all, delete-orphan",
         order_by="RdimPecaDesvio.ordem",
     )
+
+    # Apontamento por componente — só usado quando tipo_produto_inspecionado
+    # == "PIG_LBD_LUN_SUPERFLEX" (pedido do Bruno, 11/09/2026, RDIM Fase 5):
+    # "duplicar e agrupar as áreas de preenchimento" por componente (disco
+    # selo, disco guia, bumper etc.), já que o desvio pode estar só em 1 ou 2
+    # componentes específicos do conjunto, não no lote como um todo. Tabela
+    # nova -> criada sozinha pelo db.create_all(), sem precisar de migração
+    # em app.py (mesmo caso de RdimMedicao/RdimPecaDesvio antes).
+    componentes_desvio = db.relationship(
+        "RdimComponenteDesvio",
+        backref="inspecao",
+        cascade="all, delete-orphan",
+        order_by="RdimComponenteDesvio.ordem",
+    )
+
+    @property
+    def quantidade_com_desvio_total(self):
+        """quantidade_com_desvio (lote inteiro) quando preenchida — modelo
+        clássico (Discos/FlexPig); senão, soma das quantidades com desvio
+        POR COMPONENTE (modelo PIG LBD/LUN/SUPERFLEX) — pra "peças com
+        desvio" continuar fazendo sentido como indicador único nas telas de
+        listagem/dashboard, independente de qual modelo a inspeção usou.
+        None quando nenhum dos dois tem dado."""
+        if self.quantidade_com_desvio is not None:
+            return self.quantidade_com_desvio
+        if self.componentes_desvio:
+            return sum(c.quantidade_com_desvio or 0 for c in self.componentes_desvio)
+        return None
+
+    @property
+    def resumo_componentes_desvio(self):
+        """Texto curto tipo "Disco Selo; Cinta Magnética" a partir de
+        componentes_desvio — mesmo espírito de resumo_pecas_desvio, usado
+        como tooltip/indicador rápido na listagem RDIM."""
+        return "; ".join(c.componente for c in self.componentes_desvio)
 
     @property
     def pedido(self):
@@ -1410,6 +1490,46 @@ class RdimPecaDesvio(db.Model):
         if self.especificado_min is not None and self.valor_medido < self.especificado_min:
             return False
         return None
+
+
+class RdimComponenteDesvio(db.Model):
+    """Uma linha = um componente do conjunto PIG LBD/LUN/SUPERFLEX que
+    apresentou desvio, dentro de uma InspecaoFinal — pedido do Bruno
+    (11/09/2026, RDIM Fase 5): "tenho alto volume de produtos chamados LBD,
+    LUN e SUPERFLEX... a inspeção necessita ser mais detalhada devido a
+    quantidade de componentes que compõe o produto... preciso apontar
+    desvios... porém o desvio se encontra somente no disco selo e não no
+    disco guia". Só existe 1 linha por componente que REALMENTE teve desvio
+    (o operador marca "Sim" pro componente na tela de Nova Inspeção) — os
+    demais componentes da lista fechada (RDIM_COMPONENTE_LBD_OPCOES) que
+    ficaram "Não" simplesmente não geram linha aqui, mesmo espírito de
+    RdimPecaDesvio (só entra quem teve desvio).
+
+    Reaproveita as MESMAS 4 informações que a tela clássica de Discos/FlexPig
+    já pede pro desvio do lote inteiro (categoria, subcategoria, quantidade
+    com desvio, desvio encontrado) — "duplicar e agrupar as áreas de
+    preenchimento" por componente, nas palavras do Bruno — só que uma cópia
+    por componente marcado, em vez de uma única cópia pro lote como um
+    todo."""
+
+    __tablename__ = "rdim_componentes_desvio"
+
+    id = db.Column(db.Integer, primary_key=True)
+    inspecao_final_id = db.Column(db.Integer, db.ForeignKey("inspecoes_finais.id"), nullable=False)
+
+    # Sempre um dos valores de RDIM_COMPONENTE_LBD_OPCOES (validado em
+    # app.py, não no banco — mesmo padrão de categoria_desvio/estacao acima).
+    componente = db.Column(db.String(40), nullable=False)
+
+    categoria_desvio = db.Column(db.String(30), nullable=True)
+    subcategoria_desvio = db.Column(db.String(40), nullable=True)
+    # Peças DESTE COMPONENTE, dentro do lote (item.quantidade), que
+    # apresentaram desvio — mesmo conceito e mesma referência (lote inteiro)
+    # de InspecaoFinal.quantidade_com_desvio, só que por componente.
+    quantidade_com_desvio = db.Column(db.Float, nullable=True)
+    desvio_encontrado = db.Column(db.Text, nullable=True)
+
+    ordem = db.Column(db.Integer, nullable=False, default=0)
 
 
 class ProjetoPD(db.Model):

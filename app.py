@@ -37,6 +37,7 @@ from models import (
     PRIORIDADE_CORES,
     PRIORIDADE_OPCOES,
     RDIM_CATEGORIA_DESVIO_OPCOES,
+    RDIM_COMPONENTE_LBD_OPCOES,
     RDIM_ESTACOES_OPCOES,
     RDIM_GRANDEZAS_PADRAO,
     RDIM_INSPECAO_VISUAL_OPCOES,
@@ -44,6 +45,8 @@ from models import (
     RDIM_RESULTADO_LABELS,
     RDIM_RESULTADO_OPCOES,
     RDIM_SUBCATEGORIA_DESVIO_OPCOES,
+    RDIM_TIPO_PRODUTO_LABELS,
+    RDIM_TIPO_PRODUTO_OPCOES,
     REGIAO_POR_UF,
     REGIOES_OPCOES,
     RNC_DISPOSICAO_OPCOES,
@@ -80,6 +83,7 @@ from models import (
     PedidoOperacao,
     Programacao,
     ProjetoPD,
+    RdimComponenteDesvio,
     RdimMedicao,
     RdimPecaDesvio,
     RncQualidade,
@@ -287,6 +291,7 @@ def create_app():
         _backfill_go_data_solicitada_cliente_retira(app)
         _migrar_rdim_inspecao_final(app)
         _migrar_rdim_pecas_desvio(app)
+        _migrar_rdim_tipo_produto(app)
         # Roda por último de todos: depende de tudo acima (Pedido/ItemPedido
         # com todas as colunas migradas, PedidoOperacao já existindo).
         _sincronizar_planilha_producao_03_09_2026(app)
@@ -382,6 +387,9 @@ def create_app():
             RDIM_CATEGORIA_DESVIO_OPCOES=RDIM_CATEGORIA_DESVIO_OPCOES,
             RDIM_SUBCATEGORIA_DESVIO_OPCOES=RDIM_SUBCATEGORIA_DESVIO_OPCOES,
             RDIM_GRANDEZAS_PADRAO=RDIM_GRANDEZAS_PADRAO,
+            RDIM_TIPO_PRODUTO_OPCOES=RDIM_TIPO_PRODUTO_OPCOES,
+            RDIM_TIPO_PRODUTO_LABELS=RDIM_TIPO_PRODUTO_LABELS,
+            RDIM_COMPONENTE_LBD_OPCOES=RDIM_COMPONENTE_LBD_OPCOES,
             hoje_iso=date.today().isoformat(),
         )
 
@@ -1396,6 +1404,26 @@ def _migrar_rdim_pecas_desvio(app):
         if "especificado_max" not in colunas:
             conn.execute(text("ALTER TABLE rdim_pecas_desvio ADD COLUMN especificado_max FLOAT"))
     app.logger.info("Migração automática: campos especificado_min e especificado_max adicionados em rdim_pecas_desvio.")
+
+
+def _migrar_rdim_tipo_produto(app):
+    """Adiciona o campo novo da Fase 5 do RDIM (pedido do Bruno, 11/09/2026:
+    Discos/FlexPig no modelo atual, PIG LBD/LUN/SUPERFLEX no modelo por
+    componente) na tabela `inspecoes_finais` — que já existe em produção,
+    então essa coluna não é coberta só por `db.create_all()`. Mesmo padrão de
+    `_migrar_rdim_inspecao_final`: campo novo e opcional, fica em branco nas
+    inspeções já registradas (nenhum backfill)."""
+    inspector = inspect(db.engine)
+    if "inspecoes_finais" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("inspecoes_finais")}
+    if "tipo_produto_inspecionado" in colunas:
+        return
+
+    with db.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE inspecoes_finais ADD COLUMN tipo_produto_inspecionado VARCHAR(30)"))
+    app.logger.info("Migração automática: campo tipo_produto_inspecionado adicionado em inspecoes_finais.")
 
 
 _CHAVE_SEED_RNC_QUALIDADE_31_08_2026 = "seed_rnc_qualidade_31_08_2026"
@@ -4984,7 +5012,7 @@ def _rnc_para_form_dict(rnc):
 # ----------------------------------------------------------------------
 CAMPOS_HISTORICO_INSPECAO_FINAL = [
     "resultado", "categoria_desvio", "subcategoria_desvio", "desvio_encontrado",
-    "observacao", "inspecao_visual", "quantidade_com_desvio",
+    "observacao", "inspecao_visual", "quantidade_com_desvio", "tipo_produto_inspecionado",
 ]
 
 
@@ -5127,7 +5155,7 @@ def _dashboard_rdim():
     # Sempre em relação ao lote inteiro (item.quantidade), decisão já
     # confirmada com ele.
     total_quantidade_inspecionada = sum((i.item.quantidade or 0) for i in inspecoes if i.item)
-    total_quantidade_com_desvio = sum(i.quantidade_com_desvio or 0 for i in inspecoes)
+    total_quantidade_com_desvio = sum(i.quantidade_com_desvio_total or 0 for i in inspecoes)
     pct_pecas_desvio = (
         round((total_quantidade_com_desvio / total_quantidade_inspecionada) * 100, 1)
         if total_quantidade_inspecionada else 0
@@ -5180,6 +5208,20 @@ def _dashboard_rdim():
         for k, v in sorted(por_mes.items(), key=lambda kv: kv[1]["ord"])
     ][-12:]
 
+    # Componentes do PIG LBD/LUN/SUPERFLEX com mais desvio — pedido do Bruno
+    # (11/09/2026, RDIM Fase 5): mesmo espírito de "principais características
+    # do desvio" (por_subcategoria_desvio), só que na granularidade de
+    # componente do conjunto, contando RdimComponenteDesvio (1 linha por
+    # componente apontado, não por inspeção).
+    contagem_componentes = {}
+    for i in inspecoes:
+        for c in i.componentes_desvio:
+            contagem_componentes[c.componente] = contagem_componentes.get(c.componente, 0) + 1
+    por_componente_desvio = [
+        {"chave": k, "total": contagem_componentes.get(k, 0)}
+        for k in RDIM_COMPONENTE_LBD_OPCOES if k in contagem_componentes
+    ]
+
     return {
         "total": total,
         "aprovadas": aprovadas,
@@ -5190,6 +5232,7 @@ def _dashboard_rdim():
         "por_categoria_desvio": _quebra_por(lambda i: i.categoria_desvio, RDIM_CATEGORIA_DESVIO_OPCOES),
         "por_subcategoria_desvio": _quebra_por(lambda i: i.subcategoria_desvio, RDIM_SUBCATEGORIA_DESVIO_OPCOES),
         "por_estacao": _quebra_por(lambda i: i.estacao, RDIM_ESTACOES_OPCOES),
+        "por_componente_desvio": por_componente_desvio,
         "ranking_produtos": _ranking_reprovacao(lambda i: i.produto),
         "ranking_clientes": _ranking_reprovacao(lambda i: i.cliente),
         "evolucao": evolucao,
@@ -5299,6 +5342,48 @@ def _salvar_pecas_desvio_rdim(inspecao, f, substituir=False):
             )
         )
         ordem += 1
+
+
+def _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=False):
+    """Grava o apontamento de desvio por componente do PIG LBD/LUN/SUPERFLEX
+    — pedido do Bruno (11/09/2026, RDIM Fase 5): "o desvio se encontra
+    somente no disco selo e não no disco guia... quero a possibilidade de
+    inserir para a inspeção e apontamento somente o componente em
+    específico". Diferente das medições/peças (arrays paralelos por índice
+    de linha), aqui cada um dos 11 componentes de RDIM_COMPONENTE_LBD_OPCOES
+    tem um campo próprio indexado pela posição dele na lista (mais simples e
+    à prova de desalinhamento do que arrays paralelos, já que a lista de
+    componentes é FIXA — não é uma lista dinâmica que o operador monta livre
+    como peça a peça). Só cria linha pro componente marcado "Sim"
+    (`componente_desvio_{i}` == "SIM"); os demais não geram registro, mesmo
+    espírito de _salvar_pecas_desvio_rdim (só quem teve desvio entra).
+
+    Retorna None em sucesso, ou uma mensagem de erro (validação de
+    quantidade_com_desvio por componente, mesma regra do campo do lote
+    inteiro) — quando há erro, NADA é salvo (a rota deve mostrar o flash e
+    não commitar, mesmo padrão de bloqueio já usado no resto do RDIM)."""
+    linhas = []
+    for i, componente in enumerate(RDIM_COMPONENTE_LBD_OPCOES):
+        if (f.get(f"componente_desvio_{i}", "") or "").strip().upper() != "SIM":
+            continue
+        qtd, erro_qtd = _validar_quantidade_com_desvio(f.get(f"componente_quantidade_com_desvio_{i}"), quantidade_item)
+        if erro_qtd:
+            return f'Componente "{componente}": {erro_qtd}'
+        linhas.append({
+            "componente": componente,
+            "categoria_desvio": (f.get(f"componente_categoria_desvio_{i}", "") or "").strip() or None,
+            "subcategoria_desvio": (f.get(f"componente_subcategoria_desvio_{i}", "") or "").strip() or None,
+            "quantidade_com_desvio": qtd,
+            "desvio_encontrado": (f.get(f"componente_desvio_encontrado_{i}", "") or "").strip() or None,
+        })
+
+    if substituir:
+        for c in list(inspecao.componentes_desvio):
+            db.session.delete(c)
+
+    for ordem, linha in enumerate(linhas):
+        db.session.add(RdimComponenteDesvio(inspecao=inspecao, ordem=ordem, **linha))
+    return None
 
 
 def _inspecoes_rdim_por_item(item_ids):
@@ -6232,6 +6317,7 @@ def _construir_backup_pedidos_wb():
     _add_sheet("Inspecoes RDIM", InspecaoFinal, InspecaoFinal.query.order_by(InspecaoFinal.id).all())
     _add_sheet("RDIM Medicoes", RdimMedicao, RdimMedicao.query.order_by(RdimMedicao.id).all())
     _add_sheet("RDIM Pecas Desvio", RdimPecaDesvio, RdimPecaDesvio.query.order_by(RdimPecaDesvio.id).all())
+    _add_sheet("RDIM Componentes Desvio", RdimComponenteDesvio, RdimComponenteDesvio.query.order_by(RdimComponenteDesvio.id).all())
 
     # ---- P&D (novo, 03/09/2026) ----
     _add_sheet("Projetos PD", ProjetoPD, ProjetoPD.query.order_by(ProjetoPD.id).all())
@@ -7607,6 +7693,7 @@ def register_routes(app):
             f = request.form
             item_id = f.get("item_pedido_id", "").strip()
             resultado = f.get("resultado", "").strip()
+            tipo_produto = f.get("tipo_produto_inspecionado", "").strip()
             item = db.session.get(ItemPedido, int(item_id)) if item_id.isdigit() else None
 
             if item is None:
@@ -7614,6 +7701,9 @@ def register_routes(app):
                 return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=None)
             if resultado not in RDIM_RESULTADO_OPCOES:
                 flash("Selecione o resultado da inspeção (Aprovado / Reprovado / Aprovado com desvio).", "danger")
+                return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)
+            if tipo_produto not in RDIM_TIPO_PRODUTO_OPCOES:
+                flash("Selecione o tipo de produto a ser inspecionado.", "danger")
                 return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)
 
             quantidade_com_desvio, erro_qtd = _validar_quantidade_com_desvio(f.get("quantidade_com_desvio"), item.quantidade)
@@ -7637,11 +7727,17 @@ def register_routes(app):
                 observacao=f.get("observacao", "").strip() or None,
                 resultado=resultado,
                 quantidade_com_desvio=quantidade_com_desvio,
+                tipo_produto_inspecionado=tipo_produto,
                 criado_por_id=current_user.id,
             )
             db.session.add(nova)
             _salvar_medicoes_rdim(nova, f)
             _salvar_pecas_desvio_rdim(nova, f)
+            erro_componentes = _salvar_componentes_desvio_rdim(nova, f, item.quantidade)
+            if erro_componentes:
+                db.session.rollback()
+                flash(erro_componentes, "danger")
+                return render_template("qualidade_rdim_novo.html", valores=f, item_selecionado=item)
             db.session.commit()
             flash("Inspeção final registrada com sucesso.", "success")
             return redirect(url_for("rdim_editar", inspecao_id=nova.id))
@@ -7662,8 +7758,16 @@ def register_routes(app):
         if request.method == "POST":
             f = request.form
             resultado = f.get("resultado", "").strip()
+            tipo_produto = f.get("tipo_produto_inspecionado", "").strip()
             if resultado not in RDIM_RESULTADO_OPCOES:
                 flash("Selecione o resultado da inspeção (Aprovado / Reprovado / Aprovado com desvio).", "danger")
+                historico = (
+                    HistoricoAlteracao.query.filter_by(entidade_tipo="inspecao_final", entidade_id=inspecao.id)
+                    .order_by(HistoricoAlteracao.criado_em.desc()).all()
+                )
+                return render_template("qualidade_rdim_editar.html", inspecao=inspecao, historico=historico)
+            if tipo_produto not in RDIM_TIPO_PRODUTO_OPCOES:
+                flash("Selecione o tipo de produto a ser inspecionado.", "danger")
                 historico = (
                     HistoricoAlteracao.query.filter_by(entidade_tipo="inspecao_final", entidade_id=inspecao.id)
                     .order_by(HistoricoAlteracao.criado_em.desc()).all()
@@ -7674,6 +7778,15 @@ def register_routes(app):
             quantidade_com_desvio, erro_qtd = _validar_quantidade_com_desvio(f.get("quantidade_com_desvio"), quantidade_item)
             if erro_qtd:
                 flash(erro_qtd, "danger")
+                historico = (
+                    HistoricoAlteracao.query.filter_by(entidade_tipo="inspecao_final", entidade_id=inspecao.id)
+                    .order_by(HistoricoAlteracao.criado_em.desc()).all()
+                )
+                return render_template("qualidade_rdim_editar.html", inspecao=inspecao, historico=historico)
+
+            erro_componentes = _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=True)
+            if erro_componentes:
+                flash(erro_componentes, "danger")
                 historico = (
                     HistoricoAlteracao.query.filter_by(entidade_tipo="inspecao_final", entidade_id=inspecao.id)
                     .order_by(HistoricoAlteracao.criado_em.desc()).all()
@@ -7693,6 +7806,7 @@ def register_routes(app):
             inspecao.observacao = f.get("observacao", "").strip() or None
             inspecao.resultado = resultado
             inspecao.quantidade_com_desvio = quantidade_com_desvio
+            inspecao.tipo_produto_inspecionado = tipo_produto
             depois = {c: getattr(inspecao, c) for c in CAMPOS_HISTORICO_INSPECAO_FINAL}
             _registrar_alteracoes("inspecao_final", inspecao.id, inspecao.item.pedido_id if inspecao.item else None,
                                    antes, depois, CAMPOS_HISTORICO_INSPECAO_FINAL)
@@ -8114,13 +8228,14 @@ def register_routes(app):
         # Ordem importa: filhos antes dos pais, por causa das foreign keys —
         # bulk delete (.query.delete()) não aciona cascade de ORM, só as
         # normais do banco, então cada FK precisa ser removida "na mão" na
-        # ordem certa (RdimPecaDesvio/RdimMedicao -> InspecaoFinal ->
-        # ItemPedido; Programacao -> ItemPedido; HistoricoAlteracao ->
-        # Pedido; TesteProjetoPD/VisitaReuniaoPD -> ProjetoPD). RncQualidade
-        # e ProjetoPD/PedidoOperacao são tabelas independentes (sem FK com o
-        # resto), podem vir em qualquer ordem.
+        # ordem certa (RdimPecaDesvio/RdimMedicao/RdimComponenteDesvio ->
+        # InspecaoFinal -> ItemPedido; Programacao -> ItemPedido;
+        # HistoricoAlteracao -> Pedido; TesteProjetoPD/VisitaReuniaoPD ->
+        # ProjetoPD). RncQualidade e ProjetoPD/PedidoOperacao são tabelas
+        # independentes (sem FK com o resto), podem vir em qualquer ordem.
         RdimPecaDesvio.query.delete(synchronize_session=False)
         RdimMedicao.query.delete(synchronize_session=False)
+        RdimComponenteDesvio.query.delete(synchronize_session=False)
         InspecaoFinal.query.delete(synchronize_session=False)
         Programacao.query.delete(synchronize_session=False)
         HistoricoAlteracao.query.delete(synchronize_session=False)

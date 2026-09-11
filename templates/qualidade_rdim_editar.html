@@ -59,6 +59,23 @@
 <div class="row g-3">
   <div class="col-12 col-xl-8">
     <form method="post" id="formRdimEditar">
+      <div class="card shadow-sm mb-3">
+        <div class="card-body">
+          <label class="form-label small text-muted mb-2 d-block">Tipo de produto a ser inspecionado</label>
+          <div class="btn-group w-100" role="group" id="grupoTipoProduto">
+            {% for op in RDIM_TIPO_PRODUTO_OPCOES %}
+            <input type="radio" class="btn-check" name="tipo_produto_inspecionado" id="tipoProduto{{ op }}" value="{{ op }}"
+                   {% if (inspecao.tipo_produto_inspecionado or 'DISCOS') == op %}checked{% endif %} required>
+            <label class="btn btn-outline-primary" for="tipoProduto{{ op }}">{{ RDIM_TIPO_PRODUTO_LABELS.get(op, op) }}</label>
+            {% endfor %}
+          </div>
+          <div class="form-text">
+            Discos e FlexPig (HLFlex/Discflex) usam o modelo de inspeção atual (abaixo). PIG LBD/LUN/SUPERFLEX usa o
+            apontamento por componente.
+          </div>
+        </div>
+      </div>
+
       <div class="row g-3 mb-3">
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Data da inspeção</label>
@@ -146,6 +163,7 @@
         </div>
       </div>
 
+      <div id="blocoModeloClassico">
       <div class="row g-3 mb-3">
         <div class="col-md-3">
           <label class="form-label small text-muted mb-1">Inspeção visual</label>
@@ -244,6 +262,70 @@
                 {% endfor %}
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <div id="blocoModeloComponentes" class="card shadow-sm mb-3 d-none">
+        <div class="card-body">
+          <h6 class="text-uppercase text-muted small mb-1">Componentes do conjunto — apontamento por componente</h6>
+          <p class="text-muted small">
+            Marque "Sim" só no(s) componente(s) que tiveram desvio — cada um marcado abre os mesmos campos de
+            categoria/subcategoria/quantidade com desvio/descrição do modelo clássico, só que específicos daquele
+            componente.
+          </p>
+          <div id="componentesDesvioLista">
+            {% set componentes_por_nome = {} %}
+            {% for c in inspecao.componentes_desvio %}
+              {% if componentes_por_nome.update({c.componente: c}) %}{% endif %}
+            {% endfor %}
+            {% for comp in RDIM_COMPONENTE_LBD_OPCOES %}
+            {% set c = componentes_por_nome.get(comp) %}
+            <div class="componente-linha border-bottom py-2" data-indice="{{ loop.index0 }}">
+              <div class="row g-2 align-items-center">
+                <div class="col-md-3 fw-semibold">{{ comp }}</div>
+                <div class="col-md-3">
+                  <div class="btn-group btn-group-sm" role="group">
+                    <input type="radio" class="btn-check componente-desvio-radio" name="componente_desvio_{{ loop.index0 }}"
+                           id="compSim{{ loop.index0 }}" value="SIM" autocomplete="off" {% if c %}checked{% endif %}>
+                    <label class="btn btn-outline-danger" for="compSim{{ loop.index0 }}">Sim, teve desvio</label>
+                    <input type="radio" class="btn-check componente-desvio-radio" name="componente_desvio_{{ loop.index0 }}"
+                           id="compNao{{ loop.index0 }}" value="NAO" autocomplete="off" {% if not c %}checked{% endif %}>
+                    <label class="btn btn-outline-secondary" for="compNao{{ loop.index0 }}">Não</label>
+                  </div>
+                </div>
+              </div>
+              <div class="componente-detalhe row g-2 mt-1 {% if not c %}d-none{% endif %}">
+                <div class="col-md-3">
+                  <select class="form-select form-select-sm" name="componente_categoria_desvio_{{ loop.index0 }}">
+                    <option value="">Categoria do desvio</option>
+                    {% for op in RDIM_CATEGORIA_DESVIO_OPCOES %}
+                      <option value="{{ op }}" {% if c and c.categoria_desvio == op %}selected{% endif %}>{{ op }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <select class="form-select form-select-sm" name="componente_subcategoria_desvio_{{ loop.index0 }}">
+                    <option value="">Subcategoria do desvio</option>
+                    {% for op in RDIM_SUBCATEGORIA_DESVIO_OPCOES %}
+                      <option value="{{ op }}" {% if c and c.subcategoria_desvio == op %}selected{% endif %}>{{ op }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <input type="number" step="any" min="0" class="form-control form-control-sm"
+                         name="componente_quantidade_com_desvio_{{ loop.index0 }}" placeholder="Qtd. c/ desvio"
+                         value="{{ c.quantidade_com_desvio if c and c.quantidade_com_desvio is not none else '' }}">
+                </div>
+                <div class="col-md-4">
+                  <input type="text" class="form-control form-control-sm"
+                         name="componente_desvio_encontrado_{{ loop.index0 }}" placeholder="Desvio encontrado neste componente"
+                         value="{{ c.desvio_encontrado if c else '' }}">
+                </div>
+              </div>
+            </div>
+            {% endfor %}
           </div>
         </div>
       </div>
@@ -426,6 +508,36 @@
 
   pecasDesvioBody.addEventListener("input", function (e) {
     if (e.target.classList.contains("peca-desvio-input")) avaliarVariacaoPeca(e.target.closest(".peca-desvio-row"));
+  });
+
+  // ---- Tipo de produto a ser inspecionado: alterna entre o modelo clássico
+  // (Discos/FlexPig) e o modelo por componente (PIG LBD/LUN/SUPERFLEX) —
+  // pedido do Bruno (11/09/2026, RDIM Fase 5). ----
+  const blocoClassico = document.getElementById("blocoModeloClassico");
+  const blocoComponentes = document.getElementById("blocoModeloComponentes");
+
+  function alternarDisabled(bloco, habilitar) {
+    bloco.querySelectorAll("input, select, textarea").forEach(function (el) { el.disabled = !habilitar; });
+  }
+
+  function aplicarTipoProduto() {
+    const marcado = document.querySelector('input[name="tipo_produto_inspecionado"]:checked');
+    const ehComponentes = marcado && marcado.value === "PIG_LBD_LUN_SUPERFLEX";
+    blocoClassico.classList.toggle("d-none", ehComponentes);
+    blocoComponentes.classList.toggle("d-none", !ehComponentes);
+    alternarDisabled(blocoClassico, !ehComponentes);
+    alternarDisabled(blocoComponentes, ehComponentes);
+  }
+
+  document.getElementById("grupoTipoProduto").addEventListener("change", aplicarTipoProduto);
+  aplicarTipoProduto();
+
+  // ---- Componentes: mostra a área de detalhe só quando "Sim" é marcado ----
+  const componentesLista = document.getElementById("componentesDesvioLista");
+  componentesLista.addEventListener("change", function (e) {
+    if (!e.target.classList.contains("componente-desvio-radio")) return;
+    const linha = e.target.closest(".componente-linha");
+    linha.querySelector(".componente-detalhe").classList.toggle("d-none", e.target.value !== "SIM");
   });
 })();
 </script>

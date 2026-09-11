@@ -109,6 +109,7 @@
         <th>Nº Pedido</th>
         <th>Produto</th>
         <th>Nº RIF</th>
+        <th>Tipo</th>
         <th>Categoria desvio</th>
         <th>Peças c/ desvio</th>
         <th>Contexto do desvio</th>
@@ -126,11 +127,20 @@
         <td>{{ i.pedido_venda or "—" }}</td>
         <td class="text-truncate" style="max-width: 220px;" title="{{ i.produto or '' }}">{{ i.produto or "—" }}</td>
         <td>{{ i.numero_rif or "—" }}</td>
-        <td>{{ i.categoria_desvio or "—" }}{% if i.subcategoria_desvio %} <span class="text-muted small">({{ i.subcategoria_desvio }})</span>{% endif %}</td>
         <td>
-          {% if i.quantidade_com_desvio is not none %}
-            <span class="{% if i.quantidade_com_desvio > 0 %}text-danger fw-semibold{% else %}text-muted{% endif %}">
-              {{ i.quantidade_com_desvio|round(0, 'floor')|int }}{% if i.item and i.item.quantidade %} / {{ i.item.quantidade|round(0, 'floor')|int }}{% endif %}
+          <span class="small">{{ RDIM_TIPO_PRODUTO_LABELS.get(i.tipo_produto_inspecionado, "—") }}</span>
+        </td>
+        <td>
+          {% if i.componentes_desvio %}
+            <span title="{{ i.resumo_componentes_desvio }}">{{ i.componentes_desvio|length }} componente(s) c/ desvio</span>
+          {% else %}
+            {{ i.categoria_desvio or "—" }}{% if i.subcategoria_desvio %} <span class="text-muted small">({{ i.subcategoria_desvio }})</span>{% endif %}
+          {% endif %}
+        </td>
+        <td>
+          {% if i.quantidade_com_desvio_total is not none %}
+            <span class="{% if i.quantidade_com_desvio_total > 0 %}text-danger fw-semibold{% else %}text-muted{% endif %}">
+              {{ i.quantidade_com_desvio_total|round(0, 'floor')|int }}{% if i.item and i.item.quantidade %} / {{ i.item.quantidade|round(0, 'floor')|int }}{% endif %}
             </span>
           {% else %}
             <span class="text-muted">—</span>
@@ -165,7 +175,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="12" class="text-center text-muted py-4">Nenhuma inspeção encontrada.</td></tr>
+      <tr><td colspan="13" class="text-center text-muted py-4">Nenhuma inspeção encontrada.</td></tr>
       {% endfor %}
     </tbody>
   </table>
