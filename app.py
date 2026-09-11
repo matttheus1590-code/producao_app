@@ -78,6 +78,8 @@ from models import (
     HistoricoAlteracao,
     InspecaoFinal,
     ItemPedido,
+    LeadTimeProducao,
+    LeadTimeProducaoHistorico,
     LeadTimeTransportadora,
     Pedido,
     PedidoOperacao,
@@ -3198,6 +3200,194 @@ def _lead_times_estacao(nome, meses_historico=3):
     return {"fila": fila, "chao": chao, "total": total, "historico": historico}
 
 
+# ----------------------------------------------------------------------
+# Lead Time de Produção — parametrização por Produto + Estação (pedido do
+# Bruno, 11/09/2026): base OFICIAL de "quanto tempo uma estação normalmente
+# leva pra produzir um produto", cadastrada em Cadastros > Lead time
+# Produção, e confrontada aqui com o histórico REAL das OPs finalizadas.
+#
+# 3 conceitos, pra não confundir (mesmo vocabulário usado no cadastro e na
+# aba Simulação da Gestão de Risco):
+#   LT PADRÃO    = parâmetro oficial, cadastrado manualmente
+#                   (LeadTimeProducao.lt_padrao_dias).
+#   LT HISTÓRICO = comportamento real das OPs finalizadas, calculado AO
+#                   VIVO a cada carregamento (nunca guardado) — ver
+#                   _estatisticas_lead_time_producao.
+#   LT PROJETADO = o que usar pra prever prazo HOJE: por padrão é o próprio
+#                   LT padrão, a não ser que o histórico recente esteja
+#                   indicando desvio relevante (ver "indicador"/"tendencia"
+#                   abaixo) — quem decide revisar é sempre um humano, o
+#                   sistema só sugere (nunca altera o LT padrão sozinho).
+#
+# Preparado pra ser reaproveitado, sem alterações, por: a aba Simulação da
+# Gestão de Risco (_simulacao_otd_linha, mais abaixo), o widget "Simulado A"
+# na tela do pedido (rota editar_pedido) e, no futuro, um simulador "E SE" e
+# a própria Torre de Controle OTD — nenhuma dessas funções depende de rota
+# nenhuma, só de dados, então dá pra chamar de qualquer lugar novo depois.
+# ----------------------------------------------------------------------
+
+LT_PRODUCAO_LIMITE_ATENCAO = 1.10    # média de referência até 10% acima do padrão = 🟢
+LT_PRODUCAO_LIMITE_VERMELHO = 1.25   # até 25% acima = 🟡; acima disso = 🔴
+LT_PRODUCAO_DESVIO_SUGESTAO = 0.15   # desvio mínimo (15%) pra sugerir revisão do LT padrão
+LT_PRODUCAO_OPS_MINIMAS_SUGESTAO = 3  # nº mínimo de OPs (últimos 3 meses) pra sugerir revisão
+
+
+def _itens_finalizados_para_lt(produto, estacao_nome):
+    """Todo ItemPedido FINALIZADO, com início e término de produção
+    preenchidos, cuja descrição CONTENHA `produto` (ILIKE — mesmo padrão de
+    busca já usado no resto do sistema, não exige catálogo nem digitação
+    idêntica) e esteja na estação `estacao_nome`. Base de todas as
+    estatísticas de lead time de produção — reaproveita
+    ItemPedido.lt_producao_dias, que já existe."""
+    if not produto or not estacao_nome:
+        return []
+    return (
+        ItemPedido.query.filter(
+            ItemPedido.estacao == estacao_nome,
+            ItemPedido.status_producao == "FINALIZADO",
+            ItemPedido.inicio_producao.isnot(None),
+            ItemPedido.termino_inspecao.isnot(None),
+            ItemPedido.descricao_produto.ilike(f"%{produto.strip()}%"),
+        )
+        .order_by(ItemPedido.termino_inspecao.asc())
+        .all()
+    )
+
+
+def _estatisticas_lead_time_producao(produto, estacao_nome, lt_padrao_dias):
+    """Estatísticas AO VIVO (nunca guardadas) de 1 combinação produto+estação
+    — pedido do Bruno (11/09/2026, item 2): "não tratar o LT como número
+    estático". Médias em janelas corridas (30d/3m/6m — aqui é "últimos N
+    dias/meses", diferente do histórico por MÊS FECHADO que a tela de
+    Estações usa), melhor/pior LT realizado, tendência e um indicador
+    🟢🟡🔴 comparando a média recente contra o LT padrão — e, quando o
+    desvio é relevante, uma sugestão de revisão (nunca aplicada sozinha)."""
+    hoje = date.today()
+    itens = _itens_finalizados_para_lt(produto, estacao_nome)
+    lts_por_item = [(i, i.lt_producao_dias) for i in itens if i.lt_producao_dias is not None]
+
+    def _media_desde(dias_atras):
+        limite = hoje - timedelta(days=dias_atras)
+        valores = [lt for i, lt in lts_por_item if i.termino_inspecao >= limite]
+        return round(sum(valores) / len(valores), 1) if valores else None
+
+    media_30d = _media_desde(30)
+    media_3m = _media_desde(90)
+    media_6m = _media_desde(180)
+    qtd_3m = len([lt for i, lt in lts_por_item if i.termino_inspecao >= hoje - timedelta(days=90)])
+    todos_lts = [lt for _, lt in lts_por_item]
+    ultimo_lt = lts_por_item[-1][1] if lts_por_item else None
+
+    # Tendência: compara os 30 dias mais recentes com a média dos últimos 3
+    # meses — se os dias mais recentes estão puxando a média pra cima/baixo,
+    # é sinal de tendência (não só ruído de 1 OP fora da curva).
+    tendencia = "sem_dado"
+    if media_30d is not None and media_3m is not None and media_3m > 0:
+        variacao = media_30d / media_3m
+        if variacao >= 1.1:
+            tendencia = "aumento"
+        elif variacao <= 0.9:
+            tendencia = "queda"
+        else:
+            tendencia = "estavel"
+
+    # Indicador visual (item 9 do pedido do Bruno) — compara a média mais
+    # confiável disponível (3M, caindo pra 30d se ainda não tiver 3M de
+    # histórico) contra o LT padrão cadastrado.
+    referencia = media_3m if media_3m is not None else media_30d
+    indicador = "sem_dado"
+    if referencia is not None and lt_padrao_dias:
+        razao = referencia / lt_padrao_dias
+        if razao <= LT_PRODUCAO_LIMITE_ATENCAO:
+            indicador = "verde"
+        elif razao <= LT_PRODUCAO_LIMITE_VERMELHO:
+            indicador = "amarelo"
+        else:
+            indicador = "vermelho"
+
+    sugestao_revisao = None
+    if (
+        referencia is not None
+        and lt_padrao_dias
+        and qtd_3m >= LT_PRODUCAO_OPS_MINIMAS_SUGESTAO
+        and abs(referencia - lt_padrao_dias) / lt_padrao_dias >= LT_PRODUCAO_DESVIO_SUGESTAO
+    ):
+        sugestao_revisao = {
+            "valor_sugerido": round(referencia),
+            "sentido": "aumento" if referencia > lt_padrao_dias else "reducao",
+            "texto": (
+                f"Média dos últimos {'3 meses' if media_3m is not None else '30 dias'} "
+                f"({referencia}d) está {'acima' if referencia > lt_padrao_dias else 'abaixo'} "
+                f"do LT padrão ({lt_padrao_dias}d) — considerar revisar para ~{round(referencia)}d."
+            ),
+        }
+
+    return {
+        "media_30d": media_30d,
+        "media_3m": media_3m,
+        "media_6m": media_6m,
+        "melhor_lt": min(todos_lts) if todos_lts else None,
+        "pior_lt": max(todos_lts) if todos_lts else None,
+        "qtd_ops_consideradas": qtd_3m,
+        "ultimo_lt": ultimo_lt,
+        "tendencia": tendencia,
+        "indicador": indicador,
+        "sugestao_revisao": sugestao_revisao,
+    }
+
+
+def _mapa_lead_time_producao():
+    """Todas as LeadTimeProducao ativas, com a Estacao já resolvida — lista
+    pequena (cadastro gerencial, não um catálogo de produto), iterada em
+    Python porque o casamento é por "contém" (não dá pra indexar por chave
+    exata como o mapa de lead time de transporte)."""
+    linhas = LeadTimeProducao.query.filter_by(ativo=True).all()
+    estacoes = {e.id: e for e in Estacao.query.all()}
+    return [(linha, estacoes.get(linha.estacao_id)) for linha in linhas]
+
+
+def _lt_producao_parametrizado_item(item, mapa=None):
+    """LT de produção parametrizado pra 1 ItemPedido: acha a
+    LeadTimeProducao cujo `produto` está contido na descrição do item E cuja
+    estação bate com item.estacao. Quando não acha nenhuma, cai pro fallback
+    já existente e hoje adormecido Estacao.meta_lead_time_dias (evita
+    duplicar o conceito de "lead time por estação" — reaproveita o campo já
+    cadastrado em Cadastros > Estações). Retorna None quando nem isso
+    existe (sem dado pra este item)."""
+    if not item.estacao:
+        return None
+    mapa = mapa if mapa is not None else _mapa_lead_time_producao()
+    descricao = (item.descricao_produto or "").upper()
+    for linha, estacao in mapa:
+        if estacao and estacao.nome == item.estacao and linha.produto.upper() in descricao:
+            return linha.lt_padrao_dias
+    estacao_cadastro = Estacao.query.filter_by(nome=item.estacao).first()
+    if estacao_cadastro and estacao_cadastro.meta_lead_time_dias:
+        return estacao_cadastro.meta_lead_time_dias
+    return None
+
+
+def _lt_producao_parametrizado_pedido(itens):
+    """LT de produção parametrizado pra um PEDIDO inteiro: aplica
+    _lt_producao_parametrizado_item em cada item aberto e usa o PIOR caso
+    (máximo) — mesmo critério de "quem manda é o item mais lento" já usado
+    em _liberacao_pcp_por_pedido_venda pro prazo real. Retorna
+    (lt_dias_ou_none, itens_sem_parametro) pra quem exibe poder avisar
+    quantos itens ficaram sem dado, sem esconder a lacuna."""
+    if not itens:
+        return None, []
+    mapa = _mapa_lead_time_producao()
+    valores = []
+    sem_parametro = []
+    for item in itens:
+        lt = _lt_producao_parametrizado_item(item, mapa=mapa)
+        if lt is None:
+            sem_parametro.append(item)
+        else:
+            valores.append(lt)
+    return (max(valores) if valores else None), sem_parametro
+
+
 def _gargalos_por_estacao():
     """Ranking de estações por "quanto está travado ali": fila, atraso, tempo
     de espera médio, lead time médio e valor parado (não finalizado).
@@ -5751,6 +5941,15 @@ def _calcular_risco_pedido(go, m, pedido_producao, rdim_resumo, gargalos_por_est
         "gargalo": gargalo,
         "acao_recomendada": acao_recomendada,
         "alternativas": alternativas,
+        # Itens ainda não finalizados do pedido de PRODUÇÃO (não o de
+        # Operação) — pedido do Bruno (11/09/2026, aba Simulação): usado
+        # pra achar o lead time de produção PARAMETRIZADO (Cadastros > Lead
+        # time Produção) de cada item, sem precisar consultar de novo
+        # _pedidos_producao_por_pedido_venda (já foi resolvido pra montar
+        # esta linha).
+        "itens_producao_abertos": (
+            [i for i in pedido_producao.itens if i.status_producao != "FINALIZADO"] if pedido_producao else []
+        ),
     }
 
 
@@ -5828,6 +6027,87 @@ def _pedidos_risco_otd(args):
         l["folga_dias"] if l["folga_dias"] is not None else 9999,
     ))
     return linhas, _resumo_risco_otd(linhas)
+
+
+SIMULACAO_BALANCO_INFO = {
+    "concordam": {"label": "Parametrizado bate com a realidade", "emoji": "🟢", "cor": "success"},
+    "alerta_operacional": {"label": "Realidade pior que o parametrizado", "emoji": "🔴", "cor": "danger"},
+    "revisar_parametro": {"label": "Parâmetro parece desatualizado", "emoji": "🟡", "cor": "warning"},
+    "sem_parametro": {"label": "Sem LT de produção parametrizado", "emoji": "⚪", "cor": "secondary"},
+}
+
+# Diferença mínima (em dias de folga) pra considerar Simulado A e Simulado B
+# realmente divergentes — abaixo disso é só ruído de arredondamento, não
+# vale a pena sinalizar como alerta.
+SIMULACAO_DIVERGENCIA_DIAS = 2
+
+
+def _simulacao_otd_linha(linha):
+    """Simulado A x Simulado B pra 1 linha já calculada por
+    _calcular_risco_pedido (pedido do Bruno, 11/09/2026, aba Simulação):
+
+    Simulado A (parâmetro) = data de inclusão do pedido + LT de produção
+    PARAMETRIZADO (pior caso entre os itens ainda abertos, Cadastros > Lead
+    time Produção) + LT de transporte parametrizado (o mesmo já calculado
+    nesta linha) — funciona mesmo sem o PCP ainda ter planejado nada, então
+    já existe pra um pedido recém-criado (ver widget em editar_pedido).
+
+    Simulado B (realidade) = a PRÓPRIA linha da Torre de Controle
+    (folga_dias/data_prevista_entrega, que já usam a previsão REAL do PCP +
+    o mesmo LT de transporte) — não recalcula nada, só reexibe lado a lado.
+
+    O "balanço" entre os dois é o sinal de decisão pro Bruno: se o parâmetro
+    diz que dá e a realidade diz que não dá, o problema é operacional
+    (estação atrasada/gargalo); se é o contrário, o parâmetro provavelmente
+    está desatualizado (folgado demais) e vale revisar."""
+    itens_abertos = linha["itens_producao_abertos"]
+    lt_producao, itens_sem_parametro = _lt_producao_parametrizado_pedido(itens_abertos)
+
+    data_inclusao = linha["go"].data_inclusao_pedido
+    transporte = linha["transporte_rodoviario_dias"]
+    prazo_comercial = linha["prazo_comercial_data"]
+
+    data_prevista_a = None
+    if data_inclusao and lt_producao is not None and transporte is not None:
+        data_prevista_a = data_inclusao + timedelta(days=lt_producao + transporte)
+
+    folga_a = (prazo_comercial - data_prevista_a).days if (prazo_comercial and data_prevista_a) else None
+    folga_b = linha["folga_dias"]
+
+    if folga_a is None or folga_b is None:
+        balanco = "sem_parametro"
+    elif abs(folga_a - folga_b) < SIMULACAO_DIVERGENCIA_DIAS:
+        balanco = "concordam"
+    elif folga_a > folga_b:
+        # Parâmetro é mais otimista que a realidade -> a operação está
+        # performando pior do que o parâmetro promete.
+        balanco = "alerta_operacional"
+    else:
+        # Parâmetro é mais pessimista que a realidade -> a operação está
+        # indo melhor do que o parâmetro previa.
+        balanco = "revisar_parametro"
+
+    return {
+        "data_prevista_a": data_prevista_a,
+        "folga_a": folga_a,
+        "lt_producao_parametrizado": lt_producao,
+        "itens_sem_parametro": itens_sem_parametro,
+        "data_prevista_b": linha["data_prevista_entrega"],
+        "folga_b": folga_b,
+        "balanco": balanco,
+        "balanco_info": SIMULACAO_BALANCO_INFO[balanco],
+    }
+
+
+def _simulacao_otd(linhas):
+    """Simulado A/B pra TODAS as linhas já calculadas (mesmo conjunto
+    filtrado exibido na Torre de Controle) + um resumo por balanço, pra
+    alimentar a aba Simulação sem duplicar a consulta de pedidos."""
+    simulacoes = {l["pedido_id"]: _simulacao_otd_linha(l) for l in linhas}
+    resumo = {chave: 0 for chave in SIMULACAO_BALANCO_INFO}
+    for s in simulacoes.values():
+        resumo[s["balanco"]] += 1
+    return simulacoes, resumo
 
 
 def _formatar_data_br(d):
@@ -7385,6 +7665,154 @@ def register_routes(app):
 
         return render_template("cadastros_lead_time_transportadora_form.html", linha=linha, form={})
 
+    # ------------------------------------------------------------------
+    # Cadastros > Lead time Produção (pedido do Bruno, 11/09/2026) — mesmo
+    # padrão CRUD do Lead time Transportadora acima, agora por Produto +
+    # Estação. O histórico real (média/melhor/pior/tendência) NUNCA é
+    # gravado aqui — é sempre recalculado ao vivo por
+    # _estatisticas_lead_time_producao (ver seção antes de
+    # _gargalos_por_estacao).
+    # ------------------------------------------------------------------
+    def _validar_lead_time_producao_form(f, ignorar_id=None):
+        """Valida/normaliza o formulário de Lead time Produção — mesmo
+        espírito de _validar_lead_time_form (devolve (dados, None) ou
+        (None, erro), compartilhado entre novo/editar)."""
+        produto = f.get("produto", "").strip()
+        familia = f.get("familia", "").strip() or None
+        estacao_id = f.get("estacao_id", type=int)
+        lt_padrao_dias = _parse_float_form(f.get("lt_padrao_dias"), default=None)
+
+        if not produto:
+            return None, "Informe o produto (ou trecho do nome do produto)."
+        if not estacao_id or db.session.get(Estacao, estacao_id) is None:
+            return None, "Selecione uma estação válida."
+        if lt_padrao_dias is None or lt_padrao_dias <= 0:
+            return None, "Informe um LT padrão válido (em dias corridos, maior que zero)."
+
+        conflito = LeadTimeProducao.query.filter_by(produto=produto, estacao_id=estacao_id)
+        if ignorar_id is not None:
+            conflito = conflito.filter(LeadTimeProducao.id != ignorar_id)
+        if conflito.first() is not None:
+            return None, f'Já existe um Lead time cadastrado para "{produto}" nessa estação.'
+
+        return {
+            "produto": produto,
+            "familia": familia,
+            "estacao_id": estacao_id,
+            "lt_padrao_dias": lt_padrao_dias,
+        }, None
+
+    def _registrar_revisao_lt_producao(entrada, valor_anterior, valor_novo, motivo):
+        """Grava 1 linha em LeadTimeProducaoHistorico quando o LT padrão
+        muda de valor (pedido do Bruno, item 4: valor anterior/novo/data/
+        responsável/motivo). Só grava quando o valor realmente mudou —
+        editar outros campos (família, ativo) não gera histórico de
+        revisão de LT."""
+        if valor_anterior == valor_novo:
+            return
+        db.session.add(
+            LeadTimeProducaoHistorico(
+                lead_time_producao_id=entrada.id,
+                valor_anterior=valor_anterior,
+                valor_novo=valor_novo,
+                motivo=(motivo or "").strip() or None,
+                usuario_nome=current_user.nome if current_user.is_authenticated else None,
+            )
+        )
+
+    @app.route("/cadastros/lead-time-producao")
+    @requer_role("ADMIN", "PCP")
+    def cadastros_lead_time_producao():
+        entradas = (
+            LeadTimeProducao.query.join(Estacao, LeadTimeProducao.estacao_id == Estacao.id)
+            .order_by(Estacao.ordem_exibicao, LeadTimeProducao.produto)
+            .all()
+        )
+        linhas = [
+            {"entrada": e, "estatisticas": _estatisticas_lead_time_producao(e.produto, e.estacao.nome, e.lt_padrao_dias)}
+            for e in entradas
+        ]
+        return render_template(
+            "cadastros_lead_time_producao.html",
+            linhas=linhas,
+            estacoes=Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all(),
+        )
+
+    @app.route("/cadastros/lead-time-producao/novo", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def cadastros_lead_time_producao_novo():
+        if request.method == "POST":
+            f = request.form
+            dados, erro = _validar_lead_time_producao_form(f)
+            if erro:
+                flash(erro, "danger")
+                return render_template(
+                    "cadastros_lead_time_producao_form.html", entrada=None, form=f,
+                    estacoes=Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all(),
+                    historico=[],
+                )
+
+            nova = LeadTimeProducao(
+                ativo=True,
+                responsavel_revisao=current_user.nome if current_user.is_authenticated else None,
+                data_ultima_revisao=date.today(),
+                **dados,
+            )
+            db.session.add(nova)
+            db.session.commit()
+            flash(f'Lead time de produção "{nova.produto}" cadastrado com sucesso.', "success")
+            return redirect(url_for("cadastros_lead_time_producao"))
+
+        return render_template(
+            "cadastros_lead_time_producao_form.html", entrada=None, form={},
+            estacoes=Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all(),
+            historico=[],
+        )
+
+    @app.route("/cadastros/lead-time-producao/<int:entrada_id>/editar", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def cadastros_lead_time_producao_editar(entrada_id):
+        entrada = db.session.get(LeadTimeProducao, entrada_id)
+        if entrada is None:
+            flash("Lead time de produção não encontrado.", "danger")
+            return redirect(url_for("cadastros_lead_time_producao"))
+
+        historico = (
+            LeadTimeProducaoHistorico.query.filter_by(lead_time_producao_id=entrada.id)
+            .order_by(LeadTimeProducaoHistorico.criado_em.desc())
+            .all()
+        )
+        estacoes_ativas = Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all()
+
+        if request.method == "POST":
+            f = request.form
+            dados, erro = _validar_lead_time_producao_form(f, ignorar_id=entrada.id)
+            if erro:
+                flash(erro, "danger")
+                return render_template(
+                    "cadastros_lead_time_producao_form.html", entrada=entrada, form=f,
+                    estacoes=estacoes_ativas, historico=historico,
+                )
+
+            lt_anterior = entrada.lt_padrao_dias
+            for campo, valor in dados.items():
+                setattr(entrada, campo, valor)
+            entrada.ativo = bool(f.get("ativo"))
+
+            if dados["lt_padrao_dias"] != lt_anterior:
+                _registrar_revisao_lt_producao(entrada, lt_anterior, dados["lt_padrao_dias"], f.get("motivo_alteracao"))
+                entrada.data_ultima_revisao = date.today()
+                entrada.responsavel_revisao = current_user.nome if current_user.is_authenticated else None
+
+            db.session.commit()
+            flash(f'Lead time de produção "{entrada.produto}" atualizado com sucesso.', "success")
+            return redirect(url_for("cadastros_lead_time_producao"))
+
+        return render_template(
+            "cadastros_lead_time_producao_form.html", entrada=entrada, form={},
+            estacoes=estacoes_ativas, historico=historico,
+        )
+
     @app.route("/alertas")
     @login_required
     def alertas():
@@ -7780,7 +8208,52 @@ def register_routes(app):
             flash("Pedido atualizado com sucesso.", "success")
             return redirect(url_for("editar_pedido", pedido_id=pedido.id))
 
-        return render_template("editar_pedido.html", pedido=pedido, transportadoras=transportadoras)
+        # Simulado A (pedido do Bruno, 11/09/2026): prazo comercial x LT de
+        # produção PARAMETRIZADO + LT de transporte parametrizado — é pra
+        # esta tela que o sistema já redireciona ao salvar um pedido novo,
+        # então já mostra a projeção na hora, sem depender do PCP ainda ter
+        # planejado nada (Simulado B, na Gestão de Risco, já é a versão com
+        # a previsão REAL do PCP). Só considera itens ainda não finalizados.
+        simulado_a = None
+        itens_abertos = [i for i in pedido.itens if i.status_producao != "FINALIZADO"]
+        if itens_abertos:
+            lt_producao, itens_sem_parametro = _lt_producao_parametrizado_pedido(itens_abertos)
+
+            transporte_dias = None
+            transporte_aplicavel = pedido.frete == "CIF"
+            if transporte_aplicavel and pedido.estado:
+                uf = pedido.estado.strip().upper()
+                linha_transporte = _mapa_lead_time_transportadora().get((uf, "Rodoviário"))
+                transporte_dias = _lead_time_transporte_dias(linha_transporte)
+
+            data_prevista = None
+            if pedido.data_inclusao_pedido and lt_producao is not None and (transporte_dias is not None or not transporte_aplicavel):
+                data_prevista = pedido.data_inclusao_pedido + timedelta(days=lt_producao + (transporte_dias or 0))
+
+            folga = (pedido.data_cliente - data_prevista).days if (pedido.data_cliente and data_prevista) else None
+
+            if folga is None:
+                indicador = "sem_dado"
+            elif folga < 0 or folga <= RISCO_OTD_LIMITE_RISCO_DIAS:
+                indicador = "vermelho"
+            elif folga <= RISCO_OTD_LIMITE_ATENCAO_DIAS:
+                indicador = "amarelo"
+            else:
+                indicador = "verde"
+
+            simulado_a = {
+                "lt_producao": lt_producao,
+                "transporte_dias": transporte_dias,
+                "transporte_aplicavel": transporte_aplicavel,
+                "data_prevista": data_prevista,
+                "folga": folga,
+                "indicador": indicador,
+                "itens_sem_parametro": itens_sem_parametro,
+            }
+
+        return render_template(
+            "editar_pedido.html", pedido=pedido, transportadoras=transportadoras, simulado_a=simulado_a,
+        )
 
     @app.route("/pedidos/<int:pedido_id>")
     @login_required
@@ -8121,10 +8594,16 @@ def register_routes(app):
             "busca": (request.args.get("busca", "") or "").strip(),
             "status": [v for v in _getlist_seguro(request.args, "status") if v in RISCO_OTD_STATUS_INFO],
         }
+        # Aba Simulação (pedido do Bruno, 11/09/2026): Simulado A (parâmetro)
+        # x Simulado B (realidade, = a própria linha acima) — mesmo conjunto
+        # já filtrado, sem duplicar a consulta de pedidos.
+        simulacoes, resumo_simulacao = _simulacao_otd(linhas)
         return render_template(
             "gestao_risco.html",
             linhas=linhas, resumo=resumo, filtros=filtros,
             RISCO_OTD_STATUS_INFO=RISCO_OTD_STATUS_INFO,
+            simulacoes=simulacoes, resumo_simulacao=resumo_simulacao,
+            SIMULACAO_BALANCO_INFO=SIMULACAO_BALANCO_INFO,
         )
 
     @app.route("/gestao-risco/relatorio.xlsx")

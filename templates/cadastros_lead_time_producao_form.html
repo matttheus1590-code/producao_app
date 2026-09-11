@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ "Editar lead time de produção" if entrada else "Novo lead time de produção" }} · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">
+    <i class="bi bi-speedometer2"></i> {{ "Editar lead time de produção" if entrada else "Novo lead time de produção" }}
+  </h4>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('cadastros_lead_time_producao') }}">
+    <i class="bi bi-arrow-left"></i> Voltar
+  </a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-5">
+          <label class="form-label small text-muted mb-1">Produto</label>
+          <input type="text" class="form-control" name="produto" required
+            value="{{ form.get('produto', entrada.produto if entrada else '') }}">
+          <div class="form-text">Trecho do nome do produto (ex.: "PIG D20") — casa com qualquer item de OP cuja descrição contenha esse texto.</div>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Família/Grupo</label>
+          <input type="text" class="form-control" name="familia" maxlength="60"
+            value="{{ form.get('familia', entrada.familia if entrada and entrada.familia else '') }}">
+          <div class="form-text">Só informativo/filtro — não entra no casamento automático.</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">Estação</label>
+          <select class="form-select" name="estacao_id" required>
+            <option value="">Selecione</option>
+            {% for est in estacoes %}
+              <option value="{{ est.id }}" {% if form.get('estacao_id', (entrada.estacao_id | string) if entrada else '') | string == est.id | string %}selected{% endif %}>{{ est.nome }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">LT padrão (dias corridos)</label>
+          <input type="number" step="0.5" min="0.5" class="form-control" name="lt_padrao_dias" required
+            value="{{ form.get('lt_padrao_dias', entrada.lt_padrao_dias if entrada else '') }}">
+        </div>
+        {% if entrada %}
+        <div class="col-md-9">
+          <label class="form-label small text-muted mb-1">Motivo da alteração <span class="text-muted">(preencher se estiver mudando o LT padrão)</span></label>
+          <input type="text" class="form-control" name="motivo_alteracao" maxlength="300" placeholder="Ex.: revisão trimestral, média dos últimos 3 meses subiu">
+        </div>
+        {% endif %}
+
+        {% if entrada %}
+        <div class="col-12">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="ativo" id="campoAtivo" value="1" {% if entrada.ativo %}checked{% endif %}>
+            <label class="form-check-label" for="campoAtivo">Parâmetro ativo</label>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="mt-4 d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Salvar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if entrada %}
+<div class="card">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-2"><i class="bi bi-clock-history"></i> Histórico de revisões</h6>
+    {% if historico %}
+    <div class="table-responsive">
+      <table class="table table-sm">
+        <thead class="table-light">
+          <tr>
+            <th>Data</th>
+            <th>Valor anterior</th>
+            <th>Novo valor</th>
+            <th>Responsável</th>
+            <th>Motivo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in historico %}
+          <tr>
+            <td class="text-muted small">{{ h.criado_em.strftime("%d/%m/%Y %H:%M") }}</td>
+            <td>{{ h.valor_anterior ~ "d" if h.valor_anterior is not none else "—" }}</td>
+            <td class="fw-semibold">{{ h.valor_novo }}d</td>
+            <td class="text-muted small">{{ h.usuario_nome or "—" }}</td>
+            <td class="text-muted small">{{ h.motivo or "—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">Nenhuma revisão registrada ainda — este é o valor original cadastrado.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

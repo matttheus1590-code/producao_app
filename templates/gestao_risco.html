@@ -48,120 +48,229 @@
   </div>
 </form>
 
-<div class="card mb-3">
-  <div class="card-body">
-    <div class="row g-2 mb-2">
-      <div class="col-6 col-md-3">
-        {{ stat_card("🔥 Pedidos em risco hoje", resumo.em_risco_hoje, cor="danger" if resumo.em_risco_hoje else None) }}
-      </div>
-      <div class="col-6 col-md-3">
-        {{ stat_card("⏱️ Menor folga de prazo", (resumo.menor_folga_dias ~ " dia(s)") if resumo.menor_folga_dias is not none else "—", cor="danger" if (resumo.menor_folga_dias is not none and resumo.menor_folga_dias < 0) else None) }}
-      </div>
-      <div class="col-6 col-md-3">
-        {{ stat_card("OTD projetado", (resumo.otd_projetado_percentual ~ "%") if resumo.otd_projetado_percentual is not none else "—", sufixo="Do que já dá pra projetar") }}
-      </div>
-      <div class="col-6 col-md-3">
-        {{ stat_card("Atraso projetado", resumo.pedidos_com_atraso_projetado, sufixo="pedido(s) com atraso projetado") }}
-      </div>
-    </div>
-    <div class="row g-2">
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("Total", resumo.total) }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card(RISCO_OTD_STATUS_INFO.VIAVEL.emoji ~ " Viáveis", resumo.por_status.VIAVEL, cor="success") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card(RISCO_OTD_STATUS_INFO.ATENCAO.emoji ~ " Atenção", resumo.por_status.ATENCAO, cor="warning") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card(RISCO_OTD_STATUS_INFO.RISCO.emoji ~ " Risco", resumo.por_status.RISCO, cor="risco") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card(RISCO_OTD_STATUS_INFO.INVIAVEL.emoji ~ " Inviáveis", resumo.por_status.INVIAVEL, cor="danger") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("Dias médios de folga", resumo.dias_medios_folga if resumo.dias_medios_folga is not none else "—") }}
-      </div>
-    </div>
-  </div>
-</div>
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#torreControle">📡 Torre de Controle</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#simulacao">🧮 Simulação</a></li>
+</ul>
 
-<div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white tabela-risco-otd">
-    <thead class="table-light">
-      <tr>
-        <th>Pedido</th>
-        <th>Cliente</th>
-        <th>UF / Região</th>
-        <th>Transportadora</th>
-        <th>Prazo comercial</th>
-        <th>Previsão produção</th>
-        <th>Lead transporte</th>
-        <th>Previsão entrega</th>
-        <th>Data máx. produção</th>
-        <th>Folga / Atraso</th>
-        <th>Status</th>
-        <th>Gargalo</th>
-        <th>Ação recomendada</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for l in linhas %}
-      <tr class="linha-risco-{{ l.status | lower }}">
-        <td class="fw-semibold">
-          <a href="{{ url_for('consulta_pedido', busca=l.pedido_venda) }}">{{ l.pedido_venda | normalizar_pedido_venda }}</a>
-        </td>
-        <td>{{ l.cliente or "—" }}</td>
-        <td>{{ l.uf or "—" }}{% if l.regiao %}<div class="text-muted small">{{ l.regiao }}</div>{% endif %}</td>
-        <td>{{ l.transportadora or "—" }}</td>
-        <td>{{ l.prazo_comercial_data.strftime("%d/%m/%Y") if l.prazo_comercial_data else "—" }}</td>
-        <td>
-          {{ l.producao_previsao_data.strftime("%d/%m/%Y") if l.producao_previsao_data else "—" }}
-          {% if l.producao_previsao_data %}
-            <div class="text-muted small">{{ "Real" if l.producao_e_real else "Previsão PCP" }}</div>
-          {% endif %}
-        </td>
-        <td>{{ (l.transporte_rodoviario_dias ~ "d rodoviário") if l.transporte_rodoviario_dias is not none else "—" }}</td>
-        <td>{{ l.data_prevista_entrega.strftime("%d/%m/%Y") if l.data_prevista_entrega else "—" }}</td>
-        <td>{{ l.data_maxima_producao.strftime("%d/%m/%Y") if l.data_maxima_producao else "—" }}</td>
-        <td>
-          {% if l.folga_dias is not none %}
-            {% if l.folga_dias < 0 %}
-              <span class="text-danger fw-semibold">{{ -l.folga_dias }}d de atraso</span>
-            {% else %}
-              <span class="text-success">{{ l.folga_dias }}d de folga</span>
-            {% endif %}
+<div class="tab-content">
+
+  {# ---- Aba: Torre de Controle (conteúdo original, inalterado) ---- #}
+  <div class="tab-pane fade show active" id="torreControle">
+
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="row g-2 mb-2">
+          <div class="col-6 col-md-3">
+            {{ stat_card("🔥 Pedidos em risco hoje", resumo.em_risco_hoje, cor="danger" if resumo.em_risco_hoje else None) }}
+          </div>
+          <div class="col-6 col-md-3">
+            {{ stat_card("⏱️ Menor folga de prazo", (resumo.menor_folga_dias ~ " dia(s)") if resumo.menor_folga_dias is not none else "—", cor="danger" if (resumo.menor_folga_dias is not none and resumo.menor_folga_dias < 0) else None) }}
+          </div>
+          <div class="col-6 col-md-3">
+            {{ stat_card("OTD projetado", (resumo.otd_projetado_percentual ~ "%") if resumo.otd_projetado_percentual is not none else "—", sufixo="Do que já dá pra projetar") }}
+          </div>
+          <div class="col-6 col-md-3">
+            {{ stat_card("Atraso projetado", resumo.pedidos_com_atraso_projetado, sufixo="pedido(s) com atraso projetado") }}
+          </div>
+        </div>
+        <div class="row g-2">
+          <div class="col-6 col-md-4 col-lg-2">
+            {{ stat_card("Total", resumo.total) }}
+          </div>
+          <div class="col-6 col-md-4 col-lg-2">
+            {{ stat_card(RISCO_OTD_STATUS_INFO.VIAVEL.emoji ~ " Viáveis", resumo.por_status.VIAVEL, cor="success") }}
+          </div>
+          <div class="col-6 col-md-4 col-lg-2">
+            {{ stat_card(RISCO_OTD_STATUS_INFO.ATENCAO.emoji ~ " Atenção", resumo.por_status.ATENCAO, cor="warning") }}
+          </div>
+          <div class="col-6 col-md-4 col-lg-2">
+            {{ stat_card(RISCO_OTD_STATUS_INFO.RISCO.emoji ~ " Risco", resumo.por_status.RISCO, cor="risco") }}
+          </div>
+          <div class="col-6 col-md-4 col-lg-2">
+            {{ stat_card(RISCO_OTD_STATUS_INFO.INVIAVEL.emoji ~ " Inviáveis", resumo.por_status.INVIAVEL, cor="danger") }}
+          </div>
+          <div class="col-6 col-md-4 col-lg-2">
+            {{ stat_card("Dias médios de folga", resumo.dias_medios_folga if resumo.dias_medios_folga is not none else "—") }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-hover table-sm align-middle bg-white tabela-risco-otd">
+        <thead class="table-light">
+          <tr>
+            <th>Pedido</th>
+            <th>Cliente</th>
+            <th>UF / Região</th>
+            <th>Transportadora</th>
+            <th>Prazo comercial</th>
+            <th>Previsão produção</th>
+            <th>Lead transporte</th>
+            <th>Previsão entrega</th>
+            <th>Data máx. produção</th>
+            <th>Folga / Atraso</th>
+            <th>Status</th>
+            <th>Gargalo</th>
+            <th>Ação recomendada</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in linhas %}
+          <tr class="linha-risco-{{ l.status | lower }}">
+            <td class="fw-semibold">
+              <a href="{{ url_for('consulta_pedido', busca=l.pedido_venda) }}">{{ l.pedido_venda | normalizar_pedido_venda }}</a>
+            </td>
+            <td>{{ l.cliente or "—" }}</td>
+            <td>{{ l.uf or "—" }}{% if l.regiao %}<div class="text-muted small">{{ l.regiao }}</div>{% endif %}</td>
+            <td>{{ l.transportadora or "—" }}</td>
+            <td>{{ l.prazo_comercial_data.strftime("%d/%m/%Y") if l.prazo_comercial_data else "—" }}</td>
+            <td>
+              {{ l.producao_previsao_data.strftime("%d/%m/%Y") if l.producao_previsao_data else "—" }}
+              {% if l.producao_previsao_data %}
+                <div class="text-muted small">{{ "Real" if l.producao_e_real else "Previsão PCP" }}</div>
+              {% endif %}
+            </td>
+            <td>{{ (l.transporte_rodoviario_dias ~ "d rodoviário") if l.transporte_rodoviario_dias is not none else "—" }}</td>
+            <td>{{ l.data_prevista_entrega.strftime("%d/%m/%Y") if l.data_prevista_entrega else "—" }}</td>
+            <td>{{ l.data_maxima_producao.strftime("%d/%m/%Y") if l.data_maxima_producao else "—" }}</td>
+            <td>
+              {% if l.folga_dias is not none %}
+                {% if l.folga_dias < 0 %}
+                  <span class="text-danger fw-semibold">{{ -l.folga_dias }}d de atraso</span>
+                {% else %}
+                  <span class="text-success">{{ l.folga_dias }}d de folga</span>
+                {% endif %}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge bg-{{ l.status_info.cor }}" title="{{ l.status_info.descricao }}">
+                {{ l.status_info.emoji }} {{ l.status_info.label }}
+              </span>
+            </td>
+            <td>{{ l.gargalo or "—" }}</td>
+            <td>
+              {% if l.acao_recomendada %}
+                <div>{{ l.acao_recomendada }}</div>
+                {% if l.alternativas %}
+                  <ul class="text-muted small mb-0 ps-3">
+                    {% for alt in l.alternativas %}
+                      <li>{{ alt }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+          </tr>
           {% else %}
-            —
-          {% endif %}
-        </td>
-        <td>
-          <span class="badge bg-{{ l.status_info.cor }}" title="{{ l.status_info.descricao }}">
-            {{ l.status_info.emoji }} {{ l.status_info.label }}
-          </span>
-        </td>
-        <td>{{ l.gargalo or "—" }}</td>
-        <td>
-          {% if l.acao_recomendada %}
-            <div>{{ l.acao_recomendada }}</div>
-            {% if l.alternativas %}
-              <ul class="text-muted small mb-0 ps-3">
-                {% for alt in l.alternativas %}
-                  <li>{{ alt }}</li>
-                {% endfor %}
-              </ul>
-            {% endif %}
+          <tr><td colspan="13" class="text-center text-muted py-4">Nenhum pedido CIF em aberto encontrado com esse filtro.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+  {# ---- Aba: Simulação (pedido do Bruno, 11/09/2026) ----
+       Simulado A (parâmetro): prazo comercial x (LT produção parametrizado
+       + LT transporte parametrizado) — Cadastros > Lead time Produção.
+       Simulado B (realidade): prazo comercial x (previsão real do PCP + LT
+       transporte parametrizado) — é a própria Torre de Controle acima,
+       só reexibida lado a lado. O Balanço entre os dois é o sinal de
+       decisão. #}
+  <div class="tab-pane fade" id="simulacao">
+
+    <p class="text-muted small mb-3">
+      Balanço entre o que o <strong>parâmetro oficial</strong> de lead time de produção promete (Simulado A) e o que
+      o <strong>PCP está planejando de verdade</strong> promete (Simulado B) — os dois contra o mesmo prazo
+      comercial. Quando divergem bastante, é sinal de decisão: ou a operação está performando pior do que o
+      parâmetro (investigar estação/gargalo), ou o parâmetro está desatualizado (considerar revisar em
+      <a href="{{ url_for('cadastros_lead_time_producao') }}">Cadastros → Lead time Produção</a>).
+    </p>
+
+    <div class="row g-2 mb-3">
+      <div class="col-6 col-md-3">
+        {{ stat_card(SIMULACAO_BALANCO_INFO.concordam.emoji ~ " Parâmetro bate", resumo_simulacao.concordam, cor="success") }}
+      </div>
+      <div class="col-6 col-md-3">
+        {{ stat_card(SIMULACAO_BALANCO_INFO.alerta_operacional.emoji ~ " Alerta operacional", resumo_simulacao.alerta_operacional, cor="danger") }}
+      </div>
+      <div class="col-6 col-md-3">
+        {{ stat_card(SIMULACAO_BALANCO_INFO.revisar_parametro.emoji ~ " Revisar parâmetro", resumo_simulacao.revisar_parametro, cor="warning") }}
+      </div>
+      <div class="col-6 col-md-3">
+        {{ stat_card(SIMULACAO_BALANCO_INFO.sem_parametro.emoji ~ " Sem parâmetro", resumo_simulacao.sem_parametro) }}
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-hover table-sm align-middle bg-white">
+        <thead class="table-light">
+          <tr>
+            <th>Pedido</th>
+            <th>Cliente</th>
+            <th>Prazo comercial</th>
+            <th>Simulado A (parâmetro)</th>
+            <th>Simulado B (realidade)</th>
+            <th>Balanço</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in linhas %}
+          {% set sim = simulacoes[l.pedido_id] %}
+          <tr>
+            <td class="fw-semibold">
+              <a href="{{ url_for('consulta_pedido', busca=l.pedido_venda) }}">{{ l.pedido_venda | normalizar_pedido_venda }}</a>
+            </td>
+            <td>{{ l.cliente or "—" }}</td>
+            <td>{{ l.prazo_comercial_data.strftime("%d/%m/%Y") if l.prazo_comercial_data else "—" }}</td>
+            <td>
+              {% if sim.data_prevista_a %}
+                {{ sim.data_prevista_a.strftime("%d/%m/%Y") }}
+                {% if sim.folga_a < 0 %}
+                  <div class="text-danger small fw-semibold">{{ -sim.folga_a }}d de atraso</div>
+                {% else %}
+                  <div class="text-success small">{{ sim.folga_a }}d de folga</div>
+                {% endif %}
+              {% else %}
+                <span class="text-muted">Sem dado</span>
+              {% endif %}
+              {% if sim.itens_sem_parametro %}
+                <div class="text-muted small" title="{{ sim.itens_sem_parametro | map(attribute='descricao_produto') | join(', ') }}">
+                  ⚠️ {{ sim.itens_sem_parametro | length }} item(ns) sem LT cadastrado
+                </div>
+              {% endif %}
+            </td>
+            <td>
+              {% if sim.data_prevista_b %}
+                {{ sim.data_prevista_b.strftime("%d/%m/%Y") }}
+                {% if sim.folga_b < 0 %}
+                  <div class="text-danger small fw-semibold">{{ -sim.folga_b }}d de atraso</div>
+                {% else %}
+                  <div class="text-success small">{{ sim.folga_b }}d de folga</div>
+                {% endif %}
+              {% else %}
+                <span class="text-muted">Sem dado</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge bg-{{ sim.balanco_info.cor }}">{{ sim.balanco_info.emoji }} {{ sim.balanco_info.label }}</span>
+            </td>
+          </tr>
           {% else %}
-            —
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="13" class="text-center text-muted py-4">Nenhum pedido CIF em aberto encontrado com esse filtro.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+          <tr><td colspan="6" class="text-center text-muted py-4">Nenhum pedido CIF em aberto encontrado com esse filtro.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
 </div>
 
 {% endblock %}

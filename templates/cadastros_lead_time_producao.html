@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Lead time Produção · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h4 class="mb-0"><i class="bi bi-speedometer2"></i> Lead time Produção</h4>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('cadastros_estacoes') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Voltar
+    </a>
+    <a href="{{ url_for('cadastros_lead_time_producao_novo') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-circle"></i> Novo lead time
+    </a>
+  </div>
+</div>
+<p class="text-muted small mb-3">
+  Lead time OFICIAL de produção por produto + estação (dias corridos), usado como parâmetro pela Gestão de Risco
+  (aba Simulação) e pela tela do pedido. O "Padrão" é definido manualmente aqui; a Média 3M/Último LT/Tendência
+  são calculados ao vivo a partir das OPs finalizadas — quando divergem bastante do padrão, o sistema só
+  <strong>sugere</strong> revisar, nunca altera sozinho.
+</p>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th></th>
+        <th>Produto</th>
+        <th>Estação</th>
+        <th>LT Padrão</th>
+        <th>Média 3M</th>
+        <th>Último LT</th>
+        <th>Tendência</th>
+        <th>Última revisão</th>
+        <th>Situação</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in linhas %}
+      {% set e = l.entrada %}
+      {% set s = l.estatisticas %}
+      <tr>
+        <td class="fs-5" title="{{ {'verde': 'LT dentro do esperado', 'amarelo': 'Atenção / tendência de aumento', 'vermelho': 'LT acima do parâmetro', 'sem_dado': 'Sem OPs finalizadas suficientes ainda'}[s.indicador] }}">
+          {{ {"verde": "🟢", "amarelo": "🟡", "vermelho": "🔴", "sem_dado": "⚪"}[s.indicador] }}
+        </td>
+        <td>
+          <div class="fw-semibold">{{ e.produto }}</div>
+          {% if e.familia %}<div class="text-muted small">{{ e.familia }}</div>{% endif %}
+        </td>
+        <td>{{ e.estacao.nome if e.estacao else "—" }}</td>
+        <td class="fw-semibold">{{ e.lt_padrao_dias | int if e.lt_padrao_dias == e.lt_padrao_dias | int else e.lt_padrao_dias }}d</td>
+        <td>{{ s.media_3m ~ "d" if s.media_3m is not none else "—" }}</td>
+        <td>{{ s.ultimo_lt ~ "d" if s.ultimo_lt is not none else "—" }}</td>
+        <td>
+          {% if s.tendencia == "aumento" %}<span class="text-danger small">⚠️ Aumento</span>
+          {% elif s.tendencia == "queda" %}<span class="text-success small">⬇️ Queda</span>
+          {% elif s.tendencia == "estavel" %}<span class="text-muted small">Estável</span>
+          {% else %}<span class="text-muted small">—</span>
+          {% endif %}
+        </td>
+        <td class="text-muted small">
+          {{ e.data_ultima_revisao.strftime("%d/%m/%Y") if e.data_ultima_revisao else "—" }}
+          {% if e.responsavel_revisao %}<div>{{ e.responsavel_revisao }}</div>{% endif %}
+        </td>
+        <td>
+          {% if e.ativo %}<span class="badge bg-success">Ativo</span>{% else %}<span class="badge bg-secondary">Inativo</span>{% endif %}
+          {% if s.sugestao_revisao %}
+          <a href="{{ url_for('cadastros_lead_time_producao_editar', entrada_id=e.id) }}" class="badge bg-warning text-dark text-decoration-none" title="{{ s.sugestao_revisao.texto }}">
+            🔄 Revisar p/ ~{{ s.sugestao_revisao.valor_sugerido }}d
+          </a>
+          {% endif %}
+        </td>
+        <td class="text-end">
+          <a href="{{ url_for('cadastros_lead_time_producao_editar', entrada_id=e.id) }}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum lead time de produção cadastrado.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

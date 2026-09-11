@@ -542,6 +542,69 @@ class LeadTimeTransportadora(db.Model):
         return f"{fmt(self.prazo_minimo)} {rotulo}"
 
 
+class LeadTimeProducao(db.Model):
+    """Lead time PARAMETRIZADO de produção por Produto + Estação (pedido do
+    Bruno, 11/09/2026) — base pra comparar "prazo comercial x parametrizado"
+    (Simulado A, na Gestão de Risco) sem depender do PCP já ter planejado o
+    pedido, e pra futuramente alimentar a Torre de Controle/simulador "E SE".
+
+    O "LT padrão" aqui é o parâmetro OFICIAL definido pela operação. O
+    histórico real (média/melhor/pior/tendência) NUNCA é guardado nesta
+    tabela — é sempre CALCULADO AO VIVO a partir das OPs finalizadas (ver
+    _estatisticas_lead_time_producao em app.py), assim nunca fica
+    desatualizado e não precisa de job/cron pra recalcular.
+
+    `produto` é texto livre (não existe catálogo de produto no sistema —
+    ItemPedido.descricao_produto também é texto livre) e casa por "contém"
+    (ILIKE) com a descrição real dos itens, igual ao padrão de busca já
+    usado no resto do sistema — não exige digitação idêntica.
+
+    `estacao_id` aponta pra Estacao de verdade (dropdown no formulário),
+    diferente de ItemPedido.estacao (que é só texto) — como esta é uma
+    tabela nova de cadastro (não uma alteração em tabela existente), dá pra
+    usar FK de verdade sem risco pra dados já gravados."""
+
+    __tablename__ = "lead_time_producao"
+    __table_args__ = (
+        db.UniqueConstraint("produto", "estacao_id", name="uq_lead_time_producao_produto_estacao"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    produto = db.Column(db.String(120), nullable=False)
+    familia = db.Column(db.String(60), nullable=True)
+    estacao_id = db.Column(db.Integer, db.ForeignKey("estacoes.id"), nullable=False)
+    lt_padrao_dias = db.Column(db.Float, nullable=False)
+    # Snapshot do nome (sobrevive se o usuário for desativado depois) — mesmo
+    # padrão de HistoricoAlteracao.usuario_nome.
+    responsavel_revisao = db.Column(db.String(120), nullable=True)
+    data_ultima_revisao = db.Column(db.Date, nullable=True)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def estacao(self):
+        return db.session.get(Estacao, self.estacao_id)
+
+
+class LeadTimeProducaoHistorico(db.Model):
+    """Histórico de revisão do LT padrão de produção (pedido do Bruno,
+    11/09/2026 — item 4: "registrar valor anterior, novo valor, data,
+    responsável e motivo da alteração"). Tabela dedicada, não reaproveita
+    HistoricoAlteracao (usado em runtime bem mais amplo, pedido/item) porque
+    aqui o motivo da alteração é parte central do fluxo de revisão."""
+
+    __tablename__ = "lead_time_producao_historico"
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_time_producao_id = db.Column(db.Integer, db.ForeignKey("lead_time_producao.id"), nullable=False)
+    valor_anterior = db.Column(db.Float, nullable=True)
+    valor_novo = db.Column(db.Float, nullable=False)
+    motivo = db.Column(db.String(300), nullable=True)
+    usuario_nome = db.Column(db.String(120), nullable=True)
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class Pedido(db.Model):
     __tablename__ = "pedidos"
 
