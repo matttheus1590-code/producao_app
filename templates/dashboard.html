@@ -136,6 +136,57 @@
   <a href="{{ url_for('relatorio_listagem_xlsx', **filtros) }}" class="btn btn-outline-secondary btn-sm">
     <i class="bi bi-file-earmark-excel"></i> Exportar Excel
   </a>
+  <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalRelatorioSemanalPCP">
+    <i class="bi bi-file-earmark-pdf"></i> Emitir relatório
+  </button>
+</div>
+
+<!-- Modal "Emitir relatório" (pedido do Bruno, 14/09/2026): relatório PDF
+     semanal, agrupado pelo Planejamento semanal (PCP), com somatório de
+     faturamento e de nº de pedidos por semana e do mês inteiro. Só pede o
+     mês — os outros filtros já ativos na tela (cliente, vendedor, status,
+     estação, busca, produto, região, datas, atrasados) são replicados como
+     campos ocultos, então o relatório sai com o MESMO recorte que a tabela
+     abaixo está mostrando agora, só que reorganizado por semana. -->
+<div class="modal fade" id="modalRelatorioSemanalPCP" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="get" action="{{ url_for('relatorio_listagem_geral_semanal_pdf') }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-file-earmark-pdf"></i> Emitir relatório semanal (PDF)</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small">
+            Gera um PDF com todos os pedidos do mês escolhido, agrupados por semana (Planejamento PCP),
+            com o faturamento e o nº de pedidos de cada semana e o total do mês inteiro no fim.
+          </p>
+          <label class="form-label small text-muted mb-1">Mês do relatório</label>
+          <input type="month" class="form-control" name="planejamento_mensal"
+                 value="{{ filtros.planejamento_mensal or mes_atual_input }}" required>
+          {% if filtros.cliente or filtros.vendedor or filtros.status or filtros.estacao or filtros.busca or filtros.produto or filtros.regiao or filtros.data_inicio or filtros.data_fim or filtros.atrasados %}
+          <p class="text-muted small mt-2 mb-0">
+            <i class="bi bi-funnel"></i> Vai respeitar os outros filtros já aplicados na tela agora.
+          </p>
+          {% endif %}
+          <input type="hidden" name="busca" value="{{ filtros.busca }}">
+          <input type="hidden" name="cliente" value="{{ filtros.cliente }}">
+          <input type="hidden" name="vendedor" value="{{ filtros.vendedor }}">
+          <input type="hidden" name="status" value="{{ filtros.status }}">
+          <input type="hidden" name="estacao" value="{{ filtros.estacao }}">
+          <input type="hidden" name="produto" value="{{ filtros.produto }}">
+          <input type="hidden" name="regiao" value="{{ filtros.regiao }}">
+          <input type="hidden" name="data_inicio" value="{{ filtros.data_inicio }}">
+          <input type="hidden" name="data_fim" value="{{ filtros.data_fim }}">
+          <input type="hidden" name="atrasados" value="{{ filtros.atrasados }}">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-file-earmark-pdf"></i> Gerar PDF</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 
 <p class="text-muted small mb-2">

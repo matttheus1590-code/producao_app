@@ -6580,6 +6580,299 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
 
 
 # ----------------------------------------------------------------------
+# Relatório semanal em PDF da Listagem Geral (pedido do Bruno, 14/09/2026):
+# "quero que disponibilize [na Listagem Geral]... vai gerar um relatorio
+# semanal de todos os pedidos semanais de setembro, e o total do mes
+# projetado pelo pcp... quero de forma agrpado semanalmente e a somatario
+# total, tanto de faturamento e tambem do total de numero de pedidos".
+# Reaproveita 100% do pipeline que a própria tela já usa (_filtrar_pedidos +
+# _linhas_listagem_geral) — o mesmo filtro "Planejamento mensal (PCP)" que já
+# existe na tela vira o mês do relatório, então o PDF nunca diverge do que a
+# Listagem Geral mostraria filtrando por aquele mês. O agrupamento semanal é
+# pelo campo "Planejamento semanal (PCP)" de cada item — a MESMA projeção do
+# PCP que já orienta os quadrantes no topo da tela — não por semana de
+# calendário da data de inclusão, exatamente o "projetado pelo PCP" pedido.
+# ----------------------------------------------------------------------
+def _agrupar_linhas_por_semana_pcp(linhas):
+    """Agrupa linhas da Listagem Geral (já filtradas por mês) pelo rótulo de
+    Planejamento semanal (PCP) de cada item, em ordem cronológica (mesma
+    chave — _chave_semana_pcp — que já ordena essa coluna na tela)."""
+    grupos = {}
+    for l in linhas:
+        grupos.setdefault(l.planejamento_semanal, []).append(l)
+    rotulos_ordenados = sorted(grupos.keys(), key=_chave_semana_pcp)
+    return [(rotulo, grupos[rotulo]) for rotulo in rotulos_ordenados]
+
+
+def _intervalo_calendario_semana_pcp(mes_ano, rotulo_semana):
+    """Data de início/fim (domingo a sábado) da semana de calendário que um
+    rótulo "SEMANA NN / MÊS / ANO" representa, só pra exibição no relatório —
+    mesma âncora (domingo igual ou anterior ao dia 1 do mês) já usada em
+    _quadrantes_planejamento_semanal, pra nunca mostrar um período diferente
+    do que os quadrantes da tela mostrariam pra mesma semana."""
+    ano, mes = mes_ano
+    m = re.search(r"SEMANA\s*(\d+)", (rotulo_semana or "").upper())
+    if not m:
+        return (None, None)
+    n = int(m.group(1))
+    primeiro_dia_mes = date(ano, mes, 1)
+    domingo_semana_01 = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
+    inicio = domingo_semana_01 + timedelta(days=7 * (n - 1))
+    fim = inicio + timedelta(days=6)
+    return (inicio, fim)
+
+
+def _texto_filtros_listagem_geral_semanal(filtros):
+    """Descrição legível dos filtros extras (além do mês, que já vira o
+    título do relatório) ativos ao gerar o PDF — mesmo espírito de
+    _texto_filtros_risco_otd, pra deixar claro que o relatório reflete só o
+    recorte que estava na tela, quando houver algum filtro a mais."""
+    partes = []
+    if filtros.get("busca"):
+        partes.append(f'Busca: "{filtros["busca"]}"')
+    if filtros.get("cliente"):
+        partes.append(f'Cliente: "{filtros["cliente"]}"')
+    if filtros.get("vendedor"):
+        partes.append(f'Vendedor: "{filtros["vendedor"]}"')
+    if filtros.get("status"):
+        partes.append(f'Status: {filtros["status"]}')
+    if filtros.get("estacao"):
+        partes.append(f'Estação: {filtros["estacao"]}')
+    if filtros.get("produto"):
+        partes.append(f'Produto: "{filtros["produto"]}"')
+    if filtros.get("regiao"):
+        partes.append(f'Região: {filtros["regiao"]}')
+    if filtros.get("data_inicio") or filtros.get("data_fim"):
+        partes.append(f'Incluído {filtros.get("data_inicio") or "—"} a {filtros.get("data_fim") or "—"}')
+    if filtros.get("atrasados"):
+        partes.append("Só pedidos atrasados")
+    return " · ".join(partes)
+
+
+def _gerar_pdf_listagem_geral_semanal(linhas, filtros, mes_ano):
+    """PDF do relatório semanal da Listagem Geral (pedido do Bruno,
+    14/09/2026) — mesmo estilo claro/print-friendly já usado nos outros
+    relatórios do app (_gerar_pdf_estacao/_gerar_pdf_risco_otd): cabeçalho
+    azul claro, KPIs grandes no topo, uma seção por semana (PCP) com sua
+    própria mini-tabela de KPIs + a listagem de itens em detalhe, e uma
+    barra horizontal simples comparando o faturamento de cada semana — o
+    toque "visual e dinâmico" pedido, sem precisar de nenhuma lib de
+    gráfico nova (só reportlab.graphics, já uma dependência existente).
+    Linha de item fica verde pastel quando `liberacao_real` está
+    preenchida, ecoando a MESMA regra (não mais o Status) que a tela da
+    Listagem Geral passou a usar no ajuste do próprio dia 14/09/2026."""
+    from reportlab.graphics.shapes import Drawing, Rect, String
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    ano, mes = mes_ano
+    titulo_mes = f"{MESES_PT_EXTENSO[mes - 1].upper()} / {ano}"
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title=f"Listagem Geral — Relatório Semanal — {titulo_mes}",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8, leading=9.7)
+    COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
+    COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
+    COR_SEMANA_BG = colors.HexColor("#eaf1fd")
+    COR_TOTAL_BG = colors.HexColor("#1b2a4a")
+    COR_FINALIZADO_BG = colors.HexColor("#d9f4e0")
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula, fontName="Helvetica-Bold", fontSize=8.5, leading=10,
+        textColor=COR_CABECALHO_TEXTO,
+    )
+
+    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+
+    elementos = [
+        Paragraph("Listagem Geral — Relatório Semanal", estilos["Title"]),
+        Paragraph(f"{titulo_mes} · Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}", estilos["Normal"]),
+    ]
+    texto_filtros = _texto_filtros_listagem_geral_semanal(filtros)
+    if texto_filtros:
+        elementos.append(Paragraph(f"Filtros ativos: {texto_filtros}", estilos["Normal"]))
+    elementos.append(Spacer(1, 5 * mm))
+
+    grupos_semana = _agrupar_linhas_por_semana_pcp(linhas)
+    pedidos_mes = {l.pedido_id for l in linhas}
+    faturamento_mes = sum(l.venda_total or 0 for l in linhas)
+
+    def _fmt_moeda(v):
+        return "R$ " + "{:,.2f}".format(v or 0).replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def _kpi(valor, rotulo_kpi):
+        return [
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=17, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8.5, alignment=1)),
+        ]
+
+    kpis_mes = [
+        _kpi(len(pedidos_mes), "Pedidos distintos no mês"),
+        _kpi(len(linhas), "Itens (produtos) no mês"),
+        _kpi(len(grupos_semana), "Semanas com pedido"),
+        _kpi(_fmt_moeda(faturamento_mes), "Faturamento total do mês"),
+    ]
+    largura_kpi = largura_disponivel / len(kpis_mes)
+    tabela_kpis = Table([[k[0] for k in kpis_mes], [k[1] for k in kpis_mes]], colWidths=[largura_kpi] * len(kpis_mes))
+    tabela_kpis.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8f9fb")),
+    ]))
+    elementos.append(tabela_kpis)
+    elementos.append(Spacer(1, 6 * mm))
+
+    # ---- barrinha comparando faturamento por semana ("visual e dinâmico") ----
+    if len(grupos_semana) > 1:
+        resumo_semanas_graf = [
+            (rotulo, sum(l.venda_total or 0 for l in linhas_semana))
+            for rotulo, linhas_semana in grupos_semana
+        ]
+        maior_valor = max((v for _, v in resumo_semanas_graf), default=0) or 1
+        altura_linha = 15
+        altura_grafico = len(resumo_semanas_graf) * altura_linha + 6
+        largura_rotulo = 62
+        largura_valor = 72
+        largura_barra_max = max(largura_disponivel - largura_rotulo - largura_valor - 6, 10)
+        desenho = Drawing(largura_disponivel, altura_grafico)
+        for i, (rotulo, valor) in enumerate(resumo_semanas_graf):
+            y = altura_grafico - (i + 1) * altura_linha + 3
+            m = re.search(r"SEMANA\s*(\d+)", (rotulo or "").upper())
+            rotulo_curto = f"Semana {int(m.group(1))}" if m else (rotulo or "—")
+            desenho.add(String(0, y, rotulo_curto, fontSize=8, fontName="Helvetica"))
+            largura_barra = (valor / maior_valor) * largura_barra_max if maior_valor else 0
+            desenho.add(Rect(largura_rotulo, y - 2, max(largura_barra, 1.5), 10, fillColor=colors.HexColor("#4c8bf5"), strokeColor=None))
+            desenho.add(String(largura_rotulo + largura_barra_max + 6, y, _fmt_moeda(valor), fontSize=8, fontName="Helvetica-Bold"))
+        elementos.append(Paragraph("Faturamento por semana", estilos["Heading4"]))
+        elementos.append(desenho)
+        elementos.append(Spacer(1, 6 * mm))
+
+    # ---- 1 seção por semana PCP ----
+    cabecalho_tabela = [
+        "PV", "Cliente", "Produto", "Qtd", "Frete", "UF / Região", "Cidade",
+        "Incluído", "Solicitado", "Liberação prevista", "Liberação real", "Status", "Venda item",
+    ]
+    pesos = [7, 13, 17, 4, 6, 9, 9, 7, 7, 8, 8, 8, 9]
+    soma_pesos = sum(pesos)
+    larguras_colunas = [p / soma_pesos * largura_disponivel for p in pesos]
+
+    for rotulo, linhas_semana in grupos_semana:
+        inicio, fim = _intervalo_calendario_semana_pcp(mes_ano, rotulo)
+        periodo_txt = f" ({inicio.strftime('%d/%m')} a {fim.strftime('%d/%m')})" if inicio and fim else ""
+        pedidos_semana = {l.pedido_id for l in linhas_semana}
+        faturamento_semana = sum(l.venda_total or 0 for l in linhas_semana)
+
+        cabecalho_semana = Table(
+            [[
+                Paragraph(f"<b>{rotulo or 'Sem semana definida'}</b>{periodo_txt}", ParagraphStyle("semana_titulo", parent=estilos["Normal"], fontSize=10.5, textColor=COR_CABECALHO_TEXTO)),
+                Paragraph(f"{len(pedidos_semana)} pedido(s)", ParagraphStyle("semana_kpi", parent=estilos["Normal"], fontSize=9.5, alignment=2, fontName="Helvetica-Bold")),
+                Paragraph(_fmt_moeda(faturamento_semana), ParagraphStyle("semana_kpi2", parent=estilos["Normal"], fontSize=9.5, alignment=2, fontName="Helvetica-Bold")),
+            ]],
+            colWidths=[largura_disponivel * 0.56, largura_disponivel * 0.2, largura_disponivel * 0.24],
+        )
+        cabecalho_semana.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), COR_SEMANA_BG),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (0, 0), 6),
+        ]))
+
+        dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho_tabela]]
+        cores_linhas = [COR_CABECALHO_BG]
+        linhas_ordenadas = sorted(
+            linhas_semana,
+            key=lambda l: (l.data_inclusao_pedido or date.max, l.pedido_venda or "", l.item_id),
+        )
+        for l in linhas_ordenadas:
+            qtd = l.quantidade or 0
+            qtd_txt = int(qtd) if qtd == int(qtd) else qtd
+            regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
+            dados_tabela.append([
+                Paragraph(l.pedido_venda or "—", estilo_celula),
+                Paragraph(l.cliente or "—", estilo_celula),
+                Paragraph(l.descricao_produto or "—", estilo_celula),
+                Paragraph(str(qtd_txt), estilo_celula),
+                Paragraph(l.frete or "—", estilo_celula),
+                Paragraph(f"{l.estado or '—'} / {regiao_txt}", estilo_celula),
+                Paragraph(l.cidade or "—", estilo_celula),
+                Paragraph(_formatar_data_br(l.data_inclusao_pedido) or "—", estilo_celula),
+                Paragraph(_formatar_data_br(l.data_cliente) or "—", estilo_celula),
+                Paragraph(_formatar_data_br(l.liberacao_prevista) or "—", estilo_celula),
+                Paragraph(_formatar_data_br(l.liberacao_real) or "—", estilo_celula),
+                Paragraph(l.status_producao or "—", estilo_celula),
+                Paragraph(_fmt_moeda(l.venda_total), estilo_celula),
+            ])
+            cores_linhas.append(COR_FINALIZADO_BG if l.liberacao_real else colors.white)
+
+        tabela_semana = Table(dados_tabela, colWidths=larguras_colunas, repeatRows=1)
+        estilo_tabela = [
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ]
+        for i, cor in enumerate(cores_linhas):
+            if i == 0:
+                continue
+            estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor))
+        tabela_semana.setStyle(TableStyle(estilo_tabela))
+
+        elementos.append(cabecalho_semana)
+        elementos.append(tabela_semana)
+        elementos.append(Spacer(1, 6 * mm))
+
+    if not grupos_semana:
+        elementos.append(Paragraph("Nenhum pedido com Planejamento semanal (PCP) preenchido nesse mês.", estilos["Normal"]))
+        elementos.append(Spacer(1, 6 * mm))
+
+    # ---- total do mês (rodapé em destaque, pedido explícito do Bruno: "e a
+    # somatario total, tanto de faturamento e tambem do total de numero de
+    # pedidos") ----
+    tabela_total = Table(
+        [[
+            Paragraph(f"TOTAL DO MÊS — {titulo_mes}", ParagraphStyle("total_titulo", parent=estilos["Normal"], fontSize=11, textColor=colors.white, fontName="Helvetica-Bold")),
+            Paragraph(f"{len(pedidos_mes)} pedido(s)", ParagraphStyle("total_kpi", parent=estilos["Normal"], fontSize=11, alignment=2, textColor=colors.white, fontName="Helvetica-Bold")),
+            Paragraph(_fmt_moeda(faturamento_mes), ParagraphStyle("total_kpi2", parent=estilos["Normal"], fontSize=11, alignment=2, textColor=colors.white, fontName="Helvetica-Bold")),
+        ]],
+        colWidths=[largura_disponivel * 0.56, largura_disponivel * 0.2, largura_disponivel * 0.24],
+    )
+    tabela_total.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), COR_TOTAL_BG),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (0, 0), 6),
+    ]))
+    elementos.append(tabela_total)
+    if not linhas:
+        elementos.append(Spacer(1, 4 * mm))
+        elementos.append(Paragraph("Nenhum pedido encontrado com os filtros aplicados nesse mês.", estilos["Normal"]))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"listagem_geral_semanal_{ano}-{mes:02d}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+# ----------------------------------------------------------------------
 # P&D — Pesquisa e Desenvolvimento (Fase 14). Segue o mesmo padrão de
 # Qualidade/RNC acima: tabela própria, controle manual, funções auxiliares
 # separadas de filtro/listagem/dashboard/form pra não misturar com nenhuma
@@ -7904,6 +8197,31 @@ def register_routes(app):
         cabecalho, linhas = _linhas_export_listagem(query.all())
         return _responder_xlsx("listagem_pedidos.xlsx", cabecalho, linhas, titulo="Listagem")
 
+    @app.route("/relatorios/listagem-geral-semanal.pdf")
+    @login_required
+    def relatorio_listagem_geral_semanal_pdf():
+        """PDF "Emitir relatório" da Listagem Geral (pedido do Bruno,
+        14/09/2026) — agrupado por semana (Planejamento PCP) dentro do mês
+        escolhido, com somatório de faturamento e de nº de pedidos por
+        semana e do mês inteiro. Ver _gerar_pdf_listagem_geral_semanal.
+
+        O mês é OBRIGATÓRIO pro relatório fazer sentido (agrupar por semana
+        só cabe dentro de 1 mês por vez) — se a tela não tinha nenhum
+        "Planejamento mensal (PCP)" selecionado, cai no mês atual por
+        padrão, em vez de dar erro ou mostrar tudo misturado. Os OUTROS
+        filtros que já estiverem ativos na tela (cliente, vendedor, status,
+        estação, busca, produto, região, datas de inclusão, atrasados)
+        continuam valendo — reaproveita _filtrar_pedidos, então o relatório
+        nunca diverge do que a própria tela mostraria com esse recorte."""
+        args = request.args.to_dict()
+        if not args.get("planejamento_mensal", "").strip():
+            args["planejamento_mensal"] = date.today().strftime("%Y-%m")
+        query, filtros = _filtrar_pedidos(args)
+        pedidos = query.all()
+        linhas = _linhas_listagem_geral(pedidos, args)
+        mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
+        return _gerar_pdf_listagem_geral_semanal(linhas, filtros, mes_ano)
+
     @app.route("/relatorios/faturamento.csv")
     @login_required
     def relatorio_faturamento_csv():
@@ -8017,6 +8335,10 @@ def register_routes(app):
             dir_ordenacao=dir_ordenacao,
             inspecoes_rdim=inspecoes_rdim,
             quadrantes_pcp=quadrantes_pcp,
+            # Valor padrão do seletor de mês no modal "Emitir relatório"
+            # (pedido do Bruno, 14/09/2026) quando nenhum "Planejamento
+            # mensal (PCP)" já estiver filtrado na tela.
+            mes_atual_input=date.today().strftime("%Y-%m"),
         )
 
     @app.route("/pedidos/novo", methods=["GET", "POST"])
