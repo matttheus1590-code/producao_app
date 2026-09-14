@@ -201,7 +201,7 @@
         {% set ns.cor_par = not ns.cor_par %}
         {% set ns.pedido_anterior = l.pedido_id %}
       {% endif %}
-      <tr class="{{ 'linha-pedido-a' if ns.cor_par else 'linha-pedido-b' }}">
+      <tr class="{% if l.status_producao == 'FINALIZADO' %}linha-pedido-finalizado{% else %}{{ 'linha-pedido-a' if ns.cor_par else 'linha-pedido-b' }}{% endif %}">
         <td class="text-nowrap">
           <a href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
             <i class="bi bi-eye"></i>

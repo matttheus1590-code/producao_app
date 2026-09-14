@@ -144,6 +144,24 @@ body.col-resizing-ativo {
   background-color: #fbe9c6;
 }
 
+/* Pedido do Bruno, 14/09/2026: "todo pedido quando finalizar (liberação
+   efetiva), mude a cor do pedido/linha inteira... verde bandeira... só
+   pela cor eu consiga visualizar" — cada linha desta tabela é 1 item (a
+   granularidade da Liberação real/efetiva é por item, não por pedido), e
+   quando o item vira FINALIZADO essa linha some da cor alternada azul/
+   laranja e vira verde puro, sobrepondo a listra do pedido. Mesmo tom de
+   "verde bandeira" (#7ee495/#4cc773) já usado na Operação 360 pra entrega
+   realizada, propositalmente igual em todo o app. */
+.tabela-listagem-geral > tbody > tr.linha-pedido-finalizado > * {
+  --bs-table-bg: #7ee495;
+  background-color: #7ee495;
+}
+
+.tabela-listagem-geral.table-hover > tbody > tr.linha-pedido-finalizado:hover > * {
+  --bs-table-bg: #4cc773;
+  background-color: #4cc773;
+}
+
 /* Operação 360 (pedido do Bruno, 10/09/2026, ampliado 10/09/2026 — "pedidos
    com status pendente: quero toda a linha na cor vermelha; entrega
    realizada: linha inteira verde"): a cor agora acompanha o "Status pedido"
