@@ -147,11 +147,19 @@ body.col-resizing-ativo {
 /* Pedido do Bruno, 14/09/2026: "todo pedido quando finalizar (liberação
    efetiva), mude a cor do pedido/linha inteira... verde bandeira... só
    pela cor eu consiga visualizar" — cada linha desta tabela é 1 item (a
-   granularidade da Liberação real/efetiva é por item, não por pedido), e
-   quando o item vira FINALIZADO essa linha some da cor alternada azul/
-   laranja e vira verde puro, sobrepondo a listra do pedido. Mesmo tom de
-   "verde bandeira" (#7ee495/#4cc773) já usado na Operação 360 pra entrega
-   realizada, propositalmente igual em todo o app. */
+   granularidade da Liberação real/efetiva é por item, não por pedido).
+   AJUSTE do mesmo dia (Bruno achou um caso, pedido 835/Morken, onde o
+   Status já mostrava FINALIZADO mas a Liberação real ainda estava vazia —
+   "quero que fique verde somente [se] a data liberação efetiva for
+   preenchida... caso contrário não fique verde"): o gatilho da cor NÃO é
+   mais o badge de Status (l.status_producao), e sim exclusivamente a
+   própria coluna "Liberação real" (l.liberacao_real) ter data — os dois
+   normalmente andam juntos, mas quando divergem (status marcado antes da
+   data ser lançada, ou vice-versa) é a data que manda. Quando tem data,
+   a linha some da cor alternada azul/laranja e vira verde puro,
+   sobrepondo a listra do pedido. Mesmo tom de "verde bandeira"
+   (#7ee495/#4cc773) já usado na Operação 360 pra entrega realizada,
+   propositalmente igual em todo o app. */
 .tabela-listagem-geral > tbody > tr.linha-pedido-finalizado > * {
   --bs-table-bg: #7ee495;
   background-color: #7ee495;
