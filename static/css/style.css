@@ -1602,6 +1602,25 @@ body.col-resizing-ativo {
   background-color: rgba(13, 110, 253, 0.05);
 }
 
+/* Kanban Expedição — Gestão Operação › Logística (pedido do Bruno,
+   16/09/2026) — mesmo visual de cartão/borda do .risco-prazo-card acima,
+   só um pouco mais "respirado" (padding maior) porque cada card carrega
+   mais informação e um botão de ação. */
+.kanban-expedicao-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #eef0f2;
+  border-radius: 0.4rem;
+  background-color: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.kanban-expedicao-card:hover {
+  border-color: #ffc107;
+  box-shadow: 0 0.1rem 0.4rem rgba(0, 0, 0, 0.06);
+}
+
 /* Cards "hero" do topo do Painel — Faturamento previsto e Backlog mês
    seguinte (pedido do Bruno, 16/09/2026: "sempre valorizando os quadrantes
    do faturamento previsto, backlog mes seguinte e lead time detalhado").

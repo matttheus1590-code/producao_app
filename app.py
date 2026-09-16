@@ -193,7 +193,12 @@ GO_SECAO_ENDPOINT = {
     # mostra as mesmas informações — só o FORMULÁRIO de edição da seção
     # Comercial continua existindo, dentro de gestao_operacao_editar).
     "comercial": "gestao_operacao_listagem_geral",
-    "pcp": "gestao_operacao_pcp",
+    # "pcp" apontava pra rota própria da aba PCP, apagada a pedido do Bruno
+    # (16/09/2026: "já tenho todo o grupo Gestão Produção completa" —
+    # redundante). O FORMULÁRIO de edição da seção PCP continua existindo
+    # (fallback manual pra pedido ainda não lançado em Produção), só o botão
+    # "Cancelar" dele volta pra Operação 360 agora.
+    "pcp": "gestao_operacao_listagem_geral",
     "logistica": "gestao_operacao_logistica",
     "resultados": "gestao_operacao_resultados",
 }
@@ -4543,61 +4548,6 @@ def _filtrar_pedidos_operacao(args):
     return query, filtros
 
 
-def _quadrantes_planejamento_semanal_operacao(filtros, hoje=None):
-    """Versão de _quadrantes_planejamento_semanal (Gestão Produção) pra
-    Gestão Operação — pedido do Bruno (10/09/2026): "quero que todo o grupo
-    gestão operação esteja 100% sincronizado com o gestão produção...
-    principalmente listagem e pcp". Mesmo cartão de mês + 1 por semana, MESMO
-    rótulo cronológico ("SEMANA NN / MÊS / ANO", de gerar_semanas_pcp) e MESMA
-    data de calendário exibida em cada card (domingo a sábado) — só a
-    CONTAGEM muda de fonte: em vez de contar ItemPedido/Pedido, conta
-    PedidoOperacao cujo pedido_venda bate com algum item de Produção
-    planejado pra aquele período (ver _pedidos_venda_com_planejamento_
-    semanal) — assim os números batem com o que a pessoa vê em Gestão
-    Produção, mesmo as duas tabelas sendo independentes.
-
-    Ver docstring completa em _quadrantes_planejamento_semanal — mesma
-    lógica de data, só reaproveitando _filtrar_pedidos_operacao pra contar."""
-    hoje = hoje or date.today()
-    ano, mes = hoje.year, hoje.month
-    dias_no_mes = monthrange(ano, mes)[1]
-    rotulos_semana = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=hoje)
-
-    primeiro_dia_mes = date(ano, mes, 1)
-    domingo_semana_01 = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
-
-    filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="")
-
-    def contar(**override):
-        query, _ = _filtrar_pedidos_operacao(dict(filtros_outros, **override))
-        return query.count()
-
-    valor_mes = f"{ano}-{mes:02d}"
-    mes_atual = {
-        "titulo": MESES_PT_EXTENSO[mes - 1].upper(),
-        "subtitulo": f"01/{mes:02d} – {dias_no_mes:02d}/{mes:02d}",
-        "total": contar(planejamento_mensal=valor_mes),
-        "ativo": filtros.get("planejamento_mensal") == valor_mes,
-        "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes),
-    }
-
-    semanas = []
-    for n, rotulo in enumerate(rotulos_semana, start=1):
-        inicio_semana = domingo_semana_01 + timedelta(days=7 * (n - 1))
-        fim_semana = inicio_semana + timedelta(days=6)
-        semanas.append(
-            {
-                "titulo": f"SEMANA {n:02d}",
-                "subtitulo": f"{inicio_semana.strftime('%d/%m')} a {fim_semana.strftime('%d/%m')}",
-                "total": contar(planejamento_semanal=rotulo),
-                "ativo": filtros.get("planejamento_semanal") == rotulo,
-                "filtros_link": dict(filtros_outros, planejamento_semanal=rotulo),
-                "atual": inicio_semana <= hoje <= fim_semana,
-            }
-        )
-    return {"mes_atual": mes_atual, "semanas": semanas}
-
-
 def _linhas_gestao_operacao(args):
     """Usado pelas 4 sub-abas de Gestão Operação: pagina o resultado de
     _filtrar_pedidos_operacao. Cada linha já é 1 pedido comercial (tabela
@@ -4929,6 +4879,56 @@ def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
         "nf_mes": card_nf_mes,
         "dinamico": dinamico,
     }
+
+
+def _pedidos_kanban_expedicao():
+    """Kanban Expedição, dentro de Logística/Expedição (pedido do Bruno,
+    16/09/2026): "pedidos finalizados PCP e já aos cuidados da logística e
+    parados na expedição... só sai do kanban quando o material for
+    expedição". Reaproveita a MESMA régua de 5 etapas já usada em Consulta
+    Pedido e na coluna "Status pedido" da Operação 360
+    (_indice_etapa_pedido) — etapa 3 ("Inspeção / Expedição") já significa
+    exatamente isso: produção finalizada (Pedido.status_producao ==
+    "FINALIZADO" ou go_data_efetiva_liberacao_pcp preenchido) e AINDA sem
+    go_data_pedido_expedido. Assim que go_data_pedido_expedido é
+    preenchido a etapa vira 4 ("Em transporte") e o pedido sai do kanban
+    sozinho — não precisa de nenhum campo/estado novo.
+
+    Casamento com Produção pelo mesmo padrão de sempre (pedido_venda, trim,
+    sem FK, nunca aproximado — ver _liberacao_pcp_por_pedido_venda/
+    _pedidos_producao_por_pedido_venda)."""
+    candidatos = PedidoOperacao.query.filter(PedidoOperacao.go_data_pedido_expedido.is_(None)).all()
+    pedidos_venda = [go.pedido_venda for go in candidatos]
+    liberacao_pcp = _liberacao_pcp_por_pedido_venda(pedidos_venda)
+    pedidos_producao = _pedidos_producao_por_pedido_venda(pedidos_venda)
+
+    linhas = []
+    for go in candidatos:
+        chave = _normalizar_pedido_venda(go.pedido_venda)
+        pedido_producao = pedidos_producao.get(chave)
+        if _indice_etapa_pedido(pedido_producao, go) != 3:
+            continue
+        conclusao = (liberacao_pcp.get(chave) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
+        dias_esperando = (date.today() - conclusao).days if conclusao else None
+        linhas.append(
+            {
+                "id": go.id,
+                "pedido_venda": chave or go.pedido_venda,
+                "cliente": go.cliente,
+                "frete": go.frete,
+                "estado": go.estado,
+                "valor": go.go_valor_pedido_operacao,
+                "conclusao_producao": conclusao,
+                "dias_esperando": dias_esperando,
+                "numero_nf": go.go_numero_nf,
+                "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
+            }
+        )
+    # Quem espera há mais tempo primeiro; sem data de conclusão (caso raro,
+    # pedido nunca lançado em Produção mas com liberação efetiva manual em
+    # Operação) fica por último, não no topo.
+    linhas.sort(key=lambda l: (l["dias_esperando"] is None, -(l["dias_esperando"] or 0)))
+    return linhas
 
 
 def _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao):
@@ -8911,38 +8911,55 @@ def register_routes(app):
     # redundante — o FORMULÁRIO de edição da seção Comercial continua
     # existindo normalmente em gestao_operacao_editar (ver GO_SECAO_ENDPOINT).
     # ------------------------------------------------------------------
-    @app.route("/gestao-operacao/pcp")
-    @login_required
-    def gestao_operacao_pcp():
-        pedidos, page, total_paginas, total_filtrado, filtros, _query_operacao = _linhas_gestao_operacao(request.args)
-        status_real_por_pedido_venda = _status_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
-        liberacao_pcp_por_pedido_venda = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
-        # "Solicitada cliente/retira" também acompanha ao vivo a "Data do
-        # cliente" de Gestão Produção — pedido do Bruno (03/09/2026).
-        data_cliente_por_pedido_venda = _data_cliente_por_pedido_venda([p.pedido_venda for p in pedidos])
-        # Quadrantes de Planejamento Semanal/Mensal PCP (pedido do Bruno,
-        # 10/09/2026) — mesmo recurso da Listagem Geral de Produção, ver
-        # _quadrantes_planejamento_semanal_operacao.
-        quadrantes_pcp = _quadrantes_planejamento_semanal_operacao(filtros)
-        return render_template(
-            "gestao_operacao_pcp.html",
-            pedidos=pedidos, page=page, total_paginas=total_paginas,
-            total_filtrado=total_filtrado, filtros=filtros,
-            status_real_por_pedido_venda=status_real_por_pedido_venda,
-            liberacao_pcp_por_pedido_venda=liberacao_pcp_por_pedido_venda,
-            data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
-            quadrantes_pcp=quadrantes_pcp,
-        )
+    # A aba PCP (rota "/gestao-operacao/pcp") foi apagada a pedido do Bruno
+    # (16/09/2026): com o grupo Gestão Produção já completo (Planejamento
+    # Semanal PCP na Listagem Geral), a listagem/quadrantes que existiam
+    # aqui ficaram redundantes — Status produção/Previsão/Data efetiva/
+    # Solicitada cliente/Término semanal já aparecem, ao vivo, na Operação
+    # 360 (ver _metricas_operacao_360); "Custo produção real" ganhou coluna
+    # própria lá (única coisa que só existia nesta aba). O FORMULÁRIO de
+    # edição da seção PCP por pedido continua existindo normalmente em
+    # gestao_operacao_editar (fallback manual pra pedido ainda não lançado
+    # em Produção).
 
     @app.route("/gestao-operacao/logistica")
     @login_required
     def gestao_operacao_logistica():
         pedidos, page, total_paginas, total_filtrado, filtros, _query_operacao = _linhas_gestao_operacao(request.args)
+        # Kanban Expedição (pedido do Bruno, 16/09/2026) — ver
+        # _pedidos_kanban_expedicao. Independente dos filtros/paginação da
+        # tabela abaixo: mostra SEMPRE todos os pedidos parados na
+        # expedição, no site inteiro.
+        kanban_expedicao = _pedidos_kanban_expedicao()
         return render_template(
             "gestao_operacao_logistica.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
+            kanban_expedicao=kanban_expedicao,
         )
+
+    @app.route("/gestao-operacao/<int:pedido_id>/marcar-expedido", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def gestao_operacao_marcar_expedido(pedido_id):
+        """Ação rápida do Kanban Expedição (pedido do Bruno, 16/09/2026): marca
+        a Data de expedição de hoje sem precisar abrir o formulário de edição
+        completo — o pedido sai do kanban sozinho na próxima carga (ver
+        _pedidos_kanban_expedicao, que já filtra por go_data_pedido_expedido
+        vazio). Mesmo padrão de auditoria (_registrar_alteracoes) e de
+        permissão (@requer_role) já usados em gestao_operacao_editar."""
+        pedido = db.session.get(PedidoOperacao, pedido_id)
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(url_for("gestao_operacao_logistica"))
+
+        antes = {"go_data_pedido_expedido": pedido.go_data_pedido_expedido}
+        pedido.go_data_pedido_expedido = date.today()
+        depois = {"go_data_pedido_expedido": pedido.go_data_pedido_expedido}
+        _registrar_alteracoes("pedido_operacao", pedido.id, None, antes, depois, ["go_data_pedido_expedido"])
+
+        db.session.commit()
+        flash(f"Pedido {pedido.pedido_venda or pedido.id} marcado como expedido.", "success")
+        return redirect(request.referrer or url_for("gestao_operacao_logistica"))
 
     @app.route("/gestao-operacao/resultados")
     @login_required

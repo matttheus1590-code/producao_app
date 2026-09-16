@@ -241,7 +241,7 @@
       <h6 class="text-uppercase text-muted small mb-0">
         📅 <i class="bi bi-calendar-week"></i> Planejamento Semanal PCP — prévia
       </h6>
-      <a href="{{ url_for('gestao_operacao_pcp') }}" class="small"><i class="bi bi-diagram-3"></i> Gestão Operação · PCP</a>
+      <a href="{{ url_for('gestao_operacao_listagem_geral') }}" class="small"><i class="bi bi-diagram-3"></i> Gestão Operação · Operação 360</a>
     </div>
     <p class="text-muted small mb-2">Passe o mouse num pedido pra ver o contexto, ou clique pra abrir o Detalhe do Pedido.</p>
     {% if preview_pcp_semanal.semanas %}
@@ -465,7 +465,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
       <h6 class="text-uppercase text-muted small mb-0">📉 Projeção PCP por semana (Gestão Operação)</h6>
-      <a href="{{ url_for('gestao_operacao_pcp') }}" class="small">Ver PCP <i class="bi bi-arrow-right"></i></a>
+      <a href="{{ url_for('gestao_operacao_listagem_geral') }}" class="small">Ver Operação 360 <i class="bi bi-arrow-right"></i></a>
     </div>
     <canvas id="graficoProjecaoPcp" height="90"></canvas>
   </div>

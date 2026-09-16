@@ -160,6 +160,7 @@
       <col style="width:110px">
       <col style="width:64px">
       <col style="width:100px">
+      <col style="width:110px">
       <col style="width:56px">
       <col style="width:52px">
       <col style="width:96px">
@@ -185,6 +186,7 @@
         <th title="Positivo = entregue depois do solicitado (atraso); negativo = antes (antecipação)">Dias atraso/antecip.</th>
         <th>OTD</th>
         <th>Valor pedido</th>
+        <th>Custo produção real</th>
         <th>Frete</th>
         <th>Estado</th>
         <th>Qualidade</th>
@@ -266,6 +268,11 @@
             R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
           {% else %}—{% endif %}
         </td>
+        <td>
+          {% if p.go_custo_producao_real is not none %}
+            R$ {{ "{:,.2f}".format(p.go_custo_producao_real).replace(",", "X").replace(".", ",").replace("X", ".") }}
+          {% else %}—{% endif %}
+        </td>
         <td>{{ p.frete or "—" }}</td>
         <td title="{{ p.cidade or '' }}{% if p.cidade and p.pais %} · {% endif %}{{ p.pais or '' }}">{{ p.estado or "—" }}</td>
         <td>
@@ -287,7 +294,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="22" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="23" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

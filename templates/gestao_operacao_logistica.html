@@ -4,6 +4,51 @@
 
 {% include "_gestao_operacao_subnav.html" with context %}
 
+<div class="card mb-4 border-warning-subtle">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">
+        📦 <i class="bi bi-kanban"></i> Kanban Expedição
+      </h6>
+      <span class="badge bg-warning text-dark">{{ kanban_expedicao|length }} pedido(s) parado(s)</span>
+    </div>
+    <p class="text-muted small mb-3">
+      Pedidos finalizados no PCP, já aos cuidados da logística e parados na expedição — casa ao vivo com Gestão
+      Produção (mesmo dado da Operação 360). Some da lista sozinho assim que marcado como expedido.
+    </p>
+    {% if kanban_expedicao %}
+    <div class="row g-3">
+      {% for p in kanban_expedicao %}
+      <div class="col-md-6 col-lg-4">
+        <div class="kanban-expedicao-card h-100">
+          <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+            <span class="fw-semibold">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
+            {% if p.frete %}<span class="badge bg-secondary">{{ p.frete }}</span>{% endif %}
+          </div>
+          <div class="small text-muted mb-2">
+            Estado: {{ p.estado or "—" }}
+            {% if p.valor is not none %} · R$ {{ "{:,.2f}".format(p.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endif %}
+            {% if p.numero_nf %} · NF {{ p.numero_nf }}{% endif %}
+            {% if p.transportadora %} · {{ p.transportadora }}{% endif %}
+          </div>
+          <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+            <span class="badge {% if p.dias_esperando is none %}bg-secondary{% elif p.dias_esperando > 7 %}bg-danger{% elif p.dias_esperando >= 3 %}bg-warning text-dark{% else %}bg-success{% endif %}">
+              {% if p.dias_esperando is none %}Aguardando expedição{% else %}há {{ p.dias_esperando }}d aguardando{% endif %}
+            </span>
+            <form method="post" action="{{ url_for('gestao_operacao_marcar_expedido', pedido_id=p.id) }}" class="m-0">
+              <button type="submit" class="btn btn-sm btn-outline-success"><i class="bi bi-truck"></i> Marcar como expedido</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">Nenhum pedido aguardando expedição no momento 🎉</p>
+    {% endif %}
+  </div>
+</div>
+
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <h4 class="mb-0"><i class="bi bi-truck"></i> Logística / Nota Fiscal</h4>
   <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
