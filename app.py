@@ -2486,6 +2486,61 @@ def _predicado_vencendo():
     return and_(tem_item_vencendo, ~_predicado_atrasado())
 
 
+def _sugestao_risco_prazo(pedido, data_prevista_pcp, mapa_lead_time):
+    """Sugestão de ação pro card do mini risco (pedido do Bruno, 16/09/2026):
+    "melhor caminho pensando no frete" pra manter o OTD positivo. Pra CIF,
+    soma o lead time de transporte cadastrado (MESMO cadastro único de
+    Cadastros > Lead time Transportadora já usado na Torre de Controle de
+    OTD/Gestão de Risco — nunca duplicado, só consultado). Pra FOB o frete é
+    por conta do cliente, então não existe trecho de transporte sob
+    responsabilidade da 4PIPE pra somar — a sugestão vira só a própria data
+    solicitada pelo cliente."""
+    prazo_cliente = pedido.data_cliente
+    if not prazo_cliente:
+        return "Sem data solicitada pelo cliente cadastrada — não dá pra calcular um prazo seguro."
+
+    if pedido.frete == "FOB":
+        return f"Frete por conta do cliente (FOB) — libere até {prazo_cliente.strftime('%d/%m/%Y')} pra cumprir o prazo solicitado."
+
+    uf = (pedido.estado or "").strip().upper()
+    linha = mapa_lead_time.get((uf, "Rodoviário"))
+    if not linha:
+        return "Sem lead time de transporte cadastrado pra esse Estado (Cadastros > Lead time Transportadora)."
+
+    dias_transporte = _lead_time_transporte_dias(linha)
+    data_limite = prazo_cliente - timedelta(days=dias_transporte)
+    if data_prevista_pcp and data_prevista_pcp <= data_limite:
+        return (
+            f"Dentro da margem: previsto PCP em {data_prevista_pcp.strftime('%d/%m/%Y')}, prazo limite pra "
+            f"liberar é {data_limite.strftime('%d/%m/%Y')} (frete de {dias_transporte}d até {uf})."
+        )
+    return (
+        f"Melhor caminho: libere até {data_limite.strftime('%d/%m/%Y')} — somado o frete rodoviário "
+        f"({dias_transporte}d até {uf}), a entrega fica dentro do prazo solicitado ({prazo_cliente.strftime('%d/%m/%Y')})."
+    )
+
+
+def _linha_risco_prazo(pedido, mapa_lead_time):
+    """Monta 1 card do mini risco (pedido do Bruno, 16/09/2026) com o
+    contexto que ele pediu: data solicitada cliente, estado, data prevista
+    PCP (a mais urgente entre os itens do pedido ainda não finalizados — a
+    mesma que está causando o atraso/vencimento) e a sugestão de ação."""
+    itens_abertos = [
+        i for i in pedido.itens if i.status_producao != "FINALIZADO" and i.liberacao_prevista
+    ]
+    data_prevista_pcp = min((i.liberacao_prevista for i in itens_abertos), default=None)
+    return {
+        "id": pedido.id,
+        "pedido_venda": pedido.pedido_venda,
+        "cliente": pedido.cliente,
+        "frete": pedido.frete,
+        "estado": pedido.estado,
+        "data_solicitada_cliente": pedido.data_cliente,
+        "data_prevista_pcp": data_prevista_pcp,
+        "sugestao": _sugestao_risco_prazo(pedido, data_prevista_pcp, mapa_lead_time),
+    }
+
+
 def _mini_risco_prazos_painel(limite=5):
     """Mini gestão de risco de prazos pro Painel, separada por frete FOB x
     CIF (pedido do Bruno, 16/09/2026) — reaproveita a MESMA regra já usada e
@@ -2495,7 +2550,12 @@ def _mini_risco_prazos_painel(limite=5):
     gravado, então já sai "atualizando diariamente" sem precisar de job
     nenhum (mesma filosofia da Gestão de Risco/Torre de Controle de OTD já
     existente em Gestão Operação, só que aqui, "mini", puxando Gestão
-    Produção/Listagem Geral)."""
+    Produção/Listagem Geral).
+
+    Cada card também traz data solicitada cliente, estado, data prevista PCP
+    e uma sugestão de ação (_linha_risco_prazo/_sugestao_risco_prazo) —
+    ajuste do Bruno (16/09/2026) depois de ver a 1ª versão ao vivo."""
+    mapa_lead_time = _mapa_lead_time_transportadora()
     resultado = {}
     for frete in ("FOB", "CIF"):
         base = Pedido.query.options(selectinload(Pedido.itens)).filter(Pedido.frete == frete)
@@ -2512,8 +2572,8 @@ def _mini_risco_prazos_painel(limite=5):
         resultado[frete] = {
             "atrasados_total": len(atrasados),
             "vencendo_total": len(vencendo),
-            "atrasados": atrasados[:limite],
-            "vencendo": vencendo[:limite],
+            "atrasados": [_linha_risco_prazo(p, mapa_lead_time) for p in atrasados[:limite]],
+            "vencendo": [_linha_risco_prazo(p, mapa_lead_time) for p in vencendo[:limite]],
         }
     return resultado
 
@@ -2613,6 +2673,92 @@ def _lead_time_medio_dias():
         return None
     dias = [(i.termino_inspecao - i.inicio_producao).days for i in itens]
     return round(sum(dias) / len(dias), 1)
+
+
+def _entrega_cliente_por_pedido_venda(pedidos_venda):
+    """dict pedido_venda (trim, sem FK) -> data de entrega no cliente,
+    olhando pra Gestão Operação (PedidoOperacao.go_data_entregue_cliente,
+    com go_data_real_entrega como fallback) — mesmo casamento por
+    pedido_venda já usado em _liberacao_pcp_por_pedido_venda/
+    _data_cliente_por_pedido_venda. Só leitura, nunca grava nada. Usado
+    exclusivamente pelo "Lead time total" do detalhamento de Lead Time do
+    Painel (pedido do Bruno, 16/09/2026) — Gestão Produção não tem campo
+    próprio de entrega no cliente, só Gestão Operação tem."""
+    valores = sorted({_normalizar_pedido_venda(v) for v in pedidos_venda if v and v.strip()})
+    if not valores:
+        return {}
+    pedidos_go = (
+        PedidoOperacao.query
+        .filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda).in_(valores))
+        .filter(
+            or_(
+                PedidoOperacao.go_data_entregue_cliente.isnot(None),
+                PedidoOperacao.go_data_real_entrega.isnot(None),
+            )
+        )
+        .all()
+    )
+    mapa = {}
+    for p in pedidos_go:
+        chave = _normalizar_pedido_venda(p.pedido_venda)
+        if not chave:
+            continue
+        data = p.go_data_entregue_cliente or p.go_data_real_entrega
+        anterior = mapa.get(chave)
+        if data and (anterior is None or data > anterior):
+            mapa[chave] = data
+    return mapa
+
+
+def _lead_time_detalhado_painel():
+    """Detalhamento de Lead Time do Painel (pedido do Bruno, 16/09/2026),
+    baseado em Gestão Produção/Listagem Geral — todas as médias, cada uma
+    com o "n" (quantidade que entrou na conta) igual ao resto do sistema
+    (_media_dias):
+
+      - chao_fabrica: Inclusão do pedido -> Liberação efetiva, por item.
+      - fila_espera: Inclusão do pedido -> Início de produção, mesmo campo
+        já existente ItemPedido.tempo_espera_dias.
+      - prazo_comercial: Inclusão do pedido -> Data solicitada pelo
+        cliente, por pedido — quanto prazo a empresa se comprometeu, na
+        média (não é o realizado, é o prometido).
+      - total: Inclusão do pedido -> Entrega no cliente. Gestão Produção
+        não tem esse campo próprio — cruza com Gestão Operação por
+        pedido_venda (_entrega_cliente_por_pedido_venda), só leitura."""
+    pedidos = Pedido.query.filter(Pedido.data_inclusao_pedido.isnot(None)).all()
+
+    chao_fabrica_valores = []
+    fila_espera_valores = []
+    for pedido in pedidos:
+        for item in pedido.itens:
+            if item.liberacao_real:
+                chao_fabrica_valores.append((item.liberacao_real - pedido.data_inclusao_pedido).days)
+            if item.tempo_espera_dias is not None:
+                fila_espera_valores.append(item.tempo_espera_dias)
+
+    prazo_comercial_valores = [
+        (p.data_cliente - p.data_inclusao_pedido).days for p in pedidos if p.data_cliente
+    ]
+
+    pedidos_venda = [p.pedido_venda for p in pedidos if p.pedido_venda]
+    entrega_por_pedido = _entrega_cliente_por_pedido_venda(pedidos_venda)
+    total_valores = []
+    for p in pedidos:
+        data_entrega = entrega_por_pedido.get(_normalizar_pedido_venda(p.pedido_venda))
+        if data_entrega:
+            total_valores.append((data_entrega - p.data_inclusao_pedido).days)
+
+    chao_fabrica_media, chao_fabrica_n = _media_dias(chao_fabrica_valores)
+    fila_espera_media, fila_espera_n = _media_dias(fila_espera_valores)
+    prazo_comercial_media, prazo_comercial_n = _media_dias(prazo_comercial_valores)
+    total_media, total_n = _media_dias(total_valores)
+
+    return {
+        "chao_fabrica": {"media": chao_fabrica_media, "n": chao_fabrica_n},
+        "fila_espera": {"media": fila_espera_media, "n": fila_espera_n},
+        "prazo_comercial": {"media": prazo_comercial_media, "n": prazo_comercial_n},
+        "total": {"media": total_media, "n": total_n},
+    }
 
 
 def _otd_percentual():
@@ -7671,6 +7817,10 @@ def register_routes(app):
         # (16/09/2026), logo abaixo de "Últimos apontamentos de Qualidade".
         mini_risco_prazos = _mini_risco_prazos_painel()
 
+        # Detalhamento de Lead Time (chão de fábrica, total, fila de espera,
+        # prazo comercial) — pedido do Bruno (16/09/2026), quadrante próprio.
+        lead_time_detalhado = _lead_time_detalhado_painel()
+
         pedidos_atrasados = (
             Pedido.query.options(selectinload(Pedido.itens))
             .filter(_predicado_atrasado())
@@ -7743,6 +7893,7 @@ def register_routes(app):
             previsto_mes=previsto_mes,
             resumo_mes_seguinte_pcp=resumo_mes_seguinte_pcp,
             mini_risco_prazos=mini_risco_prazos,
+            lead_time_detalhado=lead_time_detalhado,
             lead_time_medio=_lead_time_medio_dias(),
             otd=_otd_percentual(),
             backlog_estacao=_backlog_por_estacao(),

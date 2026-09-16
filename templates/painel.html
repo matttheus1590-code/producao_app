@@ -41,6 +41,37 @@
 </div>
 {% endif %}
 
+<div class="card mb-4 border-secondary-subtle">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-3">
+      <i class="bi bi-stopwatch"></i> Lead time detalhado (médias, Gestão Produção)
+    </h6>
+    <div class="row g-3 text-center">
+      <div class="col-6 col-lg-3">
+        <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.chao_fabrica.media|string + "d") if lead_time_detalhado.chao_fabrica.media is not none else "—" }}</div>
+        <div class="text-muted small">Chão de fábrica<br>(Inclusão → Liberação efetiva)</div>
+        <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.chao_fabrica.n }} item(ns)</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.total.media|string + "d") if lead_time_detalhado.total.media is not none else "—" }}</div>
+        <div class="text-muted small">Total<br>(Inclusão → Entrega no cliente)</div>
+        <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.total.n }} pedido(s)</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.fila_espera.media|string + "d") if lead_time_detalhado.fila_espera.media is not none else "—" }}</div>
+        <div class="text-muted small">Fila de espera<br>(Inclusão → Início produção)</div>
+        <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.fila_espera.n }} item(ns)</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.prazo_comercial.media|string + "d") if lead_time_detalhado.prazo_comercial.media is not none else "—" }}</div>
+        <div class="text-muted small">Prazo comercial<br>(Inclusão → Solicitado cliente)</div>
+        <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.prazo_comercial.n }} pedido(s)</div>
+      </div>
+    </div>
+    <p class="text-muted small mb-0 mt-2">"Total" cruza com Gestão Operação (data de entrega no cliente) pelo Pedido de venda — os demais vêm só de Gestão Produção/Listagem Geral.</p>
+  </div>
+</div>
+
 <div class="card mb-4 border-info-subtle">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
@@ -99,21 +130,33 @@
             </div>
           </div>
           {% if dados and (dados.atrasados or dados.vencendo) %}
-          <div class="notif-feed-lista">
+          <div class="d-flex flex-column gap-2">
             {% for p in dados.atrasados %}
-            <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="notif-feed-item">
-              <div class="notif-feed-linha1">
+            <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="risco-prazo-card text-decoration-none">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <span class="fw-semibold">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
                 <span class="badge bg-danger">Atrasado</span>
-                <span class="notif-feed-titulo">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
               </div>
+              <div class="small text-muted">
+                Solicitado cliente: {{ p.data_solicitada_cliente.strftime("%d/%m/%Y") if p.data_solicitada_cliente else "—" }}
+                · Estado: {{ p.estado or "—" }}
+                · Previsto PCP: {{ p.data_prevista_pcp.strftime("%d/%m/%Y") if p.data_prevista_pcp else "—" }}
+              </div>
+              <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ p.sugestao }}</div>
             </a>
             {% endfor %}
             {% for p in dados.vencendo %}
-            <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="notif-feed-item">
-              <div class="notif-feed-linha1">
+            <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="risco-prazo-card text-decoration-none">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <span class="fw-semibold">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
                 <span class="badge bg-warning text-dark">Vencendo</span>
-                <span class="notif-feed-titulo">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
               </div>
+              <div class="small text-muted">
+                Solicitado cliente: {{ p.data_solicitada_cliente.strftime("%d/%m/%Y") if p.data_solicitada_cliente else "—" }}
+                · Estado: {{ p.estado or "—" }}
+                · Previsto PCP: {{ p.data_prevista_pcp.strftime("%d/%m/%Y") if p.data_prevista_pcp else "—" }}
+              </div>
+              <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ p.sugestao }}</div>
             </a>
             {% endfor %}
           </div>

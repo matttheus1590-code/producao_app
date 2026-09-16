@@ -1585,3 +1585,19 @@ body.col-resizing-ativo {
   background-color: #157347;
   border-color: #0f5132;
 }
+
+/* Card do mini risco de prazos FOB/CIF (Painel, pedido do Bruno,
+   16/09/2026) — mesmo estilo compacto do .pcp-preview-card, só que com
+   mais linhas de contexto + sugestão. */
+.risco-prazo-card {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #eef0f2;
+  border-radius: 0.3rem;
+  background-color: #fff;
+  color: inherit;
+}
+.risco-prazo-card:hover {
+  border-color: #6ea8fe;
+  background-color: rgba(13, 110, 253, 0.05);
+}
