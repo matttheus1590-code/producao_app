@@ -11,58 +11,61 @@
   <a href="{{ url_for('consulta_pedido') }}" class="fw-semibold">🔍 Consulta Pedido</a>.
 </div>
 
+<!-- Quadrantes valorizados (pedido do Bruno, 16/09/2026): Faturamento
+     previsto e Backlog mês seguinte ganham destaque em cards "hero" no topo
+     — os antigos cards de Backlog/Atrasados/Vencendo/Lead time médio saíram
+     daqui (esses dois primeiros continuam disponíveis via Listagem Geral e
+     na tabela "Pedidos atrasados" mais abaixo; Vencendo/Lead time médio
+     seguem calculados, só não ocupam mais espaço de destaque no topo). -->
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Backlog (não finalizado)", backlog) }}
+  <div class="col-md-6">
+    <div class="painel-hero-card painel-hero-card-previsto">
+      <div class="painel-hero-icone">💰</div>
+      <div>
+        <div class="painel-hero-label">Faturamento previsto (mês)</div>
+        <div class="painel-hero-valor">R$ {{ "{:,.0f}".format(previsto_mes).replace(",", ".") }}</div>
+        <div class="painel-hero-sufixo">Planejamento PCP · Listagem Geral</div>
+      </div>
+    </div>
   </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("🔴 Atrasados", atrasados, cor="danger", borda="danger", link=url_for('dashboard', atrasados='1')) }}
-  </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("🟡 Vencendo (" + PRAZO_ALERTA_DIAS|string + "d)", vencendo, cor="warning", borda="warning") }}
-  </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Faturamento previsto (mês)", "R$ " + "{:,.0f}".format(previsto_mes).replace(",", ".")) }}
-  </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Backlog mês seguinte (" + resumo_mes_seguinte_pcp.mes_label + ")", "R$ " + "{:,.0f}".format(resumo_mes_seguinte_pcp.valor_total).replace(",", ".")) }}
-  </div>
-  <div class="col-6 col-lg-2" title="Calculado a partir de itens com 'Início de produção' e 'Término de inspeção/embalagem' preenchidos">
-    {{ stat_card("Lead time médio", (lead_time_medio|string + "d") if lead_time_medio is not none else "—", sufixo="OTD: " + ((otd|string + "%") if otd is not none else "—")) }}
+  <div class="col-md-6">
+    <div class="painel-hero-card painel-hero-card-backlog">
+      <div class="painel-hero-icone">📦</div>
+      <div>
+        <div class="painel-hero-label">Backlog mês seguinte ({{ resumo_mes_seguinte_pcp.mes_label }})</div>
+        <div class="painel-hero-valor">R$ {{ "{:,.0f}".format(resumo_mes_seguinte_pcp.valor_total).replace(",", ".") }}</div>
+        <div class="painel-hero-sufixo">{{ resumo_mes_seguinte_pcp.pedidos_total }} pedido(s) planejados</div>
+      </div>
+    </div>
   </div>
 </div>
 
-{% if lead_time_medio is none or otd is none %}
-<div class="alert alert-light border small text-muted mb-4">
-  <i class="bi bi-info-circle"></i>
-  Lead time médio e OTD aparecem em branco porque os pedidos importados do histórico raramente têm as datas de
-  "Início de produção" e "Término de inspeção/embalagem" preenchidas juntas. Esses dois indicadores passam a
-  funcionar automaticamente conforme os pedidos novos forem preenchidos com essas datas.
-</div>
-{% endif %}
-
-<div class="card mb-4 border-secondary-subtle">
+<div class="card mb-4 painel-hero-card-lt">
   <div class="card-body">
     <h6 class="text-uppercase text-muted small mb-3">
-      <i class="bi bi-stopwatch"></i> Lead time detalhado (médias, Gestão Produção)
+      ⏱️ <i class="bi bi-stopwatch"></i> Lead time detalhado (médias, Gestão Produção)
     </h6>
     <div class="row g-3 text-center">
       <div class="col-6 col-lg-3">
+        <div class="fs-2 mb-1">🛠️</div>
         <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.chao_fabrica.media|string + "d") if lead_time_detalhado.chao_fabrica.media is not none else "—" }}</div>
         <div class="text-muted small">Chão de fábrica<br>(Inclusão → Liberação efetiva)</div>
         <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.chao_fabrica.n }} item(ns)</div>
       </div>
       <div class="col-6 col-lg-3">
+        <div class="fs-2 mb-1">🚚</div>
         <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.total.media|string + "d") if lead_time_detalhado.total.media is not none else "—" }}</div>
         <div class="text-muted small">Total<br>(Inclusão → Entrega no cliente)</div>
         <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.total.n }} pedido(s)</div>
       </div>
       <div class="col-6 col-lg-3">
+        <div class="fs-2 mb-1">⏳</div>
         <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.fila_espera.media|string + "d") if lead_time_detalhado.fila_espera.media is not none else "—" }}</div>
         <div class="text-muted small">Fila de espera<br>(Inclusão → Início produção)</div>
         <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.fila_espera.n }} item(ns)</div>
       </div>
       <div class="col-6 col-lg-3">
+        <div class="fs-2 mb-1">🤝</div>
         <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.prazo_comercial.media|string + "d") if lead_time_detalhado.prazo_comercial.media is not none else "—" }}</div>
         <div class="text-muted small">Prazo comercial<br>(Inclusão → Solicitado cliente)</div>
         <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.prazo_comercial.n }} pedido(s)</div>
@@ -76,7 +79,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
       <h6 class="text-uppercase text-muted small mb-0">
-        <i class="bi bi-bell"></i> Últimos apontamentos de Qualidade (RDIM + RNC)
+        🔔 <i class="bi bi-bell"></i> Últimos apontamentos de Qualidade (RDIM + RNC)
       </h6>
       <div class="d-flex align-items-center gap-2 flex-wrap">
         {% if novos_apontamentos %}
@@ -113,7 +116,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
       <h6 class="text-uppercase text-muted small mb-0">
-        <i class="bi bi-shield-exclamation"></i> Mini gestão de risco — prazos de entrega
+        🛡️ <i class="bi bi-shield-exclamation"></i> Mini gestão de risco — prazos de entrega
       </h6>
       <span class="text-muted small">Recalculado a cada acesso · mesmo critério de Atrasados/Vencendo</span>
     </div>
@@ -174,7 +177,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
       <h6 class="text-uppercase text-muted small mb-0">
-        <i class="bi bi-cart-plus"></i> Últimos pedidos incluídos (Gestão Produção)
+        🛒 <i class="bi bi-cart-plus"></i> Últimos pedidos incluídos (Gestão Produção)
       </h6>
       <div class="d-flex align-items-center gap-2 flex-wrap">
         {% if novos_pedidos_producao %}
@@ -211,7 +214,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
       <h6 class="text-uppercase text-muted small mb-0">
-        <i class="bi bi-calendar-week"></i> Planejamento Semanal PCP — prévia
+        📅 <i class="bi bi-calendar-week"></i> Planejamento Semanal PCP — prévia
       </h6>
       <a href="{{ url_for('gestao_operacao_pcp') }}" class="small"><i class="bi bi-diagram-3"></i> Gestão Operação · PCP</a>
     </div>
@@ -265,7 +268,7 @@
 <div class="card mb-4 border-info-subtle">
   <div class="card-body">
     <h6 class="text-uppercase text-muted small mb-3">
-      <i class="bi bi-calendar2-range"></i> Resumo do planejamento PCP — {{ resumo_mes_seguinte_pcp.mes_label }}
+      🗓️ <i class="bi bi-calendar2-range"></i> Resumo do planejamento PCP — {{ resumo_mes_seguinte_pcp.mes_label }}
     </h6>
     <div class="row g-3 text-center">
       <div class="col-6 col-lg-3">
@@ -292,7 +295,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
       <h6 class="text-uppercase text-muted small mb-0">
-        <i class="bi bi-flask"></i> Últimas atualizações de P&D
+        🧪 <i class="bi bi-flask"></i> Últimas atualizações de P&D
       </h6>
       <div class="d-flex align-items-center gap-2 flex-wrap">
         {% if novas_atualizacoes_pd %}
@@ -327,7 +330,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-1">
       <h6 class="text-uppercase text-muted small mb-0">
-        <i class="bi bi-speedometer2"></i> OTD e Lead Time — Operação · {{ mes_atual_label }}
+        📊 <i class="bi bi-speedometer2"></i> OTD e Lead Time — Operação · {{ mes_atual_label }}
       </h6>
       <a href="{{ url_for('gestao_operacao_resultados') }}" class="small">Ver detalhado em Resultados/OTD <i class="bi bi-arrow-right"></i></a>
     </div>
@@ -389,7 +392,7 @@
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Pedidos por status</h6>
+        <h6 class="text-uppercase text-muted small mb-3">🥧 Pedidos por status</h6>
         <canvas id="graficoStatus" height="220"></canvas>
       </div>
     </div>
@@ -397,7 +400,7 @@
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-1">Backlog por estação</h6>
+        <h6 class="text-uppercase text-muted small mb-1">🏗️ Backlog por estação</h6>
         <p class="text-muted small mb-2">Passe o mouse pra ver os pedidos parados ali; clique pra abrir a estação.</p>
         <canvas id="graficoBacklog" height="220"></canvas>
       </div>
@@ -408,7 +411,7 @@
 <div class="card mb-4">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-      <h6 class="text-uppercase text-muted small mb-0"><i class="bi bi-bar-chart-line"></i> Faturamento e OTD mensais — {{ ano_graficos }}</h6>
+      <h6 class="text-uppercase text-muted small mb-0">📈 <i class="bi bi-bar-chart-line"></i> Faturamento e OTD mensais — {{ ano_graficos }}</h6>
       <form method="get" class="d-flex align-items-center gap-2">
         <label class="small text-muted mb-0" for="ano-graficos-select">Ano:</label>
         <select id="ano-graficos-select" name="ano_graficos" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
@@ -436,7 +439,7 @@
 <div class="card mb-4">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-      <h6 class="text-uppercase text-muted small mb-0">Projeção PCP por semana (Gestão Operação)</h6>
+      <h6 class="text-uppercase text-muted small mb-0">📉 Projeção PCP por semana (Gestão Operação)</h6>
       <a href="{{ url_for('gestao_operacao_pcp') }}" class="small">Ver PCP <i class="bi bi-arrow-right"></i></a>
     </div>
     <canvas id="graficoProjecaoPcp" height="90"></canvas>
@@ -447,7 +450,7 @@
 <div class="card mb-4">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-      <h6 class="text-uppercase text-muted small mb-0">Projeção PCP por mês (soma das semanas do mês)</h6>
+      <h6 class="text-uppercase text-muted small mb-0">🗂️ Projeção PCP por mês (soma das semanas do mês)</h6>
     </div>
     <p class="text-muted small mb-3">
       "Finalizado" = já entregue/concluído; "Em aberto" = ainda projetado pra aquele mês.
