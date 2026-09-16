@@ -1605,25 +1605,37 @@ body.col-resizing-ativo {
 /* Cards "hero" do topo do Painel — Faturamento previsto e Backlog mês
    seguinte (pedido do Bruno, 16/09/2026: "sempre valorizando os quadrantes
    do faturamento previsto, backlog mes seguinte e lead time detalhado").
-   Maiores e com ícone, pra chamar mais atenção que os stat_card comuns. */
+   Maiores e com ícone, pra chamar mais atenção que os stat_card comuns.
+   Clicáveis (o card INTEIRO é um <a>) e com um Top 5 de pedidos à direita,
+   menor e agrupado (ajuste do Bruno, 16/09/2026, depois de ver a 1ª versão
+   ao vivo: "deixe maiores os custos... quero clicar em cima..."). */
 .painel-hero-card {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
   height: 100%;
   padding: 1.1rem 1.4rem;
   border-radius: 0.5rem;
   border: 1px solid #eef0f2;
   background-color: #fff;
+  color: inherit;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.painel-hero-card:hover {
+  box-shadow: 0 0.35rem 0.9rem rgba(0, 0, 0, 0.09);
+  border-color: #ced4da;
+  color: inherit;
+  transform: translateY(-1px);
 }
 .painel-hero-icone {
   flex-shrink: 0;
-  width: 3.1rem;
-  height: 3.1rem;
+  width: 3.4rem;
+  height: 3.4rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.6rem;
+  font-size: 1.75rem;
   border-radius: 50%;
 }
 .painel-hero-card-previsto {
@@ -1638,6 +1650,10 @@ body.col-resizing-ativo {
 .painel-hero-card-backlog .painel-hero-icone {
   background-color: rgba(13, 110, 253, 0.12);
 }
+.painel-hero-principal {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
 .painel-hero-label {
   text-transform: uppercase;
   font-size: 0.72rem;
@@ -1646,13 +1662,63 @@ body.col-resizing-ativo {
   font-weight: 600;
 }
 .painel-hero-valor {
-  font-size: 1.9rem;
-  font-weight: 700;
-  line-height: 1.2;
+  font-size: 2.5rem;
+  font-weight: 800;
+  line-height: 1.15;
 }
 .painel-hero-sufixo {
   font-size: 0.78rem;
   color: #6c757d;
+}
+/* Top 5 pedidos por valor — menor, agrupado à direita do card, separado
+   por uma linha vertical fina. */
+.painel-hero-top5 {
+  flex: 0 0 auto;
+  width: 13.5rem;
+  max-width: 100%;
+  padding-left: 1rem;
+  border-left: 1px solid #eef0f2;
+}
+.painel-hero-top5-titulo {
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  color: #6c757d;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+}
+.painel-hero-top5-linha {
+  display: flex;
+  flex-direction: column;
+  padding: 0.2rem 0;
+  border-bottom: 1px dashed #eef0f2;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+.painel-hero-top5-linha:last-child {
+  border-bottom: none;
+}
+.painel-hero-top5-nome {
+  font-weight: 600;
+  color: #212529;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.painel-hero-top5-pv {
+  color: #6c757d;
+}
+.painel-hero-top5-vazio {
+  font-size: 0.72rem;
+}
+@media (max-width: 767px) {
+  .painel-hero-top5 {
+    border-left: none;
+    border-top: 1px solid #eef0f2;
+    padding-left: 0;
+    padding-top: 0.6rem;
+    width: 100%;
+  }
 }
 /* Card de Lead time detalhado — mesmo tratamento de destaque (borda
    colorida à esquerda) dos cards hero acima, pra ficar no mesmo patamar

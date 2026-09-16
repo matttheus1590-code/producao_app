@@ -16,27 +16,52 @@
      — os antigos cards de Backlog/Atrasados/Vencendo/Lead time médio saíram
      daqui (esses dois primeiros continuam disponíveis via Listagem Geral e
      na tabela "Pedidos atrasados" mais abaixo; Vencendo/Lead time médio
-     seguem calculados, só não ocupam mais espaço de destaque no topo). -->
+     seguem calculados, só não ocupam mais espaço de destaque no topo).
+     Cada card é um link pra Listagem Geral já filtrada no mês
+     correspondente, e traz um Top 5 de pedidos por valor à direita (ajuste
+     do Bruno, 16/09/2026, depois de ver a 1ª versão ao vivo). -->
 <div class="row g-3 mb-4">
   <div class="col-md-6">
-    <div class="painel-hero-card painel-hero-card-previsto">
+    <a href="{{ url_for('dashboard', planejamento_mensal=resumo_mes_atual_pcp.mes_str) }}" class="painel-hero-card painel-hero-card-previsto text-decoration-none">
       <div class="painel-hero-icone">💰</div>
-      <div>
+      <div class="painel-hero-principal">
         <div class="painel-hero-label">Faturamento previsto (mês)</div>
-        <div class="painel-hero-valor">R$ {{ "{:,.0f}".format(previsto_mes).replace(",", ".") }}</div>
-        <div class="painel-hero-sufixo">Planejamento PCP · Listagem Geral</div>
+        <div class="painel-hero-valor">R$ {{ "{:,.0f}".format(resumo_mes_atual_pcp.valor_total).replace(",", ".") }}</div>
+        <div class="painel-hero-sufixo">{{ resumo_mes_atual_pcp.pedidos_total }} pedido(s) · Planejamento PCP · Listagem Geral</div>
       </div>
-    </div>
+      <div class="painel-hero-top5">
+        <div class="painel-hero-top5-titulo">Top 5 · maior faturamento</div>
+        {% for p in resumo_mes_atual_pcp.top5 %}
+        <div class="painel-hero-top5-linha">
+          <span class="painel-hero-top5-nome">{{ p.cliente }}</span>
+          <span class="painel-hero-top5-pv">PV {{ p.pedido_venda or "—" }} · R$ {{ "{:,.0f}".format(p.valor).replace(",", ".") }}</span>
+        </div>
+        {% else %}
+        <div class="painel-hero-top5-vazio text-muted">Sem pedidos no período.</div>
+        {% endfor %}
+      </div>
+    </a>
   </div>
   <div class="col-md-6">
-    <div class="painel-hero-card painel-hero-card-backlog">
+    <a href="{{ url_for('dashboard', planejamento_mensal=resumo_mes_seguinte_pcp.mes_str) }}" class="painel-hero-card painel-hero-card-backlog text-decoration-none">
       <div class="painel-hero-icone">📦</div>
-      <div>
+      <div class="painel-hero-principal">
         <div class="painel-hero-label">Backlog mês seguinte ({{ resumo_mes_seguinte_pcp.mes_label }})</div>
         <div class="painel-hero-valor">R$ {{ "{:,.0f}".format(resumo_mes_seguinte_pcp.valor_total).replace(",", ".") }}</div>
         <div class="painel-hero-sufixo">{{ resumo_mes_seguinte_pcp.pedidos_total }} pedido(s) planejados</div>
       </div>
-    </div>
+      <div class="painel-hero-top5">
+        <div class="painel-hero-top5-titulo">Top 5 · maior faturamento</div>
+        {% for p in resumo_mes_seguinte_pcp.top5 %}
+        <div class="painel-hero-top5-linha">
+          <span class="painel-hero-top5-nome">{{ p.cliente }}</span>
+          <span class="painel-hero-top5-pv">PV {{ p.pedido_venda or "—" }} · R$ {{ "{:,.0f}".format(p.valor).replace(",", ".") }}</span>
+        </div>
+        {% else %}
+        <div class="painel-hero-top5-vazio text-muted">Sem pedidos no período.</div>
+        {% endfor %}
+      </div>
+    </a>
   </div>
 </div>
 

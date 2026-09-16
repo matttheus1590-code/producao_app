@@ -2080,19 +2080,21 @@ def _preview_semanal_pcp_painel(hoje=None):
     return {"semanas": semanas}
 
 
-def _resumo_mes_seguinte_pcp(hoje=None):
-    """Quadrante único resumindo todo o planejamento PCP (Listagem Geral) do
-    mês SEGUINTE ao atual — pedido do Bruno (16/09/2026): "um resumo em um
-    único quadrante de todo o planejamento do mês seguinte (Outubro)".
-    Mesma base de dados de `_preview_semanal_pcp_painel`
+def _resumo_mes_pcp(ano, mes):
+    """Resumo consolidado do planejamento PCP (Listagem Geral) de UM mês —
+    base compartilhada dos cards "Faturamento previsto" (mês atual) e
+    "Backlog mês seguinte" + o quadrante de resumo (pedido do Bruno,
+    16/09/2026). Mesma base de dados de `_preview_semanal_pcp_painel`
     (`_pedidos_pcp_por_semana`), só que consolidando todas as semanas do mês
-    seguinte num resumo único em vez de uma coluna por semana.
+    num resumo único em vez de uma coluna por semana — inclui o Top 5
+    pedidos por valor (pedido do Bruno, 16/09/2026: "top 5 pedidos melhores
+    faturamento, com nome, pv e valor pedido").
 
-    `valor_total` também alimenta o card KPI "Backlog mês seguinte" do
-    Painel — mesmo número nos dois lugares, pra nunca divergir."""
-    hoje = hoje or date.today()
-    ano_seg, mes_seg = _somar_meses(hoje.year, hoje.month, 1)
-    rotulos = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano_seg, mes_seg, 1))
+    `valor_total` alimenta tanto o card KPI quanto o quadrante de resumo —
+    mesmo número nos dois lugares, pra nunca divergir. `mes_str` (formato
+    "AAAA-MM") serve pra linkar direto pra Listagem Geral já filtrada nesse
+    mês (`dashboard(planejamento_mensal=...)`)."""
+    rotulos = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, mes, 1))
     por_semana = _pedidos_pcp_por_semana(rotulos)
 
     pedidos = {}
@@ -2103,18 +2105,32 @@ def _resumo_mes_seguinte_pcp(hoje=None):
             alvo["finalizado"] = alvo["finalizado"] and dados["finalizado"]
 
     lista = list(pedidos.values())
+    for p in lista:
+        p["valor"] = round(p["valor"], 2)
     finalizados = [p for p in lista if p["finalizado"]]
     em_aberto = [p for p in lista if not p["finalizado"]]
+    top5 = sorted(lista, key=lambda p: p["valor"], reverse=True)[:5]
 
     return {
-        "mes_label": f"{MESES_PT[mes_seg - 1]}/{ano_seg}",
+        "mes_label": f"{MESES_PT[mes - 1]}/{ano}",
+        "mes_str": f"{ano:04d}-{mes:02d}",
         "pedidos_total": len(lista),
         "valor_total": round(sum(p["valor"] for p in lista), 2),
         "pedidos_finalizados": len(finalizados),
         "valor_finalizado": round(sum(p["valor"] for p in finalizados), 2),
         "pedidos_em_aberto": len(em_aberto),
         "valor_em_aberto": round(sum(p["valor"] for p in em_aberto), 2),
+        "top5": top5,
     }
+
+
+def _resumo_mes_seguinte_pcp(hoje=None):
+    """Wrapper de `_resumo_mes_pcp` pro mês SEGUINTE ao atual — "Backlog mês
+    seguinte" (pedido do Bruno, 16/09/2026: "um resumo em um único
+    quadrante de todo o planejamento do mês seguinte (Outubro)")."""
+    hoje = hoje or date.today()
+    ano_seg, mes_seg = _somar_meses(hoje.year, hoje.month, 1)
+    return _resumo_mes_pcp(ano_seg, mes_seg)
 
 
 # ---------------------------------------------------------------------------
@@ -2605,24 +2621,6 @@ def _faturamento_mes(ano, mes, filtros=None):
         or 0.0
     )
     return round(previsto, 2), round(realizado, 2)
-
-
-def _faturamento_previsto_pcp_mes(ano, mes):
-    """Soma quantidade × custo_unitario de todo item cujo Planejamento
-    Semanal PCP (Listagem Geral / Gestão Produção — ItemPedido.
-    planejamento_semanal) cai no mês informado — pedido do Bruno
-    (16/09/2026): "Faturamento previsto" do Painel tem que sempre levar em
-    conta o planejamento PCP dentro da Listagem Geral, não a liberação
-    prevista (campo usado por _faturamento_mes, que continua existindo pros
-    outros usos que já tinha: gráfico anual, tendência etc.)."""
-    rotulos = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, mes, 1))
-    valor = (
-        db.session.query(func.sum(ItemPedido.quantidade * ItemPedido.custo_unitario))
-        .filter(ItemPedido.planejamento_semanal.in_(rotulos))
-        .scalar()
-        or 0.0
-    )
-    return round(valor, 2)
 
 
 def _faturamento_tendencia(meses=6):
@@ -7805,12 +7803,15 @@ def register_routes(app):
         backlog = resumo["total"] - resumo["finalizado"]
 
         hoje = date.today()
-        # Faturamento previsto + Backlog mês seguinte — pedido do Bruno
-        # (16/09/2026): sempre a partir do planejamento PCP da Listagem
-        # Geral (ItemPedido.planejamento_semanal), não mais da liberação
-        # prevista (_faturamento_mes, que continua existindo pros outros
-        # usos que já tinha: gráfico anual, tendência etc.).
-        previsto_mes = _faturamento_previsto_pcp_mes(hoje.year, hoje.month)
+        # Faturamento previsto (mês atual) + Backlog mês seguinte — pedido do
+        # Bruno (16/09/2026): sempre a partir do planejamento PCP da
+        # Listagem Geral (ItemPedido.planejamento_semanal), não mais da
+        # liberação prevista (_faturamento_mes, que continua existindo pros
+        # outros usos que já tinha: gráfico anual, tendência etc.). Os dois
+        # cards usam o mesmo _resumo_mes_pcp — inclui contagem de pedidos e
+        # Top 5 por valor (pedido do Bruno, 16/09/2026).
+        resumo_mes_atual_pcp = _resumo_mes_pcp(hoje.year, hoje.month)
+        previsto_mes = resumo_mes_atual_pcp["valor_total"]
         resumo_mes_seguinte_pcp = _resumo_mes_seguinte_pcp(hoje)
 
         # Mini gestão de risco de prazos, FOB x CIF — pedido do Bruno
@@ -7891,6 +7892,7 @@ def register_routes(app):
             vencendo=vencendo,
             backlog=backlog,
             previsto_mes=previsto_mes,
+            resumo_mes_atual_pcp=resumo_mes_atual_pcp,
             resumo_mes_seguinte_pcp=resumo_mes_seguinte_pcp,
             mini_risco_prazos=mini_risco_prazos,
             lead_time_detalhado=lead_time_detalhado,
