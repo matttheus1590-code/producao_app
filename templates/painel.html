@@ -25,7 +25,7 @@
     {{ stat_card("Faturamento previsto (mês)", "R$ " + "{:,.0f}".format(previsto_mes).replace(",", ".")) }}
   </div>
   <div class="col-6 col-lg-2">
-    {{ stat_card("Faturamento realizado (mês)", "R$ " + "{:,.0f}".format(realizado_mes).replace(",", ".")) }}
+    {{ stat_card("Backlog mês seguinte (" + resumo_mes_seguinte_pcp.mes_label + ")", "R$ " + "{:,.0f}".format(resumo_mes_seguinte_pcp.valor_total).replace(",", ".")) }}
   </div>
   <div class="col-6 col-lg-2" title="Calculado a partir de itens com 'Início de produção' e 'Término de inspeção/embalagem' preenchidos">
     {{ stat_card("Lead time médio", (lead_time_medio|string + "d") if lead_time_medio is not none else "—", sufixo="OTD: " + ((otd|string + "%") if otd is not none else "—")) }}
@@ -75,6 +75,55 @@
     {% else %}
     <p class="text-muted small mb-0">Nenhum apontamento de Qualidade registrado ainda.</p>
     {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4 border-warning-subtle">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">
+        <i class="bi bi-shield-exclamation"></i> Mini gestão de risco — prazos de entrega
+      </h6>
+      <span class="text-muted small">Recalculado a cada acesso · mesmo critério de Atrasados/Vencendo</span>
+    </div>
+    <div class="row g-3">
+      {% for frete in ["FOB", "CIF"] %}
+      {% set dados = mini_risco_prazos.get(frete) %}
+      <div class="col-md-6">
+        <div class="border rounded p-2 h-100">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-semibold">{{ frete }}</span>
+            <div class="d-flex gap-1">
+              <span class="badge bg-danger">🔴 {{ dados.atrasados_total if dados else 0 }} atrasado(s)</span>
+              <span class="badge bg-warning text-dark">🟡 {{ dados.vencendo_total if dados else 0 }} vencendo</span>
+            </div>
+          </div>
+          {% if dados and (dados.atrasados or dados.vencendo) %}
+          <div class="notif-feed-lista">
+            {% for p in dados.atrasados %}
+            <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="notif-feed-item">
+              <div class="notif-feed-linha1">
+                <span class="badge bg-danger">Atrasado</span>
+                <span class="notif-feed-titulo">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
+              </div>
+            </a>
+            {% endfor %}
+            {% for p in dados.vencendo %}
+            <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="notif-feed-item">
+              <div class="notif-feed-linha1">
+                <span class="badge bg-warning text-dark">Vencendo</span>
+                <span class="notif-feed-titulo">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
+              </div>
+            </a>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="text-muted small mb-0">Nenhum pedido {{ frete }} em risco no momento 🎉</p>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
 </div>
 
@@ -167,6 +216,32 @@
     {% else %}
     <p class="text-muted small mb-0">Nenhum planejamento semanal PCP cadastrado ainda.</p>
     {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4 border-info-subtle">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-3">
+      <i class="bi bi-calendar2-range"></i> Resumo do planejamento PCP — {{ resumo_mes_seguinte_pcp.mes_label }}
+    </h6>
+    <div class="row g-3 text-center">
+      <div class="col-6 col-lg-3">
+        <div class="fs-4 fw-semibold">{{ resumo_mes_seguinte_pcp.pedidos_total }}</div>
+        <div class="text-muted small">Pedidos planejados</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="fs-4 fw-semibold">R$ {{ "{:,.0f}".format(resumo_mes_seguinte_pcp.valor_total).replace(",", ".") }}</div>
+        <div class="text-muted small">Valor total planejado</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="fs-4 fw-semibold text-success">{{ resumo_mes_seguinte_pcp.pedidos_finalizados }} <span class="fs-6 fw-normal text-muted">/ R$ {{ "{:,.0f}".format(resumo_mes_seguinte_pcp.valor_finalizado).replace(",", ".") }}</span></div>
+        <div class="text-muted small">Já finalizados</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="fs-4 fw-semibold text-primary">{{ resumo_mes_seguinte_pcp.pedidos_em_aberto }} <span class="fs-6 fw-normal text-muted">/ R$ {{ "{:,.0f}".format(resumo_mes_seguinte_pcp.valor_em_aberto).replace(",", ".") }}</span></div>
+        <div class="text-muted small">Em aberto</div>
+      </div>
+    </div>
   </div>
 </div>
 

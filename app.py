@@ -1968,63 +1968,23 @@ def _somar_meses(ano, mes, delta):
     return (total // 12, total % 12 + 1)
 
 
-def _semanas_pcp_janela(hoje=None, semanas_atras=1, semanas_frente=3):
-    """Janela curta de rótulos "SEMANA NN / MÊS / ANO" (mesmo formato de
-    gerar_semanas_pcp) centrada na semana atual — `semanas_atras` rótulos
-    antes + a semana de hoje + `semanas_frente` rótulos depois, sempre em
-    ordem cronológica. Usada pela prévia horizontal do Planejamento PCP no
-    Painel (pedido do Bruno, 09/09/2026: "prévia... de bate pronto", não o
-    histórico/projeção inteira que já existe no quadro mensal do Painel).
+def _pedidos_pcp_por_semana(rotulos):
+    """Agrupa ItemPedido por (semana do Planejamento Semanal PCP da Listagem
+    Geral, pedido) pros rótulos dados — base compartilhada da prévia semanal
+    do Painel (`_preview_semanal_pcp_painel`) e do resumo do mês seguinte
+    (`_resumo_mes_seguinte_pcp`). Devolve dict rotulo -> {pedido_id: {...}}.
 
-    5 colunas por padrão (1 atrás + atual + 3 à frente) — Bruno pediu
-    (09/09/2026) pra excluir a coluna que ainda cai no mês seguinte (tinha 6
-    colunas, a última quase sempre vazia) e distribuir as colunas restantes
-    ocupando toda a largura disponível."""
-    hoje = hoje or date.today()
-    # meses_atras/meses_frente = 2 dá folga de sobra pra cobrir a janela de
-    # semanas mesmo perto de virada de mês/ano — gerar_semanas_pcp já cobre
-    # isso testado (ver docstring dela).
-    todas = gerar_semanas_pcp(meses_atras=2, meses_frente=2, hoje=hoje)
-    semana_atual_num = -(-hoje.day // 7)  # mesmo ceil(dia/7) de gerar_semanas_pcp
-    chave_hoje = (hoje.year, hoje.month, semana_atual_num)
-    indice_atual = next((i for i, s in enumerate(todas) if _chave_semana_pcp(s) == chave_hoje), None)
-    if indice_atual is None:
-        return todas[: semanas_atras + semanas_frente + 1]
-    inicio = max(0, indice_atual - semanas_atras)
-    fim = indice_atual + semanas_frente + 1
-    return todas[inicio:fim]
-
-
-def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=3):
-    """Prévia horizontal do Planejamento Semanal PCP pro Painel (pedido do
-    Bruno, 09/09/2026): "de bate pronto", como gestor, ele quer ver resumido
-    o que o PCP tem planejado nas semanas próximas — pedido, valor, data
-    solicitada pelo cliente, data prevista PCP, data efetiva de liberação,
-    frete e estado — os mesmos dados que já existem espalhados em Gestão
-    Produção/Consulta Pedido, só que resumidos aqui na tela principal, com
-    link direto pro contexto completo do pedido (Detalhe do Pedido).
-
-    Uma coluna por semana (`_semanas_pcp_janela`), um card por PEDIDO dentro
-    de cada semana — soma dos itens daquele pedido planejados pra aquela
-    semana especificamente (um pedido com itens em semanas diferentes
-    aparece em cada uma delas, com a soma da semana em questão). "Data
-    prevista PCP" e "Data efetiva de liberação" usam a mais recente entre os
-    itens do pedido naquela semana, mesmo critério já usado em
-    _liberacao_pcp_por_pedido_venda.
-
-    Ajustes do Bruno (09/09/2026, depois de ver a 1ª versão ao vivo):
-    - cards ordenados por "Data solicitada cliente" (prazo de entrega mais
-      curto primeiro) em vez de valor — sem data fica por último;
-    - card marcado como `finalizado` (verde forte no template) quando TODOS
-      os itens do pedido naquela semana já estão com status_producao =
-      FINALIZADO — mesmo campo "confiável" já usado no Kanban de Estações."""
-    hoje = hoje or date.today()
-    rotulos = _semanas_pcp_janela(hoje, semanas_atras=semanas_atras, semanas_frente=semanas_frente)
+    "Data prevista PCP" e "Data efetiva de liberação" usam a mais recente
+    entre os itens do pedido naquela semana, mesmo critério já usado em
+    _liberacao_pcp_por_pedido_venda. `finalizado` = TODOS os itens do pedido
+    naquela semana já têm "Liberação real" preenchida — mesmo critério
+    "verde bandeira" já corrigido na Listagem Geral/relatório PDF (pedido
+    835/Morken, 09/2026); antes esta função usava status_producao ==
+    FINALIZADO, que pode divergir da data real preenchida (auditoria do
+    Painel, 16/09/2026)."""
+    por_semana = {rotulo: {} for rotulo in rotulos}
     if not rotulos:
-        return {"semanas": []}
-
-    semana_atual_num = -(-hoje.day // 7)
-    chave_atual = (hoje.year, hoje.month, semana_atual_num)
+        return por_semana
 
     itens = (
         ItemPedido.query.options(selectinload(ItemPedido.pedido))
@@ -2033,7 +1993,6 @@ def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=3):
         .all()
     )
 
-    por_semana = {rotulo: {} for rotulo in rotulos}
     for item in itens:
         if not item.pedido or item.planejamento_semanal not in por_semana:
             continue
@@ -2053,7 +2012,7 @@ def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=3):
             },
         )
         grupo["valor"] += item.valor_total
-        if item.status_producao != "FINALIZADO":
+        if not item.liberacao_real:
             grupo["finalizado"] = False
         if item.liberacao_prevista and (
             grupo["data_prevista_pcp"] is None or item.liberacao_prevista > grupo["data_prevista_pcp"]
@@ -2063,6 +2022,43 @@ def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=3):
             grupo["data_efetiva_liberacao"] is None or item.liberacao_real > grupo["data_efetiva_liberacao"]
         ):
             grupo["data_efetiva_liberacao"] = item.liberacao_real
+
+    return por_semana
+
+
+def _preview_semanal_pcp_painel(hoje=None):
+    """Prévia horizontal do Planejamento Semanal PCP pro Painel (pedido do
+    Bruno, 09/09/2026): "de bate pronto", como gestor, ele quer ver resumido
+    o que o PCP tem planejado nas semanas próximas — pedido, valor, data
+    solicitada pelo cliente, data prevista PCP, data efetiva de liberação,
+    frete e estado — os mesmos dados que já existem espalhados em Gestão
+    Produção/Consulta Pedido, só que resumidos aqui na tela principal, com
+    link direto pro contexto completo do pedido (Detalhe do Pedido).
+
+    Uma coluna por semana, um card por PEDIDO dentro de cada semana — soma
+    dos itens daquele pedido planejados pra aquela semana especificamente
+    (um pedido com itens em semanas diferentes aparece em cada uma delas,
+    com a soma da semana em questão).
+
+    Ajuste do Bruno (16/09/2026): antes as colunas eram uma janela ROLANTE
+    de poucas semanas (1 atrás + atual + 3 à frente), e a Semana 01 do mês
+    "saía" da tela conforme o mês avançava. Agora mostra SEMPRE todas as
+    semanas do mês atual (`gerar_semanas_pcp` com meses_atras=meses_frente=0
+    centrado no mês de `hoje`) — o resumo do mês seguinte (Outubro) tem seu
+    próprio quadrante à parte (`_resumo_mes_seguinte_pcp`).
+
+    Ajuste do Bruno (09/09/2026, depois de ver a 1ª versão ao vivo): cards
+    ordenados por "Data solicitada cliente" (prazo de entrega mais curto
+    primeiro) em vez de valor — sem data fica por último."""
+    hoje = hoje or date.today()
+    rotulos = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=hoje)
+    if not rotulos:
+        return {"semanas": []}
+
+    semana_atual_num = -(-hoje.day // 7)
+    chave_atual = (hoje.year, hoje.month, semana_atual_num)
+
+    por_semana = _pedidos_pcp_por_semana(rotulos)
 
     semanas = []
     for rotulo in rotulos:
@@ -2082,6 +2078,43 @@ def _preview_semanal_pcp_painel(hoje=None, semanas_atras=1, semanas_frente=3):
             }
         )
     return {"semanas": semanas}
+
+
+def _resumo_mes_seguinte_pcp(hoje=None):
+    """Quadrante único resumindo todo o planejamento PCP (Listagem Geral) do
+    mês SEGUINTE ao atual — pedido do Bruno (16/09/2026): "um resumo em um
+    único quadrante de todo o planejamento do mês seguinte (Outubro)".
+    Mesma base de dados de `_preview_semanal_pcp_painel`
+    (`_pedidos_pcp_por_semana`), só que consolidando todas as semanas do mês
+    seguinte num resumo único em vez de uma coluna por semana.
+
+    `valor_total` também alimenta o card KPI "Backlog mês seguinte" do
+    Painel — mesmo número nos dois lugares, pra nunca divergir."""
+    hoje = hoje or date.today()
+    ano_seg, mes_seg = _somar_meses(hoje.year, hoje.month, 1)
+    rotulos = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano_seg, mes_seg, 1))
+    por_semana = _pedidos_pcp_por_semana(rotulos)
+
+    pedidos = {}
+    for grupo in por_semana.values():
+        for pid, dados in grupo.items():
+            alvo = pedidos.setdefault(pid, {**dados, "valor": 0.0, "finalizado": True})
+            alvo["valor"] += dados["valor"]
+            alvo["finalizado"] = alvo["finalizado"] and dados["finalizado"]
+
+    lista = list(pedidos.values())
+    finalizados = [p for p in lista if p["finalizado"]]
+    em_aberto = [p for p in lista if not p["finalizado"]]
+
+    return {
+        "mes_label": f"{MESES_PT[mes_seg - 1]}/{ano_seg}",
+        "pedidos_total": len(lista),
+        "valor_total": round(sum(p["valor"] for p in lista), 2),
+        "pedidos_finalizados": len(finalizados),
+        "valor_finalizado": round(sum(p["valor"] for p in finalizados), 2),
+        "pedidos_em_aberto": len(em_aberto),
+        "valor_em_aberto": round(sum(p["valor"] for p in em_aberto), 2),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2453,6 +2486,38 @@ def _predicado_vencendo():
     return and_(tem_item_vencendo, ~_predicado_atrasado())
 
 
+def _mini_risco_prazos_painel(limite=5):
+    """Mini gestão de risco de prazos pro Painel, separada por frete FOB x
+    CIF (pedido do Bruno, 16/09/2026) — reaproveita a MESMA regra já usada e
+    confiável dos cards Atrasados/Vencendo (_predicado_atrasado /
+    _predicado_vencendo), só filtrada por Pedido.frete e organizada em 2
+    colunas. Recalculado ao vivo a cada carregamento da tela — nada fica
+    gravado, então já sai "atualizando diariamente" sem precisar de job
+    nenhum (mesma filosofia da Gestão de Risco/Torre de Controle de OTD já
+    existente em Gestão Operação, só que aqui, "mini", puxando Gestão
+    Produção/Listagem Geral)."""
+    resultado = {}
+    for frete in ("FOB", "CIF"):
+        base = Pedido.query.options(selectinload(Pedido.itens)).filter(Pedido.frete == frete)
+        atrasados = (
+            base.filter(_predicado_atrasado())
+            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+            .all()
+        )
+        vencendo = (
+            base.filter(_predicado_vencendo())
+            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+            .all()
+        )
+        resultado[frete] = {
+            "atrasados_total": len(atrasados),
+            "vencendo_total": len(vencendo),
+            "atrasados": atrasados[:limite],
+            "vencendo": vencendo[:limite],
+        }
+    return resultado
+
+
 def _faturamento_mes(ano, mes, filtros=None):
     """Soma o valor dos itens com liberação PREVISTA (usa quantidade × custo)
     e com liberação REALIZADA (usa o valor faturado de verdade quando
@@ -2480,6 +2545,24 @@ def _faturamento_mes(ano, mes, filtros=None):
         or 0.0
     )
     return round(previsto, 2), round(realizado, 2)
+
+
+def _faturamento_previsto_pcp_mes(ano, mes):
+    """Soma quantidade × custo_unitario de todo item cujo Planejamento
+    Semanal PCP (Listagem Geral / Gestão Produção — ItemPedido.
+    planejamento_semanal) cai no mês informado — pedido do Bruno
+    (16/09/2026): "Faturamento previsto" do Painel tem que sempre levar em
+    conta o planejamento PCP dentro da Listagem Geral, não a liberação
+    prevista (campo usado por _faturamento_mes, que continua existindo pros
+    outros usos que já tinha: gráfico anual, tendência etc.)."""
+    rotulos = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=date(ano, mes, 1))
+    valor = (
+        db.session.query(func.sum(ItemPedido.quantidade * ItemPedido.custo_unitario))
+        .filter(ItemPedido.planejamento_semanal.in_(rotulos))
+        .scalar()
+        or 0.0
+    )
+    return round(valor, 2)
 
 
 def _faturamento_tendencia(meses=6):
@@ -7576,7 +7659,17 @@ def register_routes(app):
         backlog = resumo["total"] - resumo["finalizado"]
 
         hoje = date.today()
-        previsto_mes, realizado_mes = _faturamento_mes(hoje.year, hoje.month)
+        # Faturamento previsto + Backlog mês seguinte — pedido do Bruno
+        # (16/09/2026): sempre a partir do planejamento PCP da Listagem
+        # Geral (ItemPedido.planejamento_semanal), não mais da liberação
+        # prevista (_faturamento_mes, que continua existindo pros outros
+        # usos que já tinha: gráfico anual, tendência etc.).
+        previsto_mes = _faturamento_previsto_pcp_mes(hoje.year, hoje.month)
+        resumo_mes_seguinte_pcp = _resumo_mes_seguinte_pcp(hoje)
+
+        # Mini gestão de risco de prazos, FOB x CIF — pedido do Bruno
+        # (16/09/2026), logo abaixo de "Últimos apontamentos de Qualidade".
+        mini_risco_prazos = _mini_risco_prazos_painel()
 
         pedidos_atrasados = (
             Pedido.query.options(selectinload(Pedido.itens))
@@ -7634,7 +7727,9 @@ def register_routes(app):
         novas_atualizacoes_pd = sum(1 for e in atualizacoes_pd if e["novo"])
 
         # Prévia horizontal do Planejamento Semanal PCP — pedido do Bruno
-        # (09/09/2026), logo abaixo de "Últimos pedidos incluídos".
+        # (09/09/2026), logo abaixo de "Últimos pedidos incluídos". Desde
+        # 16/09/2026 mostra sempre TODAS as semanas do mês atual (não mais
+        # uma janela rolante) — ver docstring de _preview_semanal_pcp_painel.
         preview_pcp_semanal = _preview_semanal_pcp_painel(hoje)
 
         session["ultima_visita_painel"] = datetime.utcnow().isoformat()
@@ -7646,7 +7741,8 @@ def register_routes(app):
             vencendo=vencendo,
             backlog=backlog,
             previsto_mes=previsto_mes,
-            realizado_mes=realizado_mes,
+            resumo_mes_seguinte_pcp=resumo_mes_seguinte_pcp,
+            mini_risco_prazos=mini_risco_prazos,
             lead_time_medio=_lead_time_medio_dias(),
             otd=_otd_percentual(),
             backlog_estacao=_backlog_por_estacao(),
