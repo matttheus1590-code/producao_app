@@ -6655,10 +6655,24 @@ def _itens_relatorio_estacao(nome, status_filtro):
 
 
 def _gerar_pdf_estacao(estacao, itens, status_filtro):
-    """Relatório PDF de UMA estação (pedido do Bruno, 11/09/2026) — mesmo
-    estilo claro/print-friendly do relatório da Torre de Controle OTD
-    (_gerar_pdf_risco_otd): cabeçalho em azul claro, letras maiores, cores
-    de linha reaproveitando o semáforo de prazo que já aparece no Kanban."""
+    """Relatório PDF de UMA estação (pedido do Bruno, 11/09/2026, revisado
+    17/09/2026 — "deixe mais intuitivo e visual... AGRUPE SEPARADAMENTE o que
+    está em produção e o que está pendente, de forma totalmente visual e
+    dinâmica"): mesmo estilo claro/print-friendly do relatório da Torre de
+    Controle OTD, cores de linha reaproveitando o semáforo de prazo que já
+    aparece no Kanban — agora com Em produção/Pendente sempre em blocos
+    visualmente separados (faixa colorida própria, MESMAS cores que a tela
+    de Estações já usa pro Kanban — STATUS_CHAO_CORES: azul/primary pra "Em
+    produção", cinza/secondary pra "Pendente" — pra nunca destoar do que a
+    pessoa já reconhece na tela) e um "pingo" colorido de prazo por linha, em
+    vez de só o texto.
+
+    Nota técnica: emoji Unicode NÃO é usado aqui de propósito — testei e a
+    fonte padrão do PDF (Helvetica/WinAnsi) não tem esses glifos, então cada
+    emoji viraria um quadrado preto ao imprimir. O efeito "visual/intuitivo"
+    pedido é feito com cor e forma (faixas coloridas, pingo de semáforo),
+    que funciona em qualquer impressora sem depender de fonte nenhuma."""
+    from reportlab.graphics.shapes import Circle, Drawing
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -6671,6 +6685,17 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         "verde": colors.white,
         "cinza": colors.HexColor("#f1f3f5"),
     }
+    COR_SEMAFORO_PINGO = {
+        "vermelho": colors.HexColor("#dc3545"),
+        "amarelo": colors.HexColor("#ffc107"),
+        "verde": colors.HexColor("#198754"),
+        "cinza": colors.HexColor("#adb5bd"),
+    }
+    # Mesmas cores (hex equivalente aos tokens Bootstrap) já usadas em
+    # STATUS_CHAO_CORES pro Kanban de Estações — "Em produção" = primary,
+    # "Pendente" = secondary.
+    COR_GRUPO_EM_PRODUCAO = colors.HexColor("#0d6efd")
+    COR_GRUPO_PENDENTE = colors.HexColor("#6c757d")
 
     info_filtro = RELATORIO_ESTACAO_STATUS_INFO.get(status_filtro, RELATORIO_ESTACAO_STATUS_INFO["ambos"])
     rotulo = rotulo_estacao(estacao.nome)
@@ -6683,12 +6708,14 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
     )
     estilos = getSampleStyleSheet()
     estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8.5, leading=10.5)
-    estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
     COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
     COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
     estilo_cabecalho_tabela = ParagraphStyle(
-        "cabecalho_tabela", parent=estilo_celula_bold, fontSize=9, leading=11, textColor=COR_CABECALHO_TEXTO,
+        "cabecalho_tabela", parent=estilo_celula, fontName="Helvetica-Bold", fontSize=9, leading=11,
+        textColor=COR_CABECALHO_TEXTO,
     )
+
+    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
 
     elementos = [
         Paragraph(f"{rotulo} — Relatório de Produção", estilos["Title"]),
@@ -6723,6 +6750,14 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         _kpi(em_producao, "Em produção"),
         _kpi(criticos, "Críticos (atrasados)"),
     ]
+    # Faixa de cor no topo de cada KPI (mesma linguagem visual das faixas de
+    # grupo abaixo) — pinta rapidamente o que é "fila" (cinza), "em
+    # produção" (azul) e "crítico" (vermelho, só quando > 0), sem precisar
+    # de emoji.
+    cores_topo_kpi = [
+        colors.HexColor("#8fa8cc"), colors.HexColor("#8fa8cc"), COR_GRUPO_PENDENTE, COR_GRUPO_EM_PRODUCAO,
+        colors.HexColor("#dc3545") if criticos else colors.HexColor("#dee2e6"),
+    ]
     largura_kpi = (landscape(A4)[0] - 20 * mm) / len(kpis)
     tabela_kpis = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
     estilo_kpis = [
@@ -6733,70 +6768,127 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ("BACKGROUND", (4, 0), (4, -1), colors.HexColor("#f8d7da") if criticos else colors.white),
     ]
+    for i, cor_topo in enumerate(cores_topo_kpi):
+        estilo_kpis.append(("LINEABOVE", (i, 0), (i, 0), 2.5, cor_topo))
     tabela_kpis.setStyle(TableStyle(estilo_kpis))
     elementos.append(tabela_kpis)
-    elementos.append(Spacer(1, 6 * mm))
+    elementos.append(Spacer(1, 7 * mm))
 
-    cabecalho = [
-        "Pedido", "Cliente", "Produto", "Qtd", "Status", "Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo",
-    ]
-    dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
-    cores_linhas = [COR_CABECALHO_BG]
+    def _pingo(cor_nome):
+        diam = 3.2 * mm
+        d = Drawing(diam, diam)
+        d.add(Circle(diam / 2, diam / 2, diam / 2 - 0.2, fillColor=COR_SEMAFORO_PINGO.get(cor_nome, colors.grey), strokeColor=None))
+        return d
 
-    for item in itens:
-        pedido = item.pedido
-        cor, dias = item.semaforo
-        if dias is None:
-            prazo_txt = "sem prazo"
-        elif dias < 0:
-            prazo_txt = f"{-dias}d atrasado"
-        else:
-            prazo_txt = f"{dias}d"
-        qtd = item.quantidade or 0
-        qtd_txt = int(qtd) if qtd == int(qtd) else qtd
+    def _faixa_grupo(texto, cor_fundo):
+        """Faixa colorida de largura total marcando o início de um bloco
+        (Em produção / Pendente) — pedido do Bruno (17/09/2026): "agrupe
+        separadamente... de forma totalmente visual e dinâmica"."""
+        estilo_faixa = ParagraphStyle(
+            "faixa_grupo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=11,
+            textColor=colors.white, leading=13,
+        )
+        t = Table([[Paragraph(texto, estilo_faixa)]], colWidths=[largura_disponivel])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), cor_fundo),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        return t
 
-        linha_tabela = [
-            Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_celula),
-            Paragraph((pedido.cliente if pedido else None) or "—", estilo_celula),
-            Paragraph(item.descricao_produto or "—", estilo_celula),
-            Paragraph(str(qtd_txt), estilo_celula),
-            Paragraph("Pendente" if item.status_producao == "PENDENTE" else "Em produção", estilo_celula_bold),
-            Paragraph((_formatar_data_br(pedido.data_inclusao_pedido) if pedido else "") or "—", estilo_celula),
-            Paragraph((_formatar_data_br(pedido.data_cliente) if pedido else "") or "—", estilo_celula),
-            Paragraph(_formatar_data_br(item.liberacao_prevista) or "—", estilo_celula),
-            Paragraph(_formatar_data_br(item.inicio_producao) or "—", estilo_celula),
-            Paragraph(prazo_txt, estilo_celula),
+    def _tabela_itens(itens_grupo):
+        """Monta a tabela de itens (sem a coluna "Status" — já fica implícita
+        na faixa colorida do grupo — e com um "pingo" de semáforo na frente
+        da Situação de prazo, no lugar de só texto)."""
+        cabecalho = [
+            "", "Pedido", "Cliente", "Produto", "Qtd", "Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo",
         ]
-        dados_tabela.append(linha_tabela)
-        cores_linhas.append(COR_SEMAFORO_BG.get(cor, colors.white))
+        dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) if c else "" for c in cabecalho]]
+        cores_linhas = [COR_CABECALHO_BG]
 
-    pesos = [12, 16, 22, 6, 11, 10, 10, 10, 10, 11]
-    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
-    soma_pesos = sum(pesos)
-    larguras_mm = [p / soma_pesos * largura_disponivel for p in pesos]
+        for item in itens_grupo:
+            pedido = item.pedido
+            cor, dias = item.semaforo
+            if dias is None:
+                prazo_txt = "sem prazo"
+            elif dias < 0:
+                prazo_txt = f"{-dias}d atrasado"
+            else:
+                prazo_txt = f"{dias}d"
+            qtd = item.quantidade or 0
+            qtd_txt = int(qtd) if qtd == int(qtd) else qtd
 
-    tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
-    estilo_tabela = [
-        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
-        ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
-        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
-    ]
-    for i, cor in enumerate(cores_linhas):
-        if i == 0:
-            continue
-        estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor))
-    tabela.setStyle(TableStyle(estilo_tabela))
-    elementos.append(tabela)
+            linha_tabela = [
+                _pingo(cor),
+                Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_celula),
+                Paragraph((pedido.cliente if pedido else None) or "—", estilo_celula),
+                Paragraph(item.descricao_produto or "—", estilo_celula),
+                Paragraph(str(qtd_txt), estilo_celula),
+                Paragraph((_formatar_data_br(pedido.data_inclusao_pedido) if pedido else "") or "—", estilo_celula),
+                Paragraph((_formatar_data_br(pedido.data_cliente) if pedido else "") or "—", estilo_celula),
+                Paragraph(_formatar_data_br(item.liberacao_prevista) or "—", estilo_celula),
+                Paragraph(_formatar_data_br(item.inicio_producao) or "—", estilo_celula),
+                Paragraph(prazo_txt, estilo_celula),
+            ]
+            dados_tabela.append(linha_tabela)
+            cores_linhas.append(COR_SEMAFORO_BG.get(cor, colors.white))
 
-    if not itens:
-        elementos.append(Spacer(1, 6 * mm))
-        elementos.append(Paragraph("Nenhum item encontrado com o filtro aplicado.", estilos["Normal"]))
+        pesos = [4, 11, 16, 22, 6, 10, 10, 10, 10, 11]
+        soma_pesos = sum(pesos)
+        larguras_mm = [p / soma_pesos * largura_disponivel for p in pesos]
+
+        tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
+        estilo_tabela = [
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (0, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+        ]
+        for i, cor_linha in enumerate(cores_linhas):
+            if i == 0:
+                continue
+            estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor_linha))
+        tabela.setStyle(TableStyle(estilo_tabela))
+        return tabela
+
+    if status_filtro == "ambos":
+        # "PRINCIPAL: agrupe separadamente o que está em produção e o que
+        # está pendente" (pedido do Bruno, 17/09/2026) — 2 blocos sempre
+        # separados por uma faixa colorida, cada um com sua própria tabela,
+        # em vez da tabela única de antes (onde os dois status ficavam
+        # misturados, só distinguíveis pela coluna "Status"/cor da linha).
+        # Mantém a ordem por prazo (mais urgente primeiro) DENTRO de cada
+        # bloco — mesmo critério de sempre.
+        grupos = [
+            ("em_producao", "EM PRODUÇÃO", COR_GRUPO_EM_PRODUCAO, [i for i in itens if i.status_producao != "PENDENTE"]),
+            ("pendente", "PENDENTE — FILA", COR_GRUPO_PENDENTE, [i for i in itens if i.status_producao == "PENDENTE"]),
+        ]
+        for _chave, titulo, cor_fundo, itens_grupo in grupos:
+            elementos.append(_faixa_grupo(f"{titulo} — {len(itens_grupo)} ITEM(NS)", cor_fundo))
+            if itens_grupo:
+                elementos.append(_tabela_itens(itens_grupo))
+            else:
+                elementos.append(Spacer(1, 2 * mm))
+                elementos.append(Paragraph("Nenhum item nesta situação no momento.", estilos["Normal"]))
+            elementos.append(Spacer(1, 7 * mm))
+    else:
+        # Filtro já veio de um status só (Pendente OU Em produção) — mantém a
+        # MESMA linguagem visual (faixa + tabela sem coluna Status), só com 1
+        # bloco em vez de 2, pra nunca destoar do relatório "ambos".
+        titulo_unico = "PENDENTE — FILA" if status_filtro == "pendente" else "EM PRODUÇÃO"
+        cor_unica = COR_GRUPO_PENDENTE if status_filtro == "pendente" else COR_GRUPO_EM_PRODUCAO
+        elementos.append(_faixa_grupo(f"{titulo_unico} — {len(itens)} ITEM(NS)", cor_unica))
+        if itens:
+            elementos.append(_tabela_itens(itens))
+        else:
+            elementos.append(Spacer(1, 2 * mm))
+            elementos.append(Paragraph("Nenhum item encontrado com o filtro aplicado.", estilos["Normal"]))
 
     doc.build(elementos)
     buffer.seek(0)
