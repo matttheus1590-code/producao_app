@@ -117,7 +117,12 @@
 </p>
 <div class="row g-2 mb-3 row-quadrantes-pcp">
   <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="primary") }}
+    {# Verde (pedido do Bruno, 17/09/2026: "no quadrante SETEMBRO, inclua na
+       cor verde") — trocado de border-primary pra border-success +
+       bg-success-subtle, mesma técnica de fundo já usada no quadrante
+       OUTUBRO (bg-primary-subtle) logo abaixo, só que verde pro mês
+       ATUAL/corrente em vez de azul pro mês seguinte. #}
+    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="success", fundo="success-subtle") }}
   </div>
   {% for semana in quadrantes_pcp.semanas %}
   <div class="col-6 col-md-4 col-lg-2">
