@@ -343,6 +343,23 @@ body.col-resizing-ativo {
   }
 }
 
+/* Quadrantes de Planejamento PCP da Listagem Geral (mês atual + até 5
+   semanas + quadrante OUTUBRO/mês seguinte, pedido do Bruno 17/09/2026:
+   "ao lado do quadrante SEMANA 05, o quadrante OUTUBRO"). Cada card usa
+   col-lg-2 (6 cabem numa linha em telas médias/grandes) — com o 7º card
+   (OUTUBRO) isso sempre quebraria pra uma 2ª linha em QUALQUER largura de
+   tela >=992px, já que col-lg-2 trava em 1/6 da linha independente de a
+   tela ser maior. A partir de 1200px (telas de desktop "normais" e acima)
+   encolhe os 7 cards igualmente pra caberem todos na mesma linha, sem
+   mexer no comportamento em celular/tablet (col-6/col-md-4 continuam
+   intactos abaixo de 1200px). */
+@media (min-width: 1200px) {
+  .row-quadrantes-pcp > [class*="col-"] {
+    flex: 0 0 calc(100% / 7);
+    max-width: calc(100% / 7);
+  }
+}
+
 /* Cabeçalho de cada uma das 3 colunas da tela de monitoramento de Estações
    (/estacoes) — pedido do Bruno (03/09/2026): agrupar por processo (Espumagem/
    Silicone, Poliuretano Cast, Outros) de um jeito visualmente claro, no mesmo

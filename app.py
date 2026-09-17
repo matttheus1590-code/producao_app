@@ -3984,7 +3984,22 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     atual, senão a contagem de cada quadrante ficaria igual à do que já
     estiver selecionado, em vez do total real daquele período. Reaproveita
     _filtrar_pedidos (mesma regra de sempre) pra nunca divergir da lógica
-    que a tabela abaixo usa."""
+    que a tabela abaixo usa.
+
+    Quadrante "mes_seguinte" (pedido do Bruno, 17/09/2026: "ao lado do
+    quadrante SEMANA 05, o quadrante OUTUBRO... completo todo o
+    planejamento do mês... número de pedidos que consta no mês... cor azul
+    claro, diferenciando dos demais") — mesmo padrão exato do "mes_atual"
+    acima (mesmo `contar()`/`filtros_link` via `planejamento_mensal`, nunca
+    diverge da tabela), só que pro mês SEGUINTE em vez do atual. Não usa
+    `_resumo_mes_pcp`/`_resumo_mes_seguinte_pcp` (que contam por
+    ItemPedido.planejamento_semanal agrupado) de propósito: esse quadrante
+    fica lado a lado com mes_atual/semanas na mesma linha da Listagem
+    Geral, então precisa usar a MESMA contagem/mesmo clique-pra-filtrar
+    (_filtrar_pedidos) que os vizinhos, pra nunca mostrar um número
+    diferente do que a tabela mostra ao clicar. `fundo="primary-subtle"` é
+    o que o template usa pra pintar de azul claro (diferente dos outros,
+    que só têm borda)."""
     hoje = hoje or date.today()
     ano, mes = hoje.year, hoje.month
     dias_no_mes = monthrange(ano, mes)[1]
@@ -4025,7 +4040,18 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
             }
         )
 
-    return {"mes_atual": mes_atual, "semanas": semanas}
+    ano_seg, mes_seg = _somar_meses(ano, mes, 1)
+    dias_no_mes_seg = monthrange(ano_seg, mes_seg)[1]
+    valor_mes_seguinte = f"{ano_seg}-{mes_seg:02d}"
+    mes_seguinte = {
+        "titulo": MESES_PT_EXTENSO[mes_seg - 1].upper(),
+        "subtitulo": f"01/{mes_seg:02d} – {dias_no_mes_seg:02d}/{mes_seg:02d}",
+        "total": contar(planejamento_mensal=valor_mes_seguinte),
+        "ativo": filtros.get("planejamento_mensal") == valor_mes_seguinte,
+        "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes_seguinte),
+    }
+
+    return {"mes_atual": mes_atual, "semanas": semanas, "mes_seguinte": mes_seguinte}
 
 
 class _LinhaListagemGeral:
