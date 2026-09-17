@@ -6797,42 +6797,83 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         ]))
         return t
 
+    def _agrupar_por_pedido(itens_grupo):
+        """Agrupa itens CONSECUTIVOS do mesmo pedido (pedido do Bruno,
+        17/09/2026: "quando for do mesmo pedido, agrupe por pedido... em
+        TODAS as estações") — preserva a ordem de urgência já aplicada em
+        _itens_relatorio_estacao (mais urgente primeiro); só junta os itens
+        de um mesmo pedido na posição da 1ª ocorrência dele nessa ordem, pela
+        FK direta ItemPedido.pedido_id (sempre presente, mais confiável que
+        casar por texto)."""
+        grupos = []
+        indice_por_pedido = {}
+        for item in itens_grupo:
+            chave = item.pedido_id
+            if chave not in indice_por_pedido:
+                indice_por_pedido[chave] = len(grupos)
+                grupos.append([])
+            grupos[indice_por_pedido[chave]].append(item)
+        return grupos
+
     def _tabela_itens(itens_grupo):
         """Monta a tabela de itens (sem a coluna "Status" — já fica implícita
         na faixa colorida do grupo — e com um "pingo" de semáforo na frente
-        da Situação de prazo, no lugar de só texto)."""
+        da Situação de prazo, no lugar de só texto). Itens do MESMO pedido
+        ficam agrupados e as colunas Pedido/Cliente aparecem só 1 vez por
+        grupo (célula mesclada verticalmente) — pedido do Bruno (17/09/2026):
+        "não repita o mesmo nome do cliente e o mesmo número do pedido"."""
         cabecalho = [
             "", "Pedido", "Cliente", "Produto", "Qtd", "Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo",
         ]
         dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) if c else "" for c in cabecalho]]
         cores_linhas = [COR_CABECALHO_BG]
+        spans_pedido = []  # (linha_inicio, linha_fim) 1-based (linha 0 = cabeçalho)
+        divisores_grupo = []  # linha da ÚLTIMA linha de cada grupo (exceto a última da tabela)
 
-        for item in itens_grupo:
-            pedido = item.pedido
-            cor, dias = item.semaforo
-            if dias is None:
-                prazo_txt = "sem prazo"
-            elif dias < 0:
-                prazo_txt = f"{-dias}d atrasado"
-            else:
-                prazo_txt = f"{dias}d"
-            qtd = item.quantidade or 0
-            qtd_txt = int(qtd) if qtd == int(qtd) else qtd
+        grupos_pedido = _agrupar_por_pedido(itens_grupo)
+        linha_atual = 1
+        for grupo in grupos_pedido:
+            linha_inicio_grupo = linha_atual
+            for indice_no_grupo, item in enumerate(grupo):
+                pedido = item.pedido
+                cor, dias = item.semaforo
+                if dias is None:
+                    prazo_txt = "sem prazo"
+                elif dias < 0:
+                    prazo_txt = f"{-dias}d atrasado"
+                else:
+                    prazo_txt = f"{dias}d"
+                qtd = item.quantidade or 0
+                qtd_txt = int(qtd) if qtd == int(qtd) else qtd
 
-            linha_tabela = [
-                _pingo(cor),
-                Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_celula),
-                Paragraph((pedido.cliente if pedido else None) or "—", estilo_celula),
-                Paragraph(item.descricao_produto or "—", estilo_celula),
-                Paragraph(str(qtd_txt), estilo_celula),
-                Paragraph((_formatar_data_br(pedido.data_inclusao_pedido) if pedido else "") or "—", estilo_celula),
-                Paragraph((_formatar_data_br(pedido.data_cliente) if pedido else "") or "—", estilo_celula),
-                Paragraph(_formatar_data_br(item.liberacao_prevista) or "—", estilo_celula),
-                Paragraph(_formatar_data_br(item.inicio_producao) or "—", estilo_celula),
-                Paragraph(prazo_txt, estilo_celula),
-            ]
-            dados_tabela.append(linha_tabela)
-            cores_linhas.append(COR_SEMAFORO_BG.get(cor, colors.white))
+                # Pedido/Cliente só na 1ª linha do grupo — as demais ficam em
+                # branco e a célula mesclada (SPAN) cobre o grupo inteiro.
+                if indice_no_grupo == 0:
+                    cel_pedido = Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_celula)
+                    cel_cliente = Paragraph((pedido.cliente if pedido else None) or "—", estilo_celula)
+                else:
+                    cel_pedido = ""
+                    cel_cliente = ""
+
+                linha_tabela = [
+                    _pingo(cor),
+                    cel_pedido,
+                    cel_cliente,
+                    Paragraph(item.descricao_produto or "—", estilo_celula),
+                    Paragraph(str(qtd_txt), estilo_celula),
+                    Paragraph((_formatar_data_br(pedido.data_inclusao_pedido) if pedido else "") or "—", estilo_celula),
+                    Paragraph((_formatar_data_br(pedido.data_cliente) if pedido else "") or "—", estilo_celula),
+                    Paragraph(_formatar_data_br(item.liberacao_prevista) or "—", estilo_celula),
+                    Paragraph(_formatar_data_br(item.inicio_producao) or "—", estilo_celula),
+                    Paragraph(prazo_txt, estilo_celula),
+                ]
+                dados_tabela.append(linha_tabela)
+                cores_linhas.append(COR_SEMAFORO_BG.get(cor, colors.white))
+                linha_atual += 1
+
+            if len(grupo) > 1:
+                spans_pedido.append((linha_inicio_grupo, linha_atual - 1))
+            divisores_grupo.append(linha_atual - 1)
 
         pesos = [4, 11, 16, 22, 6, 10, 10, 10, 10, 11]
         soma_pesos = sum(pesos)
@@ -6850,6 +6891,17 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
             ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
         ]
+        # Mescla Pedido (col 1) e Cliente (col 2) verticalmente pra cada
+        # grupo com mais de 1 item — texto aparece só 1 vez, centralizado.
+        for linha_inicio, linha_fim in spans_pedido:
+            estilo_tabela.append(("SPAN", (1, linha_inicio), (1, linha_fim)))
+            estilo_tabela.append(("SPAN", (2, linha_inicio), (2, linha_fim)))
+        # Linha divisória um pouco mais forte entre pedidos diferentes, pra
+        # reforçar visualmente onde um grupo termina e o outro começa.
+        ultima_linha = len(dados_tabela) - 1
+        for linha_fim in divisores_grupo:
+            if linha_fim != ultima_linha:
+                estilo_tabela.append(("LINEBELOW", (0, linha_fim), (-1, linha_fim), 1, colors.HexColor("#8fa8cc")))
         for i, cor_linha in enumerate(cores_linhas):
             if i == 0:
                 continue
