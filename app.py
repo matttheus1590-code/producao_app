@@ -3521,6 +3521,299 @@ def _kpi_gerencial_mensal(ano, mes):
     return linha
 
 
+def _gerar_pdf_kpis(meses, ano, mes, lead_time_fila_estacao, tendencia, variacoes, gargalos, produtividade, kpi_mensal):
+    """Relatório PDF da tela de KPIs (pedido do Bruno, 18/09/2026: "incluir
+    para gerar relatório em PDF... totalmente intuitivo e didático") —
+    paisagem A4, reaproveita EXATAMENTE os mesmos dados já calculados pra
+    tela (mesmos parâmetros que a rota kpis() já usa: `desde`/`meses` pro
+    Bloco A, `ano`/`mes` pro Bloco D), então o PDF nunca diverge do que
+    aparece no navegador. Usa reportlab (mesma lib dos outros 3 PDFs do
+    sistema — _gerar_pdf_risco_otd/_gerar_pdf_estacao/
+    _gerar_pdf_listagem_geral_semanal — pura Python, sem dependência de
+    pacote de sistema, importante porque o deploy no Render não dá controle
+    sobre isso).
+
+    "Didático": nada de emoji (fontes padrão do reportlab não têm os glyphs
+    coloridos — vira quadrado preto, mesmo problema já resolvido antes no
+    relatório de Estações); em vez disso, cor de fundo de célula pra
+    piora/melhora (mesmo truque do relatório de Risco OTD) e um gráfico de
+    linha NATIVO do reportlab (reportlab.graphics, sem dependência nova)
+    pra tendência de fila/lead time — o mesmo gráfico que já aparece na
+    tela, só que desenhado com as primitivas do próprio reportlab."""
+    from reportlab.graphics.charts.legends import Legend
+    from reportlab.graphics.charts.lineplots import LinePlot
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    COR_PIORA = colors.HexColor("#f8d7da")
+    COR_MELHORA = colors.HexColor("#d1e7dd")
+    COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
+    COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
+    COR_FILA = colors.HexColor("#f59f00")
+    COR_LEAD_TIME = colors.HexColor("#6ea8fe")
+
+    def _moeda(valor):
+        return "R$ " + "{:,.2f}".format(valor or 0).replace(",", "X").replace(".", ",").replace("X", ".")
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title="Relatório de KPIs — Gestão da Produção",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8.5, leading=10.5)
+    estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula_bold, fontSize=9, leading=11, textColor=COR_CABECALHO_TEXTO,
+    )
+    estilo_secao = ParagraphStyle("secao", parent=estilos["Heading2"], spaceBefore=4, spaceAfter=6)
+    estilo_obs = ParagraphStyle("obs", parent=estilos["Normal"], fontSize=9, leading=12, textColor=colors.HexColor("#495057"))
+
+    largura_pagina = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+
+    def _kpi_box(valor, rotulo):
+        return [
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=17, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8.5, alignment=1)),
+        ]
+
+    def _tabela_kpis(kpis):
+        largura = largura_pagina / len(kpis)
+        t = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura] * len(kpis))
+        t.setStyle(TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        return t
+
+    mes_label = f"{MESES_PT[mes - 1]}/{ano}"
+    elementos = [
+        Paragraph("Relatório de KPIs — Gestão da Produção", estilos["Title"]),
+        Paragraph(
+            f'Gerado em {datetime.now().strftime("%d/%m/%Y %H:%M")} · '
+            f'Bloco de lead time/fila: últimos {meses} meses · Controle mensal: {mes_label}',
+            estilos["Normal"],
+        ),
+        Spacer(1, 5 * mm),
+    ]
+
+    # ---------------- Bloco A — Lead time e fila das OPs ----------------
+    elementos.append(Paragraph("Lead time e fila das OPs", estilo_secao))
+    total_linha = lead_time_fila_estacao[-1] if lead_time_fila_estacao else None
+    kpis_a = [
+        _kpi_box((f'{total_linha["lead_time_medio"]}d' if total_linha and total_linha["lead_time_medio"] is not None else "—"), "Lead time médio (total)"),
+        _kpi_box((f'{total_linha["fila_media"]}d' if total_linha and total_linha["fila_media"] is not None else "—"), "Tempo de fila médio (total)"),
+        _kpi_box((f'{total_linha["processamento_medio"]}d' if total_linha and total_linha["processamento_medio"] is not None else "—"), "Tempo de processamento (total)"),
+        _kpi_box(sum(t["finalizados"] for t in tendencia), f"OPs concluídas (últimos {meses} meses)"),
+    ]
+    elementos.append(_tabela_kpis(kpis_a))
+    elementos.append(Spacer(1, 5 * mm))
+
+    pontos_grafico = [t for t in tendencia if t["fila_media"] is not None and t["lead_time_medio"] is not None]
+    if len(pontos_grafico) >= 2:
+        d = Drawing(largura_pagina, 62 * mm)
+        lp = LinePlot()
+        lp.x, lp.y = 15 * mm, 10 * mm
+        lp.width, lp.height = largura_pagina - 25 * mm, 42 * mm
+        lp.data = [
+            list(enumerate(p["fila_media"] for p in pontos_grafico)),
+            list(enumerate(p["lead_time_medio"] for p in pontos_grafico)),
+        ]
+        lp.lines[0].strokeColor, lp.lines[0].strokeWidth = COR_FILA, 2
+        lp.lines[1].strokeColor, lp.lines[1].strokeWidth = COR_LEAD_TIME, 2
+        lp.xValueAxis.valueMin, lp.xValueAxis.valueMax = 0, len(pontos_grafico) - 1
+        lp.xValueAxis.valueSteps = list(range(len(pontos_grafico)))
+        rotulos_x = [p["mes"] for p in pontos_grafico]
+        lp.xValueAxis.labelTextFormat = lambda x, rotulos=rotulos_x: rotulos[int(x)]
+        lp.xValueAxis.labels.fontSize = 7
+        lp.yValueAxis.valueMin = 0
+        lp.yValueAxis.labels.fontSize = 7
+        d.add(lp)
+        legenda = Legend()
+        legenda.x, legenda.y = 15 * mm, 58 * mm
+        legenda.colorNamePairs = [(COR_FILA, "Tempo de fila médio (d)"), (COR_LEAD_TIME, "Lead time médio (d)")]
+        legenda.fontSize, legenda.alignment = 8, "left"
+        d.add(legenda)
+        elementos.append(Paragraph("Tendência mensal — fila e lead time", estilos["Heading3"]))
+        elementos.append(d)
+    else:
+        elementos.append(Paragraph("Ainda não há meses suficientes com dado pra desenhar o gráfico de tendência.", estilo_obs))
+    elementos.append(Spacer(1, 4 * mm))
+
+    cabecalho_lt = ["Estação", "Fila", "Processamento", "Total", "OPs"]
+    dados_lt = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho_lt]]
+    for l in lead_time_fila_estacao:
+        negrito = l["estacao"].startswith("TOTAL")
+        estilo = estilo_celula_bold if negrito else estilo_celula
+        dados_lt.append([
+            Paragraph(l["estacao"], estilo),
+            Paragraph(f'{l["fila_media"]}d' if l["fila_media"] is not None else "—", estilo),
+            Paragraph(f'{l["processamento_medio"]}d' if l["processamento_medio"] is not None else "—", estilo),
+            Paragraph(f'{l["lead_time_medio"]}d' if l["lead_time_medio"] is not None else "—", estilo),
+            Paragraph(str(l["quantidade"]), estilo),
+        ])
+    pesos_lt = [30, 15, 18, 15, 12]
+    larguras_lt = [p / sum(pesos_lt) * largura_pagina for p in pesos_lt]
+    tabela_lt = Table(dados_lt, colWidths=larguras_lt, repeatRows=1)
+    tabela_lt.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f1f3f5")),
+    ]))
+    elementos.append(tabela_lt)
+    elementos.append(Spacer(1, 7 * mm))
+
+    # ---------------- Bloco B — Causas do aumento ----------------
+    elementos.append(Paragraph("Causas do aumento do tempo de fila e do lead time", estilo_secao))
+    if variacoes:
+        elementos.append(Paragraph(
+            f'Comparação entre {variacoes[0]["mes_anterior"]} e {variacoes[0]["mes_atual"]} '
+            "(últimos 2 meses com dado fechado) — maior piora primeiro.", estilos["Normal"],
+        ))
+        elementos.append(Spacer(1, 3 * mm))
+        cab_v = ["Estação", "Fila (d)", "Variação fila", "Lead time (d)", "Variação lead time"]
+        dados_v = [[Paragraph(c, estilo_cabecalho_tabela) for c in cab_v]]
+        cores_v = [None]
+        for v in variacoes:
+            fila_txt = f'{v["fila_anterior"]}d → {v["fila_atual"]}d' if v["fila_anterior"] is not None and v["fila_atual"] is not None else "—"
+            lt_txt = f'{v["lead_time_anterior"]}d → {v["lead_time_atual"]}d' if v["lead_time_anterior"] is not None and v["lead_time_atual"] is not None else "—"
+            delta_fila_txt = f'{"+" if v["delta_fila"] and v["delta_fila"] > 0 else ""}{v["delta_fila"]}d' if v["delta_fila"] is not None else "—"
+            delta_lt_txt = f'{"+" if v["delta_lead_time"] and v["delta_lead_time"] > 0 else ""}{v["delta_lead_time"]}d' if v["delta_lead_time"] is not None else "—"
+            dados_v.append([
+                Paragraph(v["estacao"], estilo_celula),
+                Paragraph(fila_txt, estilo_celula),
+                Paragraph(delta_fila_txt, estilo_celula_bold),
+                Paragraph(lt_txt, estilo_celula),
+                Paragraph(delta_lt_txt, estilo_celula_bold),
+            ])
+            if v["delta_lead_time"] is None:
+                cores_v.append(None)
+            elif v["delta_lead_time"] > 0:
+                cores_v.append(COR_PIORA)
+            elif v["delta_lead_time"] < 0:
+                cores_v.append(COR_MELHORA)
+            else:
+                cores_v.append(None)
+        tabela_v = Table(dados_v, colWidths=[p / 100 * largura_pagina for p in (22, 20, 18, 20, 20)], repeatRows=1)
+        estilo_v = [
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ]
+        for i, cor in enumerate(cores_v):
+            if cor:
+                estilo_v.append(("BACKGROUND", (0, i), (-1, i), cor))
+        tabela_v.setStyle(TableStyle(estilo_v))
+        elementos.append(tabela_v)
+    else:
+        elementos.append(Paragraph("Ainda não há 2 meses fechados com dado suficiente pra comparar.", estilo_obs))
+    elementos.append(Spacer(1, 4 * mm))
+    elementos.append(Paragraph("Observação (causas do aumento):", estilo_celula_bold))
+    elementos.append(Paragraph(kpi_mensal.obs_causas_fila_lead_time or "Nenhuma observação registrada.", estilo_obs))
+    elementos.append(Spacer(1, 6 * mm))
+
+    # ---------------- Bloco C — Gargalos ----------------
+    elementos.append(Paragraph("Gargalos do processo produtivo — setores críticos", estilo_secao))
+    cab_g = ["Estação", "Fila", "Atrasados", "Tempo de espera médio", "Lead time médio", "Valor parado"]
+    dados_g = [[Paragraph(c, estilo_cabecalho_tabela) for c in cab_g]]
+    for l in gargalos:
+        dados_g.append([
+            Paragraph(l["estacao"], estilo_celula_bold),
+            Paragraph(str(l["fila"]), estilo_celula),
+            Paragraph(str(l["atraso"]) if l["atraso"] else "—", estilo_celula),
+            Paragraph(f'{l["tempo_espera_medio"]}d' if l["tempo_espera_medio"] is not None else "—", estilo_celula),
+            Paragraph(f'{l["lt_medio"]}d' if l["lt_medio"] is not None else "—", estilo_celula),
+            Paragraph(_moeda(l["valor_parado"]), estilo_celula),
+        ])
+    tabela_g = Table(dados_g, colWidths=[p / 100 * largura_pagina for p in (24, 12, 14, 18, 16, 16)], repeatRows=1)
+    tabela_g.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+    ]))
+    elementos.append(tabela_g)
+    elementos.append(Spacer(1, 4 * mm))
+    elementos.append(Paragraph("Observação (causas e plano de ação):", estilo_celula_bold))
+    elementos.append(Paragraph(kpi_mensal.obs_gargalos_plano_acao or "Nenhuma observação registrada.", estilo_obs))
+    elementos.append(PageBreak())
+
+    # ---------------- Bloco D — Controle mensal ----------------
+    elementos.append(Paragraph(f"Controle mensal — {mes_label}", estilo_secao))
+
+    aderencia_txt = "—"
+    if kpi_mensal.aderencia_planejado:
+        pct = 100 * (kpi_mensal.aderencia_realizado or 0) / kpi_mensal.aderencia_planejado
+        aderencia_txt = f"{pct:.1f}%"
+    kpis_d = [
+        _kpi_box(kpi_mensal.aderencia_planejado if kpi_mensal.aderencia_planejado is not None else "—", "Aderência — Planejado"),
+        _kpi_box(kpi_mensal.aderencia_realizado if kpi_mensal.aderencia_realizado is not None else "—", "Aderência — Realizado"),
+        _kpi_box(aderencia_txt, "Aderência ao planejamento"),
+        _kpi_box(kpi_mensal.consumo_materia_prima if kpi_mensal.consumo_materia_prima is not None else "—", "Consumo total de matéria-prima"),
+        _kpi_box(kpi_mensal.indice_perdas if kpi_mensal.indice_perdas is not None else "—", "Perdas"),
+        _kpi_box(kpi_mensal.indice_refugos if kpi_mensal.indice_refugos is not None else "—", "Refugos"),
+        _kpi_box(kpi_mensal.indice_descartes if kpi_mensal.indice_descartes is not None else "—", "Descartes"),
+    ]
+    elementos.append(_tabela_kpis(kpis_d))
+    elementos.append(Spacer(1, 6 * mm))
+
+    elementos.append(Paragraph(f"Produtividade por setor — {mes_label}", estilos["Heading3"]))
+    elementos.append(Paragraph(
+        "Volume de PIGs e sobressalentes com produção concluída no mês, por estação, agrupado por DN/mm "
+        "identificado na descrição do produto (best-effort — itens sem diâmetro identificável entram em "
+        '"Sem DN/mm identificado").', estilo_obs,
+    ))
+    elementos.append(Spacer(1, 3 * mm))
+    cab_p = ["Estação", "Total PIGs", "PIGs por DN/mm", "Total sobressalentes", "Sobressalentes por DN/mm"]
+    dados_p = [[Paragraph(c, estilo_cabecalho_tabela) for c in cab_p]]
+    for p in produtividade:
+        pig_dn = ", ".join(f'{d["dn"]}: {d["quantidade"]}' for d in p["pig_por_dn"]) or "—"
+        sobra_dn = ", ".join(f'{d["dn"]}: {d["quantidade"]}' for d in p["sobressalente_por_dn"]) or "—"
+        dados_p.append([
+            Paragraph(p["estacao"], estilo_celula_bold),
+            Paragraph(str(p["total_pig"]), estilo_celula),
+            Paragraph(pig_dn, estilo_celula),
+            Paragraph(str(p["total_sobressalente"]), estilo_celula),
+            Paragraph(sobra_dn, estilo_celula),
+        ])
+    if not produtividade:
+        dados_p.append([Paragraph("Nenhuma produção concluída no mês.", estilo_celula), "", "", "", ""])
+    tabela_p = Table(dados_p, colWidths=[p / 100 * largura_pagina for p in (16, 12, 30, 12, 30)], repeatRows=1)
+    tabela_p.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+    ]))
+    elementos.append(tabela_p)
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"kpis_{ano}-{mes:02d}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
 def _lead_times_estacao(nome, meses_historico=3):
     """Lead time médio de 1 estação, quebrado em 3 etapas (pedido do Bruno,
     11/09/2026): "fila" (inclusão do pedido -> início da OP), "chão de
@@ -8301,6 +8594,39 @@ def register_routes(app):
             mes_label=f"{MESES_PT[mes - 1]}/{ano}",
             mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
             mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
+            lead_time_fila_estacao=_lead_time_fila_por_estacao(desde=desde),
+            tendencia=tendencia_fila["tendencia"],
+            variacoes=tendencia_fila["variacoes"],
+            gargalos=_gargalos_por_estacao(),
+            produtividade=_produtividade_por_setor(ano, mes),
+            kpi_mensal=_kpi_gerencial_mensal(ano, mes),
+        )
+
+    @app.route("/kpis/relatorio.pdf")
+    @login_required
+    def kpis_relatorio_pdf():
+        """Relatório PDF da tela de KPIs (pedido do Bruno, 18/09/2026) —
+        aceita os MESMOS parâmetros `meses`/`ano`/`mes` da tela (o botão
+        "Emitir relatório" do kpis.html já manda o período/mês que estava
+        selecionado na hora), e recalcula os dados com as MESMAS funções da
+        rota kpis() acima — nunca corre o risco de o PDF divergir do que a
+        tela mostra."""
+        meses = request.args.get("meses", 6, type=int)
+        if meses not in (3, 6, 12):
+            meses = 6
+        desde = date.today() - timedelta(days=30 * meses)
+
+        hoje = date.today()
+        ano = request.args.get("ano", hoje.year, type=int)
+        mes = request.args.get("mes", hoje.month, type=int)
+        if not (1 <= mes <= 12):
+            mes = hoje.month
+
+        tendencia_fila = _tendencia_fila_lead_time(meses=meses)
+        return _gerar_pdf_kpis(
+            meses=meses,
+            ano=ano,
+            mes=mes,
             lead_time_fila_estacao=_lead_time_fila_por_estacao(desde=desde),
             tendencia=tendencia_fila["tendencia"],
             variacoes=tendencia_fila["variacoes"],

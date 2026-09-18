@@ -6,10 +6,15 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h4 class="mb-0"><i class="bi bi-graph-up"></i> KPIs</h4>
-  <div class="btn-group btn-group-sm" role="group">
-    <a href="{{ url_for('kpis', meses=3, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 3 %}active{% endif %}">3 meses</a>
-    <a href="{{ url_for('kpis', meses=6, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 6 %}active{% endif %}">6 meses</a>
-    <a href="{{ url_for('kpis', meses=12, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 12 %}active{% endif %}">12 meses</a>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <div class="btn-group btn-group-sm" role="group">
+      <a href="{{ url_for('kpis', meses=3, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 3 %}active{% endif %}">3 meses</a>
+      <a href="{{ url_for('kpis', meses=6, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 6 %}active{% endif %}">6 meses</a>
+      <a href="{{ url_for('kpis', meses=12, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 12 %}active{% endif %}">12 meses</a>
+    </div>
+    <a href="{{ url_for('kpis_relatorio_pdf', meses=meses, ano=ano, mes=mes) }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-file-earmark-pdf"></i> Emitir relatório
+    </a>
   </div>
 </div>
 
