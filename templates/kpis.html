@@ -2,85 +2,375 @@
 {% block title %}KPIs · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
+{% set pode_editar = current_user.role in ('ADMIN', 'PCP') %}
+
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h4 class="mb-0"><i class="bi bi-graph-up"></i> KPIs</h4>
   <div class="btn-group btn-group-sm" role="group">
-    <a href="{{ url_for('kpis', meses=3) }}" class="btn btn-outline-primary {% if meses == 3 %}active{% endif %}">3 meses</a>
-    <a href="{{ url_for('kpis', meses=6) }}" class="btn btn-outline-primary {% if meses == 6 %}active{% endif %}">6 meses</a>
-    <a href="{{ url_for('kpis', meses=12) }}" class="btn btn-outline-primary {% if meses == 12 %}active{% endif %}">12 meses</a>
+    <a href="{{ url_for('kpis', meses=3, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 3 %}active{% endif %}">3 meses</a>
+    <a href="{{ url_for('kpis', meses=6, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 6 %}active{% endif %}">6 meses</a>
+    <a href="{{ url_for('kpis', meses=12, ano=ano, mes=mes) }}" class="btn btn-outline-primary {% if meses == 12 %}active{% endif %}">12 meses</a>
   </div>
 </div>
 
-{% set sem_dados = tendencia | selectattr('lt_medio', 'none') | list | length == tendencia | length %}
+{% set sem_dados = tendencia | selectattr('lead_time_medio', 'none') | list | length == tendencia | length %}
 {% if sem_dados %}
 <div class="alert alert-light border small text-muted mb-4">
   <i class="bi bi-info-circle"></i>
-  Estes indicadores dependem de "Início de produção" e "Término de inspeção/embalagem" preenchidos nos itens.
-  O histórico importado raramente tem as duas datas juntas — os gráficos passam a se popular conforme os
-  pedidos novos forem preenchidos com essas datas.
+  Os indicadores de lead time e fila dependem de "Início de produção" e "Término de inspeção/embalagem" preenchidos
+  nos itens. O histórico importado raramente tem as duas datas juntas — os gráficos e tabelas passam a se popular
+  conforme os pedidos novos forem preenchidos com essas datas.
 </div>
 {% endif %}
+
+<!-- ==================== BLOCO A — Lead time e fila das OPs (itens 1+2+3) ==================== -->
+<div class="d-flex align-items-center gap-2 mb-2">
+  <i class="bi bi-speedometer2 text-primary"></i>
+  <h6 class="text-uppercase text-muted small mb-0">Lead time e fila das OPs — últimos {{ meses }} meses</h6>
+</div>
+
+{% set total_estacoes = lead_time_fila_estacao[-1] if lead_time_fila_estacao else None %}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Lead time médio (total)</div>
+        <div class="fs-3 fw-semibold">{{ (total_estacoes.lead_time_medio ~ "d") if total_estacoes and total_estacoes.lead_time_medio is not none else "—" }}</div>
+        <div class="text-muted small">{{ total_estacoes.quantidade if total_estacoes else 0 }} OP(s)</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Tempo de fila médio (total)</div>
+        <div class="fs-3 fw-semibold">{{ (total_estacoes.fila_media ~ "d") if total_estacoes and total_estacoes.fila_media is not none else "—" }}</div>
+        <div class="text-muted small">inclusão → início de produção</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">Tempo de processamento (total)</div>
+        <div class="fs-3 fw-semibold">{{ (total_estacoes.processamento_medio ~ "d") if total_estacoes and total_estacoes.processamento_medio is not none else "—" }}</div>
+        <div class="text-muted small">início → conclusão da OP</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">OPs concluídas no período</div>
+        <div class="fs-3 fw-semibold">{{ tendencia | sum(attribute='finalizados') }}</div>
+        <div class="text-muted small">últimos {{ meses }} meses</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="row g-3 mb-4">
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Pedidos finalizados por mês</h6>
-        <canvas id="graficoFinalizados" height="200"></canvas>
+        <h6 class="text-uppercase text-muted small mb-3">Tendência mensal — fila e lead time</h6>
+        <canvas id="graficoTendenciaFila" height="200"></canvas>
       </div>
     </div>
   </div>
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Lead time médio e OTD por mês</h6>
-        <canvas id="graficoTendencia" height="200"></canvas>
+        <h6 class="text-uppercase text-muted small mb-3">Lead time por estação — fila / processamento / total</h6>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Estação</th>
+                <th class="text-center">Fila</th>
+                <th class="text-center">Processamento</th>
+                <th class="text-center">Total</th>
+                <th class="text-center">OPs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for l in lead_time_fila_estacao %}
+              <tr class="{% if l.estacao.startswith('TOTAL') %}table-light fw-semibold{% endif %}">
+                <td>{{ l.estacao }}</td>
+                <td class="text-center">{{ (l.fila_media ~ "d") if l.fila_media is not none else "—" }}</td>
+                <td class="text-center">{{ (l.processamento_medio ~ "d") if l.processamento_medio is not none else "—" }}</td>
+                <td class="text-center">{{ (l.lead_time_medio ~ "d") if l.lead_time_medio is not none else "—" }}</td>
+                <td class="text-center">{{ l.quantidade }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-3">Sem dados suficientes ainda.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
-<div class="row g-3">
-  <div class="col-lg-6">
+<form method="post" action="{{ url_for('kpis_mensal_salvar', ano=ano, mes=mes) }}">
+
+<!-- ==================== BLOCO B — Causas do aumento do tempo de fila/lead time (item 4) ==================== -->
+<div class="d-flex align-items-center gap-2 mb-2">
+  <i class="bi bi-graph-up-arrow text-warning"></i>
+  <h6 class="text-uppercase text-muted small mb-0">Causas do aumento do tempo de fila e do lead time</h6>
+</div>
+<div class="card mb-4">
+  <div class="card-body">
+    {% if variacoes %}
+    <p class="text-muted small mb-3">
+      Comparação entre <strong>{{ variacoes[0].mes_anterior }}</strong> e <strong>{{ variacoes[0].mes_atual }}</strong>
+      (últimos 2 meses com dado fechado) — estações ordenadas da maior piora pra maior melhora no lead time.
+    </p>
+    <div class="table-responsive mb-3">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Estação</th>
+            <th class="text-center">Fila ({{ variacoes[0].mes_anterior }} → {{ variacoes[0].mes_atual }})</th>
+            <th class="text-center">Variação fila</th>
+            <th class="text-center">Lead time ({{ variacoes[0].mes_anterior }} → {{ variacoes[0].mes_atual }})</th>
+            <th class="text-center">Variação lead time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in variacoes %}
+          <tr>
+            <td>{{ v.estacao }}</td>
+            <td class="text-center">
+              {{ (v.fila_anterior ~ "d") if v.fila_anterior is not none else "—" }} →
+              {{ (v.fila_atual ~ "d") if v.fila_atual is not none else "—" }}
+            </td>
+            <td class="text-center">
+              {% if v.delta_fila is not none %}
+                <span class="badge bg-{{ 'danger' if v.delta_fila > 0 else ('success' if v.delta_fila < 0 else 'secondary') }}">
+                  {{ "+%.1f"|format(v.delta_fila) if v.delta_fila > 0 else v.delta_fila }}d
+                </span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-center">
+              {{ (v.lead_time_anterior ~ "d") if v.lead_time_anterior is not none else "—" }} →
+              {{ (v.lead_time_atual ~ "d") if v.lead_time_atual is not none else "—" }}
+            </td>
+            <td class="text-center">
+              {% if v.delta_lead_time is not none %}
+                <span class="badge bg-{{ 'danger' if v.delta_lead_time > 0 else ('success' if v.delta_lead_time < 0 else 'secondary') }}">
+                  {{ "+%.1f"|format(v.delta_lead_time) if v.delta_lead_time > 0 else v.delta_lead_time }}d
+                </span>
+              {% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted small mb-3">Ainda não há 2 meses fechados com dado suficiente pra comparar.</p>
+    {% endif %}
+
+    <label class="form-label small text-muted mb-1">Observação — causas do aumento (opcional, preenchimento manual)</label>
+    {% if pode_editar %}
+    <textarea class="form-control" name="obs_causas_fila_lead_time" rows="3"
+      placeholder="Ex.: falta de matéria-prima na Espumagem, troca de turno no Mandril...">{{ kpi_mensal.obs_causas_fila_lead_time or "" }}</textarea>
+    {% else %}
+    <div class="border rounded p-2 bg-light text-muted small">{{ kpi_mensal.obs_causas_fila_lead_time or "Nenhuma observação registrada." }}</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ==================== BLOCO C — Gargalos do processo produtivo (item 5) ==================== -->
+<div class="d-flex align-items-center gap-2 mb-2">
+  <i class="bi bi-exclamation-triangle text-danger"></i>
+  <h6 class="text-uppercase text-muted small mb-0">Gargalos do processo produtivo — setores críticos</h6>
+</div>
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="table-responsive mb-3">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Estação</th>
+            <th class="text-center">Fila (itens parados)</th>
+            <th class="text-center">Atrasados</th>
+            <th class="text-center">Tempo de espera médio</th>
+            <th class="text-center">Lead time médio</th>
+            <th class="text-end">Valor parado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in gargalos %}
+          <tr>
+            <td class="fw-semibold">{{ l.estacao }}</td>
+            <td class="text-center">
+              <span class="badge bg-{{ 'danger' if l.fila > 10 else ('warning' if l.fila > 0 else 'secondary') }}">{{ l.fila }}</span>
+            </td>
+            <td class="text-center">{% if l.atraso > 0 %}<span class="badge bg-danger">{{ l.atraso }}</span>{% else %}—{% endif %}</td>
+            <td class="text-center">{{ (l.tempo_espera_medio ~ "d") if l.tempo_espera_medio is not none else "—" }}</td>
+            <td class="text-center">{{ (l.lt_medio ~ "d") if l.lt_medio is not none else "—" }}</td>
+            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_parado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-3">Nenhuma estação cadastrada.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <label class="form-label small text-muted mb-1">Observação — causas e plano de ação (opcional, preenchimento manual)</label>
+    {% if pode_editar %}
+    <textarea class="form-control" name="obs_gargalos_plano_acao" rows="3"
+      placeholder="Ex.: Mandril travado por manutenção do torno — plano: revisão preventiva até dia 30.">{{ kpi_mensal.obs_gargalos_plano_acao or "" }}</textarea>
+    {% else %}
+    <div class="border rounded p-2 bg-light text-muted small">{{ kpi_mensal.obs_gargalos_plano_acao or "Nenhuma observação registrada." }}</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ==================== BLOCO D — Controle mensal (itens 6, 7, 8) ==================== -->
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <div class="d-flex align-items-center gap-2">
+    <i class="bi bi-calendar-check text-success"></i>
+    <h6 class="text-uppercase text-muted small mb-0">Controle mensal — {{ mes_label }}</h6>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('kpis', meses=meses, ano=mes_anterior.ano, mes=mes_anterior.mes) }}">
+      <i class="bi bi-chevron-left"></i> Mês anterior
+    </a>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('kpis', meses=meses, ano=mes_seguinte.ano, mes=mes_seguinte.mes) }}">
+      Próximo mês <i class="bi bi-chevron-right"></i>
+    </a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-4">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">Lead time médio por estação</h6>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead class="table-light"><tr><th>Estação</th><th>Lead time médio</th><th>Itens</th></tr></thead>
-            <tbody>
-              {% for l in lead_time_estacao %}
-              <tr><td>{{ l.estacao }}</td><td>{{ l.lt_medio }}d</td><td>{{ l.quantidade }}</td></tr>
-              {% else %}
-              <tr><td colspan="3" class="text-center text-muted py-3">Sem dados suficientes ainda.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
+        <h6 class="text-uppercase text-muted small mb-3">Aderência ao planejamento</h6>
+        {% if pode_editar %}
+        <div class="row g-2 mb-2">
+          <div class="col-6">
+            <label class="form-label small text-muted mb-1">Planejado</label>
+            <input type="text" inputmode="decimal" class="form-control" name="aderencia_planejado" value="{{ kpi_mensal.aderencia_planejado if kpi_mensal.aderencia_planejado is not none else '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label small text-muted mb-1">Realizado</label>
+            <input type="text" inputmode="decimal" class="form-control" name="aderencia_realizado" value="{{ kpi_mensal.aderencia_realizado if kpi_mensal.aderencia_realizado is not none else '' }}">
+          </div>
         </div>
+        {% else %}
+        <div class="text-muted small mb-2">
+          Planejado: <strong>{{ kpi_mensal.aderencia_planejado if kpi_mensal.aderencia_planejado is not none else "—" }}</strong> ·
+          Realizado: <strong>{{ kpi_mensal.aderencia_realizado if kpi_mensal.aderencia_realizado is not none else "—" }}</strong>
+        </div>
+        {% endif %}
+        {% if kpi_mensal.aderencia_planejado %}
+        {% set pct = (100 * kpi_mensal.aderencia_realizado / kpi_mensal.aderencia_planejado) if kpi_mensal.aderencia_realizado is not none else 0 %}
+        <div class="progress" style="height: 8px;">
+          <div class="progress-bar bg-{{ 'success' if pct >= 90 else ('warning' if pct >= 70 else 'danger') }}" style="width: {{ [pct, 100] | min }}%"></div>
+        </div>
+        <div class="text-muted small mt-1">{{ "%.1f"|format(pct) }}% de aderência</div>
+        {% endif %}
       </div>
     </div>
   </div>
-  <div class="col-lg-6">
+
+  <div class="col-lg-4">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">OTD por vendedor</h6>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead class="table-light"><tr><th>Vendedor</th><th>OTD</th><th>Itens</th></tr></thead>
-            <tbody>
-              {% for v in otd_vendedor %}
-              <tr>
-                <td>{{ v.vendedor }}</td>
-                <td><span class="badge bg-{{ 'success' if v.otd >= 90 else ('warning' if v.otd >= 70 else 'danger') }}">{{ v.otd }}%</span></td>
-                <td>{{ v.total }}</td>
-              </tr>
-              {% else %}
-              <tr><td colspan="3" class="text-center text-muted py-3">Sem dados suficientes ainda.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        <h6 class="text-uppercase text-muted small mb-3">Consumo total de matéria-prima</h6>
+        {% if pode_editar %}
+        <input type="text" inputmode="decimal" class="form-control" name="consumo_materia_prima" value="{{ kpi_mensal.consumo_materia_prima if kpi_mensal.consumo_materia_prima is not none else '' }}">
+        <div class="text-muted small mt-1">Use a unidade que você mesmo controla (kg, toneladas etc.).</div>
+        {% else %}
+        <div class="fs-3 fw-semibold">{{ kpi_mensal.consumo_materia_prima if kpi_mensal.consumo_materia_prima is not none else "—" }}</div>
+        {% endif %}
       </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="text-uppercase text-muted small mb-3">Perdas, refugos e descartes</h6>
+        {% if pode_editar %}
+        <div class="row g-2">
+          <div class="col-4">
+            <label class="form-label small text-muted mb-1">Perdas</label>
+            <input type="text" inputmode="decimal" class="form-control" name="indice_perdas" value="{{ kpi_mensal.indice_perdas if kpi_mensal.indice_perdas is not none else '' }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label small text-muted mb-1">Refugos</label>
+            <input type="text" inputmode="decimal" class="form-control" name="indice_refugos" value="{{ kpi_mensal.indice_refugos if kpi_mensal.indice_refugos is not none else '' }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label small text-muted mb-1">Descartes</label>
+            <input type="text" inputmode="decimal" class="form-control" name="indice_descartes" value="{{ kpi_mensal.indice_descartes if kpi_mensal.indice_descartes is not none else '' }}">
+          </div>
+        </div>
+        {% else %}
+        <div class="text-muted small">
+          Perdas: <strong>{{ kpi_mensal.indice_perdas if kpi_mensal.indice_perdas is not none else "—" }}</strong> ·
+          Refugos: <strong>{{ kpi_mensal.indice_refugos if kpi_mensal.indice_refugos is not none else "—" }}</strong> ·
+          Descartes: <strong>{{ kpi_mensal.indice_descartes if kpi_mensal.indice_descartes is not none else "—" }}</strong>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if pode_editar %}
+<div class="d-flex justify-content-end mb-4">
+  <button type="submit" class="btn btn-success"><i class="bi bi-check-lg"></i> Salvar KPIs do mês</button>
+</div>
+{% endif %}
+
+</form>
+
+<!-- Produtividade por setor (item 9) — automático, fora do form (não é editável) -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-1">Produtividade por setor — {{ mes_label }}</h6>
+    <p class="text-muted small mb-3">
+      Volume de PIGs e sobressalentes produzidos, por estação e DN/mm — calculado automaticamente a partir dos
+      pedidos com produção concluída no mês. O agrupamento por DN/mm é feito lendo a descrição do produto; itens
+      sem um diâmetro identificável entram em "Sem DN/mm identificado".
+    </p>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Estação</th>
+            <th class="text-center">Total PIGs</th>
+            <th>PIGs por DN/mm</th>
+            <th class="text-center">Total sobressalentes</th>
+            <th>Sobressalentes por DN/mm</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in produtividade %}
+          <tr>
+            <td class="fw-semibold">{{ p.estacao }}</td>
+            <td class="text-center">{{ p.total_pig }}</td>
+            <td>
+              {% for d in p.pig_por_dn %}<span class="badge bg-primary-subtle text-primary-emphasis me-1 mb-1">{{ d.dn }}: {{ d.quantidade }}</span>{% endfor %}
+            </td>
+            <td class="text-center">{{ p.total_sobressalente }}</td>
+            <td>
+              {% for d in p.sobressalente_por_dn %}<span class="badge bg-secondary-subtle text-secondary-emphasis me-1 mb-1">{{ d.dn }}: {{ d.quantidade }}</span>{% endfor %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">Nenhuma produção concluída em {{ mes_label }} ainda.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -96,30 +386,18 @@
 
   const tendencia = {{ tendencia | tojson }};
 
-  new Chart(document.getElementById("graficoFinalizados"), {
-    type: "bar",
-    data: {
-      labels: tendencia.map(function (p) { return p.mes; }),
-      datasets: [{ label: "Finalizados", data: tendencia.map(function (p) { return p.finalizados; }), backgroundColor: "#198754" }],
-    },
-    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
-  });
-
-  new Chart(document.getElementById("graficoTendencia"), {
+  new Chart(document.getElementById("graficoTendenciaFila"), {
     type: "line",
     data: {
       labels: tendencia.map(function (p) { return p.mes; }),
       datasets: [
-        { label: "Lead time médio (d)", data: tendencia.map(function (p) { return p.lt_medio; }), borderColor: "#6ea8fe", yAxisID: "y", tension: 0.2 },
-        { label: "OTD (%)", data: tendencia.map(function (p) { return p.otd; }), borderColor: "#198754", yAxisID: "y1", tension: 0.2 },
+        { label: "Tempo de fila médio (d)", data: tendencia.map(function (p) { return p.fila_media; }), borderColor: "#f59f00", tension: 0.2 },
+        { label: "Lead time médio (d)", data: tendencia.map(function (p) { return p.lead_time_medio; }), borderColor: "#6ea8fe", tension: 0.2 },
       ],
     },
     options: {
       plugins: { legend: { position: "bottom" } },
-      scales: {
-        y: { type: "linear", position: "left", title: { display: true, text: "dias" } },
-        y1: { type: "linear", position: "right", title: { display: true, text: "%" }, grid: { drawOnChartArea: false } },
-      },
+      scales: { y: { beginAtZero: true, title: { display: true, text: "dias" } } },
     },
   });
 })();

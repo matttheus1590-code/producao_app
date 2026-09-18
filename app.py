@@ -78,6 +78,7 @@ from models import (
     HistoricoAlteracao,
     InspecaoFinal,
     ItemPedido,
+    KpiGerencialMensal,
     LeadTimeProducao,
     LeadTimeProducaoHistorico,
     LeadTimeTransportadora,
@@ -3257,59 +3258,97 @@ def _atualizacoes_recentes_pd(desde=None, limite=15):
     return eventos
 
 
-def _lead_time_por_estacao(desde=None):
-    """Lead time médio (dias) agrupado por estação, entre os itens que já têm
-    início de produção e término de inspeção preenchidos."""
-    query = ItemPedido.query.filter(
-        ItemPedido.inicio_producao.isnot(None), ItemPedido.termino_inspecao.isnot(None), ItemPedido.estacao.isnot(None)
-    )
-    if desde:
-        query = query.filter(ItemPedido.termino_inspecao >= desde)
-    agrupado = {}
-    for item in query.all():
-        agrupado.setdefault(item.estacao, []).append((item.termino_inspecao - item.inicio_producao).days)
+# ----------------------------------------------------------------------
+# Tela de KPIs — reconstrução completa (pedido do Bruno, 17-18/09/2026):
+# "zere todos que já existe" (os 4 widgets antigos: Pedidos finalizados por
+# mês, Lead time médio + OTD por mês, Lead time médio por estação, OTD por
+# vendedor — nenhum é usado por mais nenhuma tela, removidos junto) e
+# substituir por 9 indicadores gerenciais novos. As funções abaixo cobrem os
+# itens automáticos (1, 2, 3, 4-ranking e 9); os itens manuais (6, 7, 8 e as
+# observações de 4/5) ficam em KpiGerencialMensal (models.py) e
+# _kpi_gerencial_mensal, mais abaixo.
+# ----------------------------------------------------------------------
 
-    resultado = [
-        {"estacao": estacao, "lt_medio": round(sum(dias) / len(dias), 1), "quantidade": len(dias)}
-        for estacao, dias in agrupado.items()
-    ]
-    resultado.sort(key=lambda r: r["lt_medio"], reverse=True)
+
+def _lead_time_fila_por_estacao(desde=None):
+    """Fila + processamento + lead time total, por estação — itens 1+2+3 da
+    tela de KPIs numa tabela só, porque são a MESMA base de dados
+    (ItemPedido.tempo_espera_dias = fila, ItemPedido.lt_producao_dias =
+    processamento, soma dos dois = lead time total), só quebrados de jeitos
+    diferentes: "Lead time das OPs (por estação, por período e no total)",
+    "Tempo de fila das OPs (por estação, por período e no total)" e "Lead
+    time por setor: tempo de fila e tempo de processamento por setor".
+
+    Substitui a antiga _lead_time_por_estacao (só tinha o lead time total).
+    Percorre o catálogo de Estacao (mesmo padrão de _gargalos_por_estacao),
+    não os valores distintos de ItemPedido.estacao — garante que toda
+    estação ativa apareça (mesmo sem dado no período) e já sai na ordem
+    canônica (Estacao.ordem_exibicao). Filtra por `termino_inspecao >=
+    desde` quando informado (mesmo seletor de período 3/6/12 meses que a
+    tela já tinha). Devolve 1 linha por estação + 1 linha "TOTAL" no fim."""
+    estacoes = Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all()
+    resultado = []
+    todos_fila, todos_proc, todos_total = [], [], []
+
+    for e in estacoes:
+        query = ItemPedido.query.filter(
+            ItemPedido.estacao == e.nome,
+            ItemPedido.inicio_producao.isnot(None),
+            ItemPedido.termino_inspecao.isnot(None),
+        )
+        if desde:
+            query = query.filter(ItemPedido.termino_inspecao >= desde)
+        itens = query.all()
+
+        fila_vals = [i.tempo_espera_dias for i in itens if i.tempo_espera_dias is not None]
+        proc_vals = [i.lt_producao_dias for i in itens if i.lt_producao_dias is not None]
+        total_vals = [
+            i.tempo_espera_dias + i.lt_producao_dias
+            for i in itens
+            if i.tempo_espera_dias is not None and i.lt_producao_dias is not None
+        ]
+        todos_fila += fila_vals
+        todos_proc += proc_vals
+        todos_total += total_vals
+
+        fila_media, _ = _media_dias(fila_vals)
+        proc_media, _ = _media_dias(proc_vals)
+        total_media, total_n = _media_dias(total_vals)
+        resultado.append({
+            "estacao": e.nome,
+            "fila_media": fila_media,
+            "processamento_medio": proc_media,
+            "lead_time_medio": total_media,
+            "quantidade": total_n,
+        })
+
+    fila_media, _ = _media_dias(todos_fila)
+    proc_media, _ = _media_dias(todos_proc)
+    total_media, total_n = _media_dias(todos_total)
+    resultado.append({
+        "estacao": "TOTAL (todas as estações)",
+        "fila_media": fila_media,
+        "processamento_medio": proc_media,
+        "lead_time_medio": total_media,
+        "quantidade": total_n,
+    })
     return resultado
 
 
-def _otd_por_vendedor(desde=None):
-    """OTD (% no prazo) agrupado por vendedor, entre os itens finalizados que
-    têm liberação prevista e término de inspeção preenchidos."""
-    query = ItemPedido.query.options(selectinload(ItemPedido.pedido)).filter(
-        ItemPedido.status_producao == "FINALIZADO",
-        ItemPedido.liberacao_prevista.isnot(None),
-        ItemPedido.termino_inspecao.isnot(None),
-    )
-    if desde:
-        query = query.filter(ItemPedido.termino_inspecao >= desde)
+def _tendencia_fila_lead_time(meses=6):
+    """Tendência mensal de fila/lead time (gráfico do Bloco A da tela de
+    KPIs) + ranking de variação por estação entre os 2 últimos meses com
+    dado — é o "ranking automático" do item 4 ("Análise das principais
+    causas do aumento do tempo de fila e do lead time das OPs", pedido do
+    Bruno, 17-18/09/2026): aponta EM QUAL estação a fila/lead time mais
+    cresceu; o "porquê" fica no campo de observação manual
+    (KpiGerencialMensal.obs_causas_fila_lead_time), preenchido à parte.
 
-    agrupado = {}
-    for item in query.all():
-        vendedor = (item.pedido.vendedor if item.pedido and item.pedido.vendedor else "Sem vendedor")
-        grupo = agrupado.setdefault(vendedor, {"no_prazo": 0, "total": 0})
-        grupo["total"] += 1
-        if item.termino_inspecao <= item.liberacao_prevista:
-            grupo["no_prazo"] += 1
-
-    resultado = [
-        {"vendedor": vendedor, "otd": round(100 * g["no_prazo"] / g["total"], 1), "total": g["total"]}
-        for vendedor, g in agrupado.items()
-    ]
-    resultado.sort(key=lambda r: r["otd"])
-    return resultado
-
-
-def _tendencia_kpis(meses=6):
-    """Finalizados / lead time médio / OTD por mês, dos últimos N meses — para
-    os gráficos de tendência da tela de KPIs."""
+    Substitui a antiga _tendencia_kpis (que trazia finalizados/lt_medio/otd
+    — otd saiu, não faz parte dos 9 itens pedidos)."""
     hoje = date.today()
-    pontos = []
     ano, mes = hoje.year, hoje.month
+    pontos = []
     for _ in range(meses):
         pontos.append((ano, mes))
         mes -= 1
@@ -3317,28 +3356,169 @@ def _tendencia_kpis(meses=6):
             mes, ano = 12, ano - 1
     pontos.reverse()
 
-    resultado = []
-    for ano, mes in pontos:
-        inicio = date(ano, mes, 1)
-        fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
+    tendencia = []
+    por_mes_estacao = {}
+    for ano_p, mes_p in pontos:
+        inicio = date(ano_p, mes_p, 1)
+        fim = date(ano_p + 1, 1, 1) if mes_p == 12 else date(ano_p, mes_p + 1, 1)
         itens = ItemPedido.query.filter(
             ItemPedido.termino_inspecao.isnot(None),
             ItemPedido.termino_inspecao >= inicio,
             ItemPedido.termino_inspecao < fim,
         ).all()
 
-        lt_medio, otd = None, None
-        if itens:
-            lts = [(i.termino_inspecao - i.inicio_producao).days for i in itens if i.inicio_producao]
-            if lts:
-                lt_medio = round(sum(lts) / len(lts), 1)
-            com_prazo = [i for i in itens if i.liberacao_prevista]
-            if com_prazo:
-                no_prazo = sum(1 for i in com_prazo if i.termino_inspecao <= i.liberacao_prevista)
-                otd = round(100 * no_prazo / len(com_prazo), 1)
+        fila_vals, total_vals = [], []
+        por_estacao = {}
+        for i in itens:
+            fila = i.tempo_espera_dias
+            proc = i.lt_producao_dias
+            total = fila + proc if (fila is not None and proc is not None) else None
+            estacao = i.estacao or "Sem estação"
+            grupo = por_estacao.setdefault(estacao, {"fila": [], "total": []})
+            if fila is not None:
+                fila_vals.append(fila)
+                grupo["fila"].append(fila)
+            if total is not None:
+                total_vals.append(total)
+                grupo["total"].append(total)
 
-        resultado.append({"mes": f"{MESES_PT[mes - 1]}/{ano}", "finalizados": len(itens), "lt_medio": lt_medio, "otd": otd})
+        fila_media, _ = _media_dias(fila_vals)
+        total_media, _ = _media_dias(total_vals)
+        tendencia.append({
+            "mes": f"{MESES_PT[mes_p - 1]}/{ano_p}",
+            "fila_media": fila_media,
+            "lead_time_medio": total_media,
+            "finalizados": len(itens),
+        })
+        por_mes_estacao[(ano_p, mes_p)] = por_estacao
+
+    # Ranking de variação: os 2 últimos pontos que já têm QUALQUER dado
+    # (não necessariamente os 2 últimos de `pontos` — o mês corrente costuma
+    # estar incompleto/vazio ainda).
+    meses_com_dado = [p for p in pontos if por_mes_estacao.get(p)]
+    variacoes = []
+    if len(meses_com_dado) >= 2:
+        atual_key, anterior_key = meses_com_dado[-1], meses_com_dado[-2]
+        atual, anterior = por_mes_estacao[atual_key], por_mes_estacao[anterior_key]
+        for estacao in set(atual) | set(anterior):
+            fila_atual, _ = _media_dias(atual.get(estacao, {}).get("fila", []))
+            fila_anterior, _ = _media_dias(anterior.get(estacao, {}).get("fila", []))
+            total_atual, _ = _media_dias(atual.get(estacao, {}).get("total", []))
+            total_anterior, _ = _media_dias(anterior.get(estacao, {}).get("total", []))
+            delta_fila = (
+                round(fila_atual - fila_anterior, 1) if (fila_atual is not None and fila_anterior is not None) else None
+            )
+            delta_lead_time = (
+                round(total_atual - total_anterior, 1) if (total_atual is not None and total_anterior is not None) else None
+            )
+            if delta_fila is None and delta_lead_time is None:
+                continue
+            variacoes.append({
+                "estacao": estacao,
+                "mes_atual": f"{MESES_PT[atual_key[1] - 1]}/{atual_key[0]}",
+                "mes_anterior": f"{MESES_PT[anterior_key[1] - 1]}/{anterior_key[0]}",
+                "fila_atual": fila_atual,
+                "fila_anterior": fila_anterior,
+                "delta_fila": delta_fila,
+                "lead_time_atual": total_atual,
+                "lead_time_anterior": total_anterior,
+                "delta_lead_time": delta_lead_time,
+            })
+        variacoes.sort(key=lambda v: (v["delta_lead_time"] is None, -(v["delta_lead_time"] or 0)))
+
+    return {"tendencia": tendencia, "variacoes": variacoes}
+
+
+_RE_DIAMETRO_POL = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:''|\"|[’”]|'|POL(?:EGADAS)?\b)", re.I)
+_RE_DIAMETRO_MM = re.compile(r"(\d+(?:[.,]\d+)?)\s*MM\b", re.I)
+
+
+def _classificar_dn_mm(descricao):
+    """Best-effort: tenta achar o DN/diâmetro na descrição do produto, pro
+    item 9 da tela de KPIs (pedido do Bruno, 17-18/09/2026: "organizar por
+    DN ou mm") — testado contra a base real: ~95% de cobertura. Tenta
+    polegadas primeiro (padrão mais comum na base: 8'', 10", 12" etc.),
+    depois mm; o que não bater cai em "Sem DN/mm identificado" (mostrado
+    explicitamente na tela, não escondido — mesma transparência já usada
+    noutros relatórios quando um dado não é 100% capturável)."""
+    if not descricao:
+        return "Sem DN/mm identificado"
+    m = _RE_DIAMETRO_POL.search(descricao)
+    if m:
+        return f'{m.group(1)}"'
+    m = _RE_DIAMETRO_MM.search(descricao)
+    if m:
+        return f"{m.group(1)}MM"
+    return "Sem DN/mm identificado"
+
+
+def _categoria_produto(descricao):
+    """PIG × Sobressalente (item 9 da tela de KPIs, pedido do Bruno,
+    17-18/09/2026) — critério "começa com PIG", não "contém PIG": itens tipo
+    "DISCO GUIA PARA PIG...", "PLACA CALIBRADORA... PARA PIG..." contêm a
+    palavra PIG mas são acessórios/sobressalentes, não o PIG em si
+    (confirmado contra a base real antes de implementar)."""
+    if descricao and descricao.strip().upper().startswith("PIG"):
+        return "PIG"
+    return "Sobressalente"
+
+
+def _produtividade_por_setor(ano, mes):
+    """Item 9 da tela de KPIs (pedido do Bruno, 17-18/09/2026): "Produtividade
+    por setor, considerando o volume de PIGs e sobressalentes produzidos...
+    controle mensal de todos os produtos produzidos, organizar por DN ou
+    mm" — AUTOMÁTICO (confirmado por ele), a partir dos pedidos já
+    lançados: soma ItemPedido.quantidade dos itens cujo término de inspeção
+    caiu no mês pedido (mesmo critério de "produção concluída" do resto da
+    tela), agrupado por estação + categoria (PIG/Sobressalente) + DN/mm."""
+    inicio = date(ano, mes, 1)
+    fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
+    itens = ItemPedido.query.filter(
+        ItemPedido.termino_inspecao.isnot(None),
+        ItemPedido.termino_inspecao >= inicio,
+        ItemPedido.termino_inspecao < fim,
+    ).all()
+
+    por_estacao = {}
+    for item in itens:
+        estacao = item.estacao or "Sem estação"
+        categoria = _categoria_produto(item.descricao_produto)
+        dn = _classificar_dn_mm(item.descricao_produto)
+        grupo = por_estacao.setdefault(
+            estacao, {"PIG": {}, "Sobressalente": {}, "total_pig": 0.0, "total_sobressalente": 0.0}
+        )
+        grupo[categoria][dn] = grupo[categoria].get(dn, 0.0) + (item.quantidade or 0)
+        chave_total = "total_pig" if categoria == "PIG" else "total_sobressalente"
+        grupo[chave_total] += item.quantidade or 0
+
+    resultado = []
+    for estacao, dados in por_estacao.items():
+        resultado.append({
+            "estacao": estacao,
+            "total_pig": round(dados["total_pig"], 2),
+            "total_sobressalente": round(dados["total_sobressalente"], 2),
+            "pig_por_dn": sorted(
+                ({"dn": dn, "quantidade": round(q, 2)} for dn, q in dados["PIG"].items()),
+                key=lambda r: -r["quantidade"],
+            ),
+            "sobressalente_por_dn": sorted(
+                ({"dn": dn, "quantidade": round(q, 2)} for dn, q in dados["Sobressalente"].items()),
+                key=lambda r: -r["quantidade"],
+            ),
+        })
+    resultado.sort(key=lambda r: -(r["total_pig"] + r["total_sobressalente"]))
     return resultado
+
+
+def _kpi_gerencial_mensal(ano, mes):
+    """Busca a linha de KpiGerencialMensal do mês pedido (itens 6/7/8 +
+    observações manuais de 4/5) — devolve um objeto "vazio" em memória (sem
+    salvar no banco) quando o mês ainda não foi preenchido nenhuma vez, pra
+    tela e formulário sempre terem algo pra mostrar/editar."""
+    linha = KpiGerencialMensal.query.filter_by(ano=ano, mes=mes).first()
+    if linha is None:
+        linha = KpiGerencialMensal(ano=ano, mes=mes)
+    return linha
 
 
 def _lead_times_estacao(nome, meses_historico=3):
@@ -8093,18 +8273,98 @@ def register_routes(app):
     @app.route("/kpis")
     @login_required
     def kpis():
+        # Reconstrução completa (pedido do Bruno, 17-18/09/2026) — 2
+        # controles de período independentes na mesma tela: `meses`
+        # (3/6/12, pro Bloco A — lead time/fila, dinâmico por período, igual
+        # a tela antiga já tinha) e `ano`/`mes` (mês navegável, mesmo padrão
+        # de faturamento(), pro Bloco D — controle mensal itens 6/7/8/9).
         meses = request.args.get("meses", 6, type=int)
         if meses not in (3, 6, 12):
             meses = 6
         desde = date.today() - timedelta(days=30 * meses)
 
+        hoje = date.today()
+        ano = request.args.get("ano", hoje.year, type=int)
+        mes = request.args.get("mes", hoje.month, type=int)
+        if not (1 <= mes <= 12):
+            mes = hoje.month
+        mes_anterior_ano, mes_anterior_mes = (ano, mes - 1) if mes > 1 else (ano - 1, 12)
+        mes_seguinte_ano, mes_seguinte_mes = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
+
+        tendencia_fila = _tendencia_fila_lead_time(meses=meses)
+
         return render_template(
             "kpis.html",
             meses=meses,
-            lead_time_estacao=_lead_time_por_estacao(desde=desde),
-            otd_vendedor=_otd_por_vendedor(desde=desde),
-            tendencia=_tendencia_kpis(meses=meses),
+            ano=ano,
+            mes=mes,
+            mes_label=f"{MESES_PT[mes - 1]}/{ano}",
+            mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
+            mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
+            lead_time_fila_estacao=_lead_time_fila_por_estacao(desde=desde),
+            tendencia=tendencia_fila["tendencia"],
+            variacoes=tendencia_fila["variacoes"],
+            gargalos=_gargalos_por_estacao(),
+            produtividade=_produtividade_por_setor(ano, mes),
+            kpi_mensal=_kpi_gerencial_mensal(ano, mes),
         )
+
+    @app.route("/kpis/mensal/<int:ano>/<int:mes>/salvar", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def kpis_mensal_salvar(ano, mes):
+        """Salva os KPIs manuais do mês (itens 6/7/8 + observações de 4/5,
+        pedido do Bruno, 17-18/09/2026) — 1 linha por ano+mes
+        (KpiGerencialMensal), criada na hora se ainda não existir."""
+        if not (1 <= mes <= 12):
+            flash("Mês inválido.", "danger")
+            return redirect(url_for("kpis"))
+
+        linha = KpiGerencialMensal.query.filter_by(ano=ano, mes=mes).first()
+        novo = linha is None
+        if novo:
+            linha = KpiGerencialMensal(ano=ano, mes=mes)
+
+        def _float_ou_none(nome):
+            valor = request.form.get(nome, "").strip().replace(",", ".")
+            if not valor:
+                return None
+            try:
+                return float(valor)
+            except ValueError:
+                return None
+
+        campos = [
+            "aderencia_planejado",
+            "aderencia_realizado",
+            "consumo_materia_prima",
+            "indice_perdas",
+            "indice_refugos",
+            "indice_descartes",
+            "obs_causas_fila_lead_time",
+            "obs_gargalos_plano_acao",
+        ]
+        antes = {} if novo else {campo: getattr(linha, campo) for campo in campos}
+
+        linha.aderencia_planejado = _float_ou_none("aderencia_planejado")
+        linha.aderencia_realizado = _float_ou_none("aderencia_realizado")
+        linha.consumo_materia_prima = _float_ou_none("consumo_materia_prima")
+        linha.indice_perdas = _float_ou_none("indice_perdas")
+        linha.indice_refugos = _float_ou_none("indice_refugos")
+        linha.indice_descartes = _float_ou_none("indice_descartes")
+        linha.obs_causas_fila_lead_time = request.form.get("obs_causas_fila_lead_time", "").strip() or None
+        linha.obs_gargalos_plano_acao = request.form.get("obs_gargalos_plano_acao", "").strip() or None
+        linha.atualizado_por = current_user.nome if current_user.is_authenticated else None
+
+        if novo:
+            db.session.add(linha)
+            db.session.flush()  # garante linha.id preenchido antes do histórico
+
+        depois = {campo: getattr(linha, campo) for campo in campos}
+        _registrar_alteracoes("kpi_gerencial_mensal", linha.id, None, antes, depois, campos)
+
+        db.session.commit()
+        flash(f"KPIs de {MESES_PT[mes - 1]}/{ano} salvos.", "success")
+        return redirect(url_for("kpis", ano=ano, mes=mes))
 
     @app.route("/gargalos")
     @login_required

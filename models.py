@@ -1797,3 +1797,51 @@ class HistoricoAlteracao(db.Model):
     valor_anterior = db.Column(db.Text, nullable=True)
     valor_novo = db.Column(db.Text, nullable=True)
     criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class KpiGerencialMensal(db.Model):
+    """KPIs gerenciais de preenchimento MANUAL, controlados mês a mês
+    (pedido do Bruno, reconstrução da tela /kpis, 17-18/09/2026) — 1 linha
+    por mês (ano+mes), guardando:
+
+      - Aderência ao planejamento: planejado × realizado (item 6).
+      - Consumo total de matéria-prima (item 7) — a unidade (kg, toneladas
+        etc.) fica a critério do Bruno, não é travada no banco, só no rótulo
+        da tela.
+      - Perdas / refugos / descartes (item 8) — 3 campos separados, porque
+        são 3 conceitos distintos que o próprio Bruno nomeou separadamente;
+        "um valor único por mês" (confirmado por ele) se aplica a CADA um
+        desses 3, não os funde num índice só.
+      - 2 observações de texto livre (itens 4 e 5): causas do aumento do
+        tempo de fila/lead time, e causas/plano de ação dos gargalos — os
+        RANKINGS desses 2 itens são automáticos (calculados ao vivo, nunca
+        guardados aqui); só o comentário/plano de ação é manual.
+
+    Todos os campos são opcionais (nullable) — a linha do mês pode ser
+    criada só com o que já foi preenchido até agora, sem exigir tudo de uma
+    vez. Tabela nova (não mexe em nenhuma tabela existente), então é coberta
+    automaticamente por db.create_all() no próximo deploy, sem precisar de
+    migração manual."""
+
+    __tablename__ = "kpis_gerenciais_mensais"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ano = db.Column(db.Integer, nullable=False)
+    mes = db.Column(db.Integer, nullable=False)  # 1-12
+
+    aderencia_planejado = db.Column(db.Float, nullable=True)
+    aderencia_realizado = db.Column(db.Float, nullable=True)
+
+    consumo_materia_prima = db.Column(db.Float, nullable=True)
+
+    indice_perdas = db.Column(db.Float, nullable=True)
+    indice_refugos = db.Column(db.Float, nullable=True)
+    indice_descartes = db.Column(db.Float, nullable=True)
+
+    obs_causas_fila_lead_time = db.Column(db.Text, nullable=True)
+    obs_gargalos_plano_acao = db.Column(db.Text, nullable=True)
+
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    atualizado_por = db.Column(db.String(120), nullable=True)
+
+    __table_args__ = (db.UniqueConstraint("ano", "mes", name="uq_kpi_gerencial_ano_mes"),)
