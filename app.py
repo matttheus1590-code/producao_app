@@ -322,6 +322,7 @@ def create_app():
         _seed_lead_time_transportadora(app)
         _seed_parametro_hora_homem(app)
         _seed_custos_pig_mandril(app)
+        _seed_custos_espuma(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -1949,6 +1950,383 @@ def _seed_custos_pig_mandril(app):
         MateriaPrima.query.count(), Produto.query.count(), EstruturaProduto.query.count(),
     )
 
+
+_CHAVE_SEED_CUSTOS_ESPUMA_20_09_2026 = "seed_custos_espuma_20_09_2026"
+
+
+def _seed_custos_espuma(app):
+    """Importa (uma única vez) a família espuma (fase 2 do módulo Gestão de
+    Custos) da mesma planilha da fase 1 (`data/custo_de_producao_20_09_2026.xlsx`):
+    abas H, HS, HL, HLR, HLR X, HLR R, HLR V, HLB, HDISC, HLCC, HLCC PC.
+    Mesmo padrão idempotente de `_seed_custos_pig_mandril` (guardado por
+    ControleSistema), e reaproveita a mesma matéria-prima central da aba
+    PARÂMETROS (linhas 18-31: bloco de espuma D26/D45/D60/D80, elastômero
+    TECPUR, sistema amino A alta/média + B iso, pigmento, corda, escova
+    fina/grossa, velcro, cola) e a MOCA CURATIVO TDI já cadastrada na fase 1
+    (linha 8 — mesmo código de matéria-prima, pra não duplicar o mesmo
+    insumo em 2 linhas do catálogo).
+
+    A aba H tem uma particularidade: 3 variantes cumulativas por DN/densidade
+    ("H", "H COM SELO", "H COM SELO E CORDA" — confirmado célula a célula
+    que cada variante = a anterior + uma camada extra), modeladas como 3
+    Produtos encadeados por SUBPRODUTO (mesmo mecanismo recursivo já usado
+    na fase 1 pra LUN→PU CAST e CORPO MANDRIL→LBD — nada novo no motor de
+    cálculo). As outras 9 abas ("sistema A+B" — poliuretano vazado em 2
+    componentes) são 1 produto por família com todas as camadas na mesma
+    estrutura (não há variante cumulativa nelas, só 1 "R$" final por DN).
+
+    Verificado 1:1 contra a aba BUSCA DE CUSTO antes deste código ir pro ar
+    — ver relatório de verificação anexo à entrega."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_CUSTOS_ESPUMA_20_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — seed espuma não executado.", xlsx_path)
+        return
+
+    import openpyxl
+
+    def _dn_str(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(v).strip()
+
+    def _dn_num(v):
+        """Só a parte numérica do DN (pra decidir escova fina/grossa por faixa) — trata
+        formatos tipo "9,5''" (vírgula decimal) também."""
+        if v is None:
+            return None
+        s = "".join(ch for ch in str(v).strip() if ch.isdigit() or ch in ",.").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    mp_cache, produto_cache = {}, {}
+
+    def _get_or_create_mp(codigo, descricao, unidade, custo, categoria):
+        mp = mp_cache.get(codigo)
+        if mp is not None:
+            return mp
+        mp = MateriaPrima.query.filter_by(codigo=codigo).first()
+        if mp is None:
+            mp = MateriaPrima(codigo=codigo, descricao=descricao, unidade=unidade, custo_atual=custo or 0, categoria=categoria, ativo=True)
+            db.session.add(mp)
+            db.session.flush()
+        mp_cache[codigo] = mp
+        return mp
+
+    def _get_or_create_produto(familia, codigo, descricao=None, categoria=None, chave_busca=None):
+        key = (familia, codigo)
+        p = produto_cache.get(key)
+        if p is not None:
+            return p
+        p = Produto.query.filter_by(familia=familia, codigo=codigo).first()
+        if p is None:
+            p = Produto(familia=familia, codigo=codigo, descricao=descricao, categoria=categoria, chave_busca=chave_busca, ativo=True)
+            db.session.add(p)
+            db.session.flush()
+        produto_cache[key] = p
+        return p
+
+    def _get_or_create_estrutura(produto, dn, ciclo_horas):
+        e = EstruturaProduto.query.filter_by(produto_id=produto.id, dn=dn).first()
+        if e is None:
+            e = EstruturaProduto(produto_id=produto.id, dn=dn, ciclo_horas=ciclo_horas or 0, ativo=True)
+            db.session.add(e)
+            db.session.flush()
+        return e
+
+    def _add_item(estrutura, ordem, tipo, quantidade, materia_prima=None, subproduto=None, observacao=None):
+        if not quantidade:
+            return
+        db.session.add(EstruturaProdutoItem(
+            estrutura_id=estrutura.id, tipo=tipo, quantidade=quantidade,
+            materia_prima_id=materia_prima.id if materia_prima else None,
+            subproduto_id=subproduto.id if subproduto else None,
+            observacao=observacao, ordem=ordem,
+        ))
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_param = wb["PARÂMETROS"]
+
+    # 0. Catálogo central de matérias-primas da família espuma — PARÂMETROS linhas 18-31.
+    #    MOCA CURATIVO TDI (linha 8) já foi cadastrada na fase 1 com este código —
+    #    reaproveita a MESMA linha do catálogo (não duplica o mesmo insumo).
+    def _mp_parametro(linha, codigo, categoria, unidade):
+        desc = ws_param.cell(linha, 2).value
+        preco = ws_param.cell(linha, 5).value
+        return _get_or_create_mp(codigo, desc, unidade, preco, categoria)
+
+    MP_MOCA = _get_or_create_mp("QUIM-MOCACURATIVOTDI", ws_param.cell(8, 2).value, "kg", ws_param.cell(8, 5).value, "Química")
+    MP_BLOCO_D26 = _mp_parametro(18, "ESPUMA-BLOCO-D26", "Bloco de espuma", "m³")
+    MP_BLOCO_D45 = _mp_parametro(19, "ESPUMA-BLOCO-D45", "Bloco de espuma", "m³")
+    MP_BLOCO_D60 = _mp_parametro(20, "ESPUMA-BLOCO-D60", "Bloco de espuma", "m³")
+    MP_BLOCO_D80 = _mp_parametro(21, "ESPUMA-BLOCO-D80", "Bloco de espuma", "m³")
+    MP_ELASTOMERO = _mp_parametro(22, "ESPUMA-ELASTOMERO-TECPUR", "Química", "kg")
+    MP_AMINO_A_ALTA = _mp_parametro(23, "ESPUMA-AMINO-A-ALTA", "Química", "kg")
+    MP_AMINO_A_MEDIA = _mp_parametro(24, "ESPUMA-AMINO-A-MEDIA", "Química", "kg")
+    MP_AMINO_B_ISO = _mp_parametro(25, "ESPUMA-AMINO-B-ISO", "Química", "kg")
+    MP_PIGMENTO = _mp_parametro(26, "ESPUMA-PIGMENTO", "Química", "kg")
+    MP_CORDA = _mp_parametro(27, "ESPUMA-CORDA-OLHAL", "Acessório", "m")
+    MP_ESCOVA_FINA = _mp_parametro(28, "ESPUMA-ESCOVA-FINA-HLR", "Acessório", "m")
+    MP_ESCOVA_GROSSA = _mp_parametro(29, "ESPUMA-ESCOVA-GROSSA-HLR", "Acessório", "m")
+    MP_VELCRO = _mp_parametro(30, "ESPUMA-VELCRO-HLR-V", "Acessório", "m")
+    MP_COLA = _mp_parametro(31, "ESPUMA-COLA-SAPATEIRO", "Acessório", "kg")
+    # Itens exclusivos de HLCC / HLCC PC — não estão centralizados em PARÂMETROS na planilha
+    # original (ficam soltos no cabeçalho da própria aba); centralizamos aqui do mesmo jeito
+    # (1 matéria-prima cada, valor tirado do cabeçalho da aba na data da importação).
+    #
+    # ATENÇÃO — achado na verificação, repassado ao Bruno: o cabeçalho da aba mostra
+    # "CUSTO METRO CABO DE AÇO" = R$9,70/m pro olhal, mas o valor REALMENTE aplicado em
+    # toda linha (custo ÷ comprimento, conferido em várias linhas de HLCC e HLCC PC) é
+    # sempre R$3,00/m — o mesmo preço da CORDA OLHAL (PARÂMETROS!$E$27). O rótulo do
+    # cabeçalho parece estar desatualizado/não é o que a fórmula usa de fato; replicamos
+    # o valor realmente aplicado (reaproveitando a matéria-prima da corda) pra bater com
+    # BUSCA DE CUSTO.
+    MP_PRENSA_CABO = _get_or_create_mp("ESPUMA-PRENSA-CABO", 'Prensa cabo 3/16" — HLCC/HLCC PC', "un", 0.95, "Acessório")
+    MP_KIT_ARRUELA_PORCA = _get_or_create_mp("ESPUMA-KIT-ARRUELA-PORCA-HLCCPC", "Kit fixação (arruela + porca) — HLCC PC", "un", 35.15, "Acessório")
+    MP_BARRA_ROSCADA = _get_or_create_mp("ESPUMA-BARRA-ROSCADA-HLCCPC", 'Barra roscada 3/4" — HLCC PC', "m", 57.0, "Acessório")
+    MP_BUMPER_PU = _get_or_create_mp("ESPUMA-BUMPER-PU-HLCCPC", "Bumper PU (MP COIM) — HLCC PC", "kg", 55.0, "Acessório")
+
+    def _amino_a(densidade):
+        return MP_AMINO_A_ALTA if "ALTA" in densidade else MP_AMINO_A_MEDIA
+
+    def _bloco_por_densidade_label(label):
+        # label ex. "BAIXA D26" / "BAIXA D45" / "BAIXA D60" / "BAIXA D80"
+        return {"D26": MP_BLOCO_D26, "D45": MP_BLOCO_D45, "D60": MP_BLOCO_D60, "D80": MP_BLOCO_D80}[label.split()[-1]]
+
+    # ------------------------------------------------------------------
+    # 1. Aba H — bloco de espuma, 4 densidades (D26/D45/D60/D80) x 3 variantes
+    #    cumulativas (H / H COM SELO / H COM SELO E CORDA), encadeadas por
+    #    SUBPRODUTO (H COM SELO = SUBPRODUTO(H) + camada selo; H COM SELO E
+    #    CORDA = SUBPRODUTO(H COM SELO) + corda) — confirmado fórmula a
+    #    fórmula (col19=D+I+M, col22=col19+G+K, col25=col22+O).
+    # ------------------------------------------------------------------
+    ws_h = wb["H"]
+    produto_h = _get_or_create_produto("H", "H", descricao="PIG H (bloco de espuma)", categoria="PIG", chave_busca=None)
+    produto_h_selo = _get_or_create_produto("H", "H-COM-SELO", descricao="PIG H com selo", categoria="PIG", chave_busca=None)
+    produto_h_selo_corda = _get_or_create_produto("H", "H-COM-SELO-CORDA", descricao="PIG H com selo e corda", categoria="PIG", chave_busca=None)
+
+    blocos_h = [(6, 29), (30, 54), (55, 79), (80, 104)]
+    for r0, r1 in blocos_h:
+        for r in range(r0, r1 + 1):
+            dn_raw = ws_h.cell(r, 1).value
+            dens_label = ws_h.cell(r, 2).value
+            if dn_raw is None or dens_label is None:
+                continue
+            dn = f"{_dn_str(dn_raw)} {dens_label}"  # ex. "6'' BAIXA D26"
+            consumo_m3 = ws_h.cell(r, 3).value or 0
+            peso_elast_selo = ws_h.cell(r, 6).value or 0
+            peso_elast_etiqueta = ws_h.cell(r, 8).value or 0
+            peso_moca_selo = ws_h.cell(r, 10).value or 0
+            peso_moca_etiqueta = ws_h.cell(r, 12).value or 0
+            comprimento_corda = ws_h.cell(r, 14).value or 0
+            # "CUSTO HH ESC/LOTE" (não "CUSTO HH CICLO" cru) — a planilha divide o
+            # custo do ciclo da máquina pela quantidade de peças do lote escalonado
+            # (col "QNT PCS"); CUSTO TOTAL = CUSTO MP + CUSTO HH ESC/LOTE, confirmado
+            # fórmula a fórmula (col71=col67+col70, não col67+col68).
+            #
+            # IMPORTANTE: o bloco de tempos (HH) de "H COM SELO" e "H COM SELO E CORDA"
+            # é um recálculo COMPLETO do ciclo (corte+roletagem+chanfro+... de novo, não
+            # só o incremento da camada extra) — confirmado comparando os blocos de tempo
+            # das 3 variantes célula a célula. Por isso as 3 estruturas abaixo são
+            # independentes (cada uma com seu próprio ciclo_horas) — só a matéria-prima é
+            # cumulativa (repetida explicitamente em cada variante, sem SUBPRODUTO), senão
+            # o motor de cálculo (que soma custo_hh do subproduto inteiro) contaria a hora
+            # de máquina da variante anterior de novo.
+            custo_hh_base = ws_h.cell(r, 70).value or 0
+            custo_hh_selo = ws_h.cell(r, 78).value or 0
+            custo_hh_corda = ws_h.cell(r, 86).value or 0
+
+            mp_bloco = _bloco_por_densidade_label(dens_label)
+
+            est_base = _get_or_create_estrutura(produto_h, dn, round(custo_hh_base / _CUSTOS_HH_RATE_SEED, 6))
+            _add_item(est_base, 0, "MATERIA_PRIMA", consumo_m3, materia_prima=mp_bloco, observacao="bloco de espuma")
+            _add_item(est_base, 1, "MATERIA_PRIMA", peso_elast_etiqueta, materia_prima=MP_ELASTOMERO, observacao="etiqueta")
+            _add_item(est_base, 2, "MATERIA_PRIMA", peso_moca_etiqueta, materia_prima=MP_MOCA, observacao="etiqueta")
+
+            est_selo = _get_or_create_estrutura(produto_h_selo, dn, round(custo_hh_selo / _CUSTOS_HH_RATE_SEED, 6))
+            _add_item(est_selo, 0, "MATERIA_PRIMA", consumo_m3, materia_prima=mp_bloco, observacao="bloco de espuma")
+            _add_item(est_selo, 1, "MATERIA_PRIMA", peso_elast_etiqueta, materia_prima=MP_ELASTOMERO, observacao="etiqueta")
+            _add_item(est_selo, 2, "MATERIA_PRIMA", peso_moca_etiqueta, materia_prima=MP_MOCA, observacao="etiqueta")
+            _add_item(est_selo, 3, "MATERIA_PRIMA", peso_elast_selo, materia_prima=MP_ELASTOMERO, observacao="selo")
+            _add_item(est_selo, 4, "MATERIA_PRIMA", peso_moca_selo, materia_prima=MP_MOCA, observacao="selo")
+
+            est_corda = _get_or_create_estrutura(produto_h_selo_corda, dn, round(custo_hh_corda / _CUSTOS_HH_RATE_SEED, 6))
+            _add_item(est_corda, 0, "MATERIA_PRIMA", consumo_m3, materia_prima=mp_bloco, observacao="bloco de espuma")
+            _add_item(est_corda, 1, "MATERIA_PRIMA", peso_elast_etiqueta, materia_prima=MP_ELASTOMERO, observacao="etiqueta")
+            _add_item(est_corda, 2, "MATERIA_PRIMA", peso_moca_etiqueta, materia_prima=MP_MOCA, observacao="etiqueta")
+            _add_item(est_corda, 3, "MATERIA_PRIMA", peso_elast_selo, materia_prima=MP_ELASTOMERO, observacao="selo")
+            _add_item(est_corda, 4, "MATERIA_PRIMA", peso_moca_selo, materia_prima=MP_MOCA, observacao="selo")
+            _add_item(est_corda, 5, "MATERIA_PRIMA", comprimento_corda, materia_prima=MP_CORDA, observacao="corda")
+
+    # ------------------------------------------------------------------
+    # 2. As 9 abas "sistema A+B" (poliuretano vazado, 2 componentes) — núcleo
+    #    comum (poliol/isocianato + elastômero + moca, 2 ou 3 camadas conforme
+    #    a aba) + bloco de acessórios específico por família. 1 produto só por
+    #    família, sem variante cumulativa (diferente da aba H).
+    # ------------------------------------------------------------------
+    def _core_ab(estrutura, ws, r, densidade, ordem, elast_specs, moca_specs):
+        """elast_specs/moca_specs: lista de (col_peso, rótulo). Sempre lê o peso
+        (já em kg) direto da célula — a fórmula/derivação de peso varia entre
+        abas (algumas usam peso fixo, outras 1% do peso de outra camada), mas
+        o valor final (data_only=True) é sempre o número certo a multiplicar
+        pelo preço unitário, então não precisamos replicar a fórmula."""
+        peso_a = ws.cell(r, 3).value or 0
+        peso_b = ws.cell(r, 5).value or 0
+        mp_a = _amino_a(densidade)
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", peso_a, materia_prima=mp_a, observacao="poliol (A)"); ordem += 1
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", peso_b, materia_prima=MP_AMINO_B_ISO, observacao="isocianato (B)"); ordem += 1
+        for col, rotulo in elast_specs:
+            peso = ws.cell(r, col).value or 0
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", peso, materia_prima=MP_ELASTOMERO, observacao=f"elastômero ({rotulo})"); ordem += 1
+        for col, rotulo in moca_specs:
+            peso = ws.cell(r, col).value or 0
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", peso, materia_prima=MP_MOCA, observacao=f"moca ({rotulo})"); ordem += 1
+        return ordem
+
+    def _pigmento_ab(estrutura, ws, r, ordem, col_revest, col_selo):
+        # ATENÇÃO — achado na verificação, repassado ao Bruno: nas 9 abas "sistema
+        # A+B" a fórmula real do custo do pigmento usa o preço da MOCA
+        # (PARÂMETROS!$E$8 = R$30,89/kg), não o preço do próprio pigmento
+        # (PARÂMETROS!$E$26 = R$89,30/kg, que é o valor mostrado no cabeçalho da
+        # aba como referência) — confirmado fórmula a fórmula nas 6 abas de 3
+        # camadas (HL, HLR/HLR X/HLR R/HLR V, HLB, HDISC, HLCC, HLCC PC). Parece
+        # um copy-paste que ficou preso na fórmula da MOCA; replicamos o cálculo
+        # real da planilha (não o rótulo) pra bater com BUSCA DE CUSTO — MP_PIGMENTO
+        # fica cadastrada no catálogo mesmo assim, caso o Bruno prefira corrigir a
+        # fórmula na planilha numa próxima rodada.
+        peso_revest = ws.cell(r, col_revest).value or 0
+        peso_selo = ws.cell(r, col_selo).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", peso_revest, materia_prima=MP_MOCA, observacao="pigmento (revestimento) — preço aplicado: moca, ver observação no código"); ordem += 1
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", peso_selo, materia_prima=MP_MOCA, observacao="pigmento (selo) — preço aplicado: moca, ver observação no código"); ordem += 1
+        return ordem
+
+    # A coluna 12 (rotulada "PESO ELASTÔMERO ETIQUETA" no cabeçalho) é na verdade
+    # precificada com o preço da MOCA na fórmula real da planilha (=L*PARÂMETROS!$E$8,
+    # não $E$22) — confirmado célula a célula nas 6 abas de 3 camadas (HL, HLR/HLR X/
+    # HLR R/HLR V, HLB, HDISC, HLCC, HLCC PC): rótulo da planilha está errado/copiado,
+    # a fórmula manda. Por isso ela entra no grupo "moca", não "elastômero" (só afeta
+    # QUAL matéria-prima é debitada — o motor de cálculo soma os itens igual).
+    ELAST_2 = [(8, "revestimento"), (10, "selagem")]
+    MOCA_4 = [(12, "etiqueta"), (14, "revestimento"), (16, "selo"), (18, "etiqueta")]
+
+    def _processar_sheet_ab(nome_aba, familia, chave_busca, custo_hh_ciclo_col,
+                             blocos_densidade, elast_specs, moca_specs,
+                             accessorios_fn):
+        # "CUSTO HH ESC/LOTE" fica sempre 2 colunas depois de "CUSTO HH CICLO"
+        # (CUSTO MP, CUSTO HH CICLO, QNT PCS, CUSTO HH ESC/LOTE, CUSTO TOTAL — padrão
+        # confirmado nas 9 abas) — é esse valor escalonado que compõe o CUSTO TOTAL
+        # da planilha (CUSTO TOTAL = CUSTO MP + CUSTO HH ESC/LOTE, não + CUSTO HH CICLO cru).
+        custo_hh_esc_lote_col = custo_hh_ciclo_col + 2
+        ws = wb[nome_aba]
+        produto = _get_or_create_produto(familia, familia, descricao=f"PIG {familia}", categoria="PIG", chave_busca=chave_busca)
+        for r0, r1 in blocos_densidade:
+            for r in range(r0, r1 + 1):
+                dn_raw = ws.cell(r, 1).value
+                densidade = ws.cell(r, 2).value
+                if dn_raw is None or densidade is None:
+                    continue
+                dn = f"{_dn_str(dn_raw)} {'ALTA' if 'ALTA' in densidade else 'MÉDIA'}"
+                custo_hh_esc_lote = ws.cell(r, custo_hh_esc_lote_col).value or 0
+                estrutura = _get_or_create_estrutura(produto, dn, round(custo_hh_esc_lote / _CUSTOS_HH_RATE_SEED, 6))
+                ordem = _core_ab(estrutura, ws, r, densidade, 0, elast_specs, moca_specs)
+                if accessorios_fn is not None:
+                    accessorios_fn(estrutura, ws, r, ordem, dn_raw)
+
+    BLOCOS_2_TIER = [(7, 30), (31, 54)]
+    BLOCOS_1_TIER = [(7, 13)]
+
+    # HS — sem camada de revestimento (só selo+etiqueta), corda embutida, sem pigmento/escova/cola.
+    def _acessorios_hs(estrutura, ws, r, ordem, dn_raw):
+        comprimento_corda = ws.cell(r, 16).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_corda, materia_prima=MP_CORDA, observacao="corda"); ordem += 1
+    _processar_sheet_ab("HS", "HS", "HS", 35, BLOCOS_2_TIER,
+                        [(8, "selo"), (10, "etiqueta")], [(12, "selo"), (14, "etiqueta")],
+                        _acessorios_hs)
+
+    # HL e HDISC — 3 camadas + corda + pigmento (revest+selo). Sem escova/cola.
+    def _acessorios_corda_pigmento(col_corda, col_pig_r, col_pig_s):
+        def _fn(estrutura, ws, r, ordem, dn_raw):
+            comprimento_corda = ws.cell(r, col_corda).value or 0
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_corda, materia_prima=MP_CORDA, observacao="corda")
+            ordem += 1
+            _pigmento_ab(estrutura, ws, r, ordem, col_pig_r, col_pig_s)
+        return _fn
+
+    _processar_sheet_ab("HL", "HL", "HL", 45, BLOCOS_2_TIER, ELAST_2, MOCA_4,
+                        _acessorios_corda_pigmento(20, 22, 24))
+    _processar_sheet_ab("HDISC", "HDISC", "HDISC", 46, BLOCOS_2_TIER, ELAST_2, MOCA_4,
+                        _acessorios_corda_pigmento(20, 22, 24))
+
+    # HLR / HLR X / HLR R — corda + escova de aço (fina até DN4, grossa DN6+) + cola + pigmento.
+    def _acessorios_escova(estrutura, ws, r, ordem, dn_raw):
+        comprimento_corda = ws.cell(r, 20).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_corda, materia_prima=MP_CORDA, observacao="corda"); ordem += 1
+        comprimento_escova = ws.cell(r, 22).value or 0
+        dn_num = _dn_num(dn_raw)
+        mp_escova = MP_ESCOVA_FINA if (dn_num is not None and dn_num <= 4) else MP_ESCOVA_GROSSA
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_escova, materia_prima=mp_escova, observacao="escova"); ordem += 1
+        peso_cola = ws.cell(r, 24).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", peso_cola, materia_prima=MP_COLA, observacao="cola (fixação escova)"); ordem += 1
+        ordem = _pigmento_ab(estrutura, ws, r, ordem, 26, 28)
+
+    for nome_aba, chave in (("HLR", "HLR"), ("HLR X", "HLR X"), ("HLR R", "HLR R")):
+        _processar_sheet_ab(nome_aba, nome_aba, chave, 50, BLOCOS_2_TIER, ELAST_2, MOCA_4, _acessorios_escova)
+
+    # HLR V / HLB — corda + velcro (preço único, sem faixa por DN) + cola + pigmento.
+    def _acessorios_velcro(estrutura, ws, r, ordem, dn_raw):
+        comprimento_corda = ws.cell(r, 20).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_corda, materia_prima=MP_CORDA, observacao="corda"); ordem += 1
+        comprimento_velcro = ws.cell(r, 22).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_velcro, materia_prima=MP_VELCRO, observacao="velcro"); ordem += 1
+        peso_cola = ws.cell(r, 24).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", peso_cola, materia_prima=MP_COLA, observacao="cola (fixação velcro)"); ordem += 1
+        ordem = _pigmento_ab(estrutura, ws, r, ordem, 26, 28)
+
+    for nome_aba, chave in (("HLR V", "HLR V"), ("HLB", "HLB")):
+        _processar_sheet_ab(nome_aba, nome_aba, chave, 50, BLOCOS_2_TIER, ELAST_2, MOCA_4, _acessorios_velcro)
+
+    # HLCC — olhal (cabo de aço) + prensa cabo + pigmento. Sem corda/escova/cola.
+    def _acessorios_hlcc(estrutura, ws, r, ordem, dn_raw):
+        comprimento_olhal = ws.cell(r, 20).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_olhal, materia_prima=MP_CORDA, observacao="olhal (cabo de aço) — preço aplicado: mesmo da corda, ver observação no código"); ordem += 1
+        qnt_prensa = ws.cell(r, 22).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", qnt_prensa, materia_prima=MP_PRENSA_CABO, observacao="prensa cabo"); ordem += 1
+        ordem = _pigmento_ab(estrutura, ws, r, ordem, 24, 26)
+
+    _processar_sheet_ab("HLCC", "HLCC", "HLCC", 46, BLOCOS_1_TIER, ELAST_2, MOCA_4, _acessorios_hlcc)
+
+    # HLCC PC — kit arruela+porca + barra roscada + placa calibradora + bumper PU +
+    # olhal (cabo de aço) + prensa cabo + pigmento. A mais "acessorizada" das 11.
+    def _acessorios_hlcc_pc(estrutura, ws, r, ordem, dn_raw):
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", 1, materia_prima=MP_KIT_ARRUELA_PORCA, observacao="kit fixação (1x)"); ordem += 1
+        comprimento_barra = ws.cell(r, 22).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_barra, materia_prima=MP_BARRA_ROSCADA, observacao="barra roscada"); ordem += 1
+        custo_placa = ws.cell(r, 24).value or 0
+        if custo_placa:
+            mp_placa = _get_or_create_mp(f"ESPUMA-PLACA-CALIBRADORA-HLCCPC-DN{_dn_str(dn_raw)}", f"Placa calibradora (usinagem+alumínio) — HLCC PC DN {_dn_str(dn_raw)}", "un", custo_placa, "Acessório")
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", 1, materia_prima=mp_placa, observacao="placa calibradora"); ordem += 1
+        peso_bumper = ws.cell(r, 25).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", peso_bumper, materia_prima=MP_BUMPER_PU, observacao="bumper PU"); ordem += 1
+        comprimento_olhal = ws.cell(r, 27).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", comprimento_olhal, materia_prima=MP_CORDA, observacao="olhal (cabo de aço) — preço aplicado: mesmo da corda, ver observação no código"); ordem += 1
+        qnt_prensa = ws.cell(r, 29).value or 0
+        _add_item(estrutura, ordem, "MATERIA_PRIMA", qnt_prensa, materia_prima=MP_PRENSA_CABO, observacao="prensa cabo"); ordem += 1
+        ordem = _pigmento_ab(estrutura, ws, r, ordem, 31, 33)
+
+    _processar_sheet_ab("HLCC PC", "HLCC PC", "HLCC PC", 57, BLOCOS_1_TIER, ELAST_2, MOCA_4, _acessorios_hlcc_pc)
+
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_CUSTOS_ESPUMA_20_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Gestão de Custos: importação da família espuma (fase 2) concluída (%d matérias-primas, %d produtos, %d estruturas).",
+        MateriaPrima.query.count(), Produto.query.count(), EstruturaProduto.query.count(),
+    )
 
 def _pagina_inicial(usuario):
     """Pra onde mandar o usuário logo após o login (e se ele visitar /login
