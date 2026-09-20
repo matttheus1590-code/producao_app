@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Necessidades do PCP · Gestão de Custos{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-diagram-3"></i> Necessidades do PCP</h4>
+  <a href="{{ url_for('custos_painel') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left"></i> Painel de Custos
+  </a>
+</div>
+<p class="text-muted small mb-3">
+  Matéria-prima necessária pra atender a fila de produção do PCP (itens ainda não finalizados), consolidada
+  automaticamente entre todos os produtos que usam a mesma matéria-prima. É sempre <strong>necessidade
+  prevista</strong> — nunca consumo real, nunca altera estoque/produção (o app ainda não tem controle de
+  almoxarifado, então não há coluna de estoque/déficit real aqui por enquanto).
+</p>
+
+<div class="table-responsive mb-4">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Matéria-prima</th>
+        <th>Unidade</th>
+        <th class="text-end">Necessidade prevista</th>
+        <th>Produtos/pedidos que geraram</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in linhas %}
+      <tr>
+        <td class="fw-semibold">{{ l.materia_prima.codigo }} — {{ l.materia_prima.descricao }}</td>
+        <td>{{ l.materia_prima.unidade }}</td>
+        <td class="text-end">{{ "%.3f"|format(l.necessidade_prevista) }}</td>
+        <td>
+          <div class="small">
+            {% for o in l.origens[:6] %}
+            <a href="{{ url_for('detalhe_pedido', pedido_id=o.pedido.id) }}" class="text-decoration-none" title="{{ o.item.descricao_produto }}">
+              {{ o.pedido.pedido_venda or ("#" ~ o.pedido.id) }} ({{ "%.2f"|format(o.quantidade_mp) }} {{ l.materia_prima.unidade }})
+            </a>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+            {% if l.origens | length > 6 %}<span class="text-muted"> +{{ l.origens | length - 6 }} outro(s)</span>{% endif %}
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="text-center text-muted py-4">Nenhuma necessidade prevista no momento.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if nao_identificados %}
+<div class="card">
+  <div class="card-header fw-semibold text-warning-emphasis">
+    <i class="bi bi-exclamation-triangle"></i> Itens do PCP não identificados automaticamente ({{ nao_identificados | length }})
+  </div>
+  <div class="card-body small text-muted">
+    Estes itens estão na fila de produção mas não foram casados com nenhum produto do catálogo de custos
+    (produto ainda não cadastrado, ou descrição/DN não bateu automaticamente) — não entram na conta acima.
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr><th>Pedido</th><th>Produto (descrição)</th><th class="text-end">Quantidade</th></tr>
+      </thead>
+      <tbody>
+        {% for item in nao_identificados[:50] %}
+        <tr>
+          <td><a href="{{ url_for('detalhe_pedido', pedido_id=item.pedido.id) }}" class="text-decoration-none">{{ item.pedido.pedido_venda or ("#" ~ item.pedido.id) }}</a></td>
+          <td>{{ item.descricao_produto }}</td>
+          <td class="text-end">{{ item.quantidade }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if nao_identificados | length > 50 %}
+  <div class="card-footer text-muted small">Mostrando os 50 primeiros de {{ nao_identificados | length }}.</div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

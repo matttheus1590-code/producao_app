@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Matérias-Primas · Gestão de Custos{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-flask"></i> Cadastro de Matérias-Primas</h4>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('custos_painel') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Painel de Custos
+    </a>
+    {% if current_user.role in ('ADMIN', 'PCP') %}
+    <a href="{{ url_for('custos_materias_primas_novo') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-circle"></i> Nova matéria-prima
+    </a>
+    {% endif %}
+  </div>
+</div>
+<p class="text-muted small mb-3">
+  Catálogo centralizado — mudar o custo aqui recalcula automaticamente todos os produtos que usam esta
+  matéria-prima (nenhum produto guarda custo fixo).
+</p>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Código</th>
+        <th>Descrição</th>
+        <th>Categoria</th>
+        <th>Unidade</th>
+        <th class="text-end">Custo atual</th>
+        <th>Atualizado em</th>
+        <th>Situação</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for mp in materias_primas %}
+      <tr>
+        <td class="fw-semibold">{{ mp.codigo }}</td>
+        <td>{{ mp.descricao }}</td>
+        <td class="text-muted small">{{ mp.categoria or "—" }}</td>
+        <td>{{ mp.unidade }}</td>
+        <td class="text-end">{{ mp.custo_atual | moeda_brl }}</td>
+        <td class="text-muted small">{{ mp.data_atualizacao_fornecedor.strftime("%d/%m/%Y") if mp.data_atualizacao_fornecedor else "—" }}</td>
+        <td>{% if mp.ativo %}<span class="badge bg-success">Ativo</span>{% else %}<span class="badge bg-secondary">Inativo</span>{% endif %}</td>
+        <td class="text-end">
+          {% if current_user.role in ('ADMIN', 'PCP') %}
+          <a href="{{ url_for('custos_materias_primas_editar', mp_id=mp.id) }}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-pencil-square"></i>
+          </a>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="text-center text-muted py-4">Nenhuma matéria-prima cadastrada.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

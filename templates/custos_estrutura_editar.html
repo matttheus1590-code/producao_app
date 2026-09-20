@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Editar estrutura · {{ produto.codigo }}{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-diagram-3"></i> Estrutura — {{ produto.codigo }} · DN {{ estrutura.dn }}</h4>
+  <a href="{{ url_for('custos_produto_detalhe', produto_id=produto.id) }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left"></i> Voltar
+  </a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Ciclo de horas (hora-homem)</div>
+  <div class="card-body">
+    <form method="post" class="row g-2 align-items-end">
+      <input type="hidden" name="acao" value="salvar_ciclo">
+      <div class="col-auto">
+        <label class="form-label small mb-0">Ciclo (horas por unidade)</label>
+        <input type="text" name="ciclo_horas" class="form-control form-control-sm" value="{{ estrutura.ciclo_horas }}" style="width:120px">
+      </div>
+      <div class="col-auto flex-grow-1">
+        <label class="form-label small mb-0">Observação</label>
+        <input type="text" name="observacao" class="form-control form-control-sm" value="{{ estrutura.observacao or '' }}">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm" type="submit">Salvar</button>
+      </div>
+    </form>
+    <div class="text-muted small mt-2">
+      Custo HH desta estrutura: {{ calc.custo_hh | moeda_brl }} (recalculado com o valor de hora-homem vigente).
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Itens da estrutura (matéria-prima / subproduto)</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Componente</th>
+          <th class="text-end">Quantidade</th>
+          <th class="text-end">Custo unit.</th>
+          <th class="text-end">Custo da linha</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in calc.linhas %}
+        <tr class="{{ 'table-warning' if l.faltando else '' }}">
+          <td>{{ l.descricao }}{% if l.item.tipo == "SUBPRODUTO" %} <span class="badge bg-info-subtle text-info-emphasis">subproduto</span>{% endif %}{% if l.item.observacao %} <span class="text-muted small">({{ l.item.observacao }})</span>{% endif %}</td>
+          <td class="text-end">{{ l.quantidade }}</td>
+          <td class="text-end">{{ l.custo_unitario | moeda_brl if l.custo_unitario is not none else "—" }}</td>
+          <td class="text-end">{{ l.custo_linha | moeda_brl if l.custo_linha is not none else "—" }}</td>
+          <td class="text-end">
+            <form method="post" onsubmit="return confirm('Remover este item da estrutura?');">
+              <input type="hidden" name="acao" value="remover_item">
+              <input type="hidden" name="item_id" value="{{ l.item.id }}">
+              <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-3">Nenhum item cadastrado ainda.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header fw-semibold">Adicionar item</div>
+  <div class="card-body">
+    <form method="post" class="row g-2 align-items-end" id="formAdicionarItem">
+      <input type="hidden" name="acao" value="adicionar_item">
+      <div class="col-auto">
+        <label class="form-label small mb-0">Tipo</label>
+        <select name="tipo" class="form-select form-select-sm" id="tipoItem" onchange="document.getElementById('campoMP').classList.toggle('d-none', this.value==='SUBPRODUTO'); document.getElementById('campoSub').classList.toggle('d-none', this.value!=='SUBPRODUTO');">
+          <option value="MATERIA_PRIMA">Matéria-prima</option>
+          <option value="SUBPRODUTO">Subproduto (outro produto do catálogo)</option>
+        </select>
+      </div>
+      <div class="col-auto flex-grow-1" id="campoMP">
+        <label class="form-label small mb-0">Matéria-prima</label>
+        <select name="materia_prima_id" class="form-select form-select-sm">
+          <option value="">Selecione...</option>
+          {% for mp in materias_primas %}
+          <option value="{{ mp.id }}">{{ mp.codigo }} — {{ mp.descricao }} ({{ mp.unidade }}, {{ mp.custo_atual | moeda_brl }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto flex-grow-1 d-none" id="campoSub">
+        <label class="form-label small mb-0">Subproduto (mesma DN "{{ estrutura.dn }}")</label>
+        <select name="subproduto_id" class="form-select form-select-sm">
+          <option value="">Selecione...</option>
+          {% for sp in subprodutos %}
+          <option value="{{ sp.id }}">{{ sp.familia }} — {{ sp.codigo }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Quantidade</label>
+        <input type="text" name="quantidade" class="form-control form-control-sm" style="width:100px" placeholder="ex. 1.5">
+      </div>
+      <div class="col-auto flex-grow-1">
+        <label class="form-label small mb-0">Observação (opcional)</label>
+        <input type="text" name="observacao" class="form-control form-control-sm">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm" type="submit">Adicionar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

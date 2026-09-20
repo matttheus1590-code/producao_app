@@ -1844,4 +1844,169 @@ class KpiGerencialMensal(db.Model):
     atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     atualizado_por = db.Column(db.String(120), nullable=True)
 
-    __table_args__ = (db.UniqueConstraint("ano", "mes", name="uq_kpi_gerencial_ano_mes"),)
+
+# =====================================================================
+# GESTÃO DE CUSTOS (pedido do Bruno, 20/09/2026) — módulo novo, Fase 1
+# (grupo PIG MANDRIL: LBD, LUN, PU CAST, CORPO MANDRIL, ELC_MG_PC, PIGS EM
+# BORRACHA). Plano completo em /root/.claude/plans/joyful-knitting-hoare.md.
+#
+# Nenhuma tabela abaixo mexe em cadastro existente — tudo novo, coberto
+# automaticamente por db.create_all() no próximo deploy.
+# =====================================================================
+
+
+class MateriaPrima(db.Model):
+    """Catálogo centralizado de matéria-prima (item 3 do pedido). Espelha o
+    padrão de LeadTimeProducao/LeadTimeProducaoHistorico (linha 545 acima):
+    cadastro simples + tabela de histórico separada, gravada só quando o
+    custo muda de verdade.
+
+    Um componente que varia de preço por DN na planilha original (tubo,
+    flange, parafuso, disco de borracha...) vira uma linha própria por DN
+    aqui (ex.: código "TUBO-DN6-LBD", "TUBO-DN8-LBD") — na prática é um
+    insumo comprado diferente por diâmetro, não uma "mesma" matéria-prima
+    com preço variável; por isso não força nenhuma modelagem especial de
+    "preço por faixa" — cada linha tem UM custo_atual, como qualquer outra
+    matéria-prima."""
+
+    __tablename__ = "materias_primas"
+
+    id = db.Column(db.Integer, primary_key=True)
+    codigo = db.Column(db.String(40), unique=True, nullable=False)
+    descricao = db.Column(db.String(200), nullable=False)
+    categoria = db.Column(db.String(60), nullable=True)  # texto livre: "Química", "Componente DN", "Acessório"...
+    unidade = db.Column(db.String(20), nullable=False, default="kg")
+    custo_atual = db.Column(db.Float, nullable=False, default=0)
+    fornecedor = db.Column(db.String(120), nullable=True)
+    data_atualizacao_fornecedor = db.Column(db.Date, nullable=True)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MateriaPrimaHistorico(db.Model):
+    """Histórico de custo de matéria-prima (itens 3 e 11 do pedido: "quando
+    o custo muda, identificar quais produtos usam" + "não apagar custos
+    anteriores"). Gravado só quando custo_atual muda de verdade, nunca em
+    todo save — mesmo padrão de LeadTimeProducaoHistorico."""
+
+    __tablename__ = "materias_primas_historico"
+
+    id = db.Column(db.Integer, primary_key=True)
+    materia_prima_id = db.Column(db.Integer, db.ForeignKey("materias_primas.id"), nullable=False)
+    custo_anterior = db.Column(db.Float, nullable=True)
+    custo_novo = db.Column(db.Float, nullable=False)
+    motivo = db.Column(db.String(300), nullable=True)
+    usuario_nome = db.Column(db.String(120), nullable=True)
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ParametroHoraHomem(db.Model):
+    """Parâmetro central de hora-homem (item 4 do pedido) — singleton: só
+    deve existir 1 linha (id=1), criada com seed de R$ 40,00/h na primeira
+    subida do app. Nenhum cálculo do módulo tem o valor de HH hardcoded —
+    todos leem esta tabela (_hora_homem_atual() em app.py)."""
+
+    __tablename__ = "parametro_hora_homem"
+
+    id = db.Column(db.Integer, primary_key=True)
+    valor = db.Column(db.Float, nullable=False, default=40.0)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    atualizado_por = db.Column(db.String(120), nullable=True)
+
+
+class ParametroHoraHomemHistorico(db.Model):
+    """Histórico de revisão do valor de hora-homem (itens 4 e 11 do
+    pedido)."""
+
+    __tablename__ = "parametro_hora_homem_historico"
+
+    id = db.Column(db.Integer, primary_key=True)
+    valor_anterior = db.Column(db.Float, nullable=True)
+    valor_novo = db.Column(db.Float, nullable=False)
+    motivo = db.Column(db.String(300), nullable=True)
+    usuario_nome = db.Column(db.String(120), nullable=True)
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Produto(db.Model):
+    """Catálogo de produtos de Gestão de Custos (item 1 do pedido) — NÃO é o
+    mesmo conceito de ItemPedido.descricao_produto (que continua texto
+    livre, sem alteração nenhuma): este catálogo é a base de custo/estrutura
+    do produto, relacionado ao PCP por correspondência de texto
+    (`chave_busca`, ILIKE contra descricao_produto) — mesmo padrão já usado
+    em LeadTimeProducao.produto, decisão confirmada com o Bruno em
+    20/09/2026."""
+
+    __tablename__ = "custos_produtos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    familia = db.Column(db.String(40), nullable=False)  # LBD, LUN, PU CAST, CORPO MANDRIL, ELC_MG_PC, PIGS EM BORRACHA...
+    codigo = db.Column(db.String(80), nullable=False)  # ex. "LBD-DG2-DS4", "PIG LUN-CP3 EPDM", "EC (AÇO)"
+    descricao = db.Column(db.String(200), nullable=True)
+    categoria = db.Column(db.String(30), nullable=True)  # PIG, Sobressalente, Acessório
+    chave_busca = db.Column(db.String(120), nullable=True)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    estruturas = db.relationship(
+        "EstruturaProduto",
+        backref="produto",
+        cascade="all, delete-orphan",
+        order_by="EstruturaProduto.dn",
+    )
+
+
+class EstruturaProduto(db.Model):
+    """A "ficha técnica" de um Produto numa DN específica (itens 1 e 2 do
+    pedido) — 1 linha por (produto, DN). O custo NUNCA fica armazenado
+    aqui — é sempre calculado ao vivo por _custo_estrutura_produto() em
+    app.py, a partir dos EstruturaProdutoItem e dos valores CORRENTES de
+    MateriaPrima/ParametroHoraHomem. Isso garante "recalcula
+    automaticamente" (itens 3 e 4) sem precisar de job nenhum."""
+
+    __tablename__ = "custos_estruturas_produto"
+    __table_args__ = (
+        db.UniqueConstraint("produto_id", "dn", name="uq_estrutura_produto_dn"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    produto_id = db.Column(db.Integer, db.ForeignKey("custos_produtos.id"), nullable=False)
+    dn = db.Column(db.String(20), nullable=False)
+    ciclo_horas = db.Column(db.Float, nullable=False, default=0)
+    escalonamento_padrao_pcs = db.Column(db.Integer, nullable=True)
+    observacao = db.Column(db.Text, nullable=True)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    atualizado_por = db.Column(db.String(120), nullable=True)
+
+    itens = db.relationship(
+        "EstruturaProdutoItem",
+        backref="estrutura",
+        cascade="all, delete-orphan",
+        order_by="EstruturaProdutoItem.ordem",
+    )
+
+
+class EstruturaProdutoItem(db.Model):
+    """Uma linha da BOM (item 2 do pedido: matéria-prima + quantidade
+    prevista). `tipo` "SUBPRODUTO" modela as dependências entre famílias
+    descobertas na planilha (LUN usa componentes calculados na aba PU CAST;
+    CORPO MANDRIL usa o custo calculado na aba LBD) de forma genérica —
+    aponta pra outro Produto, resolvido recursivamente na MESMA dn por
+    _custo_estrutura_produto()."""
+
+    __tablename__ = "custos_estrutura_itens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    estrutura_id = db.Column(db.Integer, db.ForeignKey("custos_estruturas_produto.id"), nullable=False)
+    tipo = db.Column(db.String(20), nullable=False, default="MATERIA_PRIMA")  # MATERIA_PRIMA | SUBPRODUTO
+    materia_prima_id = db.Column(db.Integer, db.ForeignKey("materias_primas.id"), nullable=True)
+    subproduto_id = db.Column(db.Integer, db.ForeignKey("custos_produtos.id"), nullable=True)
+    quantidade = db.Column(db.Float, nullable=False, default=0)
+    observacao = db.Column(db.String(200), nullable=True)
+    ordem = db.Column(db.Integer, nullable=False, default=0)
+
+    materia_prima = db.relationship("MateriaPrima", foreign_keys=[materia_prima_id])
+    subproduto = db.relationship("Produto", foreign_keys=[subproduto_id])

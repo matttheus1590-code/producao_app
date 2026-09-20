@@ -75,6 +75,8 @@ from models import (
     UFS_BRASIL,
     ControleSistema,
     Estacao,
+    EstruturaProduto,
+    EstruturaProdutoItem,
     HistoricoAlteracao,
     InspecaoFinal,
     ItemPedido,
@@ -82,8 +84,13 @@ from models import (
     LeadTimeProducao,
     LeadTimeProducaoHistorico,
     LeadTimeTransportadora,
+    MateriaPrima,
+    MateriaPrimaHistorico,
+    ParametroHoraHomem,
+    ParametroHoraHomemHistorico,
     Pedido,
     PedidoOperacao,
+    Produto,
     Programacao,
     ProjetoPD,
     RdimComponenteDesvio,
@@ -313,6 +320,8 @@ def create_app():
         _seed_usuario_pd_gustavo(app)
         _seed_usuarios_pcp_fabiano_daniel(app)
         _seed_lead_time_transportadora(app)
+        _seed_parametro_hora_homem(app)
+        _seed_custos_pig_mandril(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -323,6 +332,17 @@ def create_app():
     # esquerda (ex. "000872" -> "872") — ele reclamou vendo o número com
     # zero antes na coluna "Pedido" da Operação 360.
     app.jinja_env.filters["normalizar_pedido_venda"] = _normalizar_pedido_venda
+
+    # Filtro Jinja "moeda_brl" (módulo Gestão de Custos, 20/09/2026): mesma
+    # formatação R$ 1.234,56 já repetida manualmente em vários templates
+    # (ex. gargalos.html) — aqui vira filtro reaproveitável, pros vários
+    # valores monetários das telas novas do módulo de custos.
+    def _moeda_brl(valor):
+        if valor is None:
+            return "—"
+        return "R$ " + "{:,.2f}".format(valor).replace(",", "X").replace(".", ",").replace("X", ".")
+
+    app.jinja_env.filters["moeda_brl"] = _moeda_brl
 
     @app.context_processor
     def inject_globals():
@@ -1601,6 +1621,333 @@ def _seed_lead_time_transportadora(app):
     db.session.add(ControleSistema(chave=_CHAVE_SEED_LEAD_TIME_TRANSPORTADORA_11_09_2026))
     db.session.commit()
     app.logger.info("Lead time Transportadora: %d linhas cadastradas (origem %s).", total, _LEAD_TIME_ORIGEM_PADRAO)
+
+
+def _seed_parametro_hora_homem(app):
+    """Garante a linha singleton (id=1) de ParametroHoraHomem com o valor
+    inicial de R$ 40,00/h pedido pelo Bruno (20/09/2026, módulo Gestão de
+    Custos) — idempotente por natureza (só cria se ainda não existir
+    nenhuma linha), sem precisar de flag em ControleSistema."""
+    if db.session.get(ParametroHoraHomem, 1) is not None:
+        return
+    db.session.add(ParametroHoraHomem(id=1, valor=40.0))
+    db.session.commit()
+    app.logger.info("Gestão de Custos: parâmetro de Hora-Homem inicializado em R$ 40,00/h.")
+
+
+_CHAVE_SEED_CUSTOS_PIG_MANDRIL_20_09_2026 = "seed_custos_pig_mandril_20_09_2026"
+_CUSTOS_HH_RATE_SEED = 40.0  # valor vigente na planilha na data da importação — usado só pra DERIVAR ciclo_horas
+
+
+def _seed_custos_pig_mandril(app):
+    """Importa (uma única vez) a planilha de custos que o Bruno anexou
+    (20/09/2026, `data/custo_de_producao_20_09_2026.xlsx`) pro novo módulo
+    GESTÃO DE CUSTOS — fase 1, grupo PIG MANDRIL (LBD, LUN, PU CAST, CORPO
+    MANDRIL, ELC_MG_PC, PIGS EM BORRACHA). Roda exatamente uma vez (mesmo
+    padrão de `_seed_lead_time_transportadora`, guardado por
+    ControleSistema) — depois disso os cadastros ficam livres pra edição
+    manual sem risco de um próximo boot sobrescrever o ajuste.
+
+    As fórmulas de cada família foram mapeadas a fundo (célula a célula, não
+    só o texto explicativo da planilha, que tinha discrepâncias confirmadas
+    contra a fórmula real) e o resultado foi validado 1:1 contra a aba
+    BUSCA DE CUSTO / colunas de total de cada aba antes desta versão ir pro
+    ar — ver `scripts/importar_custos_pig_mandril.py` (script irmão usado
+    pra iterar/validar localmente) pra o relatório completo de verificação."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_CUSTOS_PIG_MANDRIL_20_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — seed não executado.", xlsx_path)
+        return
+
+    import openpyxl
+
+    def _dn_str(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(v).strip()
+
+    def _dn_num_str(v):
+        """Extrai só a parte numérica do DN, descartando aspas de polegada (ex.: "6''" -> "6") —
+        as tabelas de PIGS EM BORRACHA em PARÂMETROS usam esse formato, diferente do resto."""
+        if v is None:
+            return None
+        s = "".join(ch for ch in str(v).strip() if ch.isdigit() or ch == ".")
+        if not s:
+            return None
+        try:
+            f = float(s)
+            return str(int(f)) if f == int(f) else str(f)
+        except ValueError:
+            return s
+
+    mp_cache, produto_cache = {}, {}
+
+    def _get_or_create_mp(codigo, descricao, unidade, custo, categoria):
+        mp = mp_cache.get(codigo)
+        if mp is not None:
+            return mp
+        mp = MateriaPrima.query.filter_by(codigo=codigo).first()
+        if mp is None:
+            mp = MateriaPrima(codigo=codigo, descricao=descricao, unidade=unidade, custo_atual=custo or 0, categoria=categoria, ativo=True)
+            db.session.add(mp)
+            db.session.flush()
+        mp_cache[codigo] = mp
+        return mp
+
+    def _get_or_create_produto(familia, codigo, descricao=None, categoria=None, chave_busca=None):
+        key = (familia, codigo)
+        p = produto_cache.get(key)
+        if p is not None:
+            return p
+        p = Produto.query.filter_by(familia=familia, codigo=codigo).first()
+        if p is None:
+            p = Produto(familia=familia, codigo=codigo, descricao=descricao, categoria=categoria, chave_busca=chave_busca, ativo=True)
+            db.session.add(p)
+            db.session.flush()
+        produto_cache[key] = p
+        return p
+
+    def _get_or_create_estrutura(produto, dn, ciclo_horas):
+        e = EstruturaProduto.query.filter_by(produto_id=produto.id, dn=dn).first()
+        if e is None:
+            e = EstruturaProduto(produto_id=produto.id, dn=dn, ciclo_horas=ciclo_horas or 0, ativo=True)
+            db.session.add(e)
+            db.session.flush()
+        return e
+
+    def _add_item(estrutura, ordem, tipo, quantidade, materia_prima=None, subproduto=None, observacao=None):
+        if not quantidade:
+            return
+        db.session.add(EstruturaProdutoItem(
+            estrutura_id=estrutura.id, tipo=tipo, quantidade=quantidade,
+            materia_prima_id=materia_prima.id if materia_prima else None,
+            subproduto_id=subproduto.id if subproduto else None,
+            observacao=observacao, ordem=ordem,
+        ))
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_param = wb["PARÂMETROS"]
+
+    # 1. Matérias-primas "químicas" — PARÂMETROS linhas 6-15
+    quimicas_por_linha = {}
+    for r in range(6, 16):
+        desc = ws_param.cell(r, 2).value
+        preco = ws_param.cell(r, 5).value
+        if not desc:
+            continue
+        codigo = "QUIM-" + "".join(ch for ch in desc.upper() if ch.isalnum())[:30]
+        quimicas_por_linha[r] = _get_or_create_mp(codigo, desc, "kg", preco, "Química")
+    MP_PRE_TDI = quimicas_por_linha[6]  # 12-70 A (PRE, sistema TDI) — usado no bumper elastômero de LBD/LUN/CORPO MANDRIL
+
+    # 2. Matérias-primas por DN — PARÂMETROS linhas 82-101 (LBD_REV A: tubo/flange bumper/flange solda/parafuso/arruela/porca)
+    tubo_por_dn, flange_bumper_por_dn, flange_solda_por_dn = {}, {}, {}
+    parafuso_por_dn, arruela_por_dn, porca_por_dn = {}, {}, {}
+    for r in range(83, 102):
+        dn = _dn_str(ws_param.cell(r, 1).value)
+        if dn is None:
+            continue
+        tubo_por_dn[dn] = _get_or_create_mp(f"TUBO-DN{dn}", f"Tubo DN {dn}", "un", ws_param.cell(r, 2).value, "Componente DN")
+        flange_bumper_por_dn[dn] = _get_or_create_mp(f"FLANGE-BUMPER-DN{dn}", f"Flange bumper DN {dn}", "un", ws_param.cell(r, 3).value, "Componente DN")
+        flange_solda_por_dn[dn] = _get_or_create_mp(f"FLANGE-SOLDA-DN{dn}", f"Flange solda DN {dn}", "un", ws_param.cell(r, 4).value, "Componente DN")
+        parafuso_por_dn[dn] = _get_or_create_mp(f"PARAFUSO-DN{dn}", f"Parafuso DN {dn}", "un", ws_param.cell(r, 5).value, "Componente DN")
+        arruela_por_dn[dn] = _get_or_create_mp(f"ARRUELA-DN{dn}", f"Arruela DN {dn}", "un", ws_param.cell(r, 6).value, "Componente DN")
+        porca_por_dn[dn] = _get_or_create_mp(f"PORCA-DN{dn}", f"Porca DN {dn}", "un", ws_param.cell(r, 7).value, "Componente DN")
+
+    # 3. Matérias-primas PIGS EM BORRACHA — PARÂMETROS linhas 65-69 (copo por material) e 73-77 (componentes comuns)
+    copo_epdm_por_dn, copo_buna_por_dn, copo_viton_por_dn = {}, {}, {}
+    for r in range(65, 70):
+        dn = _dn_num_str(ws_param.cell(r, 1).value)
+        if dn is None:
+            continue
+        copo_epdm_por_dn[dn] = _get_or_create_mp(f"COPO-BORRACHA-EPDM-DN{dn}", f"Copo de borracha EPDM DN {dn}", "un", ws_param.cell(r, 2).value, "Componente DN")
+        copo_buna_por_dn[dn] = _get_or_create_mp(f"COPO-BORRACHA-BUNA-DN{dn}", f"Copo de borracha BUNA N DN {dn}", "un", ws_param.cell(r, 3).value, "Componente DN")
+        copo_viton_por_dn[dn] = _get_or_create_mp(f"COPO-BORRACHA-VITON-DN{dn}", f"Copo de borracha VITON DN {dn}", "un", ws_param.cell(r, 4).value, "Componente DN")
+
+    eixo_por_dn, cabecote_por_dn, nylon_por_dn, porca_bor_por_dn, flange_bor_por_dn = {}, {}, {}, {}, {}
+    hh_montagem_borracha = None
+    for r in range(73, 78):
+        dn = _dn_num_str(ws_param.cell(r, 1).value)
+        if dn is None:
+            continue
+        eixo_por_dn[dn] = _get_or_create_mp(f"EIXO-BORRACHA-DN{dn}", f"Eixo (barra roscada) DN {dn}", "un", ws_param.cell(r, 2).value, "Componente DN")
+        cabecote_por_dn[dn] = _get_or_create_mp(f"CABECOTE-BORRACHA-DN{dn}", f"Cabeçote PU DN {dn}", "un", ws_param.cell(r, 3).value, "Componente DN")
+        nylon_por_dn[dn] = _get_or_create_mp(f"NYLON-BORRACHA-DN{dn}", f"De nylon preto (2X) DN {dn}", "un", ws_param.cell(r, 4).value, "Componente DN")
+        porca_bor_por_dn[dn] = _get_or_create_mp(f"PORCA-BORRACHA-DN{dn}", f"Porca DN {dn}", "un", ws_param.cell(r, 5).value, "Componente DN")
+        flange_bor_por_dn[dn] = _get_or_create_mp(f"FLANGE-BORRACHA-DN{dn}", f"Flange (2X) DN {dn}", "un", ws_param.cell(r, 6).value, "Componente DN")
+        hh_montagem_borracha = ws_param.cell(r, 7).value
+
+    # 4. Família PU CAST — DS, DG, DE, COPO CONICO, COPO PISTAO, HFLEX, DISCFLEX SD, DISCFLEX SDI.
+    #    A coluna "CUSTO MP" de cada linha entra como 1 valor já consolidado por (item, DN) — não é
+    #    peso×preço fixo por coluna (varia por linha, confirmado célula a célula) — preserva fidelidade
+    #    exata ao valor da planilha em vez de arriscar uma decomposição incorreta. "BUMPER (2X)" fica de
+    #    fora (a própria aba referencia a LBD pra esse valor, não tem BOM própria).
+    ws_pu = wb["PU CAST"]
+    col_map = {"ITEM": 27, "CUSTO_MP": 29, "CUSTO_HH_UNIT": 34, "DN_NUM": 37}
+    # chave de busca pra casar com o texto livre dos pedidos do PCP (confirmado por amostragem real:
+    # "DISCO SELO DN 12"", "PIG DISCFLEX SDI DN 6"" etc. — vendidos/produzidos como sobressalente avulso).
+    chave_busca_pu_cast = {
+        "DS": "DISCO SELO", "DG": "DISCO GUIA", "DE": "DISCO ESPAÇADOR",
+        "COPO CONICO": "COPO CONICO", "COPO PISTAO": "COPO PIST", "HFLEX": "HFLEX",
+        "DISCFLEX SD": "DISCFLEX SD", "DISCFLEX SDI": "DISCFLEX SDI",
+    }
+    pu_cast_estruturas = {}
+    for r in range(10, ws_pu.max_row + 1):
+        item = ws_pu.cell(r, col_map["ITEM"]).value
+        dn_num = ws_pu.cell(r, col_map["DN_NUM"]).value
+        if item is None or item == "BUMPER (2X)" or dn_num in (None, ""):
+            continue
+        dn = _dn_str(dn_num)
+        custo_mp = ws_pu.cell(r, col_map["CUSTO_MP"]).value or 0
+        custo_hh_unit = ws_pu.cell(r, col_map["CUSTO_HH_UNIT"]).value or 0
+        ciclo_horas = round(custo_hh_unit / _CUSTOS_HH_RATE_SEED, 6) if custo_hh_unit else 0
+
+        produto = _get_or_create_produto("PU CAST", item, descricao=f"PU CAST — {item}", categoria="Sobressalente", chave_busca=chave_busca_pu_cast.get(item))
+        estrutura = _get_or_create_estrutura(produto, dn, ciclo_horas)
+        slug = "".join(ch for ch in str(item).upper() if ch.isalnum())[:20]
+        mp = _get_or_create_mp(f"PUCAST-MP-{slug}-DN{dn}", f"PU CAST {item} — matéria-prima consolidada DN {dn}", "un", custo_mp, "Química (consolidada)")
+        _add_item(estrutura, 0, "MATERIA_PRIMA", 1, materia_prima=mp)
+        pu_cast_estruturas[(item, dn)] = estrutura
+
+    def _itens_corpo_fixacao(estrutura, ws, r, ordem):
+        """Tubo/flanges/bumper/parafuso/arruela/porca de 1 linha da aba LBD — reaproveitado por LBD,
+        LUN e CORPO MANDRIL (que usa exatamente os mesmos itens/quantidades da LBD, sem os discos)."""
+        tubo_qtd = ws.cell(r, 17).value or 0
+        flange_bumper_qtd = 2 if ws.cell(r, 24).value else 0
+        bumper_peso_total = ws.cell(r, 27).value or 0
+        flange_solda_qtd = 2 if ws.cell(r, 35).value else 0
+        parafuso_qtd = ws.cell(r, 38).value or 0
+        arruela_qtd = ws.cell(r, 43).value or 0
+        porca_qtd = ws.cell(r, 48).value or 0
+        if tubo_qtd and dn in tubo_por_dn:
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", tubo_qtd, materia_prima=tubo_por_dn[dn]); ordem += 1
+        if flange_bumper_qtd and dn in flange_bumper_por_dn:
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", flange_bumper_qtd, materia_prima=flange_bumper_por_dn[dn]); ordem += 1
+        if bumper_peso_total:
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", bumper_peso_total, materia_prima=MP_PRE_TDI, observacao="bumper (elastômero)"); ordem += 1
+        if flange_solda_qtd and dn in flange_solda_por_dn:
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", flange_solda_qtd, materia_prima=flange_solda_por_dn[dn]); ordem += 1
+        if parafuso_qtd and dn in parafuso_por_dn:
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", parafuso_qtd, materia_prima=parafuso_por_dn[dn]); ordem += 1
+        if arruela_qtd and dn in arruela_por_dn:
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", arruela_qtd, materia_prima=arruela_por_dn[dn]); ordem += 1
+        if porca_qtd and dn in porca_por_dn:
+            _add_item(estrutura, ordem, "MATERIA_PRIMA", porca_qtd, materia_prima=porca_por_dn[dn]); ordem += 1
+        return ordem
+
+    # 5. Família LBD — produto único "LBD-DG2-DS4"
+    ws_lbd = wb["LBD"]
+    produto_lbd = _get_or_create_produto("LBD", "LBD-DG2-DS4", descricao="Mandril LBD-DG2-DS4", categoria="PIG", chave_busca="LBD")
+    for r in range(6, 28):
+        modelo = ws_lbd.cell(r, 1).value
+        dn_val = ws_lbd.cell(r, 2).value
+        if modelo is None or dn_val is None:
+            continue
+        dn = _dn_str(dn_val)
+        custo_hh_unit = ws_lbd.cell(r, 59).value or 0  # BG
+        ciclo_horas = round(custo_hh_unit / _CUSTOS_HH_RATE_SEED, 6) if custo_hh_unit else 0
+        estrutura = _get_or_create_estrutura(produto_lbd, dn, ciclo_horas)
+        ordem = 0
+        for item_pu, qtd in (("DS", 4), ("DG", 2), ("DE", 6)):  # multiplicador fixo confirmado nas fórmulas
+            sub = pu_cast_estruturas.get((item_pu, dn))
+            if sub is not None:
+                _add_item(estrutura, ordem, "SUBPRODUTO", qtd, subproduto=produto_cache[("PU CAST", item_pu)]); ordem += 1
+        _itens_corpo_fixacao(estrutura, ws_lbd, r, ordem)
+
+    # 6. Família LUN — produto único "LUN" (mesma estrutura da LBD, discos com quantidade variável por DN)
+    ws_lun = wb["LUN"]
+    produto_lun = _get_or_create_produto("LUN", "LUN", descricao="Mandril LUN", categoria="PIG", chave_busca="LUN")
+    for r in range(6, 28):
+        modelo = ws_lun.cell(r, 1).value
+        dn_val = ws_lun.cell(r, 2).value
+        if modelo is None or dn_val is None:
+            continue
+        dn = _dn_str(dn_val)
+        custo_hh_unit = ws_lun.cell(r, 59).value or 0
+        ciclo_horas = round(custo_hh_unit / _CUSTOS_HH_RATE_SEED, 6) if custo_hh_unit else 0
+        estrutura = _get_or_create_estrutura(produto_lun, dn, ciclo_horas)
+        ordem = 0
+        for item_pu, qtd_col in (("COPO CONICO", 3), ("DS", 6), ("DG", 9), ("DE", 12)):
+            qtd = ws_lun.cell(r, qtd_col).value or 0
+            sub = pu_cast_estruturas.get((item_pu, dn))
+            if qtd and sub is not None:
+                _add_item(estrutura, ordem, "SUBPRODUTO", qtd, subproduto=produto_cache[("PU CAST", item_pu)]); ordem += 1
+        _itens_corpo_fixacao(estrutura, ws_lun, r, ordem)
+
+    # 7. Família CORPO MANDRIL — "corpo + fixação" (sem discos). Confirmado via fórmula real:
+    #    CORPO MANDRIL!D = LBD!AZ (tubo+flange bumper+bumper+flange solda), CORPO MANDRIL!E = LBD!BA
+    #    (parafuso+arruela+porca) — sempre lidas da MESMA linha da LBD (mesma DN, quantidades reais,
+    #    não fixas). Relê a aba LBD (não a CORPO MANDRIL, que só tem DN+total, sem quantidade); a aba
+    #    CORPO MANDRIL só é usada pro HH/ciclo (coluna H), que é independente.
+    ws_corpo = wb["CORPO MANDRIL"]
+    produto_corpo = _get_or_create_produto("CORPO MANDRIL", "CORPO + FIXAÇÃO", descricao="Corpo do PIG (tubo+flanges+fixação, sem discos)", categoria="Sobressalente", chave_busca="CORPO MANDRIL")
+    for r in range(6, 28):
+        dn_val = ws_lbd.cell(r, 2).value
+        if dn_val is None:
+            continue
+        dn = _dn_str(dn_val)
+        custo_hh_cico = 0
+        for rc in range(4, ws_corpo.max_row + 1):
+            if _dn_str(ws_corpo.cell(rc, 3).value) == dn:
+                custo_hh_cico = ws_corpo.cell(rc, 8).value or 0
+                break
+        ciclo_horas = round(custo_hh_cico / _CUSTOS_HH_RATE_SEED, 6) if custo_hh_cico else 0
+        estrutura = _get_or_create_estrutura(produto_corpo, dn, ciclo_horas)
+        _itens_corpo_fixacao(estrutura, ws_lbd, r, 0)
+
+    # 8. Família ELC_MG_PC — ELC (AÇO), ELP (PP), CINTA MAGNÉTICA, PLACA CALIBRADORA — custo MP já
+    #    vem pronto por DN (fonte externa não enviada), vira 1 matéria-prima por (item, DN).
+    ws_elc = wb["ELC_MG_PC"]
+    for r in range(4, ws_elc.max_row + 1):
+        item = ws_elc.cell(r, 2).value
+        dn_val = ws_elc.cell(r, 3).value
+        custo_mp = ws_elc.cell(r, 4).value
+        custo_hh_unit = ws_elc.cell(r, 9).value or 0
+        if item is None or dn_val is None:
+            continue
+        dn = _dn_str(dn_val)
+        slug = "".join(ch for ch in item.upper() if ch.isalnum())[:20]
+        mp = _get_or_create_mp(f"{slug}-MP-DN{dn}", f"{item} — matéria-prima DN {dn}", "un", custo_mp, "Acessório")
+        produto = _get_or_create_produto("ELC_MG_PC", item, descricao=item, categoria="Acessório", chave_busca=item.split(" ")[0])
+        ciclo_horas = round(custo_hh_unit / _CUSTOS_HH_RATE_SEED, 6) if custo_hh_unit else 0
+        estrutura = _get_or_create_estrutura(produto, dn, ciclo_horas)
+        _add_item(estrutura, 0, "MATERIA_PRIMA", 1, materia_prima=mp)
+
+    # 9. Família PIGS EM BORRACHA — 3 variantes de material (EPDM, BUNA N, VITON), DN 6/8/10/12/14
+    ciclo_borracha = round((hh_montagem_borracha or 0) / _CUSTOS_HH_RATE_SEED, 6)
+    variantes_borracha = (
+        ("PIG LUN-CP3 EPDM", copo_epdm_por_dn, "LUN-CP3 EPDM"),
+        ("PIG LUN-CP3 BUNA N", copo_buna_por_dn, "LUN-CP3 BUNA"),
+        ("PIG LUN-CP3 VITON", copo_viton_por_dn, "LUN-CP3 VITON"),
+    )
+    for codigo, copo_por_dn, chave in variantes_borracha:
+        produto = _get_or_create_produto("PIGS EM BORRACHA", codigo, descricao=codigo, categoria="PIG", chave_busca=chave)
+        for dn in ("6", "8", "10", "12", "14"):
+            estrutura = _get_or_create_estrutura(produto, dn, ciclo_borracha)
+            ordem = 0
+            if dn in copo_por_dn:
+                _add_item(estrutura, ordem, "MATERIA_PRIMA", 3, materia_prima=copo_por_dn[dn], observacao="3X"); ordem += 1  # "COPO BORRACHA ___ (3X)"
+            if dn in eixo_por_dn:
+                _add_item(estrutura, ordem, "MATERIA_PRIMA", 1, materia_prima=eixo_por_dn[dn]); ordem += 1
+            if dn in cabecote_por_dn:
+                _add_item(estrutura, ordem, "MATERIA_PRIMA", 1, materia_prima=cabecote_por_dn[dn]); ordem += 1
+            if dn in nylon_por_dn:
+                _add_item(estrutura, ordem, "MATERIA_PRIMA", 1, materia_prima=nylon_por_dn[dn]); ordem += 1
+            if dn in porca_bor_por_dn:
+                _add_item(estrutura, ordem, "MATERIA_PRIMA", 1, materia_prima=porca_bor_por_dn[dn]); ordem += 1
+            if dn in flange_bor_por_dn:
+                _add_item(estrutura, ordem, "MATERIA_PRIMA", 1, materia_prima=flange_bor_por_dn[dn]); ordem += 1
+
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_CUSTOS_PIG_MANDRIL_20_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Gestão de Custos: importação inicial do grupo PIG MANDRIL concluída (%d matérias-primas, %d produtos, %d estruturas).",
+        MateriaPrima.query.count(), Produto.query.count(), EstruturaProduto.query.count(),
+    )
 
 
 def _pagina_inicial(usuario):
@@ -8330,6 +8677,338 @@ def _construir_backup_pedidos_wb():
     return wb
 
 
+# =====================================================================
+# GESTÃO DE CUSTOS (pedido do Bruno, 20/09/2026) — módulo novo, Fase 1
+# (grupo PIG MANDRIL: LBD, LUN, PU CAST, CORPO MANDRIL, ELC_MG_PC, PIGS EM
+# BORRACHA). Plano completo em /root/.claude/plans/joyful-knitting-hoare.md.
+#
+# Princípio central do módulo inteiro: nenhum custo fica armazenado — tudo
+# é calculado ao vivo a partir de MateriaPrima.custo_atual e
+# ParametroHoraHomem.valor CORRENTES (_custo_estrutura_produto). É isso que
+# garante "mudou o preço, recalcula tudo automaticamente" sem job nenhum.
+# =====================================================================
+
+def _hora_homem_atual():
+    p = db.session.get(ParametroHoraHomem, 1)
+    return p.valor if p else 40.0
+
+
+def _custo_estrutura_produto(estrutura, _visitados=None):
+    """Calcula o custo de 1 unidade de uma EstruturaProduto (produto numa
+    DN), resolvendo itens SUBPRODUTO recursivamente (modela as dependências
+    entre abas descobertas na planilha: LUN usa PU CAST, CORPO MANDRIL usa
+    LBD). `_visitados` evita loop infinito se alguém cadastrar uma
+    referência circular por engano — nunca deveria acontecer num uso normal,
+    mas é uma trava de segurança barata.
+
+    Retorna dict: custo_mp, custo_hh, custo_total, linhas (detalhe de cada
+    item, pra tela de composição), incompleto (True se algum SUBPRODUTO não
+    tinha estrutura cadastrada na mesma DN — custo fica parcial, mostrado
+    com aviso na tela em vez de mentir um total errado)."""
+    _visitados = _visitados or set()
+    if estrutura.id in _visitados:
+        return {"custo_mp": 0.0, "custo_hh": 0.0, "custo_total": 0.0, "linhas": [], "incompleto": True}
+    _visitados = _visitados | {estrutura.id}
+
+    custo_mp = 0.0
+    linhas = []
+    incompleto = False
+
+    for item in estrutura.itens:
+        if item.tipo == "SUBPRODUTO":
+            sub_estrutura = None
+            if item.subproduto_id:
+                sub_estrutura = EstruturaProduto.query.filter_by(
+                    produto_id=item.subproduto_id, dn=estrutura.dn, ativo=True
+                ).first()
+            if sub_estrutura is None:
+                incompleto = True
+                linhas.append({
+                    "item": item, "descricao": item.subproduto.codigo if item.subproduto else "?",
+                    "quantidade": item.quantidade, "custo_unitario": None, "custo_linha": None,
+                    "faltando": True,
+                })
+                continue
+            sub_calc = _custo_estrutura_produto(sub_estrutura, _visitados)
+            incompleto = incompleto or sub_calc["incompleto"]
+            custo_unit = sub_calc["custo_total"]
+            custo_linha = custo_unit * item.quantidade
+            custo_mp += custo_linha
+            linhas.append({
+                "item": item, "descricao": item.subproduto.codigo if item.subproduto else "?",
+                "quantidade": item.quantidade, "custo_unitario": custo_unit, "custo_linha": custo_linha,
+                "faltando": False,
+            })
+        else:
+            mp = item.materia_prima
+            custo_unit = mp.custo_atual if mp else None
+            if mp is None:
+                incompleto = True
+                linhas.append({
+                    "item": item, "descricao": "?", "quantidade": item.quantidade,
+                    "custo_unitario": None, "custo_linha": None, "faltando": True,
+                })
+                continue
+            custo_linha = custo_unit * item.quantidade
+            custo_mp += custo_linha
+            linhas.append({
+                "item": item, "descricao": f"{mp.codigo} — {mp.descricao}", "quantidade": item.quantidade,
+                "unidade": mp.unidade, "custo_unitario": custo_unit, "custo_linha": custo_linha,
+                "faltando": False,
+            })
+
+    custo_hh = (estrutura.ciclo_horas or 0) * _hora_homem_atual()
+    return {
+        "custo_mp": round(custo_mp, 4),
+        "custo_hh": round(custo_hh, 4),
+        "custo_total": round(custo_mp + custo_hh, 4),
+        "linhas": linhas,
+        "incompleto": incompleto,
+    }
+
+
+def _produtos_catalogo(familia=None, apenas_ativos=True):
+    """Lista Produto + EstruturaProduto com custo calculado — equivalente
+    funcional da aba BUSCA DE CUSTO (índice consolidado), item 1/2 do
+    pedido. Cada linha = 1 (produto, DN)."""
+    q = Produto.query
+    if apenas_ativos:
+        q = q.filter_by(ativo=True)
+    if familia:
+        q = q.filter_by(familia=familia)
+    produtos = q.order_by(Produto.familia, Produto.codigo).all()
+
+    linhas = []
+    for p in produtos:
+        estruturas = [e for e in p.estruturas if e.ativo] if apenas_ativos else list(p.estruturas)
+        for e in sorted(estruturas, key=lambda e: _chave_ordenacao_dn(e.dn)):
+            calc = _custo_estrutura_produto(e)
+            linhas.append({"produto": p, "estrutura": e, "calc": calc})
+    return linhas
+
+
+def _chave_ordenacao_dn(dn):
+    """Tenta ordenar DN numericamente (2, 3, 4, 6, 8...) em vez de
+    alfabeticamente (10 antes de 2) — best-effort, cai pro texto se não
+    conseguir extrair número."""
+    m = re.search(r"\d+(?:[.,]\d+)?", dn or "")
+    return (0, float(m.group(0).replace(",", "."))) if m else (1, dn or "")
+
+
+_FAMILIAS_PRODUTO_PCP = ("LBD", "LUN", "PU CAST", "CORPO MANDRIL", "ELC_MG_PC", "PIGS EM BORRACHA")
+
+# Famílias da planilha ainda NÃO implementadas nesta fase (Fase 2 = espuma,
+# Fase 3 = PU/silicone) — usado só pra mostrar "chega numa próxima fase" na
+# tela de Custos dos Produtos, em vez de simplesmente omitir sem explicação.
+_FAMILIAS_FASE_SEGUINTE = (
+    "H", "HS", "HL", "HLR", "HLR X", "HLR V", "HLR R", "HLB", "HDISC", "HLCC", "HLCC PC",
+    "SUPERFLEX", "SILICONE",
+)
+
+
+_RE_FRACAO_POL = re.compile(r"\d\s*/\s*\d+\s*(?:''|\"|['’”]|POL(?:EGADAS)?\b)", re.I)
+
+
+def _dn_extraido_para_matching_custos(descricao):
+    """Reaproveita `_classificar_dn_mm` (validada pro item 9 da tela de
+    KPIs), mas descarta o resultado quando a medida em polegadas é uma
+    fração/número misto (ex. "5 1/8\"", "6 1/2\"" — tamanhos reais de
+    tubo/OD que aparecem na base). `_classificar_dn_mm` foi feita pra
+    agrupamento em relatório (best-effort, ~95% de cobertura, erro ali só
+    põe o item no grupo errado de um relatório) e nesses casos ela captura
+    só o denominador da fração (ex. "5 1/8\"" -> "8", "6 1/2\"" -> "2"),
+    que aqui viraria uma matéria-prima/custo ERRADO atribuído em silêncio —
+    achado ao validar manualmente casamentos reais do PCP nesta sessão.
+    Aqui a régua é outra: preferir não identificar a identificar errado."""
+    if not descricao or _RE_FRACAO_POL.search(descricao):
+        return None
+    return _classificar_dn_mm(descricao)
+
+
+def _matching_produto_pcp(item_pedido):
+    """Casa um ItemPedido com um (Produto, EstruturaProduto) do catálogo de
+    custos, por correspondência de texto — mesmo princípio já usado em
+    LeadTimeProducao.produto (ILIKE contido na descrição), decisão
+    confirmada com o Bruno em 20/09/2026. DN extraído via
+    `_dn_extraido_para_matching_custos` (ver docstring — protege contra
+    tamanhos fracionários mal interpretados pela extração genérica de DN).
+
+    Retorna a EstruturaProduto casada, ou None se não achou correspondência
+    (o chamador trata como "não identificado automaticamente" — nunca some
+    o item da conta, sempre aparece explicitamente como não-casado)."""
+    # espaços duplos são comuns na digitação livre dos pedidos (ex. "DISCO  GUIA  DN 18\"") —
+    # normaliza pra não perder correspondências óbvias por causa de formatação.
+    descricao = re.sub(r"\s+", " ", (item_pedido.descricao_produto or "").upper()).strip()
+    if not descricao:
+        return None
+
+    dn_extraido = _dn_extraido_para_matching_custos(item_pedido.descricao_produto)
+    if dn_extraido is None:
+        return None
+
+    candidatos = Produto.query.filter(Produto.ativo == True, Produto.chave_busca.isnot(None)).all()  # noqa: E712
+    melhor = None
+    melhor_especificidade = -1
+    for produto in candidatos:
+        chave = re.sub(r"\s+", " ", (produto.chave_busca or "").upper()).strip()
+        if not chave or chave not in descricao:
+            continue
+        for estrutura in produto.estruturas:
+            if not estrutura.ativo:
+                continue
+            dn_produto = (estrutura.dn or "").strip()
+            # compara o número puro do DN (ignora aspas/"mm"/espaços) —
+            # dn_extraido vem no formato 6" ou 150MM; estrutura.dn é só o
+            # número (ex. "6") como na planilha original.
+            numero_extraido = re.sub(r"[^\d.,]", "", dn_extraido)
+            numero_estrutura = re.sub(r"[^\d.,]", "", dn_produto)
+            if numero_extraido and numero_estrutura and numero_extraido == numero_estrutura:
+                # produto mais específico (chave de busca mais longa) ganha
+                # em caso de mais de um bater (ex. "LBD" e "LBD-DG2-DS4")
+                if len(chave) > melhor_especificidade:
+                    melhor = estrutura
+                    melhor_especificidade = len(chave)
+    return melhor
+
+
+def _necessidades_pcp_materia_prima():
+    """Item 5/6 do pedido — o objetivo principal do módulo: a partir da fila
+    do PCP (itens ainda não finalizados), identifica automaticamente
+    produto -> estrutura -> matérias-primas necessárias, consolidando por
+    matéria-prima entre todos os produtos que a usam.
+
+    NUNCA grava nada (item 7: é sempre "necessidade prevista" calculada na
+    hora, nunca consumo real, nunca mexe em estoque/produção) — recalcula do
+    zero a cada chamada, então acompanha qualquer mudança do PCP
+    automaticamente (item 8), sem duplicidade e sem precisar de
+    sincronização manual."""
+    itens_pendentes = (
+        ItemPedido.query.join(Pedido)
+        .filter(ItemPedido.status_producao != "FINALIZADO")
+        .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+        .all()
+    )
+
+    necessidades = {}  # materia_prima_id -> {materia_prima, necessidade, origens: [...]}
+    nao_identificados = []
+
+    def _explodir(estrutura, quantidade_produto, item_pedido, _visitados=None):
+        _visitados = _visitados or set()
+        if estrutura.id in _visitados:
+            return
+        _visitados = _visitados | {estrutura.id}
+        for comp in estrutura.itens:
+            if comp.tipo == "SUBPRODUTO":
+                if not comp.subproduto_id:
+                    continue
+                sub_estrutura = EstruturaProduto.query.filter_by(
+                    produto_id=comp.subproduto_id, dn=estrutura.dn, ativo=True
+                ).first()
+                if sub_estrutura:
+                    _explodir(sub_estrutura, quantidade_produto * comp.quantidade, item_pedido, _visitados)
+            else:
+                if not comp.materia_prima_id:
+                    continue
+                mp = comp.materia_prima
+                qtd_necessaria = quantidade_produto * comp.quantidade
+                bucket = necessidades.setdefault(mp.id, {"materia_prima": mp, "necessidade_prevista": 0.0, "origens": []})
+                bucket["necessidade_prevista"] += qtd_necessaria
+                bucket["origens"].append({
+                    "pedido": item_pedido.pedido, "item": item_pedido, "quantidade_mp": qtd_necessaria,
+                })
+
+    for item in itens_pendentes:
+        estrutura = _matching_produto_pcp(item)
+        if estrutura is None:
+            nao_identificados.append(item)
+            continue
+        _explodir(estrutura, item.quantidade or 0, item)
+
+    linhas = sorted(necessidades.values(), key=lambda b: b["materia_prima"].descricao)
+    for linha in linhas:
+        linha["necessidade_prevista"] = round(linha["necessidade_prevista"], 3)
+
+    return {"linhas": linhas, "nao_identificados": nao_identificados}
+
+
+def _visao_rapida_custos():
+    """Item 9 do pedido — indicadores do painel de Gestão de Custos. Os 2
+    indicadores que o texto original liga a estoque ("MP em risco",
+    "produtos impactados por falta de MP") não têm como significar risco de
+    ruptura sem estoque real cadastrado no app (nenhum existe hoje — decisão
+    já combinada com o Bruno) — nesta fase eles viram indicador de
+    QUALIDADE DE DADO (matéria-prima sem custo cadastrado / item do PCP não
+    identificado automaticamente), rotulados de forma explícita na tela pra
+    não prometer um risco de estoque que o dado não sustenta."""
+    necessidades = _necessidades_pcp_materia_prima()
+
+    produtos_cadastrados = Produto.query.filter_by(ativo=True).count()
+    mps_cadastradas = MateriaPrima.query.filter_by(ativo=True).count()
+
+    custo_total_previsto = 0.0
+    itens_pendentes = ItemPedido.query.filter(ItemPedido.status_producao != "FINALIZADO").all()
+    for item in itens_pendentes:
+        estrutura = _matching_produto_pcp(item)
+        if estrutura is None:
+            continue
+        calc = _custo_estrutura_produto(estrutura)
+        custo_total_previsto += calc["custo_total"] * (item.quantidade or 0)
+
+    mps_sem_custo = [
+        linha["materia_prima"] for linha in necessidades["linhas"]
+        if not linha["materia_prima"].custo_atual
+    ]
+
+    return {
+        "produtos_cadastrados": produtos_cadastrados,
+        "mps_cadastradas": mps_cadastradas,
+        "custo_total_previsto": round(custo_total_previsto, 2),
+        "materias_primas_com_necessidade": len(necessidades["linhas"]),
+        "mps_sem_custo": mps_sem_custo,
+        "itens_nao_identificados": necessidades["nao_identificados"],
+        "hora_homem_atual": _hora_homem_atual(),
+    }
+
+
+def _validar_materia_prima_form(f, ignorar_id=None):
+    codigo = (f.get("codigo") or "").strip().upper()
+    descricao = (f.get("descricao") or "").strip()
+    unidade = (f.get("unidade") or "").strip() or "kg"
+    categoria = (f.get("categoria") or "").strip() or None
+    fornecedor = (f.get("fornecedor") or "").strip() or None
+    custo_atual = _parse_float_form(f.get("custo_atual"), default=None)
+
+    if not codigo:
+        return None, "Informe o código da matéria-prima."
+    if not descricao:
+        return None, "Informe a descrição da matéria-prima."
+    if custo_atual is None or custo_atual < 0:
+        return None, "Informe um custo atual válido (maior ou igual a zero)."
+
+    conflito = MateriaPrima.query.filter_by(codigo=codigo)
+    if ignorar_id is not None:
+        conflito = conflito.filter(MateriaPrima.id != ignorar_id)
+    if conflito.first() is not None:
+        return None, f'Já existe uma matéria-prima cadastrada com o código "{codigo}".'
+
+    return {
+        "codigo": codigo, "descricao": descricao, "unidade": unidade, "categoria": categoria,
+        "fornecedor": fornecedor, "custo_atual": custo_atual,
+    }, None
+
+
+def _registrar_revisao_materia_prima(mp, valor_anterior, valor_novo, motivo):
+    if valor_anterior == valor_novo:
+        return
+    db.session.add(
+        MateriaPrimaHistorico(
+            materia_prima_id=mp.id, custo_anterior=valor_anterior, custo_novo=valor_novo,
+            motivo=(motivo or "").strip() or None,
+            usuario_nome=current_user.nome if current_user.is_authenticated else None,
+        )
+    )
+
+
 def register_routes(app):
     @app.before_request
     def _restringir_acesso_por_papel():
@@ -9110,6 +9789,206 @@ def register_routes(app):
             "cadastros_lead_time_producao_form.html", entrada=entrada, form={},
             estacoes=estacoes_ativas, historico=historico,
         )
+
+    # ------------------------------------------------------------------
+    # GESTÃO DE CUSTOS (pedido do Bruno, 20/09/2026) — Fase 1: grupo PIG
+    # MANDRIL. Visualização liberada pra ADMIN/PCP/GESTAO (mesmo grupo que
+    # já vê KPIs/Gargalos/Faturamento); edição (matéria-prima, hora-homem,
+    # estrutura) só ADMIN/PCP, via @requer_role — mesmo padrão do resto do
+    # app. Plano completo em /root/.claude/plans/joyful-knitting-hoare.md.
+    # ------------------------------------------------------------------
+    @app.route("/custos")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_painel():
+        return render_template("custos_painel.html", visao=_visao_rapida_custos())
+
+    @app.route("/custos/produtos")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_produtos():
+        familia = request.args.get("familia") or None
+        linhas = _produtos_catalogo(familia=familia)
+        familias_com_dados = sorted({p.familia for p in Produto.query.filter_by(ativo=True).all()})
+        return render_template(
+            "custos_produtos.html", linhas=linhas, familia_selecionada=familia,
+            familias_com_dados=familias_com_dados, familias_futuras=_FAMILIAS_FASE_SEGUINTE,
+        )
+
+    @app.route("/custos/produtos/<int:produto_id>")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_produto_detalhe(produto_id):
+        produto = db.session.get(Produto, produto_id)
+        if produto is None:
+            flash("Produto não encontrado.", "danger")
+            return redirect(url_for("custos_produtos"))
+        estruturas = sorted([e for e in produto.estruturas if e.ativo], key=lambda e: _chave_ordenacao_dn(e.dn))
+        composicoes = [{"estrutura": e, "calc": _custo_estrutura_produto(e)} for e in estruturas]
+        return render_template("custos_produto_detalhe.html", produto=produto, composicoes=composicoes)
+
+    @app.route("/custos/estrutura/<int:produto_id>/<path:dn>/editar", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def custos_estrutura_editar(produto_id, dn):
+        produto = db.session.get(Produto, produto_id)
+        if produto is None:
+            flash("Produto não encontrado.", "danger")
+            return redirect(url_for("custos_produtos"))
+        estrutura = EstruturaProduto.query.filter_by(produto_id=produto_id, dn=dn).first()
+        if estrutura is None:
+            flash(f'Estrutura para DN "{dn}" não encontrada.', "danger")
+            return redirect(url_for("custos_produto_detalhe", produto_id=produto_id))
+
+        if request.method == "POST":
+            acao = request.form.get("acao")
+            if acao == "adicionar_item":
+                tipo = request.form.get("tipo") or "MATERIA_PRIMA"
+                quantidade = _parse_float_form(request.form.get("quantidade"), default=None)
+                if quantidade is None or quantidade <= 0:
+                    flash("Informe uma quantidade válida (maior que zero).", "danger")
+                elif tipo == "SUBPRODUTO":
+                    subproduto_id = request.form.get("subproduto_id", type=int)
+                    if not subproduto_id:
+                        flash("Selecione o subproduto.", "danger")
+                    else:
+                        db.session.add(EstruturaProdutoItem(
+                            estrutura_id=estrutura.id, tipo="SUBPRODUTO", subproduto_id=subproduto_id,
+                            quantidade=quantidade, observacao=(request.form.get("observacao") or "").strip() or None,
+                            ordem=len(estrutura.itens),
+                        ))
+                        db.session.commit()
+                        flash("Item adicionado à estrutura.", "success")
+                else:
+                    materia_prima_id = request.form.get("materia_prima_id", type=int)
+                    if not materia_prima_id:
+                        flash("Selecione a matéria-prima.", "danger")
+                    else:
+                        db.session.add(EstruturaProdutoItem(
+                            estrutura_id=estrutura.id, tipo="MATERIA_PRIMA", materia_prima_id=materia_prima_id,
+                            quantidade=quantidade, observacao=(request.form.get("observacao") or "").strip() or None,
+                            ordem=len(estrutura.itens),
+                        ))
+                        db.session.commit()
+                        flash("Item adicionado à estrutura.", "success")
+            elif acao == "remover_item":
+                item_id = request.form.get("item_id", type=int)
+                item = db.session.get(EstruturaProdutoItem, item_id)
+                if item and item.estrutura_id == estrutura.id:
+                    db.session.delete(item)
+                    db.session.commit()
+                    flash("Item removido da estrutura.", "success")
+            elif acao == "salvar_ciclo":
+                ciclo = _parse_float_form(request.form.get("ciclo_horas"), default=None)
+                if ciclo is None or ciclo < 0:
+                    flash("Informe um ciclo de horas válido.", "danger")
+                else:
+                    estrutura.ciclo_horas = ciclo
+                    estrutura.observacao = (request.form.get("observacao") or "").strip() or None
+                    estrutura.atualizado_por = current_user.nome if current_user.is_authenticated else None
+                    db.session.commit()
+                    flash("Ciclo de horas atualizado.", "success")
+            return redirect(url_for("custos_estrutura_editar", produto_id=produto_id, dn=dn))
+
+        materias_primas = MateriaPrima.query.filter_by(ativo=True).order_by(MateriaPrima.codigo).all()
+        subprodutos = Produto.query.filter(Produto.ativo == True, Produto.id != produto_id).order_by(Produto.familia, Produto.codigo).all()  # noqa: E712
+        calc = _custo_estrutura_produto(estrutura)
+        return render_template(
+            "custos_estrutura_editar.html", produto=produto, estrutura=estrutura, calc=calc,
+            materias_primas=materias_primas, subprodutos=subprodutos,
+        )
+
+    @app.route("/custos/materias-primas")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_materias_primas():
+        mps = MateriaPrima.query.order_by(MateriaPrima.categoria, MateriaPrima.codigo).all()
+        return render_template("custos_materias_primas.html", materias_primas=mps)
+
+    @app.route("/custos/materias-primas/novo", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def custos_materias_primas_novo():
+        if request.method == "POST":
+            f = request.form
+            dados, erro = _validar_materia_prima_form(f)
+            if erro:
+                flash(erro, "danger")
+                return render_template("custos_materia_prima_form.html", mp=None, form=f, historico=[])
+            nova = MateriaPrima(ativo=True, **dados)
+            db.session.add(nova)
+            db.session.commit()
+            flash(f'Matéria-prima "{nova.codigo}" cadastrada com sucesso.', "success")
+            return redirect(url_for("custos_materias_primas"))
+        return render_template("custos_materia_prima_form.html", mp=None, form={}, historico=[])
+
+    @app.route("/custos/materias-primas/<int:mp_id>/editar", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def custos_materias_primas_editar(mp_id):
+        mp = db.session.get(MateriaPrima, mp_id)
+        if mp is None:
+            flash("Matéria-prima não encontrada.", "danger")
+            return redirect(url_for("custos_materias_primas"))
+        historico = MateriaPrimaHistorico.query.filter_by(materia_prima_id=mp.id).order_by(MateriaPrimaHistorico.criado_em.desc()).all()
+
+        if request.method == "POST":
+            f = request.form
+            dados, erro = _validar_materia_prima_form(f, ignorar_id=mp.id)
+            if erro:
+                flash(erro, "danger")
+                return render_template("custos_materia_prima_form.html", mp=mp, form=f, historico=historico)
+
+            custo_anterior = mp.custo_atual
+            for campo, valor in dados.items():
+                setattr(mp, campo, valor)
+            mp.ativo = bool(f.get("ativo"))
+
+            if dados["custo_atual"] != custo_anterior:
+                _registrar_revisao_materia_prima(mp, custo_anterior, dados["custo_atual"], f.get("motivo_alteracao"))
+                mp.data_atualizacao_fornecedor = date.today()
+
+            db.session.commit()
+            flash(f'Matéria-prima "{mp.codigo}" atualizada com sucesso.', "success")
+            return redirect(url_for("custos_materias_primas"))
+
+        return render_template("custos_materia_prima_form.html", mp=mp, form={}, historico=historico)
+
+    @app.route("/custos/hora-homem", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_hora_homem():
+        param = db.session.get(ParametroHoraHomem, 1)
+        if param is None:
+            param = ParametroHoraHomem(id=1, valor=40.0)
+            db.session.add(param)
+            db.session.commit()
+        historico = ParametroHoraHomemHistorico.query.order_by(ParametroHoraHomemHistorico.criado_em.desc()).all()
+
+        if request.method == "POST":
+            if current_user.role not in ("ADMIN", "PCP"):
+                abort(403)
+            novo_valor = _parse_float_form(request.form.get("valor"), default=None)
+            if novo_valor is None or novo_valor <= 0:
+                flash("Informe um valor de hora-homem válido (maior que zero).", "danger")
+                return redirect(url_for("custos_hora_homem"))
+            valor_anterior = param.valor
+            if novo_valor != valor_anterior:
+                db.session.add(ParametroHoraHomemHistorico(
+                    valor_anterior=valor_anterior, valor_novo=novo_valor,
+                    motivo=(request.form.get("motivo_alteracao") or "").strip() or None,
+                    usuario_nome=current_user.nome if current_user.is_authenticated else None,
+                ))
+                param.valor = novo_valor
+                param.atualizado_por = current_user.nome if current_user.is_authenticated else None
+                db.session.commit()
+                flash(f"Valor de hora-homem atualizado para R$ {novo_valor:.2f}/h — todos os produtos foram recalculados automaticamente.", "success")
+            return redirect(url_for("custos_hora_homem"))
+
+        return render_template("custos_hora_homem.html", param=param, historico=historico)
+
+    @app.route("/custos/necessidades-pcp")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_necessidades_pcp():
+        dados = _necessidades_pcp_materia_prima()
+        return render_template("custos_necessidades_pcp.html", linhas=dados["linhas"], nao_identificados=dados["nao_identificados"])
+
+    @app.route("/custos/simulacao")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_simulacao():
+        return render_template("custos_simulacao.html")
 
     @app.route("/alertas")
     @login_required

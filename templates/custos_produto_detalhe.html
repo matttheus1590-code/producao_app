@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ produto.codigo }} · Gestão de Custos{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-box-seam"></i> {{ produto.codigo }}</h4>
+  <a href="{{ url_for('custos_produtos') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left"></i> Voltar
+  </a>
+</div>
+<p class="text-muted small mb-3">
+  {{ produto.familia }}{% if produto.descricao %} · {{ produto.descricao }}{% endif %}
+  {% if produto.categoria %} · <span class="badge bg-secondary">{{ produto.categoria }}</span>{% endif %}
+</p>
+
+{% for c in composicoes %}
+{% set e = c.estrutura %}
+{% set calc = c.calc %}
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div class="fw-semibold">DN {{ e.dn }}</div>
+    <div class="d-flex align-items-center gap-3">
+      <span class="text-muted small">Ciclo: {{ e.ciclo_horas }}h</span>
+      <span class="fw-semibold">{{ calc.custo_total | moeda_brl }}</span>
+      {% if calc.incompleto %}<span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Estrutura incompleta</span>{% endif %}
+      {% if current_user.role in ('ADMIN', 'PCP') %}
+      <a href="{{ url_for('custos_estrutura_editar', produto_id=produto.id, dn=e.dn) }}" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-pencil-square"></i> Editar
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Componente</th>
+          <th class="text-end">Quantidade</th>
+          <th class="text-end">Custo unit.</th>
+          <th class="text-end">Custo da linha</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in calc.linhas %}
+        <tr class="{{ 'table-warning' if l.faltando else '' }}">
+          <td>{{ l.descricao }}{% if l.item.tipo == "SUBPRODUTO" %} <span class="badge bg-info-subtle text-info-emphasis">subproduto</span>{% endif %}</td>
+          <td class="text-end">{{ l.quantidade }}</td>
+          <td class="text-end">{{ l.custo_unitario | moeda_brl if l.custo_unitario is not none else "—" }}</td>
+          <td class="text-end">{{ l.custo_linha | moeda_brl if l.custo_linha is not none else "—" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="text-center text-muted py-3">Nenhum item cadastrado nesta estrutura.</td></tr>
+        {% endfor %}
+        <tr class="table-light">
+          <td colspan="3" class="text-end fw-semibold">Custo hora-homem ({{ e.ciclo_horas }}h)</td>
+          <td class="text-end fw-semibold">{{ calc.custo_hh | moeda_brl }}</td>
+        </tr>
+        <tr class="table-light">
+          <td colspan="3" class="text-end fw-semibold">Custo total</td>
+          <td class="text-end fw-semibold">{{ calc.custo_total | moeda_brl }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<p class="text-muted text-center py-4">Nenhuma estrutura de custo cadastrada ainda para este produto.</p>
+{% endfor %}
+
+{% endblock %}

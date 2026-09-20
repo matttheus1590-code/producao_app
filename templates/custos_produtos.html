@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Custos dos Produtos · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-box-seam"></i> Custos dos Produtos</h4>
+  <a href="{{ url_for('custos_painel') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left"></i> Painel de Custos
+  </a>
+</div>
+<p class="text-muted small mb-3">
+  Custo calculado automaticamente (matéria-prima + hora-homem) a partir da estrutura cadastrada de cada produto —
+  nunca fica armazenado, sempre reflete o custo atual das matérias-primas e o valor vigente de hora-homem.
+</p>
+
+<div class="d-flex flex-wrap gap-2 mb-3">
+  <a href="{{ url_for('custos_produtos') }}" class="btn btn-sm {{ 'btn-primary' if not familia_selecionada else 'btn-outline-secondary' }}">Todas</a>
+  {% for fam in familias_com_dados %}
+  <a href="{{ url_for('custos_produtos', familia=fam) }}" class="btn btn-sm {{ 'btn-primary' if familia_selecionada == fam else 'btn-outline-secondary' }}">{{ fam }}</a>
+  {% endfor %}
+</div>
+
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>Família</th>
+        <th>Produto</th>
+        <th>DN</th>
+        <th class="text-end">Custo MP</th>
+        <th class="text-end">Custo HH</th>
+        <th class="text-end">Custo total</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in linhas %}
+      <tr>
+        <td class="text-muted small">{{ l.produto.familia }}</td>
+        <td>
+          <div class="fw-semibold">{{ l.produto.codigo }}</div>
+          {% if l.produto.descricao %}<div class="text-muted small">{{ l.produto.descricao }}</div>{% endif %}
+        </td>
+        <td>{{ l.estrutura.dn }}</td>
+        <td class="text-end">{{ l.calc.custo_mp | moeda_brl }}</td>
+        <td class="text-end">{{ l.calc.custo_hh | moeda_brl }}</td>
+        <td class="text-end fw-semibold">
+          {{ l.calc.custo_total | moeda_brl }}
+          {% if l.calc.incompleto %}<i class="bi bi-exclamation-triangle text-warning" title="Estrutura incompleta — algum item não tem matéria-prima/subproduto cadastrado"></i>{% endif %}
+        </td>
+        <td class="text-end">
+          <a href="{{ url_for('custos_produto_detalhe', produto_id=l.produto.id) }}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-eye"></i>
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-4">Nenhum produto cadastrado ainda nesta família.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if familias_futuras %}
+<p class="text-muted small mt-3">
+  <i class="bi bi-clock-history"></i> Ainda não implementadas nesta fase (chegam numa próxima entrega):
+  {{ familias_futuras | join(", ") }}.
+</p>
+{% endif %}
+
+{% endblock %}

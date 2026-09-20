@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Gestão de Custos · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-cash-coin"></i> Gestão de Custos</h4>
+</div>
+<p class="text-muted small mb-3">
+  Módulo novo (pedido do Bruno, 20/09/2026) — Fase 1: grupo <strong>PIG MANDRIL</strong> (LBD, LUN, PU CAST,
+  CORPO MANDRIL, ELC_MG_PC, PIGS EM BORRACHA). As demais famílias da planilha (espuma, PU CAST/SUPERFLEX,
+  SILICONE) e a tela de Simulação chegam nas próximas fases.
+</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    {{ m.stat_card("Produtos cadastrados", visao.produtos_cadastrados, link=url_for('custos_produtos')) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ m.stat_card("Matérias-primas cadastradas", visao.mps_cadastradas, link=url_for('custos_materias_primas')) }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ m.stat_card("Custo total previsto no PCP", visao.custo_total_previsto | moeda_brl, cor="primary") }}
+  </div>
+  <div class="col-6 col-lg-3">
+    {{ m.stat_card("Valor de hora-homem atual", visao.hora_homem_atual | moeda_brl ~ "/h", link=url_for('custos_hora_homem')) }}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-4">
+    {{ m.stat_card("Matérias-primas com necessidade prevista", visao.materias_primas_com_necessidade, link=url_for('custos_necessidades_pcp')) }}
+  </div>
+  <div class="col-6 col-lg-4">
+    {{ m.stat_card("Matérias-primas sem custo cadastrado", visao.mps_sem_custo | length, cor=("danger" if visao.mps_sem_custo else "success"), link=url_for('custos_materias_primas')) }}
+  </div>
+  <div class="col-6 col-lg-4">
+    {{ m.stat_card("Itens do PCP não identificados automaticamente", visao.itens_nao_identificados | length, cor=("warning" if visao.itens_nao_identificados else "success"), link=url_for('custos_necessidades_pcp')) }}
+  </div>
+</div>
+
+<p class="text-muted small">
+  <i class="bi bi-info-circle"></i> "Matérias-primas em risco" e "produtos impactados" do pedido original viram,
+  nesta fase, indicadores de <strong>qualidade de dado</strong> (matéria-prima sem custo cadastrado / item do PCP
+  ainda não identificado automaticamente) — o app não tem controle de estoque/almoxarifado hoje, então não há
+  como calcular risco de ruptura real ainda.
+</p>
+
+<div class="row g-3">
+  <div class="col-md-6 col-lg-4">
+    <a class="text-decoration-none" href="{{ url_for('custos_produtos') }}">
+      <div class="card h-100"><div class="card-body">
+        <div class="fs-4"><i class="bi bi-box-seam"></i></div>
+        <div class="fw-semibold">Custos dos Produtos</div>
+        <div class="text-muted small">Custo total/MP/HH por produto e DN, calculado automaticamente.</div>
+      </div></div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="text-decoration-none" href="{{ url_for('custos_materias_primas') }}">
+      <div class="card h-100"><div class="card-body">
+        <div class="fs-4"><i class="bi bi-flask"></i></div>
+        <div class="fw-semibold">Cadastro de Matérias-Primas</div>
+        <div class="text-muted small">Catálogo centralizado, com histórico de custo.</div>
+      </div></div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="text-decoration-none" href="{{ url_for('custos_hora_homem') }}">
+      <div class="card h-100"><div class="card-body">
+        <div class="fs-4"><i class="bi bi-person-workspace"></i></div>
+        <div class="fw-semibold">Parametrização de Hora-Homem</div>
+        <div class="text-muted small">Valor único, central — recalcula tudo automaticamente ao mudar.</div>
+      </div></div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="text-decoration-none" href="{{ url_for('custos_necessidades_pcp') }}">
+      <div class="card h-100"><div class="card-body">
+        <div class="fs-4"><i class="bi bi-diagram-3"></i></div>
+        <div class="fw-semibold">Necessidades do PCP</div>
+        <div class="text-muted small">Matéria-prima necessária pra fila de produção, consolidada automaticamente.</div>
+      </div></div>
+    </a>
+  </div>
+  <div class="col-md-6 col-lg-4">
+    <a class="text-decoration-none" href="{{ url_for('custos_simulacao') }}">
+      <div class="card h-100"><div class="card-body">
+        <div class="fs-4"><i class="bi bi-sliders"></i></div>
+        <div class="fw-semibold">Simulação / Histórico</div>
+        <div class="text-muted small">Chega numa próxima fase.</div>
+      </div></div>
+    </a>
+  </div>
+</div>
+
+{% endblock %}

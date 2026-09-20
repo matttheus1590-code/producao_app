@@ -133,6 +133,28 @@
         </a>
         {% endif %}
 
+        {% if current_user.role in ('ADMIN', 'PCP', 'GESTAO') %}
+        <div class="app-nav-section">💲 Gestão de Custos</div>
+        <a class="app-nav-link {% if request.endpoint == 'custos_painel' %}active{% endif %}" href="{{ url_for('custos_painel') }}">
+          <span>🎛️ Painel</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint in ('custos_produtos', 'custos_produto_detalhe', 'custos_estrutura_editar') %}active{% endif %}" href="{{ url_for('custos_produtos') }}">
+          <span>📦 Custos dos Produtos</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('custos_materias_primas') %}active{% endif %}" href="{{ url_for('custos_materias_primas') }}">
+          <span>🧪 Matérias-Primas</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'custos_hora_homem' %}active{% endif %}" href="{{ url_for('custos_hora_homem') }}">
+          <span>👷 Hora-Homem</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'custos_necessidades_pcp' %}active{% endif %}" href="{{ url_for('custos_necessidades_pcp') }}">
+          <span>📐 Necessidades do PCP</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint == 'custos_simulacao' %}active{% endif %}" href="{{ url_for('custos_simulacao') }}">
+          <span>🧮 Simulação/Histórico</span>
+        </a>
+        {% endif %}
+
         {% if current_user.role == 'ADMIN' %}
         <div class="app-nav-section">🔐 Administração</div>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('usuarios_') %}active{% endif %}" href="{{ url_for('usuarios_lista') }}">
