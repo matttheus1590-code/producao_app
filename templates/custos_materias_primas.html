@@ -17,16 +17,18 @@
 </div>
 <p class="text-muted small mb-3">
   Catálogo centralizado — mudar o custo aqui recalcula automaticamente todos os produtos que usam esta
-  matéria-prima (nenhum produto guarda custo fixo).
+  matéria-prima (nenhum produto guarda custo fixo). Agrupado igual à aba <strong>PARÂMETROS</strong> da
+  planilha original: só entram aqui os insumos validados nela ({{ total_parametros }} itens).
 </p>
 
+{% macro tabela_mp(itens, mostrar_secao=false) %}
 <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white">
+  <table class="table table-hover table-sm align-middle bg-white mb-0">
     <thead class="table-light">
       <tr>
         <th>Código</th>
         <th>Descrição</th>
-        <th>Categoria</th>
+        <th>Fornecedor / Ref.</th>
         <th>Unidade</th>
         <th class="text-end">Custo atual</th>
         <th>Atualizado em</th>
@@ -35,11 +37,11 @@
       </tr>
     </thead>
     <tbody>
-      {% for mp in materias_primas %}
+      {% for mp in itens %}
       <tr>
         <td class="fw-semibold">{{ mp.codigo }}</td>
         <td>{{ mp.descricao }}</td>
-        <td class="text-muted small">{{ mp.categoria or "—" }}</td>
+        <td class="text-muted small">{{ mp.fornecedor or "—" }}</td>
         <td>{{ mp.unidade }}</td>
         <td class="text-end">{{ mp.custo_atual | moeda_brl }}</td>
         <td class="text-muted small">{{ mp.data_atualizacao_fornecedor.strftime("%d/%m/%Y") if mp.data_atualizacao_fornecedor else "—" }}</td>
@@ -52,11 +54,53 @@
           {% endif %}
         </td>
       </tr>
-      {% else %}
-      <tr><td colspan="8" class="text-center text-muted py-4">Nenhuma matéria-prima cadastrada.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+{% endmacro %}
+
+{% if not secoes %}
+<p class="text-muted text-center py-4">Nenhuma matéria-prima validada (aba PARÂMETROS) cadastrada.</p>
+{% else %}
+{% for secao in secoes %}
+<div class="card mb-3">
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-tag"></i> {{ secao.nome }}</span>
+    <span class="badge bg-light text-dark">{{ secao.itens | length }}</span>
+  </div>
+  <div class="card-body p-0">
+    {{ tabela_mp(secao.itens) }}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if derivadas_por_categoria %}
+<div class="card mt-4">
+  <div class="card-header">
+    <a class="text-decoration-none d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#outros-custos" role="button">
+      <span class="text-muted"><i class="bi bi-box-seam"></i> Outros custos — produtos e acessórios consolidados ({{ total_derivadas }})</span>
+      <i class="bi bi-chevron-down text-muted"></i>
+    </a>
+  </div>
+  <div class="collapse" id="outros-custos">
+    <div class="card-body">
+      <p class="text-muted small mb-3">
+        Estes itens <strong>não são matéria-prima</strong> — são produtos acabados ou custos já consolidados
+        (Placa Calibradora, Cinta Magnética, ELC, ELP, Alojamento, Calandra, discos "PU CAST" consolidados,
+        acessórios de HLCC/HLCC PC e valores fixos de SUPERFLEX) que precisam existir aqui só pra entrar nas
+        fórmulas de custo dos produtos. Continuam editáveis normalmente.
+      </p>
+      {% for categoria, itens in derivadas_por_categoria.items() %}
+      <div class="mb-3">
+        <div class="text-muted small fw-semibold mb-1">{{ categoria }} ({{ itens | length }})</div>
+        {{ tabela_mp(itens) }}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% endblock %}

@@ -1879,6 +1879,15 @@ class MateriaPrima(db.Model):
     custo_atual = db.Column(db.Float, nullable=False, default=0)
     fornecedor = db.Column(db.String(120), nullable=True)
     data_atualizacao_fornecedor = db.Column(db.Date, nullable=True)
+    # "PARAMETROS" = corresponde a uma linha validada de verdade na aba
+    # PARÂMETROS da planilha original (pedido do Bruno, 21/09/2026: não
+    # misturar produto acabado com matéria-prima na tela principal).
+    # "DERIVADO" = produto acabado/custo consolidado modelado como
+    # matéria-prima só pra entrar nas fórmulas (Placa Calibradora, Cinta
+    # Magnética, ELC/ELP, Alojamento, Calandra...) — continua no banco,
+    # fica de fora da tela principal. Classificado/mantido em dia por
+    # `_migrar_materia_prima_origem_planilha` (app.py), não editável aqui.
+    origem_planilha = db.Column(db.String(20), nullable=True)
     ativo = db.Column(db.Boolean, nullable=False, default=True)
     criado_em = db.Column(db.DateTime, default=datetime.utcnow)
     atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
