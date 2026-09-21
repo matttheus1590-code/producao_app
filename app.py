@@ -2563,9 +2563,18 @@ def _seed_custos_superflex_silicone(app):
         else:
             # 2 linhas com o mesmo rótulo de DN e pesos diferentes (planilha original,
             # sem explicação — linhas 9 e 10, 0,2834kg vs 0,2995kg) — desambiguado aqui
-            # pra caber no modelo (UniqueConstraint produto+dn); sinalizado pro Bruno revisar.
-            dn = f"{dn_raw} (variante {n + 1} — peso {peso}kg, ver observação)"
+            # pra caber no modelo (UniqueConstraint produto+dn); sinalizado pro Bruno revisar
+            # na observação da estrutura (o campo `dn` é VARCHAR(20), por isso o sufixo
+            # curto aqui — o detalhe completo vai pra `observacao`, que é texto livre).
+            dn = f"{dn_raw} (v{n + 1})"
         est = _get_or_create_estrutura(produto_discflex, dn, tempo_h)
+        if n > 0 and not est.observacao:
+            est.observacao = (
+                f"Variante {n + 1} do DN {dn_raw} — a planilha original (aba SILICONE) tem 2 linhas "
+                f"DISCFLEX com o mesmo rótulo de DN ({dn_raw}) e pesos de manta diferentes, sem "
+                f"explicação (linhas 9 e 10: 0,2834kg vs 0,2995kg). Peso desta variante: {peso}kg. "
+                "Sinalizado pro Bruno revisar a origem dessa duplicidade na planilha."
+            )
         _add_item(est, 0, "MATERIA_PRIMA", peso, materia_prima=MP_MANTA_SILICONE, observacao="manta de silicone")
 
     for r in range(14, 16):  # DISCFLEX COM IMÃ — ímã 8x5mm (fórmula usa $B$3)
