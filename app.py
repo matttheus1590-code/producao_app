@@ -9036,17 +9036,27 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
             linhas_b = b["linhas"]
             pedidos_b = {l.pedido_id for l in linhas_b}
             faturamento_b = sum(l.venda_total or 0 for l in linhas_b)
-            linha_rotulo.append(Paragraph(b["rotulo"], ParagraphStyle("cmp_rotulo", parent=estilos["Normal"], fontSize=10.5, textColor=colors.white, fontName="Helvetica-Bold", alignment=1)))
-            linha_kpi.append(Paragraph(f"{len(pedidos_b)} pedido(s) · {len(linhas_b)} item(ns)", ParagraphStyle("cmp_kpi", parent=estilos["Normal"], fontSize=9, textColor=colors.white, alignment=1)))
-            linha_valor.append(Paragraph(_fmt_moeda(faturamento_b), ParagraphStyle("cmp_valor", parent=estilos["Normal"], fontSize=13, textColor=colors.white, fontName="Helvetica-Bold", alignment=1)))
+            linha_rotulo.append(Paragraph(b["rotulo"], ParagraphStyle("cmp_rotulo", parent=estilos["Normal"], fontSize=13, leading=15, textColor=colors.white, fontName="Helvetica-Bold", alignment=1)))
+            linha_kpi.append(Paragraph(f"{len(pedidos_b)} pedido(s) · {len(linhas_b)} item(ns)", ParagraphStyle("cmp_kpi", parent=estilos["Normal"], fontSize=11, leading=13, textColor=colors.white, alignment=1)))
+            linha_valor.append(Paragraph(_fmt_moeda(faturamento_b), ParagraphStyle("cmp_valor", parent=estilos["Normal"], fontSize=28, leading=32, textColor=colors.white, fontName="Helvetica-Bold", alignment=1)))
         largura_col = largura_disponivel / len(blocos)
+        # Números BEM maiores e chamativos aqui (pedido do Bruno, 21/09/2026:
+        # "quero que esses numeros ficam maiores e mais chamativos!!
+        # principalmente os numeros da visao geral") — o faturamento de cada
+        # bloco (28pt) é de longe o maior número do PDF inteiro, de propósito,
+        # já que essa visão comparativa é o primeiro número que salta aos
+        # olhos ao abrir o relatório.
         tabela_comparativo = Table([linha_rotulo, linha_kpi, linha_valor], colWidths=[largura_col] * len(blocos))
         estilo_comparativo = [
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ("LEFTPADDING", (0, 0), (-1, -1), 3),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, 0), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+            ("TOPPADDING", (0, 1), (-1, 1), 1),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 6),
+            ("TOPPADDING", (0, 2), (-1, 2), 2),
+            ("BOTTOMPADDING", (0, 2), (-1, 2), 12),
         ]
         for i in range(len(blocos)):
             estilo_comparativo.append(("BACKGROUND", (i, 0), (i, -1), cores_bloco[i % len(cores_bloco)]))
@@ -9090,7 +9100,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
 
         def _kpi(valor, rotulo_kpi):
             return [
-                Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=17, fontName="Helvetica-Bold", alignment=1)),
+                Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=20, leading=23, fontName="Helvetica-Bold", alignment=1)),
                 Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8.5, alignment=1)),
             ]
 
@@ -9120,20 +9130,23 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
                 for rotulo, linhas_semana in grupos_semana
             ]
             maior_valor = max((v for _, v in resumo_semanas_graf), default=0) or 1
-            altura_linha = 15
+            # Rótulos maiores e mais chamativos (pedido do Bruno, 21/09/2026)
+            # — linha mais alta e fontes maiores pro valor de cada semana
+            # (o número que ele circulou no print) saltar mais aos olhos.
+            altura_linha = 20
             altura_grafico = len(resumo_semanas_graf) * altura_linha + 6
-            largura_rotulo = 62
-            largura_valor = 72
+            largura_rotulo = 68
+            largura_valor = 92
             largura_barra_max = max(largura_disponivel - largura_rotulo - largura_valor - 6, 10)
             desenho = Drawing(largura_disponivel, altura_grafico)
             for i, (rotulo, valor) in enumerate(resumo_semanas_graf):
-                y = altura_grafico - (i + 1) * altura_linha + 3
+                y = altura_grafico - (i + 1) * altura_linha + 4
                 m = re.search(r"SEMANA\s*(\d+)", (rotulo or "").upper())
                 rotulo_curto = f"Semana {int(m.group(1))}" if m else (rotulo or "—")
-                desenho.add(String(0, y, rotulo_curto, fontSize=8, fontName="Helvetica"))
+                desenho.add(String(0, y, rotulo_curto, fontSize=10, fontName="Helvetica-Bold"))
                 largura_barra = (valor / maior_valor) * largura_barra_max if maior_valor else 0
-                desenho.add(Rect(largura_rotulo, y - 2, max(largura_barra, 1.5), 10, fillColor=colors.HexColor("#4c8bf5"), strokeColor=None))
-                desenho.add(String(largura_rotulo + largura_barra_max + 6, y, _fmt_moeda(valor), fontSize=8, fontName="Helvetica-Bold"))
+                desenho.add(Rect(largura_rotulo, y - 3, max(largura_barra, 1.5), 13, fillColor=colors.HexColor("#4c8bf5"), strokeColor=None))
+                desenho.add(String(largura_rotulo + largura_barra_max + 6, y, _fmt_moeda(valor), fontSize=12, fontName="Helvetica-Bold"))
             elems.append(Paragraph("Faturamento por semana", estilos["Heading4"]))
             elems.append(desenho)
             elems.append(Spacer(1, 6 * mm))
@@ -9272,9 +9285,9 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
 
             cabecalho_semana = Table(
                 [[
-                    Paragraph(f"<b>{rotulo or 'Sem semana definida'}</b>{periodo_txt}", ParagraphStyle("semana_titulo", parent=estilos["Normal"], fontSize=10.5, textColor=COR_CABECALHO_TEXTO)),
-                    Paragraph(f"{len(pedidos_semana)} pedido(s)", ParagraphStyle("semana_kpi", parent=estilos["Normal"], fontSize=9.5, alignment=2, fontName="Helvetica-Bold")),
-                    Paragraph(_fmt_moeda(faturamento_semana), ParagraphStyle("semana_kpi2", parent=estilos["Normal"], fontSize=9.5, alignment=2, fontName="Helvetica-Bold")),
+                    Paragraph(f"<b>{rotulo or 'Sem semana definida'}</b>{periodo_txt}", ParagraphStyle("semana_titulo", parent=estilos["Normal"], fontSize=11, leading=13, textColor=COR_CABECALHO_TEXTO)),
+                    Paragraph(f"{len(pedidos_semana)} pedido(s)", ParagraphStyle("semana_kpi", parent=estilos["Normal"], fontSize=10.5, leading=12, alignment=2, fontName="Helvetica-Bold")),
+                    Paragraph(_fmt_moeda(faturamento_semana), ParagraphStyle("semana_kpi2", parent=estilos["Normal"], fontSize=12, leading=14, alignment=2, fontName="Helvetica-Bold")),
                 ]],
                 colWidths=[largura_disponivel * 0.56, largura_disponivel * 0.2, largura_disponivel * 0.24],
             )
@@ -9383,9 +9396,9 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
         # 2 meses, pra reforçar visualmente de qual mês é aquele total ----
         tabela_total = Table(
             [[
-                Paragraph(f"TOTAL — {titulo_mes_b}", ParagraphStyle("total_titulo", parent=estilos["Normal"], fontSize=11, textColor=colors.white, fontName="Helvetica-Bold")),
-                Paragraph(f"{len(pedidos_mes)} pedido(s)", ParagraphStyle("total_kpi", parent=estilos["Normal"], fontSize=11, alignment=2, textColor=colors.white, fontName="Helvetica-Bold")),
-                Paragraph(_fmt_moeda(faturamento_mes), ParagraphStyle("total_kpi2", parent=estilos["Normal"], fontSize=11, alignment=2, textColor=colors.white, fontName="Helvetica-Bold")),
+                Paragraph(f"TOTAL — {titulo_mes_b}", ParagraphStyle("total_titulo", parent=estilos["Normal"], fontSize=12.5, leading=15, textColor=colors.white, fontName="Helvetica-Bold")),
+                Paragraph(f"{len(pedidos_mes)} pedido(s)", ParagraphStyle("total_kpi", parent=estilos["Normal"], fontSize=12.5, leading=15, alignment=2, textColor=colors.white, fontName="Helvetica-Bold")),
+                Paragraph(_fmt_moeda(faturamento_mes), ParagraphStyle("total_kpi2", parent=estilos["Normal"], fontSize=15, leading=17, alignment=2, textColor=colors.white, fontName="Helvetica-Bold")),
             ]],
             colWidths=[largura_disponivel * 0.56, largura_disponivel * 0.2, largura_disponivel * 0.24],
         )
