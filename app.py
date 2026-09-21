@@ -10,7 +10,9 @@ from itertools import zip_longest
 from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
-from openpyxl.styles import Font
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from sqlalchemy import and_, case, extract, false, func, inspect, not_, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -5714,6 +5716,7 @@ def _filtrar_pedidos(args):
     planejamento_mensal = args.get("planejamento_mensal", "").strip()
     mes_inclusao = args.get("mes_inclusao", "").strip()
     mes_entrega_cliente = args.get("mes_entrega_cliente", "").strip()
+    sem_planejamento_semanal = args.get("sem_planejamento_semanal", "").strip()
 
     if cliente:
         query = query.filter(Pedido.cliente.ilike(f"%{cliente}%"))
@@ -5752,6 +5755,13 @@ def _filtrar_pedidos(args):
             query = query.filter(predicado)
     if planejamento_semanal:
         query = query.filter(Pedido.itens.any(ItemPedido.planejamento_semanal == planejamento_semanal))
+    # Quadrante "Sem planejamento PCP" (pedido do Bruno, 21/09/2026, ao lado do
+    # quadrante do mês seguinte): pedidos com pelo menos 1 item cujo
+    # Planejamento semanal (PCP) ainda não foi preenchido — mesmo espírito dos
+    # outros quadrantes (conta PEDIDOS, a listagem abaixo estreita pra só os
+    # ITENS sem planejamento, ver _linhas_listagem_geral).
+    if sem_planejamento_semanal:
+        query = query.filter(Pedido.itens.any(ItemPedido.planejamento_semanal.is_(None)))
     if planejamento_mensal:
         mes_ano = _parse_mes_ano_form(planejamento_mensal, None)
         if mes_ano:
@@ -5805,6 +5815,7 @@ def _filtrar_pedidos(args):
         planejamento_mensal=planejamento_mensal,
         mes_inclusao=mes_inclusao,
         mes_entrega_cliente=mes_entrega_cliente,
+        sem_planejamento_semanal=sem_planejamento_semanal,
     )
     return query, filtros
 
@@ -5869,7 +5880,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     primeiro_dia_mes = date(ano, mes, 1)
     domingo_semana_01 = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
 
-    filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="")
+    filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="", sem_planejamento_semanal="")
 
     def contar(**override):
         query, _ = _filtrar_pedidos(dict(filtros_outros, **override))
@@ -5910,7 +5921,22 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
         "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes_seguinte),
     }
 
-    return {"mes_atual": mes_atual, "semanas": semanas, "mes_seguinte": mes_seguinte}
+    # Quadrante "Sem planejamento PCP" (pedido do Bruno, 21/09/2026, "ao lado
+    # do quadrante de outubro"): pedidos com pelo menos 1 item cujo
+    # Planejamento semanal (PCP) ainda não foi preenchido — mesmo mecanismo
+    # de clique-pra-filtrar dos outros (`sem_planejamento_semanal=1`, ver
+    # _filtrar_pedidos/_linhas_listagem_geral), sem recorte de mês (mostra
+    # TODOS os pendentes, não só os do mês atual/seguinte, já que o ponto é
+    # justamente achar quem ainda não entrou em nenhum planejamento).
+    sem_planejamento = {
+        "titulo": "SEM PLANEJAMENTO PCP",
+        "subtitulo": "ainda não planejados por semana",
+        "total": contar(sem_planejamento_semanal="1"),
+        "ativo": filtros.get("sem_planejamento_semanal") == "1",
+        "filtros_link": dict(filtros_outros, sem_planejamento_semanal="1"),
+    }
+
+    return {"mes_atual": mes_atual, "semanas": semanas, "mes_seguinte": mes_seguinte, "sem_planejamento": sem_planejamento}
 
 
 class _LinhaListagemGeral:
@@ -6040,6 +6066,7 @@ def _linhas_listagem_geral(pedidos, args):
     produto = args.get("produto", "").strip().upper()
     planejamento_semanal = args.get("planejamento_semanal", "").strip()
     planejamento_mensal = args.get("planejamento_mensal", "").strip()
+    sem_planejamento_semanal = args.get("sem_planejamento_semanal", "").strip()
     mes_ano = _parse_mes_ano_form(planejamento_mensal, None) if planejamento_mensal else None
 
     linhas = []
@@ -6050,6 +6077,12 @@ def _linhas_listagem_geral(pedidos, args):
             if produto and produto not in (item.descricao_produto or "").upper():
                 continue
             if planejamento_semanal and item.planejamento_semanal != planejamento_semanal:
+                continue
+            # Quadrante "Sem planejamento PCP" — estreita pra só os itens sem
+            # Planejamento semanal (PCP) preenchido, mesmo raciocínio do
+            # filtro de planejamento_semanal exato acima (não mistura com os
+            # itens já planejados de um pedido que tem os dois casos).
+            if sem_planejamento_semanal and item.planejamento_semanal is not None:
                 continue
             if mes_ano and _mes_ano_da_semana_pcp(item.planejamento_semanal) != mes_ano:
                 continue
@@ -9661,6 +9694,198 @@ def _responder_xlsx(nome_arquivo, cabecalho, linhas, titulo="Relatório"):
     return resposta
 
 
+# ---------------------------------------------------------------------------
+# Relatório Excel "gerencial" da Listagem Geral (pedido do Bruno, 21/09/2026:
+# "quero que voce melhora a geração de relatorio via excel... quero que
+# inclua todo o contexto do pedido, itens, quantidade, produto, valores e
+# faturamento, datas... inclua tambem a coluna do planejamento semanal e
+# coluna tmb da referencia do mes... totalmente intuitivo e dinamico,
+# relatorio padrão gerencial") — substitui o export .xlsx flat (1 linha por
+# PEDIDO, poucas colunas) que existia antes. Reaproveita a MESMA lista já
+# achatada por ITEM que a tela usa (_linhas_listagem_geral / _LinhaListagemGeral)
+# — o relatório nunca diverge do que a Listagem Geral está mostrando com o
+# filtro ativo. Formatado como Tabela nativa do Excel (cabeçalho fixo,
+# autofiltro, zebra) em vez de uma planilha crua — é isso que fica
+# "intuitivo e dinâmico" pra quem abre no Excel: já chega pronta pra
+# ordenar/filtrar/explorar sem precisar reformatar nada.
+# ---------------------------------------------------------------------------
+def _linhas_export_listagem_geral(linhas, inspecoes_rdim):
+    """1 linha por item (produto) — mesmo grão da tela — com todo o contexto
+    comercial, de produção, faturamento, qualidade e planejamento PCP.
+    `inspecoes_rdim` é o dict item_pedido_id -> InspecaoFinal já usado pela
+    própria tela (ver _inspecoes_rdim_por_item), reaproveitado aqui pra
+    trazer a coluna "Qualidade" sem rodar a mesma query 2x."""
+    cabecalho = [
+        "Pedido", "Cliente", "CNPJ", "Vendedor", "País", "UF", "Cidade", "Frete", "Prioridade",
+        "Produto", "Quantidade", "Venda unitário (R$)", "Venda total item (R$)", "Venda total pedido (R$)",
+        "Estação", "Status produção", "Qualidade (RDIM)",
+        "Nº nota fiscal", "Valor faturado (R$)",
+        "Data de inclusão", "Data do cliente (prazo)",
+        "Início produção", "Início inspeção", "Término inspeção",
+        "Liberação prevista", "Liberação real", "Liberação faturamento",
+        "Planejamento semanal (PCP)", "Mês de referência (Planej. semanal)",
+        "Dias (negativo = atrasado)",
+    ]
+    linhas_export = []
+    for l in linhas:
+        item = l.item
+        insp = inspecoes_rdim.get(l.item_id)
+        qualidade = RDIM_RESULTADO_LABELS.get(insp.resultado, insp.resultado) if insp else ""
+        mes_ano = _mes_ano_da_semana_pcp(l.planejamento_semanal)
+        mes_referencia = f"{MESES_PT[mes_ano[1] - 1]}/{mes_ano[0]}" if mes_ano else ""
+        _, dias_atraso = l.semaforo
+        linhas_export.append([
+            l.pedido_venda or "",
+            l.cliente or "",
+            l.pedido.cnpj or "",
+            l.vendedor or "",
+            l.pais or "",
+            l.estado or "",
+            l.cidade or "",
+            l.frete or "",
+            l.prioridade or "",
+            l.descricao_produto or "",
+            l.quantidade or 0,
+            round(l.venda_unidade or 0, 2),
+            round(l.venda_total or 0, 2),
+            round(l.venda_total_pedido or 0, 2),
+            l.estacao or "",
+            l.status_producao or "",
+            qualidade,
+            item.numero_nota_fiscal or "",
+            round(item.valor_faturamento_realizado or 0, 2),
+            l.data_inclusao_pedido,
+            l.data_cliente,
+            item.inicio_producao,
+            item.inicio_inspecao,
+            item.termino_inspecao,
+            l.liberacao_prevista,
+            l.liberacao_real,
+            item.liberacao_faturamento,
+            l.planejamento_semanal or "",
+            mes_referencia,
+            dias_atraso if dias_atraso is not None else "",
+        ])
+    return cabecalho, linhas_export
+
+
+def _resumo_export_por_semana_pcp(linhas):
+    """Agrega as linhas (já achatadas por item, com o filtro da tela já
+    aplicado) por Planejamento semanal (PCP) — vira a aba "Resumo por
+    Semana PCP" do relatório gerencial, visão rápida sem precisar montar
+    tabela dinâmica no Excel. Ordem cronológica (mesma _chave_semana_pcp que
+    já ordena essa coluna na tela); itens SEM planejamento ainda (rótulo
+    None — exatamente os que o quadrante "Sem planejamento PCP" aponta)
+    ficam agrupados num grupo próprio, sempre por último."""
+    grupos = {}
+    for l in linhas:
+        grupos.setdefault(l.planejamento_semanal, []).append(l)
+
+    def chave_ordenacao(rotulo):
+        return _chave_semana_pcp(rotulo) or (9999, 99, 0)
+
+    resultado = []
+    for rotulo in sorted(grupos.keys(), key=chave_ordenacao):
+        linhas_grupo = grupos[rotulo]
+        mes_ano = _mes_ano_da_semana_pcp(rotulo)
+        mes_referencia = f"{MESES_PT[mes_ano[1] - 1]}/{mes_ano[0]}" if mes_ano else ""
+        pedidos_distintos = {l.pedido_id for l in linhas_grupo}
+        resultado.append({
+            "semana": rotulo or "Sem planejamento",
+            "mes_referencia": mes_referencia,
+            "pedidos": len(pedidos_distintos),
+            "itens": len(linhas_grupo),
+            "quantidade_total": sum(l.quantidade or 0 for l in linhas_grupo),
+            "venda_total": sum(l.venda_total or 0 for l in linhas_grupo),
+            "faturado_total": sum((l.item.valor_faturamento_realizado or 0) for l in linhas_grupo),
+        })
+    return resultado
+
+
+def _preencher_aba_relatorio_gerencial(ws, nome_tabela, cabecalho, linhas, colunas_moeda=(), colunas_data=()):
+    """Escreve `cabecalho`/`linhas` numa aba já formatada como Tabela nativa
+    do Excel — cabeçalho em negrito com fundo, zebra automática (estilo da
+    Tabela), autofiltro em toda a extensão, 1ª linha congelada (cabeçalho
+    sempre visível ao rolar), moeda/data formatadas e largura de coluna
+    automática. `colunas_moeda`/`colunas_data` são conjuntos com o número da
+    coluna (1 = primeira) que devem levar cada formato numérico."""
+    ws.append(cabecalho)
+    fundo_cabecalho = PatternFill(start_color="1B2A4A", end_color="1B2A4A", fill_type="solid")
+    for celula in ws[1]:
+        celula.font = Font(bold=True, color="FFFFFF")
+        celula.fill = fundo_cabecalho
+        celula.alignment = Alignment(vertical="center", wrap_text=True)
+    ws.freeze_panes = "A2"
+
+    for linha in linhas:
+        ws.append(linha)
+
+    ultima_linha = len(linhas) + 1
+    for indice in colunas_moeda:
+        letra = get_column_letter(indice)
+        for celula in ws[f"{letra}2:{letra}{ultima_linha}"]:
+            celula[0].number_format = '"R$" #,##0.00'
+    for indice in colunas_data:
+        letra = get_column_letter(indice)
+        for celula in ws[f"{letra}2:{letra}{ultima_linha}"]:
+            celula[0].number_format = "DD/MM/YYYY"
+
+    for coluna in ws.columns:
+        valores = [len(str(c.value)) for c in coluna if c.value is not None]
+        largura = max(valores) if valores else 10
+        ws.column_dimensions[coluna[0].column_letter].width = min(max(largura + 2, 10), 42)
+    ws.row_dimensions[1].height = 28
+
+    ultima_coluna_letra = get_column_letter(len(cabecalho))
+    tabela = Table(displayName=nome_tabela, ref=f"A1:{ultima_coluna_letra}{ultima_linha}")
+    tabela.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False,
+        showRowStripes=True, showColumnStripes=False,
+    )
+    ws.add_table(tabela)
+
+
+def _responder_xlsx_listagem_geral(linhas):
+    """Monta o relatório .xlsx "padrão gerencial" da Listagem Geral inteiro
+    (2 abas — detalhe por item + resumo por semana PCP, ver funções acima)
+    e devolve como download, mesmo padrão de resposta de _responder_xlsx."""
+    inspecoes_rdim = _inspecoes_rdim_por_item([l.item_id for l in linhas])
+    cabecalho_detalhe, linhas_detalhe = _linhas_export_listagem_geral(linhas, inspecoes_rdim)
+    resumo_semanas = _resumo_export_por_semana_pcp(linhas)
+
+    wb = Workbook()
+    ws_detalhe = wb.active
+    ws_detalhe.title = "Pedidos"
+    _preencher_aba_relatorio_gerencial(
+        ws_detalhe, "TabelaPedidos", cabecalho_detalhe, linhas_detalhe,
+        colunas_moeda={12, 13, 14, 19}, colunas_data={20, 21, 22, 23, 24, 25, 26, 27},
+    )
+
+    ws_resumo = wb.create_sheet("Resumo por Semana PCP")
+    cabecalho_resumo = [
+        "Semana (PCP)", "Mês de referência", "Pedidos distintos", "Itens (produtos)",
+        "Quantidade total", "Venda total (R$)", "Faturado total (R$)",
+    ]
+    linhas_resumo = [
+        [r["semana"], r["mes_referencia"], r["pedidos"], r["itens"],
+         r["quantidade_total"], round(r["venda_total"], 2), round(r["faturado_total"], 2)]
+        for r in resumo_semanas
+    ]
+    _preencher_aba_relatorio_gerencial(
+        ws_resumo, "TabelaResumoSemanal", cabecalho_resumo, linhas_resumo, colunas_moeda={6, 7},
+    )
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    resposta = Response(
+        buffer.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resposta.headers["Content-Disposition"] = "attachment; filename=listagem_geral_gerencial.xlsx"
+    return resposta
+
+
 def _construir_backup_pedidos_wb():
     """Monta um Workbook com TODAS as colunas de cada tabela apagada por
     "/admin/zerar-dados" (uma aba cada), lendo as colunas direto do
@@ -11381,9 +11606,15 @@ def register_routes(app):
     @app.route("/relatorios/listagem.xlsx")
     @login_required
     def relatorio_listagem_xlsx():
+        """Relatório Excel "padrão gerencial" (pedido do Bruno, 21/09/2026) —
+        reaproveita a MESMA lista achatada por item que a Listagem Geral usa
+        na tela (_linhas_listagem_geral), então o Excel sempre reflete
+        exatamente o filtro que estava ativo quando o botão foi clicado.
+        Ver _responder_xlsx_listagem_geral pro detalhe do que entra em cada
+        aba."""
         query, _ = _filtrar_pedidos(request.args)
-        cabecalho, linhas = _linhas_export_listagem(query.all())
-        return _responder_xlsx("listagem_pedidos.xlsx", cabecalho, linhas, titulo="Listagem")
+        linhas = _linhas_listagem_geral(query.all(), request.args)
+        return _responder_xlsx_listagem_geral(linhas)
 
     @app.route("/relatorios/listagem-geral-semanal.pdf")
     @login_required

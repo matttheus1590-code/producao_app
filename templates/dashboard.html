@@ -25,6 +25,12 @@
 </div>
 
 <form class="row g-2 align-items-end mb-3" method="get">
+  {# Quadrante "Sem planejamento PCP" não tem campo próprio no formulário
+     (só é acionado pelo clique no quadrante) — precisa desse campo oculto
+     pra não se perder quando o usuário mexe em outro filtro e reenvia o
+     formulário (mesmo raciocínio que já vale, de forma visível, pros
+     campos de Planejamento semanal/mensal abaixo). #}
+  <input type="hidden" name="sem_planejamento_semanal" value="{{ filtros.sem_planejamento_semanal }}">
   <div class="col-md-2">
     <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
     <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
@@ -131,6 +137,13 @@
   {% endfor %}
   <div class="col-6 col-md-4 col-lg-2">
     {{ stat_card(quadrantes_pcp.mes_seguinte.titulo, quadrantes_pcp.mes_seguinte.total, sufixo=quadrantes_pcp.mes_seguinte.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_seguinte.filtros_link), ativo=quadrantes_pcp.mes_seguinte.ativo, fundo="primary-subtle") }}
+  </div>
+  {# Pedido do Bruno (21/09/2026): quadrante ao lado de OUTUBRO pra achar
+     pedidos com item ainda sem Planejamento semanal (PCP) nenhum — cor de
+     alerta (âmbar) porque é uma pendência a resolver, diferente dos outros
+     que só mostram período. #}
+  <div class="col-6 col-md-4 col-lg-2">
+    {{ stat_card(quadrantes_pcp.sem_planejamento.titulo, quadrantes_pcp.sem_planejamento.total, sufixo=quadrantes_pcp.sem_planejamento.subtitulo, link=url_for('dashboard', **quadrantes_pcp.sem_planejamento.filtros_link), ativo=quadrantes_pcp.sem_planejamento.ativo, borda="warning", fundo="warning-subtle") }}
   </div>
 </div>
 
