@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Gestão Operação · {{ GO_SECAO_LABEL[secao] }} · Pedido #{{ pedido.id }} · Gestão da Produção e Operação{% endblock %}
+{% block title %}Gestão Operação · {{ GO_SECAO_LABEL[secao] }} · Pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }} · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
 <div class="row justify-content-center">
