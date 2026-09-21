@@ -73,6 +73,7 @@
               <td>
                 {{ a.nome }}
                 {% if a.chave == "alojamento" %}<div class="text-muted small">Embalagem — achado pendente de revisão, ver observação no relatório</div>{% endif %}
+                {% if a.custo_calandra %}<div class="text-muted small">Inclui calandra: {{ a.custo_calandra | moeda_brl }}</div>{% endif %}
                 {% if not a.disponivel %}<div class="text-muted small">Sem custo cadastrado pra este DN</div>{% endif %}
               </td>
               <td class="text-end fw-semibold" style="width:160px">
@@ -80,6 +81,14 @@
               </td>
             </tr>
             {% endfor %}
+            <tr class="table-light">
+              <td></td>
+              <td>
+                Discos espaçadores extras
+                <div class="text-muted small">1 por acessório marcado entre ELC/ELP/Cinta/Placa (Alojamento não conta) — {{ qtd_conta_espacador }} marcado(s) × {{ custo_unit_espacador | moeda_brl }}</div>
+              </td>
+              <td class="text-end fw-semibold" style="width:160px">{{ custo_espacadores | moeda_brl }}</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -90,15 +99,19 @@
 <div class="card border-primary">
   <div class="card-body">
     <div class="row text-center g-3">
-      <div class="col-4">
+      <div class="col-3">
         <div class="text-muted small">Custo base</div>
         <div class="fs-5">{{ calc_base.custo_total | moeda_brl }}</div>
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <div class="text-muted small">+ Acessórios marcados</div>
         <div class="fs-5">{{ custo_acessorios | moeda_brl }}</div>
       </div>
-      <div class="col-4">
+      <div class="col-3">
+        <div class="text-muted small">+ Espaçadores extras</div>
+        <div class="fs-5">{{ custo_espacadores | moeda_brl }}</div>
+      </div>
+      <div class="col-3">
         <div class="text-muted small fw-semibold">Total do conjunto</div>
         <div class="fs-3 fw-bold text-primary">{{ custo_total_combinado | moeda_brl }}</div>
       </div>

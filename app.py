@@ -326,6 +326,7 @@ def create_app():
         _seed_custos_superflex_silicone(app)
         _importar_historico_custos_manual(app)
         _seed_custos_pig_alojamento(app)
+        _seed_custos_pig_calandra(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -2756,6 +2757,59 @@ def _seed_custos_pig_alojamento(app):
     db.session.add(ControleSistema(chave=_CHAVE_SEED_CUSTOS_PIG_ALOJAMENTO_20_09_2026))
     db.session.commit()
     app.logger.info("Gestão de Custos: matérias-primas de Alojamento importadas (%d criadas).", criados)
+
+
+_CHAVE_SEED_CUSTOS_PIG_CALANDRA_20_09_2026 = "seed_custos_pig_calandra_20_09_2026"
+
+
+def _seed_custos_pig_calandra(app):
+    """Importa (uma única vez) o custo de "CALANDRA" — achado ao investigar a pergunta
+    do Bruno sobre o Disco Espaçador somar automaticamente no configurador de acessórios
+    (21/09/2026): a aba LBD tem, a partir da linha 30, um CONFIGURADOR DE ACESSÓRIOS
+    PRÓPRIO da planilha (colunas A-S, que eu tinha lido errado na fase 1 como "bloco
+    vazio" — só tinha checado as colunas BH/BI/BJ daquele intervalo de linhas, que
+    realmente ficam vazias ali; os dados reais estão nas colunas A-S, num layout
+    diferente da tabela principal) — e ele mostra que marcar ELC (AÇO) ou ELP (PP) soma,
+    além do custo do próprio item (ELC_MG_PC), um custo extra de "CALANDRA" (processo de
+    calandragem, tabela própria "CUSTOS CALANDRA" em LBD!A76:B99 / LUN!A77:B100 — só
+    ELC/ELP, CINTA MAGNÉTICA e PLACA CALIBRADORA não somam calandra, confirmado nas
+    fórmulas D32/F32 vs H32/J32). Valor idêntico nas abas LBD e LUN (conferido linha a
+    linha), então uma matéria-prima só por DN (`CALANDRA-DN{dn}`), reaproveitada pelas
+    duas. R$0 pra DN 2/3/4 (não se aplica nesse tamanho).
+
+    Não mexe na EstruturaProduto "oficial" do LBD/LUN, mesmo raciocínio do Alojamento —
+    fica só disponível pro configurador de acessórios somar quando ELC/ELP for marcado."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_CUSTOS_PIG_CALANDRA_20_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — seed de Calandra não executado.", xlsx_path)
+        return
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_lbd = wb["LBD"]
+
+    criados = 0
+    for r in range(77, 100):
+        rotulo = ws_lbd.cell(r, 1).value  # "DN2", "DN6", ...
+        valor = ws_lbd.cell(r, 2).value
+        if not rotulo or not str(rotulo).startswith("DN") or valor is None:
+            continue
+        dn = str(rotulo)[2:].strip()
+        codigo = f"CALANDRA-DN{dn}"
+        if MateriaPrima.query.filter_by(codigo=codigo).first() is None:
+            db.session.add(MateriaPrima(
+                codigo=codigo, descricao=f"Calandra (processo) — acessório ELC/ELP PIG DN {dn}",
+                unidade="un", custo_atual=valor, categoria="Acessório", ativo=True,
+            ))
+            criados += 1
+
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_CUSTOS_PIG_CALANDRA_20_09_2026))
+    db.session.commit()
+    app.logger.info("Gestão de Custos: matérias-primas de Calandra importadas (%d criadas).", criados)
 
 
 def _pagina_inicial(usuario):
@@ -10678,11 +10732,23 @@ def register_routes(app):
         """Configurador de acessórios pro LBD/LUN (pedido do Bruno, 21/09/2026): escolhe
         o PIG (LBD ou LUN) + DN, marca quais acessórios entram (ELC aço, ELP PP, Cinta
         Magnética, Placa Calibradora — hoje já cadastrados como Produto próprio da
-        família ELC_MG_PC, com custo por DN — e Alojamento, matéria-prima nova desta
-        entrega) e vê o custo total do conjunto ajustar na hora. Tela própria e simples
-        (sem os campos de "novo custo"/histórico da tela de Simulação), só GET, nada é
-        salvo — mesmo espírito "what-if" da Simulação, só que focada nessa combinação
-        específica em vez de edição livre de qualquer matéria-prima."""
+        família ELC_MG_PC, com custo por DN — e Alojamento) e vê o custo total do
+        conjunto ajustar na hora. Tela própria e simples (sem os campos de "novo
+        custo"/histórico da tela de Simulação), só GET, nada é salvo.
+
+        Réplica fiel do "CONFIGURADOR DE CUSTOS ADICIONAIS" que já existe dentro da
+        própria aba LBD/LUN (linhas 31+/32+, colunas A-S — achado só depois do Bruno
+        perguntar sobre o disco espaçador; na fase 1 eu tinha checado só as colunas
+        BH/BI/BJ daquele intervalo, que ficam vazias, e concluído errado que era um
+        bloco sem dado). 2 regras que não são óbvias e vêm direto das fórmulas de lá
+        (D32/F32/H32/J32/O32/P32/Q32 da aba LBD, idêntico na LUN):
+        1) ELC (AÇO) e ELP (PP) somam, além do próprio custo, um valor de "CALANDRA"
+           por DN (tabela própria, ver `_seed_custos_pig_calandra`) — CINTA MAGNÉTICA e
+           PLACA CALIBRADORA não somam calandra.
+        2) Cada acessório marcado entre ELC/ELP/CINTA/PLACA (Alojamento NÃO conta)
+           soma mais 1 Disco Espaçador (matéria-prima "PUCAST-MP-DE-DN{dn}", a mesma
+           já usada na estrutura padrão do LBD/LUN) ao custo — 2 acessórios marcados
+           = 2 espaçadores extras, e assim por diante."""
         produtos_base = Produto.query.filter(Produto.familia.in_(("LBD", "LUN")), Produto.ativo == True).order_by(Produto.familia, Produto.codigo).all()  # noqa: E712
         produto_id = request.args.get("produto_id", type=int)
         produto_selecionado = db.session.get(Produto, produto_id) if produto_id else None
@@ -10702,10 +10768,11 @@ def register_routes(app):
             calc_base = _custo_estrutura_produto(estrutura_base)
 
         acessorios = []
+        qtd_conta_espacador = 0
         if dn_selecionado:
-            for chave, nome_produto in (
-                ("elc", "ELC (AÇO)"), ("elp", "ELP (PP)"),
-                ("cinta", "CINTA MAGNÉTICA"), ("placa", "PLACA CALIBRADORA"),
+            for chave, nome_produto, tem_calandra in (
+                ("elc", "ELC (AÇO)", True), ("elp", "ELP (PP)", True),
+                ("cinta", "CINTA MAGNÉTICA", False), ("placa", "PLACA CALIBRADORA", False),
             ):
                 produto_acc = Produto.query.filter_by(familia="ELC_MG_PC", codigo=nome_produto, ativo=True).first()
                 calc_acc = None
@@ -10713,26 +10780,42 @@ def register_routes(app):
                     estrutura_acc = EstruturaProduto.query.filter_by(produto_id=produto_acc.id, dn=dn_selecionado, ativo=True).first()
                     if estrutura_acc is not None:
                         calc_acc = _custo_estrutura_produto(estrutura_acc)
+                custo_calandra = None
+                if tem_calandra:
+                    mp_calandra = MateriaPrima.query.filter_by(codigo=f"CALANDRA-DN{dn_selecionado}", ativo=True).first()
+                    custo_calandra = mp_calandra.custo_atual if mp_calandra else 0.0
+                custo_item = None
+                if calc_acc is not None:
+                    custo_item = calc_acc["custo_total"] + (custo_calandra or 0.0)
+                marcado = request.args.get(f"acc_{chave}") == "1"
                 acessorios.append({
-                    "chave": chave, "nome": nome_produto, "disponivel": calc_acc is not None,
-                    "custo": calc_acc["custo_total"] if calc_acc else None,
-                    "marcado": request.args.get(f"acc_{chave}") == "1",
+                    "chave": chave, "nome": nome_produto, "disponivel": custo_item is not None,
+                    "custo": custo_item, "custo_calandra": custo_calandra if tem_calandra else None,
+                    "marcado": marcado, "conta_espacador": True,
                 })
+                if marcado and custo_item is not None:
+                    qtd_conta_espacador += 1
             mp_alojamento = MateriaPrima.query.filter_by(codigo=f"ALOJAMENTO-DN{dn_selecionado}", ativo=True).first()
             acessorios.append({
                 "chave": "alojamento", "nome": "Alojamento (embalagem)", "disponivel": mp_alojamento is not None,
-                "custo": mp_alojamento.custo_atual if mp_alojamento else None,
-                "marcado": request.args.get("acc_alojamento") == "1",
+                "custo": mp_alojamento.custo_atual if mp_alojamento else None, "custo_calandra": None,
+                "marcado": request.args.get("acc_alojamento") == "1", "conta_espacador": False,
             })
+
+        mp_espacador = MateriaPrima.query.filter_by(codigo=f"PUCAST-MP-DE-DN{dn_selecionado}", ativo=True).first() if dn_selecionado else None
+        custo_unit_espacador = mp_espacador.custo_atual if mp_espacador else 0.0
+        custo_espacadores = qtd_conta_espacador * custo_unit_espacador
 
         custo_acessorios = sum((a["custo"] or 0) for a in acessorios if a["marcado"] and a["disponivel"])
         custo_base = calc_base["custo_total"] if calc_base else 0.0
-        custo_total_combinado = custo_base + custo_acessorios
+        custo_total_combinado = custo_base + custo_acessorios + custo_espacadores
 
         return render_template(
             "custos_configurador_pig.html", produtos_base=produtos_base, produto_selecionado=produto_selecionado,
             dns_disponiveis=dns_disponiveis, dn_selecionado=dn_selecionado, calc_base=calc_base,
-            acessorios=acessorios, custo_acessorios=custo_acessorios, custo_total_combinado=custo_total_combinado,
+            acessorios=acessorios, custo_acessorios=custo_acessorios, qtd_conta_espacador=qtd_conta_espacador,
+            custo_unit_espacador=custo_unit_espacador, custo_espacadores=custo_espacadores,
+            custo_total_combinado=custo_total_combinado,
         )
 
     @app.route("/custos/estrutura/<int:produto_id>/<path:dn>/editar", methods=["GET", "POST"])
