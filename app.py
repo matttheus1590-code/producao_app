@@ -325,6 +325,7 @@ def create_app():
         _seed_custos_espuma(app)
         _seed_custos_superflex_silicone(app)
         _importar_historico_custos_manual(app)
+        _seed_custos_pig_alojamento(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -2693,6 +2694,69 @@ def _importar_historico_custos_manual(app):
         "Gestão de Custos: histórico manual de matéria-prima importado (%d registros; %d itens do log sem correspondência no catálogo: %s).",
         importados, len(nao_encontrados), ", ".join(nao_encontrados) if nao_encontrados else "nenhum",
     )
+
+
+_CHAVE_SEED_CUSTOS_PIG_ALOJAMENTO_20_09_2026 = "seed_custos_pig_alojamento_20_09_2026"
+
+
+def _seed_custos_pig_alojamento(app):
+    """Importa (uma única vez) o custo de "ALOJAMENTO" (embalagem/caixa do PIG) que já
+    existe como coluna própria nas abas LBD e LUN (coluna BI, "CUSTO TOTAL + ALOJAMENTO"
+    em BJ) mas nunca tinha sido trazido pro app nas fases 1-3 — um valor literal (não
+    fórmula) por DN, R$100 até DN 8 e R$120 de DN 10 em diante, IDÊNTICO nas duas abas
+    (LBD e LUN), conferido linha a linha antes de escrever este seed.
+
+    Motivado pelo pedido do Bruno (21/09/2026) de um configurador de acessórios pro
+    LBD/LUN — ao montar esse configurador ficou claro que Alojamento é a única coluna
+    de custo que existe na planilha do LBD/LUN e nunca tinha entrado no app. Cadastrado
+    aqui como matéria-prima de catálogo (`ALOJAMENTO-DN{dn}`, 1 por DN, compartilhada
+    entre LBD e LUN já que o valor é o mesmo) — assim fica editável/com histórico igual
+    qualquer outra matéria-prima. Importante: isso NÃO é adicionado automaticamente na
+    EstruturaProduto do LBD/LUN (não quero mudar em silêncio o custo total que já é
+    mostrado hoje em Custos dos Produtos/Necessidades do PCP) — fica só como opção no
+    novo configurador de acessórios, pro Bruno decidir se/quando incluir. Sinalizar pra
+    ele: talvez faça sentido esse valor entrar sempre por padrão no custo do PIG (parece
+    ser custo de embalagem obrigatório, não um acessório opcional de verdade) — decisão
+    dele, não assumida aqui."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_CUSTOS_PIG_ALOJAMENTO_20_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — seed de Alojamento não executado.", xlsx_path)
+        return
+
+    import openpyxl
+
+    def _dn_str(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(v).strip()
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_lbd = wb["LBD"]
+
+    criados = 0
+    for r in range(6, 28):
+        dn_val = ws_lbd.cell(r, 2).value
+        alojamento = ws_lbd.cell(r, 61).value  # BI
+        if dn_val is None or alojamento is None:
+            continue
+        dn = _dn_str(dn_val)
+        codigo = f"ALOJAMENTO-DN{dn}"
+        if MateriaPrima.query.filter_by(codigo=codigo).first() is None:
+            db.session.add(MateriaPrima(
+                codigo=codigo, descricao=f"Alojamento (embalagem) — PIG DN {dn}",
+                unidade="un", custo_atual=alojamento, categoria="Acessório", ativo=True,
+            ))
+            criados += 1
+
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_CUSTOS_PIG_ALOJAMENTO_20_09_2026))
+    db.session.commit()
+    app.logger.info("Gestão de Custos: matérias-primas de Alojamento importadas (%d criadas).", criados)
+
 
 def _pagina_inicial(usuario):
     """Pra onde mandar o usuário logo após o login (e se ele visitar /login
@@ -10607,6 +10671,69 @@ def register_routes(app):
         estruturas = sorted([e for e in produto.estruturas if e.ativo], key=lambda e: _chave_ordenacao_dn(e.dn))
         composicoes = [{"estrutura": e, "calc": _custo_estrutura_produto(e)} for e in estruturas]
         return render_template("custos_produto_detalhe.html", produto=produto, composicoes=composicoes)
+
+    @app.route("/custos/configurador-pig")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_configurador_pig():
+        """Configurador de acessórios pro LBD/LUN (pedido do Bruno, 21/09/2026): escolhe
+        o PIG (LBD ou LUN) + DN, marca quais acessórios entram (ELC aço, ELP PP, Cinta
+        Magnética, Placa Calibradora — hoje já cadastrados como Produto próprio da
+        família ELC_MG_PC, com custo por DN — e Alojamento, matéria-prima nova desta
+        entrega) e vê o custo total do conjunto ajustar na hora. Tela própria e simples
+        (sem os campos de "novo custo"/histórico da tela de Simulação), só GET, nada é
+        salvo — mesmo espírito "what-if" da Simulação, só que focada nessa combinação
+        específica em vez de edição livre de qualquer matéria-prima."""
+        produtos_base = Produto.query.filter(Produto.familia.in_(("LBD", "LUN")), Produto.ativo == True).order_by(Produto.familia, Produto.codigo).all()  # noqa: E712
+        produto_id = request.args.get("produto_id", type=int)
+        produto_selecionado = db.session.get(Produto, produto_id) if produto_id else None
+        if produto_selecionado is None or produto_selecionado.familia not in ("LBD", "LUN"):
+            produto_selecionado = produtos_base[0] if produtos_base else None
+
+        dns_disponiveis = []
+        if produto_selecionado is not None:
+            dns_disponiveis = sorted([e.dn for e in produto_selecionado.estruturas if e.ativo], key=_chave_ordenacao_dn)
+        dn_selecionado = request.args.get("dn") or (dns_disponiveis[0] if dns_disponiveis else None)
+
+        estrutura_base = None
+        calc_base = None
+        if produto_selecionado is not None and dn_selecionado:
+            estrutura_base = EstruturaProduto.query.filter_by(produto_id=produto_selecionado.id, dn=dn_selecionado, ativo=True).first()
+        if estrutura_base is not None:
+            calc_base = _custo_estrutura_produto(estrutura_base)
+
+        acessorios = []
+        if dn_selecionado:
+            for chave, nome_produto in (
+                ("elc", "ELC (AÇO)"), ("elp", "ELP (PP)"),
+                ("cinta", "CINTA MAGNÉTICA"), ("placa", "PLACA CALIBRADORA"),
+            ):
+                produto_acc = Produto.query.filter_by(familia="ELC_MG_PC", codigo=nome_produto, ativo=True).first()
+                calc_acc = None
+                if produto_acc is not None:
+                    estrutura_acc = EstruturaProduto.query.filter_by(produto_id=produto_acc.id, dn=dn_selecionado, ativo=True).first()
+                    if estrutura_acc is not None:
+                        calc_acc = _custo_estrutura_produto(estrutura_acc)
+                acessorios.append({
+                    "chave": chave, "nome": nome_produto, "disponivel": calc_acc is not None,
+                    "custo": calc_acc["custo_total"] if calc_acc else None,
+                    "marcado": request.args.get(f"acc_{chave}") == "1",
+                })
+            mp_alojamento = MateriaPrima.query.filter_by(codigo=f"ALOJAMENTO-DN{dn_selecionado}", ativo=True).first()
+            acessorios.append({
+                "chave": "alojamento", "nome": "Alojamento (embalagem)", "disponivel": mp_alojamento is not None,
+                "custo": mp_alojamento.custo_atual if mp_alojamento else None,
+                "marcado": request.args.get("acc_alojamento") == "1",
+            })
+
+        custo_acessorios = sum((a["custo"] or 0) for a in acessorios if a["marcado"] and a["disponivel"])
+        custo_base = calc_base["custo_total"] if calc_base else 0.0
+        custo_total_combinado = custo_base + custo_acessorios
+
+        return render_template(
+            "custos_configurador_pig.html", produtos_base=produtos_base, produto_selecionado=produto_selecionado,
+            dns_disponiveis=dns_disponiveis, dn_selecionado=dn_selecionado, calc_base=calc_base,
+            acessorios=acessorios, custo_acessorios=custo_acessorios, custo_total_combinado=custo_total_combinado,
+        )
 
     @app.route("/custos/estrutura/<int:produto_id>/<path:dn>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")

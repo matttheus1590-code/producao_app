@@ -141,6 +141,9 @@
         <a class="app-nav-link {% if request.endpoint in ('custos_produtos', 'custos_produto_detalhe', 'custos_estrutura_editar') %}active{% endif %}" href="{{ url_for('custos_produtos') }}">
           <span>📦 Custos dos Produtos</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'custos_configurador_pig' %}active{% endif %}" href="{{ url_for('custos_configurador_pig') }}">
+          <span>🧩 Configurador de Acessórios</span>
+        </a>
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('custos_materias_primas') %}active{% endif %}" href="{{ url_for('custos_materias_primas') }}">
           <span>🧪 Matérias-Primas</span>
         </a>

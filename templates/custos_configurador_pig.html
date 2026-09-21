@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Configurador de Acessórios · Gestão de Custos{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-puzzle"></i> Configurador de Acessórios (LBD/LUN)</h4>
+  <a href="{{ url_for('custos_painel') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left"></i> Painel de Custos
+  </a>
+</div>
+<p class="text-muted small mb-3">
+  Escolha o PIG e o DN, marque os acessórios que quer incluir e veja o custo total ajustar na hora. Nada aqui é salvo.
+</p>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label small text-muted">PIG</label>
+        <select name="produto_id" class="form-select" onchange="this.form.submit()">
+          {% for p in produtos_base %}
+          <option value="{{ p.id }}" {{ "selected" if produto_selecionado and produto_selecionado.id == p.id else "" }}>
+            {{ p.familia }} — {{ p.codigo }}{% if p.descricao %} ({{ p.descricao }}){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted">DN</label>
+        <select name="dn" class="form-select" onchange="this.form.submit()">
+          {% for dn in dns_disponiveis %}
+          <option value="{{ dn }}" {{ "selected" if dn == dn_selecionado else "" }}>{{ dn }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if not produtos_base %}
+<p class="text-muted text-center py-4">Nenhum produto LBD/LUN cadastrado.</p>
+{% elif not calc_base %}
+<p class="text-muted text-center py-4">Nenhuma estrutura de custo cadastrada para este PIG/DN.</p>
+{% else %}
+
+<div class="card mb-3">
+  <div class="card-header fw-semibold"><i class="bi bi-box-seam"></i> {{ produto_selecionado.codigo }} — DN {{ dn_selecionado }}</div>
+  <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <div class="text-muted small">Custo base do PIG (sem acessórios)</div>
+      <div class="fs-5 fw-semibold">{{ calc_base.custo_total | moeda_brl }}</div>
+    </div>
+    {% if calc_base.incompleto %}<span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Estrutura incompleta — custo base parcial</span>{% endif %}
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header fw-semibold"><i class="bi bi-check2-square"></i> Acessórios</div>
+  <div class="card-body p-0">
+    <form method="get">
+      <input type="hidden" name="produto_id" value="{{ produto_selecionado.id }}">
+      <input type="hidden" name="dn" value="{{ dn_selecionado }}">
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <tbody>
+            {% for a in acessorios %}
+            <tr class="{{ 'text-muted' if not a.disponivel else '' }}">
+              <td style="width:40px">
+                <input type="checkbox" class="form-check-input" name="acc_{{ a.chave }}" value="1"
+                       {{ "checked" if a.marcado else "" }} {{ "disabled" if not a.disponivel else "" }}
+                       onchange="this.form.submit()">
+              </td>
+              <td>
+                {{ a.nome }}
+                {% if a.chave == "alojamento" %}<div class="text-muted small">Embalagem — achado pendente de revisão, ver observação no relatório</div>{% endif %}
+                {% if not a.disponivel %}<div class="text-muted small">Sem custo cadastrado pra este DN</div>{% endif %}
+              </td>
+              <td class="text-end fw-semibold" style="width:160px">
+                {{ a.custo | moeda_brl if a.custo is not none else "—" }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card border-primary">
+  <div class="card-body">
+    <div class="row text-center g-3">
+      <div class="col-4">
+        <div class="text-muted small">Custo base</div>
+        <div class="fs-5">{{ calc_base.custo_total | moeda_brl }}</div>
+      </div>
+      <div class="col-4">
+        <div class="text-muted small">+ Acessórios marcados</div>
+        <div class="fs-5">{{ custo_acessorios | moeda_brl }}</div>
+      </div>
+      <div class="col-4">
+        <div class="text-muted small fw-semibold">Total do conjunto</div>
+        <div class="fs-3 fw-bold text-primary">{{ custo_total_combinado | moeda_brl }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+
+{% endblock %}
