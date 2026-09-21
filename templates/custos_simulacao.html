@@ -8,22 +8,172 @@
     <i class="bi bi-arrow-left"></i> Painel de Custos
   </a>
 </div>
+<p class="text-muted small mb-3">
+  Simule mudanças de custo de matéria-prima, hora-homem e quantidade antes de confirmar (nada aqui é salvo), e
+  acompanhe o histórico de revisões já registradas no sistema.
+</p>
+
+<div class="card mb-4">
+  <div class="card-header fw-semibold"><i class="bi bi-calculator"></i> Simulação — "e se"</div>
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end mb-3">
+      <div class="col-md-6">
+        <label class="form-label small text-muted">Produto</label>
+        <select name="produto_id" class="form-select form-select-sm" onchange="this.form.submit()">
+          <option value="">Selecione um produto…</option>
+          {% for p in produtos_pai %}
+          <option value="{{ p.id }}" {{ "selected" if produto_selecionado and produto_selecionado.id == p.id else "" }}>
+            {{ p.familia }} — {{ p.codigo }}{% if p.descricao %} ({{ p.descricao }}){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% if produto_selecionado %}
+      <div class="col-md-3">
+        <label class="form-label small text-muted">DN</label>
+        <select name="dn" class="form-select form-select-sm" onchange="this.form.submit()">
+          {% for dn in dns_disponiveis %}
+          <option value="{{ dn }}" {{ "selected" if dn == dn_selecionado else "" }}>{{ dn }}</option>
+          {% endfor %}
+        </select>
+        <input type="hidden" name="produto_id" value="{{ produto_selecionado.id }}">
+      </div>
+      {% endif %}
+    </form>
+
+    {% if produto_selecionado and not estrutura %}
+    <p class="text-muted small mb-0">Nenhuma estrutura de custo cadastrada para este produto.</p>
+    {% endif %}
+
+    {% if estrutura and calc_atual %}
+    <form method="get" class="border-top pt-3">
+      <input type="hidden" name="produto_id" value="{{ produto_selecionado.id }}">
+      <input type="hidden" name="dn" value="{{ dn_selecionado }}">
+      <input type="hidden" name="simular" value="1">
+
+      <div class="table-responsive mb-3">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Matéria-prima</th>
+              <th class="text-end">Custo atual</th>
+              <th class="text-end" style="max-width:160px">Novo custo (simulado)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for mp in materias_usadas %}
+            <tr>
+              <td>{{ mp.codigo }} — {{ mp.descricao }} <span class="text-muted small">({{ mp.unidade }})</span></td>
+              <td class="text-end text-muted">{{ mp.custo_atual | moeda_brl }}</td>
+              <td>
+                <input type="text" name="mp_{{ mp.id }}" class="form-control form-control-sm text-end"
+                       value="{{ request.args.get('mp_' ~ mp.id, mp.custo_atual) }}">
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-3">Nenhuma matéria-prima nesta estrutura.</td></tr>
+            {% endfor %}
+            <tr class="table-light">
+              <td class="fw-semibold">Hora-homem (R$/h)</td>
+              <td class="text-end text-muted">{{ hh_atual | moeda_brl }}</td>
+              <td><input type="text" name="hh_override" class="form-control form-control-sm text-end" value="{{ hh_override_valor if hh_override_valor is not none else hh_atual }}"></td>
+            </tr>
+            <tr class="table-light">
+              <td class="fw-semibold">Quantidade a produzir</td>
+              <td class="text-end text-muted">1</td>
+              <td><input type="text" name="quantidade" class="form-control form-control-sm text-end" value="{{ quantidade }}"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-play-fill"></i> Simular</button>
+      {% if calc_atual.incompleto %}<span class="badge bg-warning text-dark ms-2"><i class="bi bi-exclamation-triangle"></i> Estrutura incompleta — custo atual parcial</span>{% endif %}
+    </form>
+
+    <div class="row g-3 mt-1">
+      <div class="col-md-6">
+        <div class="border rounded p-3 h-100">
+          <div class="text-muted small mb-1">Custo atual (1 unidade)</div>
+          <div class="fs-4 fw-semibold">{{ calc_atual.custo_total | moeda_brl }}</div>
+          <div class="text-muted small">MP: {{ calc_atual.custo_mp | moeda_brl }} · HH: {{ calc_atual.custo_hh | moeda_brl }}</div>
+          {% if quantidade and quantidade != 1.0 %}
+          <div class="text-muted small mt-1">× {{ quantidade | int if quantidade == quantidade | int else quantidade }} un. = {{ (calc_atual.custo_total * quantidade) | moeda_brl }}</div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="col-md-6">
+        {% if simulando and calc_simulado %}
+        {% set variacao = calc_simulado.custo_total - calc_atual.custo_total %}
+        {% set variacao_pct = (variacao / calc_atual.custo_total * 100) if calc_atual.custo_total else 0 %}
+        <div class="border rounded p-3 h-100 {{ 'border-danger' if variacao > 0 else ('border-success' if variacao < 0 else '') }}">
+          <div class="text-muted small mb-1">Custo simulado (1 unidade)</div>
+          <div class="fs-4 fw-semibold">{{ calc_simulado.custo_total | moeda_brl }}
+            <span class="fs-6 {{ 'text-danger' if variacao > 0 else ('text-success' if variacao < 0 else 'text-muted') }}">
+              ({{ "+" if variacao > 0 else "" }}{{ variacao | moeda_brl }} · {{ "+" if variacao_pct > 0 else "" }}{{ "%.1f"|format(variacao_pct) }}%)
+            </span>
+          </div>
+          <div class="text-muted small">MP: {{ calc_simulado.custo_mp | moeda_brl }} · HH: {{ calc_simulado.custo_hh | moeda_brl }}</div>
+          {% if quantidade and quantidade != 1.0 %}
+          <div class="text-muted small mt-1">× {{ quantidade | int if quantidade == quantidade | int else quantidade }} un. = {{ (calc_simulado.custo_total * quantidade) | moeda_brl }}
+            <span class="{{ 'text-danger' if variacao > 0 else ('text-success' if variacao < 0 else 'text-muted') }}">
+              ({{ "+" if variacao > 0 else "" }}{{ (variacao * quantidade) | moeda_brl }})
+            </span>
+          </div>
+          {% endif %}
+          {% if calc_simulado.incompleto %}<div class="text-warning small mt-1"><i class="bi bi-exclamation-triangle"></i> Estrutura incompleta — custo simulado parcial</div>{% endif %}
+        </div>
+        {% else %}
+        <div class="border rounded p-3 h-100 d-flex align-items-center justify-content-center text-muted small">
+          Ajuste algum valor acima e clique em "Simular" pra ver o comparativo.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
 
 <div class="card">
-  <div class="card-body text-center py-5">
-    <div class="fs-1 mb-2"><i class="bi bi-cone-striped"></i></div>
-    <div class="fw-semibold mb-2">Em desenvolvimento — chega numa próxima fase</div>
-    <p class="text-muted small mb-0" style="max-width:560px; margin:0 auto;">
-      Esta tela vai permitir simular mudanças de custo de matéria-prima, hora-homem e quantidade produzida
-      (Custo atual × Custo simulado × Variação, sem alterar o custo oficial até confirmar), e navegar o histórico
-      completo de revisões. Por enquanto, o histórico de matéria-prima e hora-homem já está disponível nas
-      respectivas telas de cadastro.
-    </p>
-    <div class="d-flex justify-content-center gap-2 mt-3">
-      <a href="{{ url_for('custos_materias_primas') }}" class="btn btn-outline-primary btn-sm">Histórico de matérias-primas</a>
-      <a href="{{ url_for('custos_hora_homem') }}" class="btn btn-outline-primary btn-sm">Histórico de hora-homem</a>
-    </div>
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span class="fw-semibold"><i class="bi bi-clock-history"></i> Histórico de revisões</span>
+    <form method="get" class="d-flex align-items-center gap-2">
+      <select name="mp_historico_id" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+        <option value="">Todos os itens</option>
+        {% for mp in materias_para_filtro %}
+        <option value="{{ mp.id }}" {{ "selected" if mp_historico_id == mp.id else "" }}>{{ mp.codigo }} — {{ mp.descricao }}</option>
+        {% endfor %}
+      </select>
+    </form>
   </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Data</th><th>Tipo</th><th>Item</th>
+          <th class="text-end">Valor anterior</th><th class="text-end">Valor novo</th>
+          <th>Motivo</th><th>Usuário</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in eventos %}
+        <tr>
+          <td class="text-muted small text-nowrap">{{ e.data.strftime("%d/%m/%Y") if e.data else "—" }}</td>
+          <td><span class="badge bg-{{ 'info-subtle text-info-emphasis' if e.tipo == 'Matéria-prima' else 'secondary-subtle text-secondary-emphasis' }}">{{ e.tipo }}</span></td>
+          <td class="small">{{ e.item }}</td>
+          <td class="text-end">{{ e.valor_anterior | moeda_brl if e.valor_anterior is not none else "—" }}</td>
+          <td class="text-end fw-semibold">{{ e.valor_novo | moeda_brl }}</td>
+          <td class="text-muted small">{{ e.motivo or "—" }}</td>
+          <td class="text-muted small">{{ e.usuario_nome or "—" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted py-4">Nenhuma revisão registrada ainda.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if eventos|length >= 200 %}
+  <div class="card-footer text-muted small">Mostrando as 200 revisões mais recentes.</div>
+  {% endif %}
 </div>
 
 {% endblock %}

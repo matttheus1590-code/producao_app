@@ -324,6 +324,7 @@ def create_app():
         _seed_custos_pig_mandril(app)
         _seed_custos_espuma(app)
         _seed_custos_superflex_silicone(app)
+        _importar_historico_custos_manual(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -2600,6 +2601,97 @@ def _seed_custos_superflex_silicone(app):
     app.logger.info(
         "Gestão de Custos: importação de SUPERFLEX/SILICONE (fase 3) concluída (%d matérias-primas, %d produtos, %d estruturas).",
         MateriaPrima.query.count(), Produto.query.count(), EstruturaProduto.query.count(),
+    )
+
+_CHAVE_IMPORTAR_HISTORICO_CUSTOS_MP_20_09_2026 = "importar_historico_custos_mp_20_09_2026"
+
+# Alias explícito pra itens do log manual da aba "EVOLUÇÃO DE CUSTOS - MP" cujo texto
+# não bate 1:1 com a `descricao` já cadastrada no catálogo (a maioria bate exata, por
+# vir literalmente de PARÂMETROS — estes 4 são os acessórios exclusivos de HLCC/HLCC PC,
+# cuja descrição no catálogo foi escrita a partir do cabeçalho da aba, não de PARÂMETROS;
+# confirmados pelo preço batendo exato entre o log e o cadastro, não só pelo nome).
+_ALIAS_HISTORICO_MP = {
+    'PRENSA CABO 3/16" (unidade)': "ESPUMA-PRENSA-CABO",
+    "KIT FIXAÇÃO HLCC-PC (conjunto)": "ESPUMA-KIT-ARRUELA-PORCA-HLCCPC",
+    'BARRA ROSCADA 3/4" (metro)': "ESPUMA-BARRA-ROSCADA-HLCCPC",
+    "BUMPER PU - COIM (kg)": "ESPUMA-BUMPER-PU-HLCCPC",
+}
+
+
+def _importar_historico_custos_manual(app):
+    """Importa (uma única vez) o log manual de mudanças de preço que o Bruno já vinha
+    mantendo à mão na aba "EVOLUÇÃO DE CUSTOS - MP" da planilha (tabela "REGISTRO DE
+    ATUALIZAÇÕES DE PREÇO", colunas F-N) pra dentro de `MateriaPrimaHistorico` — assim a
+    tela de Histórico (fase 3) mostra a trajetória real de preço desde que ele começou a
+    registrar (nov/2024), não só as mudanças feitas a partir de agora dentro do app.
+
+    NÃO importa o log da aba "EVOLUÇÃO DE CUSTOS - PRODUTOS": checado célula a célula, esse
+    log é só 1 fotografia única (811 linhas, todas com observação "Carga inicial (snapshot
+    do índice BUSCA DE CUSTO)", datadas do mesmo dia 07/08/2026, zero mudança real registrada
+    depois disso) — e custo de produto no app nunca é armazenado, é sempre recalculado ao
+    vivo a partir da matéria-prima/hora-homem correntes (`_custo_estrutura_produto`), então
+    guardar essa fotografia como "histórico" seria só duplicar um número já derivável e
+    ficaria descolado do valor real assim que qualquer matéria-prima mudasse de preço depois
+    dela. Se Bruno passar a registrar mudanças de custo de produto de verdade na planilha
+    (histórico com mais de 1 ponto por produto), dá pra reconsiderar numa fase futura.
+
+    Casamento log→catálogo: por `descricao` exata (cobre a maioria — vem literalmente da
+    aba PARÂMETROS nos dois lados) + um alias explícito pra 4 itens exclusivos de HLCC/HLCC
+    PC cuja descrição no catálogo foi escrita a partir do cabeçalho da aba, não de
+    PARÂMETROS (confirmados pelo preço batendo exato, não só pelo nome — ver
+    `_ALIAS_HISTORICO_MP`). 3 linhas do log não têm correspondência confiável no catálogo
+    atual (texto diferente E preço não bate com nada) — não importadas, só logadas como aviso
+    pro Bruno decidir se são itens obsoletos ou se falta cadastrar: "8086 BUMPER PRÉ-POLÍMERO
+    TDI", "MOCA / CURATIVO (kg)" (grafia antiga, distinta de "MOCA CURATIVO TDI" já
+    cadastrada) e "CABO DE AÇO (metro)" (o app usa a MESMA matéria-prima da corda pro olhal
+    de cabo de aço da HLCC/HLCC PC — achado da fase 2, revisão pendente com o Bruno — não um
+    item de catálogo próprio)."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_IMPORTAR_HISTORICO_CUSTOS_MP_20_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — histórico manual não importado.", xlsx_path)
+        return
+
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws = wb["EVOLUÇÃO DE CUSTOS - MP"]
+
+    mps_por_descricao = {mp.descricao: mp for mp in MateriaPrima.query.all()}
+
+    importados = 0
+    nao_encontrados = []
+    for r in range(21, ws.max_row + 1):
+        item = ws.cell(r, 8).value
+        if not item:
+            continue
+        item = str(item).strip()
+        preco = ws.cell(r, 10).value
+        data_registro = ws.cell(r, 6).value
+        observacao = (ws.cell(r, 13).value or "").strip()
+        if preco is None or data_registro is None:
+            continue
+
+        mp = mps_por_descricao.get(item)
+        if mp is None and item in _ALIAS_HISTORICO_MP:
+            mp = MateriaPrima.query.filter_by(codigo=_ALIAS_HISTORICO_MP[item]).first()
+        if mp is None:
+            nao_encontrados.append(item)
+            continue
+
+        db.session.add(MateriaPrimaHistorico(
+            materia_prima_id=mp.id, custo_anterior=None, custo_novo=preco,
+            motivo=(observacao or "Carga inicial (migrado do log manual da planilha)")[:300],
+            usuario_nome="Importação (planilha)", criado_em=data_registro,
+        ))
+        importados += 1
+
+    db.session.add(ControleSistema(chave=_CHAVE_IMPORTAR_HISTORICO_CUSTOS_MP_20_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Gestão de Custos: histórico manual de matéria-prima importado (%d registros; %d itens do log sem correspondência no catálogo: %s).",
+        importados, len(nao_encontrados), ", ".join(nao_encontrados) if nao_encontrados else "nenhum",
     )
 
 def _pagina_inicial(usuario):
@@ -9345,13 +9437,22 @@ def _hora_homem_atual():
     return p.valor if p else 40.0
 
 
-def _custo_estrutura_produto(estrutura, _visitados=None):
+def _custo_estrutura_produto(estrutura, _visitados=None, overrides_mp=None, override_hh=None):
     """Calcula o custo de 1 unidade de uma EstruturaProduto (produto numa
     DN), resolvendo itens SUBPRODUTO recursivamente (modela as dependências
     entre abas descobertas na planilha: LUN usa PU CAST, CORPO MANDRIL usa
     LBD). `_visitados` evita loop infinito se alguém cadastrar uma
     referência circular por engano — nunca deveria acontecer num uso normal,
     mas é uma trava de segurança barata.
+
+    `overrides_mp` (dict {materia_prima_id: novo_custo}) e `override_hh`
+    (valor R$/h) permitem SIMULAR um cenário hipotético sem alterar nada no
+    banco — usados pela tela de Simulação (fase 3). Quando None (uso normal
+    de todas as telas de produto/necessidades), o cálculo usa
+    `MateriaPrima.custo_atual`/`_hora_homem_atual()` de verdade, exatamente
+    como antes. Os overrides se propagam pra baixo em SUBPRODUTO, então
+    simular o custo de uma matéria-prima usada bem no fundo de uma cadeia
+    (ex. CORPO MANDRIL → LBD → PU CAST) afeta o total corretamente.
 
     Retorna dict: custo_mp, custo_hh, custo_total, linhas (detalhe de cada
     item, pra tela de composição), incompleto (True se algum SUBPRODUTO não
@@ -9381,7 +9482,7 @@ def _custo_estrutura_produto(estrutura, _visitados=None):
                     "faltando": True,
                 })
                 continue
-            sub_calc = _custo_estrutura_produto(sub_estrutura, _visitados)
+            sub_calc = _custo_estrutura_produto(sub_estrutura, _visitados, overrides_mp=overrides_mp, override_hh=override_hh)
             incompleto = incompleto or sub_calc["incompleto"]
             custo_unit = sub_calc["custo_total"]
             custo_linha = custo_unit * item.quantidade
@@ -9394,6 +9495,8 @@ def _custo_estrutura_produto(estrutura, _visitados=None):
         else:
             mp = item.materia_prima
             custo_unit = mp.custo_atual if mp else None
+            if mp is not None and overrides_mp and mp.id in overrides_mp:
+                custo_unit = overrides_mp[mp.id]
             if mp is None:
                 incompleto = True
                 linhas.append({
@@ -9409,7 +9512,8 @@ def _custo_estrutura_produto(estrutura, _visitados=None):
                 "faltando": False,
             })
 
-    custo_hh = (estrutura.ciclo_horas or 0) * _hora_homem_atual()
+    hh_rate = override_hh if override_hh is not None else _hora_homem_atual()
+    custo_hh = (estrutura.ciclo_horas or 0) * hh_rate
     return {
         "custo_mp": round(custo_mp, 4),
         "custo_hh": round(custo_hh, 4),
@@ -9417,6 +9521,34 @@ def _custo_estrutura_produto(estrutura, _visitados=None):
         "linhas": linhas,
         "incompleto": incompleto,
     }
+
+
+def _materias_primas_usadas(estrutura, _visitados=None):
+    """Coleta (recursivamente, resolvendo SUBPRODUTO na mesma DN) o conjunto de
+    MateriaPrima realmente usadas numa EstruturaProduto — pra tela de Simulação
+    (fase 3) oferecer um campo de "novo custo" pra cada uma, mesmo as que estão
+    escondidas dentro de uma cadeia de sub-produto (ex.: CORPO MANDRIL usa LBD
+    usa PU CAST). Retorna lista ordenada por código, sem repetição."""
+    _visitados = _visitados or set()
+    if estrutura.id in _visitados:
+        return []
+    _visitados = _visitados | {estrutura.id}
+
+    vistos = {}
+    for item in estrutura.itens:
+        if item.tipo == "SUBPRODUTO":
+            if not item.subproduto_id:
+                continue
+            sub_estrutura = EstruturaProduto.query.filter_by(
+                produto_id=item.subproduto_id, dn=estrutura.dn, ativo=True
+            ).first()
+            if sub_estrutura is None:
+                continue
+            for mp in _materias_primas_usadas(sub_estrutura, _visitados):
+                vistos[mp.id] = mp
+        elif item.materia_prima is not None:
+            vistos[item.materia_prima.id] = item.materia_prima
+    return sorted(vistos.values(), key=lambda mp: mp.codigo)
 
 
 def _produtos_catalogo(familia=None, apenas_ativos=True):
@@ -10640,7 +10772,106 @@ def register_routes(app):
     @app.route("/custos/simulacao")
     @requer_role("ADMIN", "PCP", "GESTAO")
     def custos_simulacao():
-        return render_template("custos_simulacao.html")
+        # --- Simulação: "e se" um custo de matéria-prima / hora-homem / quantidade
+        # mudasse — sem alterar nada de verdade (GET puro, nada é salvo). ---
+        produtos_pai = (
+            Produto.query.filter_by(ativo=True)
+            .order_by(Produto.familia, Produto.codigo)
+            .all()
+        )
+        produto_id = request.args.get("produto_id", type=int)
+        dn_selecionado = request.args.get("dn") or None
+
+        produto_selecionado = None
+        dns_disponiveis = []
+        estrutura = None
+        materias_usadas = []
+        calc_atual = None
+        calc_simulado = None
+        hh_atual = _hora_homem_atual()
+        hh_override_valor = _parse_float_form(request.args.get("hh_override"), default=None)
+        quantidade = _parse_float_form(request.args.get("quantidade"), default=None) or 1.0
+        simulando = False
+
+        if produto_id:
+            produto_selecionado = db.session.get(Produto, produto_id)
+        if produto_selecionado is not None:
+            dns_disponiveis = sorted(
+                [e.dn for e in produto_selecionado.estruturas if e.ativo],
+                key=_chave_ordenacao_dn,
+            )
+            if dn_selecionado is None and dns_disponiveis:
+                dn_selecionado = dns_disponiveis[0]
+            if dn_selecionado:
+                estrutura = EstruturaProduto.query.filter_by(
+                    produto_id=produto_selecionado.id, dn=dn_selecionado, ativo=True
+                ).first()
+            if estrutura is not None:
+                materias_usadas = _materias_primas_usadas(estrutura)
+                calc_atual = _custo_estrutura_produto(estrutura)
+
+                # overrides vêm de "mp_<id>" na query string — só monta o dict de
+                # simulação se pelo menos 1 valor foi realmente alterado do padrão
+                # (senão a "simulação" seria idêntica ao atual e só confundiria).
+                overrides_mp = {}
+                algo_alterado = False
+                for mp in materias_usadas:
+                    valor = _parse_float_form(request.args.get(f"mp_{mp.id}"), default=None)
+                    if valor is not None:
+                        overrides_mp[mp.id] = valor
+                        if round(valor, 6) != round(mp.custo_atual, 6):
+                            algo_alterado = True
+                if hh_override_valor is not None and round(hh_override_valor, 6) != round(hh_atual, 6):
+                    algo_alterado = True
+                if quantidade != 1.0:
+                    algo_alterado = True
+
+                if request.args.get("simular") and algo_alterado:
+                    simulando = True
+                    calc_simulado = _custo_estrutura_produto(
+                        estrutura,
+                        overrides_mp=overrides_mp or None,
+                        override_hh=hh_override_valor,
+                    )
+
+        # --- Histórico: MateriaPrimaHistorico + ParametroHoraHomemHistorico, num
+        # único timeline (filtrável por matéria-prima). ---
+        mp_historico_id = request.args.get("mp_historico_id", type=int)
+        mps_por_id = {mp.id: mp for mp in MateriaPrima.query.all()}
+        q_historico = MateriaPrimaHistorico.query
+        if mp_historico_id:
+            q_historico = q_historico.filter_by(materia_prima_id=mp_historico_id)
+        eventos = []
+        for h in q_historico.order_by(MateriaPrimaHistorico.criado_em.desc()).limit(200).all():
+            mp_ref = mps_por_id.get(h.materia_prima_id)
+            eventos.append({
+                "data": h.criado_em, "tipo": "Matéria-prima",
+                "item": f"{mp_ref.codigo} — {mp_ref.descricao}" if mp_ref else "?",
+                "valor_anterior": h.custo_anterior, "valor_novo": h.custo_novo,
+                "motivo": h.motivo, "usuario_nome": h.usuario_nome,
+            })
+        if not mp_historico_id:
+            for h in ParametroHoraHomemHistorico.query.order_by(ParametroHoraHomemHistorico.criado_em.desc()).limit(50).all():
+                eventos.append({
+                    "data": h.criado_em, "tipo": "Hora-homem",
+                    "item": "Valor de hora-homem (R$/h)",
+                    "valor_anterior": h.valor_anterior, "valor_novo": h.valor_novo,
+                    "motivo": h.motivo, "usuario_nome": h.usuario_nome,
+                })
+            eventos.sort(key=lambda e: e["data"] or datetime.min, reverse=True)
+        eventos = eventos[:200]
+
+        materias_para_filtro = MateriaPrima.query.order_by(MateriaPrima.codigo).all()
+
+        return render_template(
+            "custos_simulacao.html",
+            produtos_pai=produtos_pai, produto_selecionado=produto_selecionado,
+            dns_disponiveis=dns_disponiveis, dn_selecionado=dn_selecionado,
+            estrutura=estrutura, materias_usadas=materias_usadas,
+            calc_atual=calc_atual, calc_simulado=calc_simulado, simulando=simulando,
+            hh_atual=hh_atual, hh_override_valor=hh_override_valor, quantidade=quantidade,
+            eventos=eventos, materias_para_filtro=materias_para_filtro, mp_historico_id=mp_historico_id,
+        )
 
     @app.route("/alertas")
     @login_required
