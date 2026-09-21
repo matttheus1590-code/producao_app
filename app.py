@@ -8951,7 +8951,7 @@ def _texto_filtros_listagem_geral_semanal(filtros):
     return " · ".join(partes)
 
 
-def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
+def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
     """PDF "Emitir relatório" — Planejamento Mensal PCP/Operação (pedido
     original do Bruno, 14/09/2026, então chamado de "Listagem Geral —
     Relatório Semanal"; aprimorado a pedido dele em 21/09/2026: "quero que
@@ -8979,7 +8979,26 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
     com KPIs, gráfico de barras de faturamento por semana e o rodapé de
     total — a mesma estrutura por mês de antes, só que fatorada em
     _construir_bloco (closure local) pra poder repetir 1x (mês) ou 2x
-    (mês + backlog) sem duplicar a montagem inteira da tabela/gráfico."""
+    (mês + backlog) sem duplicar a montagem inteira da tabela/gráfico.
+
+    `modelo` (pedido do Bruno, 21/09/2026: "quero que tenha dois modelo de
+    relatorio em pdf... um modelo que já esta estabelecido... e outro
+    modelo mais compacto, onde eu nao quero que detalhe e cite os itens,
+    somente cite o pedido... cada linha dentro da semana agrupada
+    representara um pedido de venda... porem, totalmente completo (com
+    valores, agrupamento, top regioes e clientes, valores, datas etc)")
+    controla SÓ a tabela de detalhe dentro de cada semana:
+      - "completo" (padrão, o modelo já existente): 1 linha por ITEM,
+        agrupado por pedido com uma linha de subtotal quando o pedido tem
+        2+ itens (ver _construir_bloco).
+      - "compacto": 1 linha por PEDIDO (nunca por item) — soma
+        quantidade/valor de todos os itens daquele pedido numa linha só,
+        pensado pra reduzir bastante o número de páginas em meses com
+        muitos itens por pedido. TUDO mais continua igual nos dois
+        modelos: banners de mês/backlog, KPIs, gráfico de faturamento por
+        semana, Top 10 clientes, principais regiões e principais clientes
+        por região, e o rodapé de total — só a granularidade da tabela de
+        pedidos muda."""
     from reportlab.graphics.shapes import Drawing, Rect, String
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
@@ -9015,9 +9034,10 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
     )
     largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
 
+    sufixo_titulo_modelo = " · Modelo compacto (1 linha por pedido)" if modelo == "compacto" else ""
     elementos = [
         Paragraph("Planejamento Mensal PCP/Operação", estilos["Title"]),
-        Paragraph(f"{titulo_periodo} · Gerado em {_agora_brt().strftime('%d/%m/%Y %H:%M')}", estilos["Normal"]),
+        Paragraph(f"{titulo_periodo} · Gerado em {_agora_brt().strftime('%d/%m/%Y %H:%M')}{sufixo_titulo_modelo}", estilos["Normal"]),
     ]
     texto_filtros = _texto_filtros_listagem_geral_semanal(filtros)
     if texto_filtros:
@@ -9065,11 +9085,21 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
         elementos.append(tabela_comparativo)
         elementos.append(Spacer(1, 7 * mm))
 
-    cabecalho_tabela = [
-        "PV", "Cliente", "Produto", "Qtd", "Frete", "UF / Região", "Cidade",
-        "Incluído", "Solicitado", "Liberação prevista", "Liberação real", "Status", "Venda item",
-    ]
-    pesos = [7, 13, 17, 4, 6, 9, 9, 7, 7, 8, 8, 8, 9]
+    # Cabeçalho/larguras da tabela de detalhe por semana — muda de acordo
+    # com o `modelo` (completo = 1 linha por item; compacto = 1 linha por
+    # pedido, sem citar os itens, pedido do Bruno 21/09/2026).
+    if modelo == "compacto":
+        cabecalho_tabela = [
+            "PV", "Cliente", "Produtos", "Itens", "Frete", "UF / Região", "Cidade",
+            "Incluído", "Solicitado", "Liberação prevista", "Liberação real", "Status", "Valor do pedido",
+        ]
+        pesos = [7, 15, 19, 5, 6, 9, 9, 7, 7, 8, 8, 9, 10]
+    else:
+        cabecalho_tabela = [
+            "PV", "Cliente", "Produto", "Qtd", "Frete", "UF / Região", "Cidade",
+            "Incluído", "Solicitado", "Liberação prevista", "Liberação real", "Status", "Venda item",
+        ]
+        pesos = [7, 13, 17, 4, 6, 9, 9, 7, 7, 8, 8, 8, 9]
     soma_pesos = sum(pesos)
     larguras_colunas = [p / soma_pesos * largura_disponivel for p in pesos]
 
@@ -9318,44 +9348,107 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
                 else:
                     grupos_pedido.append((l.pedido_id, [l]))
 
-            estilo_subtotal_rotulo = ParagraphStyle("subtotal_rotulo", parent=estilo_celula, fontName="Helvetica-Bold", textColor=COR_CABECALHO_TEXTO)
-            estilo_subtotal_valor = ParagraphStyle("subtotal_valor", parent=estilo_celula, fontName="Helvetica-Bold", alignment=2)
-            for _, itens_pedido in grupos_pedido:
-                for l in itens_pedido:
-                    qtd = l.quantidade or 0
-                    qtd_txt = int(qtd) if qtd == int(qtd) else qtd
-                    regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
-                    dados_tabela.append([
-                        Paragraph(l.pedido_venda or "—", estilo_celula),
-                        Paragraph(l.cliente or "—", estilo_celula),
-                        Paragraph(l.descricao_produto or "—", estilo_celula),
-                        Paragraph(str(qtd_txt), estilo_celula),
-                        Paragraph(l.frete or "—", estilo_celula),
-                        Paragraph(f"{l.estado or '—'} / {regiao_txt}", estilo_celula),
-                        Paragraph(l.cidade or "—", estilo_celula),
-                        Paragraph(_formatar_data_br(l.data_inclusao_pedido) or "—", estilo_celula),
-                        Paragraph(_formatar_data_br(l.data_cliente) or "—", estilo_celula),
-                        Paragraph(_formatar_data_br(l.liberacao_prevista) or "—", estilo_celula),
-                        Paragraph(_formatar_data_br(l.liberacao_real) or "—", estilo_celula),
-                        Paragraph(l.status_producao or "—", estilo_celula),
-                        Paragraph(_fmt_moeda(l.venda_total), estilo_celula),
-                    ])
-                    cores_linhas.append(COR_FINALIZADO_BG if l.liberacao_real else colors.white)
-
-                # Subtotal do pedido — só quando há mais de 1 item (com 1 só
-                # item, a própria linha já mostra o total, repetir seria
-                # redundante); "bem simples" como pedido pelo Bruno.
-                if len(itens_pedido) > 1:
+            if modelo == "compacto":
+                # Modelo compacto (pedido do Bruno, 21/09/2026: "nao quero
+                # que detalhe e cite os itens, somente cite o pedido...
+                # cada linha dentro da semana agrupada representara um
+                # pedido de venda") — 1 linha por PEDIDO, nunca por item.
+                # Campos que já são do próprio pedido (frete/UF/cidade/
+                # datas de inclusão e do cliente) vêm do primeiro item;
+                # campos que variam por item (produto, liberação, status)
+                # são resumidos/agregados pra continuar "totalmente
+                # completo" sem listar item a item.
+                for _, itens_pedido in grupos_pedido:
                     primeiro = itens_pedido[0]
                     total_pedido = sum(l.venda_total or 0 for l in itens_pedido)
-                    idx_linha = len(dados_tabela)
+                    regiao_txt = REGIAO_POR_UF.get(primeiro.estado, "—")
+
+                    produtos_unicos = []
+                    for l in itens_pedido:
+                        nome = l.descricao_produto or "—"
+                        if nome not in produtos_unicos:
+                            produtos_unicos.append(nome)
+                    produtos_txt = produtos_unicos[0]
+                    if len(produtos_unicos) > 1:
+                        produtos_txt += f" (+{len(produtos_unicos) - 1} produto{'s' if len(produtos_unicos) > 2 else ''})"
+
+                    datas_prevista = sorted({l.liberacao_prevista for l in itens_pedido if l.liberacao_prevista})
+                    if not datas_prevista:
+                        prevista_txt = "—"
+                    elif len(datas_prevista) == 1:
+                        prevista_txt = _formatar_data_br(datas_prevista[0])
+                    else:
+                        prevista_txt = f"{_formatar_data_br(datas_prevista[0])} a {_formatar_data_br(datas_prevista[-1])}"
+
+                    qtd_com_real = sum(1 for l in itens_pedido if l.liberacao_real)
+                    datas_real = sorted({l.liberacao_real for l in itens_pedido if l.liberacao_real})
+                    if qtd_com_real == 0:
+                        real_txt = "—"
+                    elif qtd_com_real < len(itens_pedido):
+                        real_txt = f"{qtd_com_real}/{len(itens_pedido)} liberados"
+                    elif len(datas_real) == 1:
+                        real_txt = _formatar_data_br(datas_real[0])
+                    else:
+                        real_txt = f"{_formatar_data_br(datas_real[0])} a {_formatar_data_br(datas_real[-1])}"
+
+                    status_unicos = sorted({l.status_producao or "—" for l in itens_pedido})
+                    status_txt = status_unicos[0] if len(status_unicos) == 1 else f"MISTO ({len(status_unicos)} status)"
+
                     dados_tabela.append([
-                        Paragraph(f"Total do pedido {primeiro.pedido_venda or '—'} — {primeiro.cliente or '—'} ({len(itens_pedido)} itens)", estilo_subtotal_rotulo),
-                        "", "", "", "", "", "", "", "", "", "", "",
-                        Paragraph(_fmt_moeda(total_pedido), estilo_subtotal_valor),
+                        Paragraph(primeiro.pedido_venda or "—", estilo_celula),
+                        Paragraph(primeiro.cliente or "—", estilo_celula),
+                        Paragraph(produtos_txt, estilo_celula),
+                        Paragraph(str(len(itens_pedido)), estilo_celula),
+                        Paragraph(primeiro.frete or "—", estilo_celula),
+                        Paragraph(f"{primeiro.estado or '—'} / {regiao_txt}", estilo_celula),
+                        Paragraph(primeiro.cidade or "—", estilo_celula),
+                        Paragraph(_formatar_data_br(primeiro.data_inclusao_pedido) or "—", estilo_celula),
+                        Paragraph(_formatar_data_br(primeiro.data_cliente) or "—", estilo_celula),
+                        Paragraph(prevista_txt, estilo_celula),
+                        Paragraph(real_txt, estilo_celula),
+                        Paragraph(status_txt, estilo_celula),
+                        Paragraph(_fmt_moeda(total_pedido), estilo_celula),
                     ])
-                    cores_linhas.append(colors.HexColor("#e9edf5"))
-                    linhas_subtotal.add(idx_linha)
+                    cores_linhas.append(COR_FINALIZADO_BG if qtd_com_real == len(itens_pedido) else colors.white)
+            else:
+                estilo_subtotal_rotulo = ParagraphStyle("subtotal_rotulo", parent=estilo_celula, fontName="Helvetica-Bold", textColor=COR_CABECALHO_TEXTO)
+                estilo_subtotal_valor = ParagraphStyle("subtotal_valor", parent=estilo_celula, fontName="Helvetica-Bold", alignment=2)
+                for _, itens_pedido in grupos_pedido:
+                    for l in itens_pedido:
+                        qtd = l.quantidade or 0
+                        qtd_txt = int(qtd) if qtd == int(qtd) else qtd
+                        regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
+                        dados_tabela.append([
+                            Paragraph(l.pedido_venda or "—", estilo_celula),
+                            Paragraph(l.cliente or "—", estilo_celula),
+                            Paragraph(l.descricao_produto or "—", estilo_celula),
+                            Paragraph(str(qtd_txt), estilo_celula),
+                            Paragraph(l.frete or "—", estilo_celula),
+                            Paragraph(f"{l.estado or '—'} / {regiao_txt}", estilo_celula),
+                            Paragraph(l.cidade or "—", estilo_celula),
+                            Paragraph(_formatar_data_br(l.data_inclusao_pedido) or "—", estilo_celula),
+                            Paragraph(_formatar_data_br(l.data_cliente) or "—", estilo_celula),
+                            Paragraph(_formatar_data_br(l.liberacao_prevista) or "—", estilo_celula),
+                            Paragraph(_formatar_data_br(l.liberacao_real) or "—", estilo_celula),
+                            Paragraph(l.status_producao or "—", estilo_celula),
+                            Paragraph(_fmt_moeda(l.venda_total), estilo_celula),
+                        ])
+                        cores_linhas.append(COR_FINALIZADO_BG if l.liberacao_real else colors.white)
+
+                    # Subtotal do pedido — só quando há mais de 1 item (com 1 só
+                    # item, a própria linha já mostra o total, repetir seria
+                    # redundante); "bem simples" como pedido pelo Bruno.
+                    if len(itens_pedido) > 1:
+                        primeiro = itens_pedido[0]
+                        total_pedido = sum(l.venda_total or 0 for l in itens_pedido)
+                        idx_linha = len(dados_tabela)
+                        dados_tabela.append([
+                            Paragraph(f"Total do pedido {primeiro.pedido_venda or '—'} — {primeiro.cliente or '—'} ({len(itens_pedido)} itens)", estilo_subtotal_rotulo),
+                            "", "", "", "", "", "", "", "", "", "", "",
+                            Paragraph(_fmt_moeda(total_pedido), estilo_subtotal_valor),
+                        ])
+                        cores_linhas.append(colors.HexColor("#e9edf5"))
+                        linhas_subtotal.add(idx_linha)
 
             tabela_semana = Table(dados_tabela, colWidths=larguras_colunas, repeatRows=1)
             estilo_tabela = [
@@ -9425,7 +9518,8 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
     buffer.seek(0)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
     sufixo_nome = "_".join(f"{b['mes_ano'][0]}-{b['mes_ano'][1]:02d}" for b in blocos)
-    nome_arquivo = f"planejamento_mensal_pcp_{sufixo_nome}.pdf"
+    sufixo_modelo = "_compacto" if modelo == "compacto" else ""
+    nome_arquivo = f"planejamento_mensal_pcp{sufixo_modelo}_{sufixo_nome}.pdf"
     resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
     return resposta
 
@@ -11909,7 +12003,14 @@ def register_routes(app):
         segundo bloco com o mês SEGUINTE ao escolhido (via _somar_meses,
         nunca mês fixo) — mesmos outros filtros, sua própria consulta
         (_filtrar_pedidos de novo com planejamento_mensal trocado), sem
-        misturar as linhas de um mês com o outro em nenhum momento."""
+        misturar as linhas de um mês com o outro em nenhum momento.
+
+        `modelo_relatorio` (select do modal, pedido do Bruno, 21/09/2026:
+        "quero que tenha dois modelo de relatorio em pdf... um... que já
+        esta estabelecido... e outro... mais compacto... cada linha dentro
+        da semana agrupada representara um pedido de venda") — "completo"
+        (padrão) ou "compacto"; vale pros dois blocos (mês + backlog)
+        igual, só passa direto pra _gerar_pdf_planejamento_mensal_pcp."""
         args = request.args.to_dict()
         if not args.get("planejamento_mensal", "").strip():
             args["planejamento_mensal"] = date.today().strftime("%Y-%m")
@@ -11932,7 +12033,10 @@ def register_routes(app):
         else:
             blocos = [{"mes_ano": mes_ano, "linhas": linhas, "rotulo": "MÊS DO RELATÓRIO"}]
 
-        return _gerar_pdf_planejamento_mensal_pcp(blocos, filtros)
+        modelo_relatorio = args.get("modelo_relatorio", "completo").strip() or "completo"
+        if modelo_relatorio not in ("completo", "compacto"):
+            modelo_relatorio = "completo"
+        return _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo_relatorio)
 
     @app.route("/relatorios/faturamento.csv")
     @login_required
