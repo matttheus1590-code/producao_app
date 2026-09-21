@@ -323,6 +323,7 @@ def create_app():
         _seed_parametro_hora_homem(app)
         _seed_custos_pig_mandril(app)
         _seed_custos_espuma(app)
+        _seed_custos_superflex_silicone(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -2325,6 +2326,270 @@ def _seed_custos_espuma(app):
     db.session.commit()
     app.logger.info(
         "Gestão de Custos: importação da família espuma (fase 2) concluída (%d matérias-primas, %d produtos, %d estruturas).",
+        MateriaPrima.query.count(), Produto.query.count(), EstruturaProduto.query.count(),
+    )
+
+_CHAVE_SEED_CUSTOS_SUPERFLEX_SILICONE_20_09_2026 = "seed_custos_superflex_silicone_20_09_2026"
+
+
+def _seed_custos_superflex_silicone(app):
+    """Importa (uma única vez) SUPERFLEX e SILICONE (fase 3 do módulo Gestão de
+    Custos, junto com a tela de Simulação/Histórico que fica numa função à parte)
+    da mesma planilha das fases 1 e 2 (`data/custo_de_producao_20_09_2026.xlsx`).
+    Mesmo padrão idempotente de `_seed_custos_pig_mandril`/`_seed_custos_espuma`
+    (guardado por ControleSistema).
+
+    SUPERFLEX (2 produtos, CS3 e CS4) tem um layout bem diferente das famílias já
+    importadas: cada variante é montada a partir de 3 "sub-tabelas" por DN (COPO
+    PISTÃO EM PU, DISCO ESPAÇADORES EM PU, EIXO EM PU — cada uma com seu próprio
+    peso/tempo/matéria-prima), multiplicadas por uma quantidade fixa (3x pra CS3,
+    4x pra CS4, confirmado nas fórmulas B6=P6*3 / B15=P6*4), mais um item de custo
+    fixo ("ANEL DE TRAVAMENTO + CABO DE AÇO" = R$45 literal, igual nas 2 variantes
+    e em todos os DNs) e um bloco fixo de HH de montagem (3h, também igual nas 2
+    variantes — `=$N$2*$N$1`). O CS4 tem ainda um acréscimo literal por DN no
+    custo do eixo (confirmado na fórmula `=B8+27`/`+38`/`+43`/`+73`/`+114` — não é
+    proporcional a nada, é um valor fixo por DN, tratado aqui como mais uma
+    matéria-prima "consolidada" por DN, mesmo padrão já usado na fase 1 pra
+    ELC_MG_PC). Modelado com o mesmo mecanismo de SUBPRODUTO já usado desde a fase
+    1 (LUN→PU CAST): cada sub-tabela vira um Produto próprio (categoria
+    "Componente", não aparece como PIG vendável) e CS3/CS4 referenciam essas
+    3 sub-tabelas com a quantidade certa — o motor de cálculo resolve tudo
+    recursivamente sem precisar de nenhuma mudança.
+
+    SUPERFLEX não está indexado na aba BUSCA DE CUSTO (nenhuma linha "SUPERFLEX"
+    lá) — verificado célula a célula contra o próprio TOTAL de cada coluna DN na
+    aba SUPERFLEX (linhas 11 e 20) em vez disso.
+
+    SILICONE (aba com só a família DISCFLEX) é bem mais simples e autocontida:
+    cada linha é 1 DN com peso de manta de silicone + qtde de ímãs (0 pro
+    DISCFLEX "puro", 2 ou 4 pras variantes "COM IMÃ"), sem nenhuma dependência de
+    outra aba. 3 produtos: DISCFLEX (8 linhas — nota: 2 delas têm o mesmo rótulo
+    de DN "3"" só que com pesos diferentes, 0,2834kg e 0,2995kg — divergência sem
+    explicação na própria planilha, mesma que a aba BUSCA DE CUSTO também carrega
+    sem diferenciar; aqui é preciso separar em 2 DNs distintos pra caber no
+    modelo, marcados "3\" (A)"/"3\" (B)" com o peso de cada um na observação, e
+    fica sinalizado pro Bruno revisar a origem dessa duplicidade), DISCFLEX COM
+    IMÃ (2 linhas, ímã 8x5mm — confirmado na fórmula `=H14*$B$3`) e HSC AZUL COM
+    IMÃ (1 linha, ímã 22x10mm — fórmula `=H16*$B$2`, catálogo de ímã diferente do
+    das outras 2 variantes). Verificado 1:1 contra BUSCA DE CUSTO (as 3 famílias
+    estão indexadas lá)."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_CUSTOS_SUPERFLEX_SILICONE_20_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — seed SUPERFLEX/SILICONE não executado.", xlsx_path)
+        return
+
+    import openpyxl
+
+    mp_cache, produto_cache = {}, {}
+
+    def _get_or_create_mp(codigo, descricao, unidade, custo, categoria):
+        mp = mp_cache.get(codigo)
+        if mp is not None:
+            return mp
+        mp = MateriaPrima.query.filter_by(codigo=codigo).first()
+        if mp is None:
+            mp = MateriaPrima(codigo=codigo, descricao=descricao, unidade=unidade, custo_atual=custo or 0, categoria=categoria, ativo=True)
+            db.session.add(mp)
+            db.session.flush()
+        mp_cache[codigo] = mp
+        return mp
+
+    def _get_or_create_produto(familia, codigo, descricao=None, categoria=None, chave_busca=None):
+        key = (familia, codigo)
+        p = produto_cache.get(key)
+        if p is not None:
+            return p
+        p = Produto.query.filter_by(familia=familia, codigo=codigo).first()
+        if p is None:
+            p = Produto(familia=familia, codigo=codigo, descricao=descricao, categoria=categoria, chave_busca=chave_busca, ativo=True)
+            db.session.add(p)
+            db.session.flush()
+        produto_cache[key] = p
+        return p
+
+    def _get_or_create_estrutura(produto, dn, ciclo_horas):
+        e = EstruturaProduto.query.filter_by(produto_id=produto.id, dn=dn).first()
+        if e is None:
+            e = EstruturaProduto(produto_id=produto.id, dn=dn, ciclo_horas=ciclo_horas or 0, ativo=True)
+            db.session.add(e)
+            db.session.flush()
+        return e
+
+    def _add_item(estrutura, ordem, tipo, quantidade, materia_prima=None, subproduto=None, observacao=None):
+        if not quantidade:
+            return
+        db.session.add(EstruturaProdutoItem(
+            estrutura_id=estrutura.id, tipo=tipo, quantidade=quantidade,
+            materia_prima_id=materia_prima.id if materia_prima else None,
+            subproduto_id=subproduto.id if subproduto else None,
+            observacao=observacao, ordem=ordem,
+        ))
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_param = wb["PARÂMETROS"]
+
+    def _dn_str(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(v).strip()
+
+    # ------------------------------------------------------------------
+    # SUPERFLEX
+    # ------------------------------------------------------------------
+    def _mp_quimica(linha):
+        """Reaproveita a MESMA matéria-prima "química" já cadastrada na fase 1
+        (PARÂMETROS linhas 6-15, catálogo `quimicas_por_linha` do
+        `_seed_custos_pig_mandril`) — mesmo código, não duplica o insumo."""
+        desc = ws_param.cell(linha, 2).value
+        preco = ws_param.cell(linha, 5).value
+        codigo = "QUIM-" + "".join(ch for ch in desc.upper() if ch.isalnum())[:30]
+        return _get_or_create_mp(codigo, desc, "kg", preco, "Química")
+
+    MP_TDI_1270A = _mp_quimica(6)   # "12-70 A PRÉ-POLÍMERO TDI" — copo pistão
+    MP_ATS85 = _mp_quimica(15)      # "ATS 85 PRÉ-POLÍMERO (AMINO) TDI" — eixo e disco espaçador
+
+    ws_sf = wb["SUPERFLEX"]
+    dn_labels = [_dn_str(ws_sf.cell(5, c).value) for c in range(2, 7)]  # "6''".."14''"
+
+    produto_copo_pistao = _get_or_create_produto(
+        "SUPERFLEX", "SUPERFLEX-COPO-PISTAO",
+        descricao="SUPERFLEX — Copo pistão em PU (70-80 Shore A)", categoria="Componente")
+    produto_eixo_pu = _get_or_create_produto(
+        "SUPERFLEX", "SUPERFLEX-EIXO-PU",
+        descricao="SUPERFLEX — Eixo em PU (80-90 Shore A)", categoria="Componente")
+    produto_disco_espacador = _get_or_create_produto(
+        "SUPERFLEX", "SUPERFLEX-DISCO-ESPACADOR",
+        descricao="SUPERFLEX — Disco espaçador em PU (80-90 Shore A)", categoria="Componente")
+
+    # Sub-tabela "COPO PISTAO: 70-80 SHORE A" (linhas 6-10, colunas L/N — peso/tempo)
+    for i, r in enumerate(range(6, 11)):
+        dn = dn_labels[i]
+        peso = ws_sf.cell(r, 12).value or 0
+        tempo_h = ws_sf.cell(r, 14).value or 0
+        est = _get_or_create_estrutura(produto_copo_pistao, dn, tempo_h)
+        _add_item(est, 0, "MATERIA_PRIMA", peso, materia_prima=MP_TDI_1270A, observacao="copo pistão (12-70 A)")
+
+    # Sub-tabela "EIXO PU: 80-90 SHORE A" (linhas 6-10, colunas S/U)
+    for i, r in enumerate(range(6, 11)):
+        dn = dn_labels[i]
+        peso = ws_sf.cell(r, 19).value or 0
+        tempo_h = ws_sf.cell(r, 21).value or 0
+        est = _get_or_create_estrutura(produto_eixo_pu, dn, tempo_h)
+        _add_item(est, 0, "MATERIA_PRIMA", peso, materia_prima=MP_ATS85, observacao="eixo (ATS 85)")
+
+    # Sub-tabela "DISCO ESPAÇADOR: 80-90 SHORE A" (linhas 14-18, colunas L/N)
+    for i, r in enumerate(range(14, 19)):
+        dn = dn_labels[i]
+        peso = ws_sf.cell(r, 12).value or 0
+        tempo_h = ws_sf.cell(r, 14).value or 0
+        est = _get_or_create_estrutura(produto_disco_espacador, dn, tempo_h)
+        _add_item(est, 0, "MATERIA_PRIMA", peso, materia_prima=MP_ATS85, observacao="disco espaçador (ATS 85)")
+
+    MP_ANEL_TRAVAMENTO = _get_or_create_mp(
+        "SUPERFLEX-ANEL-TRAVAMENTO-CABO-ACO", "Anel de travamento + cabo de aço (SUPERFLEX)",
+        "un", 45, "Acessório")
+
+    # Acréscimo literal do eixo no CS4 (fórmula "=B8+27"/"+38"/"+43"/"+73"/"+114" —
+    # valor fixo por DN, sem decomposição em peso/preço na planilha; centralizado
+    # como matéria-prima "consolidada" por DN, mesmo padrão já usado na fase 1
+    # pra ELC_MG_PC).
+    acrescimos_eixo_cs4 = [27, 38, 43, 73, 114]
+    mp_acrescimo_cs4 = []
+    for i, dn in enumerate(dn_labels):
+        dn_num = _dn_str(ws_sf.cell(5, i + 2).value).replace("''", "").strip()
+        mp = _get_or_create_mp(
+            f"SUPERFLEX-CS4-EIXO-ACRESCIMO-DN{dn_num}",
+            f"SUPERFLEX CS4 — acréscimo de eixo DN {dn} (valor fixo da planilha, sem decomposição)",
+            "un", acrescimos_eixo_cs4[i], "Componente DN")
+        mp_acrescimo_cs4.append(mp)
+
+    produto_cs3 = _get_or_create_produto("SUPERFLEX", "SUPERFLEX-CS3", descricao="PIG SUPERFLEX-CS3", categoria="PIG", chave_busca="SUPERFLEX-CS3")
+    produto_cs4 = _get_or_create_produto("SUPERFLEX", "SUPERFLEX-CS4", descricao="PIG SUPERFLEX-CS4", categoria="PIG", chave_busca="SUPERFLEX-CS4")
+
+    for i, dn in enumerate(dn_labels):
+        est3 = _get_or_create_estrutura(produto_cs3, dn, 3)  # HH MONTAGEM+QUALIDADE+PCP = 3h fixo, igual nas 2 variantes
+        ordem = 0
+        _add_item(est3, ordem, "SUBPRODUTO", 3, subproduto=produto_copo_pistao, observacao="copo pistão (3x)"); ordem += 1
+        _add_item(est3, ordem, "SUBPRODUTO", 1, subproduto=produto_disco_espacador, observacao="disco espaçador"); ordem += 1
+        _add_item(est3, ordem, "SUBPRODUTO", 1, subproduto=produto_eixo_pu, observacao="eixo"); ordem += 1
+        _add_item(est3, ordem, "MATERIA_PRIMA", 1, materia_prima=MP_ANEL_TRAVAMENTO, observacao="anel de travamento + cabo de aço"); ordem += 1
+
+        est4 = _get_or_create_estrutura(produto_cs4, dn, 3)
+        ordem = 0
+        _add_item(est4, ordem, "SUBPRODUTO", 4, subproduto=produto_copo_pistao, observacao="copo pistão (4x)"); ordem += 1
+        _add_item(est4, ordem, "SUBPRODUTO", 1, subproduto=produto_disco_espacador, observacao="disco espaçador"); ordem += 1
+        _add_item(est4, ordem, "SUBPRODUTO", 1, subproduto=produto_eixo_pu, observacao="eixo (base)"); ordem += 1
+        _add_item(est4, ordem, "MATERIA_PRIMA", 1, materia_prima=mp_acrescimo_cs4[i], observacao="eixo — acréscimo CS4 (valor fixo da planilha)"); ordem += 1
+        _add_item(est4, ordem, "MATERIA_PRIMA", 1, materia_prima=MP_ANEL_TRAVAMENTO, observacao="anel de travamento + cabo de aço"); ordem += 1
+
+    # ------------------------------------------------------------------
+    # SILICONE (família DISCFLEX)
+    # ------------------------------------------------------------------
+    MP_MANTA_SILICONE = _get_or_create_mp(
+        "SILICONE-MANTA", ws_param.cell(32, 2).value, "kg", ws_param.cell(32, 5).value, "Química")
+    MP_IMA_22X10 = _get_or_create_mp(
+        "SILICONE-IMA-22X10MM", ws_param.cell(33, 2).value, "un", ws_param.cell(33, 5).value, "Acessório")
+    MP_IMA_8X5 = _get_or_create_mp(
+        "SILICONE-IMA-8X5MM", ws_param.cell(34, 2).value, "un", ws_param.cell(34, 5).value, "Acessório")
+
+    ws_sil = wb["SILICONE"]
+
+    def _tempo_para_horas(t):
+        if t is None:
+            return 0
+        try:
+            return t.hour + t.minute / 60 + t.second / 3600
+        except AttributeError:
+            return float(t) * 24  # fallback se vier como fração de dia (float)
+
+    produto_discflex = _get_or_create_produto("SILICONE", "DISCFLEX", descricao="Disco DISCFLEX (manta silicone)", categoria="Sobressalente", chave_busca="DISCFLEX")
+    produto_discflex_ima = _get_or_create_produto("SILICONE", "DISCFLEX-COM-IMA", descricao="Disco DISCFLEX com ímã (manta silicone)", categoria="Sobressalente", chave_busca="DISCFLEX COM IMA")
+    produto_hsc_azul = _get_or_create_produto("SILICONE", "HSC-AZUL-COM-IMA", descricao="HSC azul com ímã (manta silicone)", categoria="Sobressalente", chave_busca="HSC AZUL COM IMA")
+
+    dn_vistos_discflex = {}
+    for r in range(6, 14):  # DISCFLEX "puro" — sem ímã
+        dn_raw = _dn_str(ws_sil.cell(r, 5).value)
+        peso = ws_sil.cell(r, 6).value or 0
+        tempo_h = _tempo_para_horas(ws_sil.cell(r, 12).value)
+        n = dn_vistos_discflex.get(dn_raw, 0)
+        dn_vistos_discflex[dn_raw] = n + 1
+        if n == 0:
+            dn = dn_raw
+        else:
+            # 2 linhas com o mesmo rótulo de DN e pesos diferentes (planilha original,
+            # sem explicação — linhas 9 e 10, 0,2834kg vs 0,2995kg) — desambiguado aqui
+            # pra caber no modelo (UniqueConstraint produto+dn); sinalizado pro Bruno revisar.
+            dn = f"{dn_raw} (variante {n + 1} — peso {peso}kg, ver observação)"
+        est = _get_or_create_estrutura(produto_discflex, dn, tempo_h)
+        _add_item(est, 0, "MATERIA_PRIMA", peso, materia_prima=MP_MANTA_SILICONE, observacao="manta de silicone")
+
+    for r in range(14, 16):  # DISCFLEX COM IMÃ — ímã 8x5mm (fórmula usa $B$3)
+        dn = _dn_str(ws_sil.cell(r, 5).value)
+        peso = ws_sil.cell(r, 6).value or 0
+        qnt_ima = ws_sil.cell(r, 8).value or 0
+        tempo_h = _tempo_para_horas(ws_sil.cell(r, 12).value)
+        est = _get_or_create_estrutura(produto_discflex_ima, dn, tempo_h)
+        _add_item(est, 0, "MATERIA_PRIMA", peso, materia_prima=MP_MANTA_SILICONE, observacao="manta de silicone")
+        _add_item(est, 1, "MATERIA_PRIMA", qnt_ima, materia_prima=MP_IMA_8X5, observacao="ímã 8x5mm")
+
+    for r in range(16, 17):  # HSC AZUL COM IMÃ — ímã 22x10mm (fórmula usa $B$2)
+        dn = _dn_str(ws_sil.cell(r, 5).value)
+        peso = ws_sil.cell(r, 6).value or 0
+        qnt_ima = ws_sil.cell(r, 8).value or 0
+        tempo_h = _tempo_para_horas(ws_sil.cell(r, 12).value)
+        est = _get_or_create_estrutura(produto_hsc_azul, dn, tempo_h)
+        _add_item(est, 0, "MATERIA_PRIMA", peso, materia_prima=MP_MANTA_SILICONE, observacao="manta de silicone")
+        _add_item(est, 1, "MATERIA_PRIMA", qnt_ima, materia_prima=MP_IMA_22X10, observacao="ímã 22x10mm")
+
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_CUSTOS_SUPERFLEX_SILICONE_20_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Gestão de Custos: importação de SUPERFLEX/SILICONE (fase 3) concluída (%d matérias-primas, %d produtos, %d estruturas).",
         MateriaPrima.query.count(), Produto.query.count(), EstruturaProduto.query.count(),
     )
 
@@ -9175,13 +9440,13 @@ def _chave_ordenacao_dn(dn):
 
 _FAMILIAS_PRODUTO_PCP = ("LBD", "LUN", "PU CAST", "CORPO MANDRIL", "ELC_MG_PC", "PIGS EM BORRACHA")
 
-# Famílias da planilha ainda NÃO implementadas nesta fase (Fase 2 = espuma,
-# Fase 3 = PU/silicone) — usado só pra mostrar "chega numa próxima fase" na
-# tela de Custos dos Produtos, em vez de simplesmente omitir sem explicação.
-_FAMILIAS_FASE_SEGUINTE = (
-    "H", "HS", "HL", "HLR", "HLR X", "HLR V", "HLR R", "HLB", "HDISC", "HLCC", "HLCC PC",
-    "SUPERFLEX", "SILICONE",
-)
+# Famílias da planilha ainda NÃO implementadas — usado só pra mostrar "chega
+# numa próxima fase" na tela de Custos dos Produtos, em vez de simplesmente
+# omitir sem explicação. Vazio desde a fase 3 (20/09/2026): todas as famílias
+# de produto da planilha (PIG MANDRIL, espuma, SUPERFLEX, SILICONE) já foram
+# importadas — só a tela de Simulação/Histórico ainda está pendente (ver
+# custos_simulacao).
+_FAMILIAS_FASE_SEGUINTE = ()
 
 
 _RE_FRACAO_POL = re.compile(r"\d\s*/\s*\d+\s*(?:''|\"|['’”]|POL(?:EGADAS)?\b)", re.I)
