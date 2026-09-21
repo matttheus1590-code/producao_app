@@ -174,7 +174,7 @@
     <div class="modal-content">
       <form method="get" action="{{ url_for('relatorio_listagem_geral_semanal_pdf') }}">
         <div class="modal-header">
-          <h5 class="modal-title"><i class="bi bi-file-earmark-pdf"></i> Emitir relatório semanal (PDF)</h5>
+          <h5 class="modal-title"><i class="bi bi-file-earmark-pdf"></i> Emitir relatório — Planejamento Mensal PCP/Operação</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
         </div>
         <div class="modal-body">
@@ -185,6 +185,13 @@
           <label class="form-label small text-muted mb-1">Mês do relatório</label>
           <input type="month" class="form-control" name="planejamento_mensal"
                  value="{{ filtros.planejamento_mensal or mes_atual_input }}" required>
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" value="1" name="incluir_backlog" id="checkIncluirBacklogPCP">
+            <label class="form-check-label small" for="checkIncluirBacklogPCP">
+              <i class="bi bi-layers"></i> Incluir também o <strong>mês seguinte como Backlog PCP</strong>
+              (projeção do que já está planejado por semana no mês seguinte, no mesmo PDF)
+            </label>
+          </div>
           {% if filtros.cliente or filtros.vendedor or filtros.status or filtros.estacao or filtros.busca or filtros.produto or filtros.regiao or filtros.data_inicio or filtros.data_fim or filtros.atrasados %}
           <p class="text-muted small mt-2 mb-0">
             <i class="bi bi-funnel"></i> Vai respeitar os outros filtros já aplicados na tela agora.
