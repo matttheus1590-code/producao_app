@@ -9138,6 +9138,47 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
             elems.append(desenho)
             elems.append(Spacer(1, 6 * mm))
 
+        # ---- top 10 clientes do mês (pedido do Bruno, 21/09/2026: "inclue
+        # um top 10 principais clientes") — ranking por faturamento somado
+        # de TODOS os itens do cliente no mês (mesma base de dado dos KPIs
+        # acima, nunca diverge) ----
+        if linhas_b:
+            agregados_cliente = {}
+            for l in linhas_b:
+                chave = l.cliente or "—"
+                info = agregados_cliente.setdefault(chave, {"pedidos": set(), "faturamento": 0.0})
+                info["pedidos"].add(l.pedido_id)
+                info["faturamento"] += l.venda_total or 0
+            ranking_clientes = sorted(agregados_cliente.items(), key=lambda kv: kv[1]["faturamento"], reverse=True)[:10]
+
+            dados_top = [[
+                Paragraph(c, estilo_cabecalho_tabela) for c in ("#", "Cliente", "Pedidos", "Faturamento no mês")
+            ]]
+            for i, (cliente_nome, info) in enumerate(ranking_clientes, start=1):
+                dados_top.append([
+                    Paragraph(str(i), estilo_celula),
+                    Paragraph(cliente_nome, estilo_celula),
+                    Paragraph(str(len(info["pedidos"])), estilo_celula),
+                    Paragraph(_fmt_moeda(info["faturamento"]), estilo_celula),
+                ])
+            largura_top = [largura_disponivel * 0.06, largura_disponivel * 0.54, largura_disponivel * 0.16, largura_disponivel * 0.24]
+            tabela_top = Table(dados_top, colWidths=largura_top, repeatRows=1)
+            tabela_top.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+                ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ]))
+            elems.append(Paragraph("Top 10 clientes do mês", estilos["Heading4"]))
+            elems.append(tabela_top)
+            elems.append(Spacer(1, 6 * mm))
+
         # ---- 1 seção por semana PCP ----
         for rotulo, linhas_semana in grupos_semana:
             inicio, fim = _intervalo_calendario_semana_pcp(mes_ano_b, rotulo)
@@ -9163,30 +9204,61 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
 
             dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho_tabela]]
             cores_linhas = [COR_CABECALHO_BG]
+            linhas_subtotal = set()
             linhas_ordenadas = sorted(
                 linhas_semana,
                 key=lambda l: (l.data_inclusao_pedido or date.max, l.pedido_venda or "", l.item_id),
             )
+            # Agrupa por pedido (pedido do Bruno, 21/09/2026: "agrupe os
+            # pedidos e totalize o valor total do pedido... tenho um pedido
+            # que possui 5 itens, some o valor de todo dele") — os itens já
+            # vêm contíguos por pedido graças à ordenação acima, então basta
+            # juntar item a item enquanto for o mesmo pedido_id.
+            grupos_pedido = []
             for l in linhas_ordenadas:
-                qtd = l.quantidade or 0
-                qtd_txt = int(qtd) if qtd == int(qtd) else qtd
-                regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
-                dados_tabela.append([
-                    Paragraph(l.pedido_venda or "—", estilo_celula),
-                    Paragraph(l.cliente or "—", estilo_celula),
-                    Paragraph(l.descricao_produto or "—", estilo_celula),
-                    Paragraph(str(qtd_txt), estilo_celula),
-                    Paragraph(l.frete or "—", estilo_celula),
-                    Paragraph(f"{l.estado or '—'} / {regiao_txt}", estilo_celula),
-                    Paragraph(l.cidade or "—", estilo_celula),
-                    Paragraph(_formatar_data_br(l.data_inclusao_pedido) or "—", estilo_celula),
-                    Paragraph(_formatar_data_br(l.data_cliente) or "—", estilo_celula),
-                    Paragraph(_formatar_data_br(l.liberacao_prevista) or "—", estilo_celula),
-                    Paragraph(_formatar_data_br(l.liberacao_real) or "—", estilo_celula),
-                    Paragraph(l.status_producao or "—", estilo_celula),
-                    Paragraph(_fmt_moeda(l.venda_total), estilo_celula),
-                ])
-                cores_linhas.append(COR_FINALIZADO_BG if l.liberacao_real else colors.white)
+                if grupos_pedido and grupos_pedido[-1][0] == l.pedido_id:
+                    grupos_pedido[-1][1].append(l)
+                else:
+                    grupos_pedido.append((l.pedido_id, [l]))
+
+            estilo_subtotal_rotulo = ParagraphStyle("subtotal_rotulo", parent=estilo_celula, fontName="Helvetica-Bold", textColor=COR_CABECALHO_TEXTO)
+            estilo_subtotal_valor = ParagraphStyle("subtotal_valor", parent=estilo_celula, fontName="Helvetica-Bold", alignment=2)
+            for _, itens_pedido in grupos_pedido:
+                for l in itens_pedido:
+                    qtd = l.quantidade or 0
+                    qtd_txt = int(qtd) if qtd == int(qtd) else qtd
+                    regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
+                    dados_tabela.append([
+                        Paragraph(l.pedido_venda or "—", estilo_celula),
+                        Paragraph(l.cliente or "—", estilo_celula),
+                        Paragraph(l.descricao_produto or "—", estilo_celula),
+                        Paragraph(str(qtd_txt), estilo_celula),
+                        Paragraph(l.frete or "—", estilo_celula),
+                        Paragraph(f"{l.estado or '—'} / {regiao_txt}", estilo_celula),
+                        Paragraph(l.cidade or "—", estilo_celula),
+                        Paragraph(_formatar_data_br(l.data_inclusao_pedido) or "—", estilo_celula),
+                        Paragraph(_formatar_data_br(l.data_cliente) or "—", estilo_celula),
+                        Paragraph(_formatar_data_br(l.liberacao_prevista) or "—", estilo_celula),
+                        Paragraph(_formatar_data_br(l.liberacao_real) or "—", estilo_celula),
+                        Paragraph(l.status_producao or "—", estilo_celula),
+                        Paragraph(_fmt_moeda(l.venda_total), estilo_celula),
+                    ])
+                    cores_linhas.append(COR_FINALIZADO_BG if l.liberacao_real else colors.white)
+
+                # Subtotal do pedido — só quando há mais de 1 item (com 1 só
+                # item, a própria linha já mostra o total, repetir seria
+                # redundante); "bem simples" como pedido pelo Bruno.
+                if len(itens_pedido) > 1:
+                    primeiro = itens_pedido[0]
+                    total_pedido = sum(l.venda_total or 0 for l in itens_pedido)
+                    idx_linha = len(dados_tabela)
+                    dados_tabela.append([
+                        Paragraph(f"Total do pedido {primeiro.pedido_venda or '—'} — {primeiro.cliente or '—'} ({len(itens_pedido)} itens)", estilo_subtotal_rotulo),
+                        "", "", "", "", "", "", "", "", "", "", "",
+                        Paragraph(_fmt_moeda(total_pedido), estilo_subtotal_valor),
+                    ])
+                    cores_linhas.append(colors.HexColor("#e9edf5"))
+                    linhas_subtotal.add(idx_linha)
 
             tabela_semana = Table(dados_tabela, colWidths=larguras_colunas, repeatRows=1)
             estilo_tabela = [
@@ -9204,6 +9276,13 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
                 if i == 0:
                     continue
                 estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor))
+            for idx_linha in linhas_subtotal:
+                estilo_tabela.append(("SPAN", (0, idx_linha), (-2, idx_linha)))
+                estilo_tabela.append(("VALIGN", (0, idx_linha), (-1, idx_linha), "MIDDLE"))
+                estilo_tabela.append(("TOPPADDING", (0, idx_linha), (-1, idx_linha), 4))
+                estilo_tabela.append(("BOTTOMPADDING", (0, idx_linha), (-1, idx_linha), 4))
+                estilo_tabela.append(("LINEABOVE", (0, idx_linha), (-1, idx_linha), 0.6, colors.HexColor("#8fa8cc")))
+                estilo_tabela.append(("LINEBELOW", (0, idx_linha), (-1, idx_linha), 0.6, colors.HexColor("#8fa8cc")))
             tabela_semana.setStyle(TableStyle(estilo_tabela))
 
             elems.append(cabecalho_semana)
