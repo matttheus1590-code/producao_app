@@ -8985,7 +8985,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     estilos = getSampleStyleSheet()
     estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8, leading=9.7)
@@ -9175,9 +9175,93 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros):
                 ("LEFTPADDING", (0, 0), (-1, -1), 4),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 4),
             ]))
-            elems.append(Paragraph("Top 10 clientes do mês", estilos["Heading4"]))
-            elems.append(tabela_top)
+            elems.append(KeepTogether([Paragraph("Top 10 clientes do mês", estilos["Heading4"]), tabela_top]))
             elems.append(Spacer(1, 6 * mm))
+
+        # ---- principais regiões de fornecimento + principais clientes por
+        # região (pedido do Bruno, 21/09/2026: "principais clientes por
+        # regiao e tambem as principais regioes de fornecimento") — mesmo
+        # REGIAO_POR_UF já usado na coluna "UF / Região" da tabela de itens
+        # (nunca diverge do resto do relatório) ----
+        if linhas_b:
+            agregados_regiao = {}
+            for l in linhas_b:
+                regiao_nome = REGIAO_POR_UF.get(l.estado, "Não identificada")
+                info = agregados_regiao.setdefault(regiao_nome, {"pedidos": set(), "faturamento": 0.0})
+                info["pedidos"].add(l.pedido_id)
+                info["faturamento"] += l.venda_total or 0
+            ranking_regioes = sorted(agregados_regiao.items(), key=lambda kv: kv[1]["faturamento"], reverse=True)
+            faturamento_total_regioes = sum(info["faturamento"] for _, info in ranking_regioes) or 1
+
+            dados_regiao = [[Paragraph(c, estilo_cabecalho_tabela) for c in ("Região", "Pedidos", "Faturamento", "% do mês")]]
+            for regiao_nome, info in ranking_regioes[:10]:
+                pct = (info["faturamento"] / faturamento_total_regioes) * 100
+                dados_regiao.append([
+                    Paragraph(regiao_nome, estilo_celula),
+                    Paragraph(str(len(info["pedidos"])), estilo_celula),
+                    Paragraph(_fmt_moeda(info["faturamento"]), estilo_celula),
+                    Paragraph(f"{pct:.1f}%", estilo_celula),
+                ])
+            largura_regiao = [largura_disponivel * 0.4, largura_disponivel * 0.2, largura_disponivel * 0.24, largura_disponivel * 0.16]
+            tabela_regiao = Table(dados_regiao, colWidths=largura_regiao, repeatRows=1)
+            tabela_regiao.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+                ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ]))
+            elems.append(KeepTogether([Paragraph("Principais regiões de fornecimento", estilos["Heading4"]), tabela_regiao]))
+            elems.append(Spacer(1, 6 * mm))
+
+            # top 3 clientes dentro de cada uma das top 5 regiões (mesmo
+            # espírito do Top 10 geral, só que segmentado por região) —
+            # tabela única, na ordem do ranking de região acima e, dentro
+            # dela, por faturamento do cliente.
+            agregados_cliente_regiao = {}
+            for l in linhas_b:
+                regiao_nome = REGIAO_POR_UF.get(l.estado, "Não identificada")
+                cliente_nome = l.cliente or "—"
+                chave = (regiao_nome, cliente_nome)
+                info = agregados_cliente_regiao.setdefault(chave, {"pedidos": set(), "faturamento": 0.0})
+                info["pedidos"].add(l.pedido_id)
+                info["faturamento"] += l.venda_total or 0
+
+            dados_cli_regiao = [[Paragraph(c, estilo_cabecalho_tabela) for c in ("Região", "Cliente", "Pedidos", "Faturamento")]]
+            for regiao_nome, _ in ranking_regioes[:5]:
+                clientes_regiao = sorted(
+                    (item for item in agregados_cliente_regiao.items() if item[0][0] == regiao_nome),
+                    key=lambda kv: kv[1]["faturamento"], reverse=True,
+                )[:3]
+                for (_, cliente_nome), info in clientes_regiao:
+                    dados_cli_regiao.append([
+                        Paragraph(regiao_nome, estilo_celula),
+                        Paragraph(cliente_nome, estilo_celula),
+                        Paragraph(str(len(info["pedidos"])), estilo_celula),
+                        Paragraph(_fmt_moeda(info["faturamento"]), estilo_celula),
+                    ])
+            if len(dados_cli_regiao) > 1:
+                largura_cli_regiao = [largura_disponivel * 0.22, largura_disponivel * 0.38, largura_disponivel * 0.16, largura_disponivel * 0.24]
+                tabela_cli_regiao = Table(dados_cli_regiao, colWidths=largura_cli_regiao, repeatRows=1)
+                tabela_cli_regiao.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+                    ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ]))
+                elems.append(KeepTogether([Paragraph("Principais clientes por região", estilos["Heading4"]), tabela_cli_regiao]))
+                elems.append(Spacer(1, 6 * mm))
 
         # ---- 1 seção por semana PCP ----
         for rotulo, linhas_semana in grupos_semana:
