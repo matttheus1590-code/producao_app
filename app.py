@@ -325,6 +325,12 @@ def create_app():
         _seed_custos_espuma(app)
         _seed_custos_superflex_silicone(app)
         _importar_historico_custos_manual(app)
+        _seed_custos_pig_alojamento(app)
+        _seed_custos_pig_calandra(app)
+        # Depende de todos os seeds de matéria-prima acima já terem rodado
+        # (precisa do catálogo completo pra classificar) — roda em todo
+        # boot, não só uma vez (ver docstring da função).
+        _migrar_materia_prima_origem_planilha(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -2693,6 +2699,295 @@ def _importar_historico_custos_manual(app):
         "Gestão de Custos: histórico manual de matéria-prima importado (%d registros; %d itens do log sem correspondência no catálogo: %s).",
         importados, len(nao_encontrados), ", ".join(nao_encontrados) if nao_encontrados else "nenhum",
     )
+
+
+_CHAVE_SEED_CUSTOS_PIG_ALOJAMENTO_20_09_2026 = "seed_custos_pig_alojamento_20_09_2026"
+
+
+def _seed_custos_pig_alojamento(app):
+    """Importa (uma única vez) o custo de "ALOJAMENTO" (embalagem/caixa do PIG) que já
+    existe como coluna própria nas abas LBD e LUN (coluna BI, "CUSTO TOTAL + ALOJAMENTO"
+    em BJ) mas nunca tinha sido trazido pro app nas fases 1-3 — um valor literal (não
+    fórmula) por DN, R$100 até DN 8 e R$120 de DN 10 em diante, IDÊNTICO nas duas abas
+    (LBD e LUN), conferido linha a linha antes de escrever este seed.
+
+    Motivado pelo pedido do Bruno (21/09/2026) de um configurador de acessórios pro
+    LBD/LUN — ao montar esse configurador ficou claro que Alojamento é a única coluna
+    de custo que existe na planilha do LBD/LUN e nunca tinha entrado no app. Cadastrado
+    aqui como matéria-prima de catálogo (`ALOJAMENTO-DN{dn}`, 1 por DN, compartilhada
+    entre LBD e LUN já que o valor é o mesmo) — assim fica editável/com histórico igual
+    qualquer outra matéria-prima. Importante: isso NÃO é adicionado automaticamente na
+    EstruturaProduto do LBD/LUN (não quero mudar em silêncio o custo total que já é
+    mostrado hoje em Custos dos Produtos/Necessidades do PCP) — fica só como opção no
+    novo configurador de acessórios, pro Bruno decidir se/quando incluir. Sinalizar pra
+    ele: talvez faça sentido esse valor entrar sempre por padrão no custo do PIG (parece
+    ser custo de embalagem obrigatório, não um acessório opcional de verdade) — decisão
+    dele, não assumida aqui."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_CUSTOS_PIG_ALOJAMENTO_20_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — seed de Alojamento não executado.", xlsx_path)
+        return
+
+    import openpyxl
+
+    def _dn_str(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(v).strip()
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_lbd = wb["LBD"]
+
+    criados = 0
+    for r in range(6, 28):
+        dn_val = ws_lbd.cell(r, 2).value
+        alojamento = ws_lbd.cell(r, 61).value  # BI
+        if dn_val is None or alojamento is None:
+            continue
+        dn = _dn_str(dn_val)
+        codigo = f"ALOJAMENTO-DN{dn}"
+        if MateriaPrima.query.filter_by(codigo=codigo).first() is None:
+            db.session.add(MateriaPrima(
+                codigo=codigo, descricao=f"Alojamento (embalagem) — PIG DN {dn}",
+                unidade="un", custo_atual=alojamento, categoria="Acessório", ativo=True,
+            ))
+            criados += 1
+
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_CUSTOS_PIG_ALOJAMENTO_20_09_2026))
+    db.session.commit()
+    app.logger.info("Gestão de Custos: matérias-primas de Alojamento importadas (%d criadas).", criados)
+
+
+_CHAVE_SEED_CUSTOS_PIG_CALANDRA_20_09_2026 = "seed_custos_pig_calandra_20_09_2026"
+
+
+def _seed_custos_pig_calandra(app):
+    """Importa (uma única vez) o custo de "CALANDRA" — achado ao investigar a pergunta
+    do Bruno sobre o Disco Espaçador somar automaticamente no configurador de acessórios
+    (21/09/2026): a aba LBD tem, a partir da linha 30, um CONFIGURADOR DE ACESSÓRIOS
+    PRÓPRIO da planilha (colunas A-S, que eu tinha lido errado na fase 1 como "bloco
+    vazio" — só tinha checado as colunas BH/BI/BJ daquele intervalo de linhas, que
+    realmente ficam vazias ali; os dados reais estão nas colunas A-S, num layout
+    diferente da tabela principal) — e ele mostra que marcar ELC (AÇO) ou ELP (PP) soma,
+    além do custo do próprio item (ELC_MG_PC), um custo extra de "CALANDRA" (processo de
+    calandragem, tabela própria "CUSTOS CALANDRA" em LBD!A76:B99 / LUN!A77:B100 — só
+    ELC/ELP, CINTA MAGNÉTICA e PLACA CALIBRADORA não somam calandra, confirmado nas
+    fórmulas D32/F32 vs H32/J32). Valor idêntico nas abas LBD e LUN (conferido linha a
+    linha), então uma matéria-prima só por DN (`CALANDRA-DN{dn}`), reaproveitada pelas
+    duas. R$0 pra DN 2/3/4 (não se aplica nesse tamanho).
+
+    Não mexe na EstruturaProduto "oficial" do LBD/LUN, mesmo raciocínio do Alojamento —
+    fica só disponível pro configurador de acessórios somar quando ELC/ELP for marcado."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SEED_CUSTOS_PIG_CALANDRA_20_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — seed de Calandra não executado.", xlsx_path)
+        return
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_lbd = wb["LBD"]
+
+    criados = 0
+    for r in range(77, 100):
+        rotulo = ws_lbd.cell(r, 1).value  # "DN2", "DN6", ...
+        valor = ws_lbd.cell(r, 2).value
+        if not rotulo or not str(rotulo).startswith("DN") or valor is None:
+            continue
+        dn = str(rotulo)[2:].strip()
+        codigo = f"CALANDRA-DN{dn}"
+        if MateriaPrima.query.filter_by(codigo=codigo).first() is None:
+            db.session.add(MateriaPrima(
+                codigo=codigo, descricao=f"Calandra (processo) — acessório ELC/ELP PIG DN {dn}",
+                unidade="un", custo_atual=valor, categoria="Acessório", ativo=True,
+            ))
+            criados += 1
+
+    db.session.add(ControleSistema(chave=_CHAVE_SEED_CUSTOS_PIG_CALANDRA_20_09_2026))
+    db.session.commit()
+    app.logger.info("Gestão de Custos: matérias-primas de Calandra importadas (%d criadas).", criados)
+
+
+# Prefixos e códigos exatos de MateriaPrima que correspondem a uma linha
+# validada de verdade na aba PARÂMETROS da planilha original (as 2 tabelas
+# de "químicas" — PU CAST/LBD e Espuma/Silicone — e as famílias de
+# componente-por-DN da tabela LBD_REV A e do bloco PIGS EM BORRACHA). Tudo
+# que NÃO cai aqui é um "wrapper" que criei pra representar um produto
+# acabado ou um custo já consolidado (Placa Calibradora, Cinta Magnética,
+# ELC, ELP, Alojamento, Calandra, os discos "PU CAST consolidado", os
+# acessórios exclusivos de HLCC/HLCC PC e os valores literais de SUPERFLEX)
+# — não é matéria-prima de verdade, mesmo tendo entrado no catálogo pra
+# poder participar das fórmulas de custo.
+_ORIGEM_MP_PREFIXOS_PARAMETROS = (
+    "QUIM-",
+    "TUBO-DN", "FLANGE-BUMPER-DN", "FLANGE-SOLDA-DN", "PARAFUSO-DN", "ARRUELA-DN", "PORCA-DN",
+    "COPO-BORRACHA-EPDM-DN", "COPO-BORRACHA-BUNA-DN", "COPO-BORRACHA-VITON-DN",
+    "EIXO-BORRACHA-DN", "CABECOTE-BORRACHA-DN", "NYLON-BORRACHA-DN", "PORCA-BORRACHA-DN", "FLANGE-BORRACHA-DN",
+)
+_ORIGEM_MP_CODIGOS_PARAMETROS = {
+    "ESPUMA-BLOCO-D26", "ESPUMA-BLOCO-D45", "ESPUMA-BLOCO-D60", "ESPUMA-BLOCO-D80",
+    "ESPUMA-ELASTOMERO-TECPUR", "ESPUMA-AMINO-A-ALTA", "ESPUMA-AMINO-A-MEDIA", "ESPUMA-AMINO-B-ISO",
+    "ESPUMA-PIGMENTO", "ESPUMA-CORDA-OLHAL", "ESPUMA-ESCOVA-FINA-HLR", "ESPUMA-ESCOVA-GROSSA-HLR",
+    "ESPUMA-VELCRO-HLR-V", "ESPUMA-COLA-SAPATEIRO",
+    "SILICONE-MANTA", "SILICONE-IMA-22X10MM", "SILICONE-IMA-8X5MM",
+}
+
+# Legenda amigável por seção — mesmo agrupamento da aba PARÂMETROS, na
+# mesma ordem em que as seções aparecem lá (usado só na tela, pra montar os
+# grupos exibidos ao Bruno).
+_ORIGEM_MP_SECOES = (
+    ("Matérias-primas químicas — PU CAST / LBD (poliuretano fundido)", ("QUIM-",)),
+    ("Matérias-primas químicas e insumos — Espuma (blocos / envase A+B)", (
+        "ESPUMA-BLOCO-", "ESPUMA-ELASTOMERO-TECPUR", "ESPUMA-AMINO-", "ESPUMA-PIGMENTO",
+        "ESPUMA-CORDA-OLHAL", "ESPUMA-ESCOVA-", "ESPUMA-VELCRO-", "ESPUMA-COLA-SAPATEIRO",
+    )),
+    ("Matéria-prima — Silicone (manta e ímãs)", ("SILICONE-",)),
+    ("Componentes do corpo do PIG por DN — tubo, flange, parafuso, arruela, porca (LBD_REV A)", (
+        "TUBO-DN", "FLANGE-BUMPER-DN", "FLANGE-SOLDA-DN", "PARAFUSO-DN", "ARRUELA-DN", "PORCA-DN",
+    )),
+    ("Copo de borracha por DN e material — PIGS EM BORRACHA", ("COPO-BORRACHA-",)),
+    ("Componentes comuns por DN — PIGS EM BORRACHA (eixo, cabeçote, nylon, porca, flange)", (
+        "EIXO-BORRACHA-DN", "CABECOTE-BORRACHA-DN", "NYLON-BORRACHA-DN", "PORCA-BORRACHA-DN", "FLANGE-BORRACHA-DN",
+    )),
+)
+
+
+def _classificar_origem_materia_prima(codigo):
+    """"PARAMETROS" = corresponde a uma linha validada na aba PARÂMETROS da
+    planilha original — é o que o Bruno pediu pra ver na tela principal de
+    Matéria-Prima. "DERIVADO" = tudo o resto: produto acabado ou custo já
+    consolidado modelado como matéria-prima só pra poder entrar nas
+    fórmulas (Placa Calibradora, Cinta Magnética, ELC/ELP, Alojamento,
+    Calandra, discos "PU CAST consolidado", acessórios HLCC/HLCC PC,
+    valores literais de SUPERFLEX) — continua no banco (o motor de custo
+    depende disso pra calcular o total dos produtos), só não aparece mais
+    misturado na tela principal de Matéria-Prima."""
+    if codigo in _ORIGEM_MP_CODIGOS_PARAMETROS:
+        return "PARAMETROS"
+    if codigo.startswith(_ORIGEM_MP_PREFIXOS_PARAMETROS):
+        return "PARAMETROS"
+    return "DERIVADO"
+
+
+def _secao_materia_prima(codigo):
+    """Nome da seção da aba PARÂMETROS que esta matéria-prima pertence, pra
+    agrupar a tela igual à planilha original. None pras não-PARAMETROS."""
+    for nome, prefixos in _ORIGEM_MP_SECOES:
+        if codigo.startswith(prefixos):
+            return nome
+    return None
+
+
+def _migrar_materia_prima_origem_planilha(app):
+    """Pedido do Bruno (21/09/2026, com print anexo mostrando Placa
+    Calibradora/Cinta Magnética/Escova dentro da tela de Matéria-Prima):
+    "dentro da aba Matéria Prima, você está misturando os custos de
+    produto e custo de matéria prima [...] quero que você valide as
+    matérias-primas somente os itens dentro da aba parâmetro [...] deixe
+    mais organizado essa aba, agrupados conforme está exatamente na aba
+    parâmetros [...] citando o fornecedor, detalhando o nome".
+
+    Adiciona a coluna `origem_planilha` (ALTER TABLE idempotente, mesmo
+    padrão de `_migrar_usuarios_role`) e classifica CADA matéria-prima do
+    catálogo entre "PARAMETROS" (aparece na tela principal, agrupada por
+    seção) e "DERIVADO" (fica de fora da tela principal — só acessível via
+    o link de edição direto, ex. a partir da composição do produto — mas
+    continua ativa no banco, porque o motor de custo depende dela).
+
+    Roda em TODO boot (não só uma vez): a classificação é 100% derivada do
+    código da matéria-prima (barato, ~500 linhas), então isso também
+    classifica automaticamente qualquer matéria-prima nova que um seed
+    futuro venha a criar, sem precisar lembrar de manter uma lista à parte
+    sincronizada."""
+    inspector = inspect(db.engine)
+    if "materias_primas" not in inspector.get_table_names():
+        return  # banco novo — db.create_all() já cuidou de tudo
+
+    colunas = {c["name"] for c in inspector.get_columns("materias_primas")}
+    if "origem_planilha" not in colunas:
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE materias_primas ADD COLUMN origem_planilha VARCHAR(20)"))
+
+    reclassificadas = 0
+    for mp in MateriaPrima.query.all():
+        nova_origem = _classificar_origem_materia_prima(mp.codigo)
+        if mp.origem_planilha != nova_origem:
+            mp.origem_planilha = nova_origem
+            reclassificadas += 1
+    if reclassificadas:
+        db.session.commit()
+        app.logger.info("Gestão de Custos: %d matérias-primas (re)classificadas por origem_planilha.", reclassificadas)
+
+    # Backfill do fornecedor/data de atualização pros itens "PARAMETROS" que
+    # a planilha original já trazia em coluna própria (FORNECEDOR / REF. e
+    # DATA ATUALIZAÇÃO, aba PARÂMETROS) — nenhum seed anterior capturou isso.
+    # Só preenche onde ainda está vazio, pra nunca sobrescrever uma edição
+    # manual feita depois pelo Bruno na tela de edição.
+    pendentes = MateriaPrima.query.filter(
+        MateriaPrima.origem_planilha == "PARAMETROS",
+        MateriaPrima.fornecedor.is_(None),
+    ).all()
+    if not pendentes:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — fornecedor/data não preenchidos.", xlsx_path)
+        return
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_param = wb["PARÂMETROS"]
+
+    fornecedor_por_codigo, data_por_codigo = {}, {}
+    for r in range(6, 16):  # químicas PU CAST / LBD — PARÂMETROS linhas 6-15
+        desc = ws_param.cell(r, 2).value
+        if not desc:
+            continue
+        codigo = "QUIM-" + "".join(ch for ch in desc.upper() if ch.isalnum())[:30]
+        fornecedor_por_codigo[codigo] = ws_param.cell(r, 3).value
+        data_por_codigo[codigo] = ws_param.cell(r, 4).value
+
+    mapa_linha_espuma_silicone = {
+        18: "ESPUMA-BLOCO-D26", 19: "ESPUMA-BLOCO-D45", 20: "ESPUMA-BLOCO-D60", 21: "ESPUMA-BLOCO-D80",
+        22: "ESPUMA-ELASTOMERO-TECPUR", 23: "ESPUMA-AMINO-A-ALTA", 24: "ESPUMA-AMINO-A-MEDIA", 25: "ESPUMA-AMINO-B-ISO",
+        26: "ESPUMA-PIGMENTO", 27: "ESPUMA-CORDA-OLHAL", 28: "ESPUMA-ESCOVA-FINA-HLR", 29: "ESPUMA-ESCOVA-GROSSA-HLR",
+        30: "ESPUMA-VELCRO-HLR-V", 31: "ESPUMA-COLA-SAPATEIRO",
+        32: "SILICONE-MANTA", 33: "SILICONE-IMA-22X10MM", 34: "SILICONE-IMA-8X5MM",
+    }  # PARÂMETROS linhas 18-34
+    for r, codigo in mapa_linha_espuma_silicone.items():
+        fornecedor_por_codigo[codigo] = ws_param.cell(r, 3).value
+        data_por_codigo[codigo] = ws_param.cell(r, 4).value
+
+    atualizadas = 0
+    for mp in pendentes:
+        fornecedor = fornecedor_por_codigo.get(mp.codigo)
+        data_valor = data_por_codigo.get(mp.codigo)
+        mudou = False
+        if fornecedor:
+            mp.fornecedor = str(fornecedor).strip()
+            mudou = True
+        if isinstance(data_valor, datetime):
+            mp.data_atualizacao_fornecedor = data_valor.date()
+            mudou = True
+        elif isinstance(data_valor, date):
+            mp.data_atualizacao_fornecedor = data_valor
+            mudou = True
+        if mudou:
+            atualizadas += 1
+    if atualizadas:
+        db.session.commit()
+        app.logger.info("Gestão de Custos: fornecedor/data preenchidos pra %d matérias-primas (aba PARÂMETROS).", atualizadas)
+
 
 def _pagina_inicial(usuario):
     """Pra onde mandar o usuário logo após o login (e se ele visitar /login
@@ -10608,6 +10903,98 @@ def register_routes(app):
         composicoes = [{"estrutura": e, "calc": _custo_estrutura_produto(e)} for e in estruturas]
         return render_template("custos_produto_detalhe.html", produto=produto, composicoes=composicoes)
 
+    @app.route("/custos/configurador-pig")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_configurador_pig():
+        """Configurador de acessórios pro LBD/LUN (pedido do Bruno, 21/09/2026): escolhe
+        o PIG (LBD ou LUN) + DN, marca quais acessórios entram (ELC aço, ELP PP, Cinta
+        Magnética, Placa Calibradora — hoje já cadastrados como Produto próprio da
+        família ELC_MG_PC, com custo por DN — e Alojamento) e vê o custo total do
+        conjunto ajustar na hora. Tela própria e simples (sem os campos de "novo
+        custo"/histórico da tela de Simulação), só GET, nada é salvo.
+
+        Réplica fiel do "CONFIGURADOR DE CUSTOS ADICIONAIS" que já existe dentro da
+        própria aba LBD/LUN (linhas 31+/32+, colunas A-S — achado só depois do Bruno
+        perguntar sobre o disco espaçador; na fase 1 eu tinha checado só as colunas
+        BH/BI/BJ daquele intervalo, que ficam vazias, e concluído errado que era um
+        bloco sem dado). 2 regras que não são óbvias e vêm direto das fórmulas de lá
+        (D32/F32/H32/J32/O32/P32/Q32 da aba LBD, idêntico na LUN):
+        1) ELC (AÇO) e ELP (PP) somam, além do próprio custo, um valor de "CALANDRA"
+           por DN (tabela própria, ver `_seed_custos_pig_calandra`) — CINTA MAGNÉTICA e
+           PLACA CALIBRADORA não somam calandra.
+        2) Cada acessório marcado entre ELC/ELP/CINTA/PLACA (Alojamento NÃO conta)
+           soma mais 1 Disco Espaçador (matéria-prima "PUCAST-MP-DE-DN{dn}", a mesma
+           já usada na estrutura padrão do LBD/LUN) ao custo — 2 acessórios marcados
+           = 2 espaçadores extras, e assim por diante."""
+        produtos_base = Produto.query.filter(Produto.familia.in_(("LBD", "LUN")), Produto.ativo == True).order_by(Produto.familia, Produto.codigo).all()  # noqa: E712
+        produto_id = request.args.get("produto_id", type=int)
+        produto_selecionado = db.session.get(Produto, produto_id) if produto_id else None
+        if produto_selecionado is None or produto_selecionado.familia not in ("LBD", "LUN"):
+            produto_selecionado = produtos_base[0] if produtos_base else None
+
+        dns_disponiveis = []
+        if produto_selecionado is not None:
+            dns_disponiveis = sorted([e.dn for e in produto_selecionado.estruturas if e.ativo], key=_chave_ordenacao_dn)
+        dn_selecionado = request.args.get("dn") or (dns_disponiveis[0] if dns_disponiveis else None)
+
+        estrutura_base = None
+        calc_base = None
+        if produto_selecionado is not None and dn_selecionado:
+            estrutura_base = EstruturaProduto.query.filter_by(produto_id=produto_selecionado.id, dn=dn_selecionado, ativo=True).first()
+        if estrutura_base is not None:
+            calc_base = _custo_estrutura_produto(estrutura_base)
+
+        acessorios = []
+        qtd_conta_espacador = 0
+        if dn_selecionado:
+            for chave, nome_produto, tem_calandra in (
+                ("elc", "ELC (AÇO)", True), ("elp", "ELP (PP)", True),
+                ("cinta", "CINTA MAGNÉTICA", False), ("placa", "PLACA CALIBRADORA", False),
+            ):
+                produto_acc = Produto.query.filter_by(familia="ELC_MG_PC", codigo=nome_produto, ativo=True).first()
+                calc_acc = None
+                if produto_acc is not None:
+                    estrutura_acc = EstruturaProduto.query.filter_by(produto_id=produto_acc.id, dn=dn_selecionado, ativo=True).first()
+                    if estrutura_acc is not None:
+                        calc_acc = _custo_estrutura_produto(estrutura_acc)
+                custo_calandra = None
+                if tem_calandra:
+                    mp_calandra = MateriaPrima.query.filter_by(codigo=f"CALANDRA-DN{dn_selecionado}", ativo=True).first()
+                    custo_calandra = mp_calandra.custo_atual if mp_calandra else 0.0
+                custo_item = None
+                if calc_acc is not None:
+                    custo_item = calc_acc["custo_total"] + (custo_calandra or 0.0)
+                marcado = request.args.get(f"acc_{chave}") == "1"
+                acessorios.append({
+                    "chave": chave, "nome": nome_produto, "disponivel": custo_item is not None,
+                    "custo": custo_item, "custo_calandra": custo_calandra if tem_calandra else None,
+                    "marcado": marcado, "conta_espacador": True,
+                })
+                if marcado and custo_item is not None:
+                    qtd_conta_espacador += 1
+            mp_alojamento = MateriaPrima.query.filter_by(codigo=f"ALOJAMENTO-DN{dn_selecionado}", ativo=True).first()
+            acessorios.append({
+                "chave": "alojamento", "nome": "Alojamento (embalagem)", "disponivel": mp_alojamento is not None,
+                "custo": mp_alojamento.custo_atual if mp_alojamento else None, "custo_calandra": None,
+                "marcado": request.args.get("acc_alojamento") == "1", "conta_espacador": False,
+            })
+
+        mp_espacador = MateriaPrima.query.filter_by(codigo=f"PUCAST-MP-DE-DN{dn_selecionado}", ativo=True).first() if dn_selecionado else None
+        custo_unit_espacador = mp_espacador.custo_atual if mp_espacador else 0.0
+        custo_espacadores = qtd_conta_espacador * custo_unit_espacador
+
+        custo_acessorios = sum((a["custo"] or 0) for a in acessorios if a["marcado"] and a["disponivel"])
+        custo_base = calc_base["custo_total"] if calc_base else 0.0
+        custo_total_combinado = custo_base + custo_acessorios + custo_espacadores
+
+        return render_template(
+            "custos_configurador_pig.html", produtos_base=produtos_base, produto_selecionado=produto_selecionado,
+            dns_disponiveis=dns_disponiveis, dn_selecionado=dn_selecionado, calc_base=calc_base,
+            acessorios=acessorios, custo_acessorios=custo_acessorios, qtd_conta_espacador=qtd_conta_espacador,
+            custo_unit_espacador=custo_unit_espacador, custo_espacadores=custo_espacadores,
+            custo_total_combinado=custo_total_combinado,
+        )
+
     @app.route("/custos/estrutura/<int:produto_id>/<path:dn>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")
     def custos_estrutura_editar(produto_id, dn):
@@ -10681,8 +11068,42 @@ def register_routes(app):
     @app.route("/custos/materias-primas")
     @requer_role("ADMIN", "PCP", "GESTAO")
     def custos_materias_primas():
-        mps = MateriaPrima.query.order_by(MateriaPrima.categoria, MateriaPrima.codigo).all()
-        return render_template("custos_materias_primas.html", materias_primas=mps)
+        """Pedido do Bruno (21/09/2026): a tela não pode misturar matéria-prima
+        de verdade (validada na aba PARÂMETROS da planilha) com produto
+        acabado/custo consolidado (Placa Calibradora, Cinta Magnética, ELC,
+        ELP, Alojamento, Calandra, discos "PU CAST consolidado"...).
+
+        Mostra primeiro, agrupado exatamente como a aba PARÂMETROS (mesmas
+        seções, mesma ordem), só o que é matéria-prima validada. Os itens
+        "derivados" continuam existindo (o motor de custo depende deles)
+        mas ficam numa seção separada e recolhida no fim da página — dá pra
+        editar o custo deles do mesmo jeito, só não aparecem misturados."""
+
+        def _chave_ordenacao_mp(mp):
+            m = re.search(r"DN(\d+)", mp.codigo)
+            if m:
+                return (0, int(m.group(1)))
+            return (1, mp.descricao or mp.codigo)
+
+        todas = MateriaPrima.query.all()
+        parametros = [mp for mp in todas if mp.origem_planilha == "PARAMETROS"]
+        derivadas = [mp for mp in todas if mp.origem_planilha != "PARAMETROS"]
+
+        secoes = []
+        for nome, _prefixos in _ORIGEM_MP_SECOES:
+            itens = sorted((mp for mp in parametros if _secao_materia_prima(mp.codigo) == nome), key=_chave_ordenacao_mp)
+            if itens:
+                secoes.append({"nome": nome, "itens": itens})
+
+        derivadas_por_categoria = {}
+        for mp in sorted(derivadas, key=lambda mp: (mp.categoria or "", mp.codigo)):
+            derivadas_por_categoria.setdefault(mp.categoria or "Sem categoria", []).append(mp)
+
+        return render_template(
+            "custos_materias_primas.html",
+            secoes=secoes, derivadas_por_categoria=derivadas_por_categoria,
+            total_parametros=len(parametros), total_derivadas=len(derivadas),
+        )
 
     @app.route("/custos/materias-primas/novo", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")
