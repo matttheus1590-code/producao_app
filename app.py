@@ -9001,13 +9001,19 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
         pedidos muda."""
     from reportlab.graphics.shapes import Drawing, Rect, String
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
     from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     estilos = getSampleStyleSheet()
-    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8, leading=9.7)
+    # Fonte da tabela de detalhe reduzida de 8/8.5pt pra 7.3/7.6pt (retrato é
+    # mais estreito que o landscape anterior — ver comentário na criação do
+    # `doc` abaixo) — junto com a realocação de `pesos` mais abaixo, isso
+    # evita que datas ("10/04/2026") e status ("FINALIZADO") quebrem no meio
+    # do texto por falta de espaço (defeito visual encontrado e corrigido
+    # antes de virar padrão — 22/09/2026).
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=7.3, leading=8.6)
     COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
     COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
     COR_SEMANA_BG = colors.HexColor("#eaf1fd")
@@ -9016,23 +9022,47 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
     COR_ATUAL_BG = colors.HexColor("#198754")     # verde — mesmo tom do quadrante "success" do dashboard
     COR_BACKLOG_BG = colors.HexColor("#0d6efd")   # azul — mesmo tom do quadrante "primary" (OUTUBRO) do dashboard
     estilo_cabecalho_tabela = ParagraphStyle(
-        "cabecalho_tabela", parent=estilo_celula, fontName="Helvetica-Bold", fontSize=8.5, leading=10,
+        "cabecalho_tabela", parent=estilo_celula, fontName="Helvetica-Bold", fontSize=7.6, leading=8.9,
         textColor=COR_CABECALHO_TEXTO,
     )
 
     def _fmt_moeda(v):
         return "R$ " + "{:,.2f}".format(v or 0).replace(",", "X").replace(".", ",").replace("X", ".")
 
+    def _quebravel(texto):
+        """Insere um espaço de verdade depois de cada hífen de `texto`, só
+        usado nas colunas Cliente/Produto da tabela de detalhe. Sem isso, um
+        código de produto tipo "LBD-DG2-DS4-CC2-ELC-MG" (comum no catálogo) é
+        um único "token" sem espaço nenhum pro ReportLab quebrar de forma
+        natural — na coluna estreita do retrato, ele acaba cortando o texto
+        no meio de qualquer jeito (ex.: "LBD-DG2-D" / "S4-CC2..."). Com um
+        espaço depois de cada hífen, a quebra (quando precisar) acontece
+        sempre logo após um hífen, nunca no meio de um bloco de caracteres.
+        (Tentativa inicial usava um espaço de largura zero (U+200B) pra não
+        alterar o texto visualmente, mas a fonte base do PDF não tem esse
+        glyph e ele aparecia como um quadradinho preto — corrigido antes de
+        virar padrão, 22/09/2026.)"""
+        return (texto or "").replace("-", "- ")
+
     titulos_meses = [f"{MESES_PT_EXTENSO[b['mes_ano'][1] - 1].upper()} / {b['mes_ano'][0]}" for b in blocos]
     titulo_periodo = " + ".join(titulos_meses)
 
+    # Página em retrato (pedido do Bruno, 22/09/2026: "quero que gere na
+    # vertical, aproveitando maximo de espaço na folha") — A4 retrato tem
+    # bem mais altura útil (297mm) que o landscape anterior (210mm), e o
+    # conteúdo do relatório é essencialmente empilhado verticalmente (KPIs,
+    # gráfico, tabelas), então retrato aproveita a folha melhor e deixa bem
+    # menos espaço em branco no rodapé de cada página. Margens laterais
+    # reduzidas (8mm) pra compensar a largura menor do retrato e dar o
+    # máximo de espaço horizontal possível pra tabela de detalhe (13
+    # colunas), que é a parte mais sensível à largura da página.
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
-        buffer, pagesize=landscape(A4),
-        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        buffer, pagesize=A4,
+        leftMargin=8 * mm, rightMargin=8 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
         title=f"Planejamento Mensal PCP/Operação — {titulo_periodo}",
     )
-    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    largura_disponivel = A4[0] - doc.leftMargin - doc.rightMargin
 
     sufixo_titulo_modelo = " · Modelo compacto (1 linha por pedido)" if modelo == "compacto" else ""
     elementos = [
@@ -9088,18 +9118,31 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
     # Cabeçalho/larguras da tabela de detalhe por semana — muda de acordo
     # com o `modelo` (completo = 1 linha por item; compacto = 1 linha por
     # pedido, sem citar os itens, pedido do Bruno 21/09/2026).
+    # Larguras em pt calculadas medindo o texto real (reportlab.stringWidth)
+    # que cai em cada coluna nessa fonte — não são mais só "pesos"
+    # proporcionais arbitrários. No retrato (mais estreito que o landscape
+    # anterior) isso importa de verdade: as 4 colunas de data (formato fixo
+    # "dd/mm/aaaa", sem espaço nenhum pro texto quebrar) e a de Status
+    # (palavras como "ANDAMENTO"/"FINALIZADO", também sem espaço) precisam
+    # de largura mínima garantida, senão o ReportLab corta o texto no meio
+    # de qualquer jeito (ex.: "10/04/2" / "026", "FINALIZ" / "ADO") — defeito
+    # visual encontrado e corrigido antes de virar padrão (22/09/2026).
+    # Cliente/Produto ficam com o que sobra (ainda a maior fatia) — nomes/
+    # códigos muito compridos podem ocasionalmente quebrar num hífen (ver
+    # `_quebravel`) ou, no pior caso raro, no meio da palavra mesmo; não tem
+    # como evitar 100% disso numa página retrato com 13 colunas.
     if modelo == "compacto":
         cabecalho_tabela = [
             "PV", "Cliente", "Produtos", "Itens", "Frete", "UF / Região", "Cidade",
             "Incluído", "Solicitado", "Liberação prevista", "Liberação real", "Status", "Valor do pedido",
         ]
-        pesos = [7, 15, 19, 5, 6, 9, 9, 7, 7, 8, 8, 9, 10]
+        pesos = [20, 58, 42, 26, 28, 34, 50, 46, 46, 46, 46, 56, 52]
     else:
         cabecalho_tabela = [
             "PV", "Cliente", "Produto", "Qtd", "Frete", "UF / Região", "Cidade",
             "Incluído", "Solicitado", "Liberação prevista", "Liberação real", "Status", "Venda item",
         ]
-        pesos = [7, 13, 17, 4, 6, 9, 9, 7, 7, 8, 8, 8, 9]
+        pesos = [20, 58, 48, 20, 28, 34, 50, 46, 46, 46, 46, 56, 52]
     soma_pesos = sum(pesos)
     larguras_colunas = [p / soma_pesos * largura_disponivel for p in pesos]
 
@@ -9396,8 +9439,8 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
 
                     dados_tabela.append([
                         Paragraph(primeiro.pedido_venda or "—", estilo_celula),
-                        Paragraph(primeiro.cliente or "—", estilo_celula),
-                        Paragraph(produtos_txt, estilo_celula),
+                        Paragraph(_quebravel(primeiro.cliente) or "—", estilo_celula),
+                        Paragraph(_quebravel(produtos_txt), estilo_celula),
                         Paragraph(str(len(itens_pedido)), estilo_celula),
                         Paragraph(primeiro.frete or "—", estilo_celula),
                         Paragraph(f"{primeiro.estado or '—'} / {regiao_txt}", estilo_celula),
@@ -9420,8 +9463,8 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
                         regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
                         dados_tabela.append([
                             Paragraph(l.pedido_venda or "—", estilo_celula),
-                            Paragraph(l.cliente or "—", estilo_celula),
-                            Paragraph(l.descricao_produto or "—", estilo_celula),
+                            Paragraph(_quebravel(l.cliente) or "—", estilo_celula),
+                            Paragraph(_quebravel(l.descricao_produto) or "—", estilo_celula),
                             Paragraph(str(qtd_txt), estilo_celula),
                             Paragraph(l.frete or "—", estilo_celula),
                             Paragraph(f"{l.estado or '—'} / {regiao_txt}", estilo_celula),
