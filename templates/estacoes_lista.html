@@ -7,11 +7,94 @@
     <h4 class="mb-0"><i class="bi bi-diagram-3"></i> Estações</h4>
     <p class="text-muted small mb-0">Fila (aguardando início) e em produção — com nº de OP/produto e total de itens de cada um — críticos (atrasados) e lead time médio de cada estação, agrupados por processo.</p>
   </div>
-  {% if current_user.role in ('ADMIN', 'PCP') %}
-  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('cadastros_estacoes') }}">
-    <i class="bi bi-gear"></i> Gerenciar estações
-  </a>
-  {% endif %}
+  <div class="d-flex gap-2">
+    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalRelatorioEstacoes">
+      <i class="bi bi-file-earmark-pdf"></i> Gerar relatório de estações
+    </button>
+    {% if current_user.role in ('ADMIN', 'PCP') %}
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('cadastros_estacoes') }}">
+      <i class="bi bi-gear"></i> Gerenciar estações
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Modal "Gerar relatório de estações" (pedido do Bruno, 22/09/2026: "crie
+     uma area onde posso selecionar diversas areas para gerar o relatorio...
+     ex: quero ver em um relatorio em pdf oque tem pendente e andamento no
+     PU e Espumagem") — escolhe várias estações de uma vez (agrupadas nas
+     MESMAS 3 colunas por processo dos cards acima) + a situação (fila/em
+     produção/ambos), e gera um único PDF com uma seção por estação
+     escolhida. GET simples, mesmo padrão do modal "Emitir relatório" da
+     Listagem Geral (dashboard.html). -->
+<div class="modal fade" id="modalRelatorioEstacoes" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <form method="get" action="{{ url_for('estacoes_relatorio_multiplo_pdf') }}" id="formRelatorioEstacoes">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-file-earmark-pdf"></i> Gerar relatório de estações</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small">
+            Escolha uma ou mais estações e gere um único PDF com o que está pendente (fila) e/ou em produção em cada uma — mesmo critério "fila/em produção" que os cards acima já mostram.
+          </p>
+
+          <label class="form-label small text-muted mb-1">Situação</label>
+          <div class="d-flex flex-wrap gap-3 mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="status" id="statusEstacoesAmbos" value="ambos" checked>
+              <label class="form-check-label small" for="statusEstacoesAmbos">Fila + Em produção</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="status" id="statusEstacoesPendente" value="pendente">
+              <label class="form-check-label small" for="statusEstacoesPendente">Só fila (pendente)</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="status" id="statusEstacoesProducao" value="em_producao">
+              <label class="form-check-label small" for="statusEstacoesProducao">Só em produção</label>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label class="form-label small text-muted mb-0">Estações</label>
+            <div>
+              <button type="button" class="btn btn-link btn-sm p-0 me-3" id="btnMarcarTodasEstacoes">Marcar todas</button>
+              <button type="button" class="btn btn-link btn-sm p-0" id="btnLimparTodasEstacoes">Limpar</button>
+            </div>
+          </div>
+          <div class="row g-2">
+            {% for grupo in grupos %}
+            <div class="col-md-4">
+              <div class="border rounded p-2 h-100">
+                <div class="text-uppercase text-muted small fw-semibold mb-2">{{ grupo.titulo }}</div>
+                {% for l in grupo.linhas %}
+                <div class="form-check">
+                  <input class="form-check-input estacao-relatorio-check" type="checkbox" name="estacao"
+                         value="{{ l.estacao.nome }}" id="checkEstacaoRel{{ l.estacao.id }}">
+                  <label class="form-check-label small" for="checkEstacaoRel{{ l.estacao.id }}">
+                    {{ l.rotulo }}
+                    {% if l.criticos > 0 %}<span class="badge bg-danger ms-1">{{ l.criticos }}</span>{% endif %}
+                  </label>
+                </div>
+                {% else %}
+                <div class="text-muted small">Nenhuma estação ativa.</div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="small text-danger mt-2 d-none" id="avisoNenhumaEstacaoRel">
+            <i class="bi bi-exclamation-triangle"></i> Selecione ao menos uma estação.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-file-earmark-pdf"></i> Gerar PDF</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 
 <div class="row g-3">
@@ -143,4 +226,39 @@
   {% endfor %}
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var form = document.getElementById("formRelatorioEstacoes");
+  var checks = document.querySelectorAll(".estacao-relatorio-check");
+  var btnMarcarTodas = document.getElementById("btnMarcarTodasEstacoes");
+  var btnLimpar = document.getElementById("btnLimparTodasEstacoes");
+  var aviso = document.getElementById("avisoNenhumaEstacaoRel");
+
+  if (btnMarcarTodas) {
+    btnMarcarTodas.addEventListener("click", function () {
+      checks.forEach(function (c) { c.checked = true; });
+      if (aviso) aviso.classList.add("d-none");
+    });
+  }
+  if (btnLimpar) {
+    btnLimpar.addEventListener("click", function () {
+      checks.forEach(function (c) { c.checked = false; });
+    });
+  }
+  if (form) {
+    form.addEventListener("submit", function (ev) {
+      var alguma = Array.prototype.some.call(checks, function (c) { return c.checked; });
+      if (!alguma) {
+        ev.preventDefault();
+        if (aviso) aviso.classList.remove("d-none");
+      } else if (aviso) {
+        aviso.classList.add("d-none");
+      }
+    });
+  }
+})();
+</script>
 {% endblock %}

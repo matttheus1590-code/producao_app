@@ -8882,6 +8882,299 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
 
 
 # ----------------------------------------------------------------------
+# Relatório PDF de VÁRIAS estações de uma vez (pedido do Bruno, 22/09/2026,
+# na tela de Estações: "quero que nessa area, tenha a possibilidade geraçãpo
+# de relatorio em PDF, com a geração de relatorio do que tem pednnete e em
+# andamento de diverdas areas... ex: quero ver em um relaotio em pdf oque
+# tem pendente e andamento no PU e Espumagem... crie uma area onde posso
+# selecionar diversas areas para gerar o relatorio"). Reaproveita a MESMA
+# consulta por estação (_itens_relatorio_estacao) do relatório de uma
+# estação só, só que uma vez por estação escolhida, tudo no mesmo PDF — cada
+# estação vira sua própria seção, na mesma ordem de agrupamento por processo
+# que a tela /estacoes já usa (ver ESTACOES_GRUPOS_MONITORAMENTO).
+# ----------------------------------------------------------------------
+def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
+    """`estacoes_com_itens` é uma lista de tuplas (Estacao, [ItemPedido...]),
+    já filtrada pelo `status_filtro` escolhido (mesma _itens_relatorio_estacao
+    do relatório de uma estação só, pra nunca divergir do que a tela mostra).
+
+    Mesma linguagem visual do relatório de uma estação (_gerar_pdf_estacao):
+    faixa colorida separando "Em produção"/"Pendente", "pingo" de semáforo
+    por linha, agrupamento por pedido — só que repetida por estação, cada
+    uma com seu próprio banner de seção (azul-marinho, pra distinguir
+    claramente onde uma estação termina e a próxima começa), dentro do MESMO
+    documento.
+
+    Página em retrato (mesmo motivo do Planejamento Mensal PCP, pedido do
+    Bruno 22/09/2026: "gere na vertical, aproveitando maximo de espaço na
+    folha") — aqui a tabela tem só 10 colunas (contra as 13 do relatório de
+    Planejamento), então sobra bem mais largura pra Cliente/Produto sem
+    precisar espremer tanto as colunas de data quanto foi preciso lá."""
+    from reportlab.graphics.shapes import Circle, Drawing
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    COR_SEMAFORO_BG = {
+        "vermelho": colors.HexColor("#f8d7da"),
+        "amarelo": colors.HexColor("#fff3cd"),
+        "verde": colors.white,
+        "cinza": colors.HexColor("#f1f3f5"),
+    }
+    COR_SEMAFORO_PINGO = {
+        "vermelho": colors.HexColor("#dc3545"),
+        "amarelo": colors.HexColor("#ffc107"),
+        "verde": colors.HexColor("#198754"),
+        "cinza": colors.HexColor("#adb5bd"),
+    }
+    # Mesmas cores (equivalente hex dos tokens Bootstrap) já usadas em
+    # STATUS_CHAO_CORES/_gerar_pdf_estacao — "Em produção" = primary,
+    # "Pendente" = secondary. Banner de estação em azul-marinho (mesmo tom
+    # do cabeçalho/rodapé do Planejamento Mensal PCP) pra ficar claramente
+    # "um nível acima" das faixas de Em produção/Pendente dentro dela.
+    COR_GRUPO_EM_PRODUCAO = colors.HexColor("#0d6efd")
+    COR_GRUPO_PENDENTE = colors.HexColor("#6c757d")
+    COR_ESTACAO_BANNER = colors.HexColor("#1b2a4a")
+
+    info_filtro = RELATORIO_ESTACAO_STATUS_INFO.get(status_filtro, RELATORIO_ESTACAO_STATUS_INFO["ambos"])
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=8 * mm, rightMargin=8 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
+        title="Relatório de Estações Selecionadas",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=7.5, leading=8.8)
+    COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
+    COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula, fontName="Helvetica-Bold", fontSize=7.8, leading=9.1,
+        textColor=COR_CABECALHO_TEXTO,
+    )
+
+    largura_disponivel = A4[0] - doc.leftMargin - doc.rightMargin
+
+    rotulos_selecionados = [rotulo_estacao(e.nome) for e, _ in estacoes_com_itens]
+    elementos = [
+        Paragraph("Relatório de Estações Selecionadas", estilos["Title"]),
+        Paragraph(f'Estações: {", ".join(rotulos_selecionados) or "—"}', estilos["Normal"]),
+        Paragraph(
+            f'Filtro: {info_filtro["titulo"]} · Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")}',
+            estilos["Normal"],
+        ),
+        Spacer(1, 5 * mm),
+    ]
+
+    def _kpi(valor, rotulo_kpi):
+        return [
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=16, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8, alignment=1)),
+        ]
+
+    hoje = date.today()
+    todos_itens = [item for _, itens in estacoes_com_itens for item in itens]
+    total_itens = len(todos_itens)
+    total_pecas = sum(item.quantidade or 0 for item in todos_itens)
+    total_pecas_txt = int(total_pecas) if total_pecas == int(total_pecas) else total_pecas
+    na_fila = sum(1 for item in todos_itens if item.status_producao == "PENDENTE")
+    em_producao = total_itens - na_fila
+    criticos = sum(
+        1 for item in todos_itens
+        if item.liberacao_prevista is not None and item.liberacao_prevista < hoje
+    )
+
+    # KPI geral, somando TODAS as estações escolhidas (visão rápida de topo,
+    # antes de entrar seção por seção) — mesmo estilo do relatório de uma
+    # estação só, com um KPI a mais no início (nº de estações no relatório).
+    kpis = [
+        _kpi(len(estacoes_com_itens), "Estações no relatório"),
+        _kpi(total_itens, "OP/produto no total"),
+        _kpi(total_pecas_txt, "Total de peças"),
+        _kpi(na_fila, "Na fila"),
+        _kpi(em_producao, "Em produção"),
+        _kpi(criticos, "Críticos (atrasados)"),
+    ]
+    cores_topo_kpi = [
+        colors.HexColor("#8fa8cc"), colors.HexColor("#8fa8cc"), colors.HexColor("#8fa8cc"),
+        COR_GRUPO_PENDENTE, COR_GRUPO_EM_PRODUCAO,
+        colors.HexColor("#dc3545") if criticos else colors.HexColor("#dee2e6"),
+    ]
+    largura_kpi = largura_disponivel / len(kpis)
+    tabela_kpis = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
+    estilo_kpis = [
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("BACKGROUND", (5, 0), (5, -1), colors.HexColor("#f8d7da") if criticos else colors.white),
+    ]
+    for i, cor_topo in enumerate(cores_topo_kpi):
+        estilo_kpis.append(("LINEABOVE", (i, 0), (i, 0), 2.5, cor_topo))
+    tabela_kpis.setStyle(TableStyle(estilo_kpis))
+    elementos.append(tabela_kpis)
+    elementos.append(Spacer(1, 6 * mm))
+
+    def _pingo(cor_nome):
+        diam = 3 * mm
+        d = Drawing(diam, diam)
+        d.add(Circle(diam / 2, diam / 2, diam / 2 - 0.2, fillColor=COR_SEMAFORO_PINGO.get(cor_nome, colors.grey), strokeColor=None))
+        return d
+
+    def _faixa(texto, cor_fundo, fonte=11):
+        estilo_faixa = ParagraphStyle(
+            "faixa", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=fonte,
+            textColor=colors.white, leading=fonte + 2,
+        )
+        t = Table([[Paragraph(texto, estilo_faixa)]], colWidths=[largura_disponivel])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), cor_fundo),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        return t
+
+    def _agrupar_por_pedido(itens_grupo):
+        grupos = []
+        indice_por_pedido = {}
+        for item in itens_grupo:
+            chave = item.pedido_id
+            if chave not in indice_por_pedido:
+                indice_por_pedido[chave] = len(grupos)
+                grupos.append([])
+            grupos[indice_por_pedido[chave]].append(item)
+        return grupos
+
+    # Larguras calculadas medindo o texto real que cai em cada coluna nessa
+    # fonte (reportlab.stringWidth), mesmo cuidado do relatório de
+    # Planejamento Mensal PCP (22/09/2026) — datas ("dd/mm/aaaa") e
+    # "Situação prazo" (ex.: "15d atrasado") têm largura mínima garantida
+    # pra nunca cortar no meio do texto; Cliente/Produto ficam com o que
+    # sobra (aqui, bem mais folga que lá — só 10 colunas, não 13).
+    pesos = [18, 40, 104, 120, 30, 46, 46, 46, 46, 54]
+    soma_pesos = sum(pesos)
+    larguras_colunas = [p / soma_pesos * largura_disponivel for p in pesos]
+
+    def _tabela_itens(itens_grupo):
+        cabecalho = [
+            "", "Pedido", "Cliente", "Produto", "Qtd", "Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo",
+        ]
+        dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) if c else "" for c in cabecalho]]
+        cores_linhas = [COR_CABECALHO_BG]
+        spans_pedido = []
+        divisores_grupo = []
+
+        grupos_pedido = _agrupar_por_pedido(itens_grupo)
+        linha_atual = 1
+        for grupo in grupos_pedido:
+            linha_inicio_grupo = linha_atual
+            for indice_no_grupo, item in enumerate(grupo):
+                pedido = item.pedido
+                cor, dias = item.semaforo
+                if dias is None:
+                    prazo_txt = "sem prazo"
+                elif dias < 0:
+                    prazo_txt = f"{-dias}d atrasado"
+                else:
+                    prazo_txt = f"{dias}d"
+                qtd = item.quantidade or 0
+                qtd_txt = int(qtd) if qtd == int(qtd) else qtd
+
+                if indice_no_grupo == 0:
+                    cel_pedido = Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_celula)
+                    cel_cliente = Paragraph((pedido.cliente if pedido else None) or "—", estilo_celula)
+                else:
+                    cel_pedido = ""
+                    cel_cliente = ""
+
+                linha_tabela = [
+                    _pingo(cor),
+                    cel_pedido,
+                    cel_cliente,
+                    Paragraph(item.descricao_produto or "—", estilo_celula),
+                    Paragraph(str(qtd_txt), estilo_celula),
+                    Paragraph((_formatar_data_br(pedido.data_inclusao_pedido) if pedido else "") or "—", estilo_celula),
+                    Paragraph((_formatar_data_br(pedido.data_cliente) if pedido else "") or "—", estilo_celula),
+                    Paragraph(_formatar_data_br(item.liberacao_prevista) or "—", estilo_celula),
+                    Paragraph(_formatar_data_br(item.inicio_producao) or "—", estilo_celula),
+                    Paragraph(prazo_txt, estilo_celula),
+                ]
+                dados_tabela.append(linha_tabela)
+                cores_linhas.append(COR_SEMAFORO_BG.get(cor, colors.white))
+                linha_atual += 1
+
+            if len(grupo) > 1:
+                spans_pedido.append((linha_inicio_grupo, linha_atual - 1))
+            divisores_grupo.append(linha_atual - 1)
+
+        tabela = Table(dados_tabela, colWidths=larguras_colunas, repeatRows=1)
+        estilo_tabela = [
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (0, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ]
+        for linha_inicio, linha_fim in spans_pedido:
+            estilo_tabela.append(("SPAN", (1, linha_inicio), (1, linha_fim)))
+            estilo_tabela.append(("SPAN", (2, linha_inicio), (2, linha_fim)))
+        ultima_linha = len(dados_tabela) - 1
+        for linha_fim in divisores_grupo:
+            if linha_fim != ultima_linha:
+                estilo_tabela.append(("LINEBELOW", (0, linha_fim), (-1, linha_fim), 1, colors.HexColor("#8fa8cc")))
+        for i, cor_linha in enumerate(cores_linhas):
+            if i == 0:
+                continue
+            estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor_linha))
+        tabela.setStyle(TableStyle(estilo_tabela))
+        return tabela
+
+    if not estacoes_com_itens:
+        elementos.append(Paragraph("Nenhuma estação selecionada.", estilos["Normal"]))
+
+    for estacao, itens in estacoes_com_itens:
+        rotulo = rotulo_estacao(estacao.nome)
+        elementos.append(_faixa(f"{rotulo} — {len(itens)} ITEM(NS)", COR_ESTACAO_BANNER, fonte=13))
+        elementos.append(Spacer(1, 2 * mm))
+
+        if status_filtro == "ambos":
+            subgrupos = [
+                ("EM PRODUÇÃO", COR_GRUPO_EM_PRODUCAO, [i for i in itens if i.status_producao != "PENDENTE"]),
+                ("PENDENTE — FILA", COR_GRUPO_PENDENTE, [i for i in itens if i.status_producao == "PENDENTE"]),
+            ]
+        else:
+            titulo_unico = "PENDENTE — FILA" if status_filtro == "pendente" else "EM PRODUÇÃO"
+            cor_unica = COR_GRUPO_PENDENTE if status_filtro == "pendente" else COR_GRUPO_EM_PRODUCAO
+            subgrupos = [(titulo_unico, cor_unica, itens)]
+
+        for titulo, cor_fundo, itens_grupo in subgrupos:
+            elementos.append(_faixa(f"{titulo} — {len(itens_grupo)} item(ns)", cor_fundo, fonte=10))
+            if itens_grupo:
+                elementos.append(_tabela_itens(itens_grupo))
+            else:
+                elementos.append(Spacer(1, 2 * mm))
+                elementos.append(Paragraph("Nenhum item nesta situação no momento.", estilos["Normal"]))
+            elementos.append(Spacer(1, 5 * mm))
+
+        elementos.append(Spacer(1, 4 * mm))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"estacoes_selecionadas_{status_filtro}_{date.today().isoformat()}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+# ----------------------------------------------------------------------
 # Relatório semanal em PDF da Listagem Geral (pedido do Bruno, 14/09/2026):
 # "quero que disponibilize [na Listagem Geral]... vai gerar um relatorio
 # semanal de todos os pedidos semanais de setembro, e o total do mes
@@ -13683,6 +13976,50 @@ def register_routes(app):
 
         itens = _itens_relatorio_estacao(nome, status_filtro)
         return _gerar_pdf_estacao(estacao, itens, status_filtro)
+
+    @app.route("/estacoes/relatorio-multiplo.pdf")
+    @login_required
+    def estacoes_relatorio_multiplo_pdf():
+        """Relatório PDF de VÁRIAS estações escolhidas de uma vez (pedido do
+        Bruno, 22/09/2026: "crie uma area onde posso selecionar diversas
+        areas para gerar o relatorio... ex: quero ver em um relatorio em pdf
+        oque tem pendente e andamento no PU e Espumagem"). Rota SEM
+        "/<nome>" — registrada como caminho fixo, então tem prioridade sobre
+        "/estacoes/<nome>" (Kanban) pra esse path exato, sem risco de
+        conflito de rota."""
+        nomes = [v for v in request.args.getlist("estacao") if v]
+        status_filtro = request.args.get("status", "ambos")
+        if status_filtro not in RELATORIO_ESTACAO_STATUS_INFO:
+            status_filtro = "ambos"
+
+        if not nomes:
+            flash("Selecione ao menos uma estação para gerar o relatório.", "warning")
+            return redirect(url_for("estacoes_lista"))
+
+        estacoes_por_nome = {e.nome: e for e in Estacao.query.filter(Estacao.nome.in_(nomes)).all()}
+
+        # Mantém a MESMA ordem de agrupamento por processo da tela /estacoes
+        # (ESTACOES_GRUPOS_MONITORAMENTO) em vez da ordem em que os
+        # checkboxes chegaram no formulário — o PDF sempre lê na mesma ordem
+        # visual que a pessoa já reconhece na tela, não importa a ordem que
+        # ela marcou.
+        ordem = []
+        vistos = set()
+        for grupo in ESTACOES_GRUPOS_MONITORAMENTO:
+            for nome_grupo in grupo["estacoes"]:
+                if nome_grupo in estacoes_por_nome and nome_grupo not in vistos:
+                    ordem.append(nome_grupo)
+                    vistos.add(nome_grupo)
+        for nome_extra in sorted(estacoes_por_nome):
+            if nome_extra not in vistos:
+                ordem.append(nome_extra)
+                vistos.add(nome_extra)
+
+        estacoes_com_itens = [
+            (estacoes_por_nome[nome_ord], _itens_relatorio_estacao(nome_ord, status_filtro))
+            for nome_ord in ordem
+        ]
+        return _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro)
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
     @login_required
