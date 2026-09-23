@@ -325,6 +325,9 @@ def create_app():
         _seed_lead_time_transportadora(app)
         _seed_parametro_hora_homem(app)
         _seed_custos_pig_mandril(app)
+        # Depende do seed acima já ter criado os produtos/estruturas/
+        # placeholders da família PU CAST.
+        _migrar_pu_cast_decompor_quimica(app)
         _seed_custos_espuma(app)
         _seed_custos_superflex_silicone(app)
         _importar_historico_custos_manual(app)
@@ -1962,6 +1965,151 @@ def _seed_custos_pig_mandril(app):
     app.logger.info(
         "Gestão de Custos: importação inicial do grupo PIG MANDRIL concluída (%d matérias-primas, %d produtos, %d estruturas).",
         MateriaPrima.query.count(), Produto.query.count(), EstruturaProduto.query.count(),
+    )
+
+
+_CHAVE_MIGRACAO_PU_CAST_QUIMICA_23_09_2026 = "migracao_pu_cast_decompor_quimica_23_09_2026"
+
+
+def _migrar_pu_cast_decompor_quimica(app):
+    """Decompõe DS/DG/DE/COPO CONICO/COPO PISTAO/HFLEX/DISCFLEX SD/DISCFLEX
+    SDI (família PU CAST) na química REAL (pré-polímero + MOCA, em kg) em
+    vez do placeholder "matéria-prima consolidada" (1 un, custo já pronto)
+    criado por `_seed_custos_pig_mandril`. Pedido do Bruno (23/09/2026), ao
+    ver o popup de matéria-prima de um LBD-DG2-DS4: "esta puxando errado...
+    eu quero as materias primas completas, inclusve as materias primas
+    para produção de disco guia DG, etc" — o placeholder aparecia como
+    "PU CAST DG — matéria-prima consolidada DN 18" (1 un) em vez da química
+    real que entra na fabricação do disco.
+
+    Por que o placeholder existia: a coluna CUSTO MP da aba PU CAST tem uma
+    referência de preço que VARIA por linha (confirmado célula a célula na
+    Fase 1 — ver `_seed_custos_pig_mandril`), então decompor por uma coluna
+    fixa teria dado valor errado sem reler a fórmula de cada linha. Reli
+    agora: das 132 linhas de (item, DN) desta família, 123 seguem o mesmo
+    padrão de fórmula (`=T{linha}` = PRE×preço + MOCA×preço, colunas F/H) e
+    só o preço do PRE varia entre 3 químicas já cadastradas (12-70 A, ATP
+    85, ATS 85 — a MOCA é sempre fixa). As 9 linhas restantes (DS/DG/DE nos
+    3 menores DN — 2", 3", 4") não têm peso (kg) nenhum lançado na planilha
+    original, só um custo digitado direto — pra essas, sem peso pra
+    decompor, o placeholder consolidado continua sendo a única opção fiel
+    (sinalizado no log, não escondido).
+
+    Roda uma vez só (`ControleSistema`, mesmo padrão do seed). Não mexe na
+    MateriaPrima placeholder em si (`PUCAST-MP-*`) — ela continua existindo
+    e ativa, porque `/custos/configurador-pig` lê o custo dela direto por
+    código (disco espaçador extra do configurador de acessórios) — só troca
+    o item da BOM que apontava pra ela por 2 itens novos apontando pra
+    química real. Antes de trocar, confere que peso×preço da química nova
+    bate com o custo antigo do placeholder (mesma fórmula, só decomposta) —
+    se não bater por algum motivo não previsto, mantém o placeholder
+    daquele (item, DN) em vez de arriscar um número errado."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_MIGRACAO_PU_CAST_QUIMICA_23_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "custo_de_producao_20_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        app.logger.warning("Gestão de Custos: planilha de importação não encontrada em %s — decomposição química PU CAST não executada.", xlsx_path)
+        return
+
+    import re
+
+    import openpyxl
+
+    wb_formulas = openpyxl.load_workbook(xlsx_path, data_only=False)
+    wb_valores = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws_f = wb_formulas["PU CAST"]
+    ws_v = wb_valores["PU CAST"]
+    ws_param = wb_valores["PARÂMETROS"]
+
+    quimicas_por_linha = {}
+    for r in range(6, 16):
+        desc = ws_param.cell(r, 2).value
+        if not desc:
+            continue
+        codigo = "QUIM-" + "".join(ch for ch in desc.upper() if ch.isalnum())[:30]
+        mp = MateriaPrima.query.filter_by(codigo=codigo).first()
+        if mp is not None:
+            quimicas_por_linha[r] = mp
+    mp_moca = quimicas_por_linha.get(8)  # MOCA CURATIVO TDI — referência fixa (col H sempre =G*PARÂMETROS!$E$8)
+
+    itens_pu_cast = {"DS", "DG", "DE", "COPO CONICO", "COPO PISTAO", "HFLEX", "DISCFLEX SD", "DISCFLEX SDI"}
+    n_decompostos = n_sem_peso = n_divergencia = n_sem_referencia = 0
+
+    for r in range(10, ws_f.max_row + 1):
+        item = ws_v.cell(r, 27).value
+        if item not in itens_pu_cast:
+            continue
+        dn_num = ws_v.cell(r, 37).value
+        if dn_num in (None, ""):
+            continue
+        dn = str(int(dn_num)) if isinstance(dn_num, float) and dn_num == int(dn_num) else str(dn_num).strip()
+
+        custo_mp_formula = ws_f.cell(r, 29).value
+        if not (isinstance(custo_mp_formula, str) and custo_mp_formula.startswith("=")):
+            n_sem_peso += 1
+            continue  # 9 linhas de DN muito pequeno sem peso cadastrado na planilha original
+
+        peso_pre = ws_v.cell(r, 5).value or 0    # E: PESO PRE (kg)
+        peso_moca = ws_v.cell(r, 7).value or 0   # G: PESO MOCA (kg)
+        if not peso_pre and not peso_moca:
+            n_sem_peso += 1
+            continue
+
+        f_formula = ws_f.cell(r, 6).value or ""  # F: CUSTO PRE — referência de preço varia por linha
+        m = re.search(r"PAR[ÂA]METROS!\$E\$(\d+)", f_formula)
+        mp_pre = quimicas_por_linha.get(int(m.group(1))) if m else None
+        if mp_pre is None or mp_moca is None:
+            app.logger.warning("Gestão de Custos: não achei a química de referência pra PU CAST %s DN %s (fórmula %r) — mantendo placeholder.", item, dn, f_formula)
+            n_sem_referencia += 1
+            continue
+
+        produto = Produto.query.filter_by(familia="PU CAST", codigo=item).first()
+        estrutura = EstruturaProduto.query.filter_by(produto_id=produto.id, dn=dn).first() if produto else None
+        if estrutura is None:
+            continue
+
+        slug = "".join(ch for ch in str(item).upper() if ch.isalnum())[:20]
+        codigo_placeholder = f"PUCAST-MP-{slug}-DN{dn}"
+        item_placeholder = next(
+            (i for i in estrutura.itens if i.tipo == "MATERIA_PRIMA" and i.materia_prima and i.materia_prima.codigo == codigo_placeholder),
+            None,
+        )
+        if item_placeholder is None:
+            continue  # já decomposto ou estrutura editada manualmente depois do seed — não mexe
+
+        custo_antigo = (item_placeholder.materia_prima.custo_atual or 0) * item_placeholder.quantidade
+        custo_novo = peso_pre * (mp_pre.custo_atual or 0) + peso_moca * (mp_moca.custo_atual or 0)
+        if abs(custo_novo - custo_antigo) > max(0.05, custo_antigo * 0.01):
+            app.logger.warning(
+                "Gestão de Custos: decomposição química de PU CAST %s DN %s não bateu com o custo original (novo=%.4f antigo=%.4f) — mantendo placeholder por segurança.",
+                item, dn, custo_novo, custo_antigo,
+            )
+            n_divergencia += 1
+            continue
+
+        db.session.delete(item_placeholder)
+        db.session.flush()
+        ordem = 0
+        if peso_pre:
+            db.session.add(EstruturaProdutoItem(
+                estrutura_id=estrutura.id, tipo="MATERIA_PRIMA", quantidade=peso_pre,
+                materia_prima_id=mp_pre.id, ordem=ordem, observacao="química real (decomposta 23/09/2026)",
+            ))
+            ordem += 1
+        if peso_moca:
+            db.session.add(EstruturaProdutoItem(
+                estrutura_id=estrutura.id, tipo="MATERIA_PRIMA", quantidade=peso_moca,
+                materia_prima_id=mp_moca.id, ordem=ordem, observacao="química real (decomposta 23/09/2026)",
+            ))
+        n_decompostos += 1
+
+    db.session.add(ControleSistema(chave=_CHAVE_MIGRACAO_PU_CAST_QUIMICA_23_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Gestão de Custos: decomposição química PU CAST concluída — %d decompostos, %d sem peso (placeholder mantido), "
+        "%d divergentes (placeholder mantido), %d sem referência de química.",
+        n_decompostos, n_sem_peso, n_divergencia, n_sem_referencia,
     )
 
 
