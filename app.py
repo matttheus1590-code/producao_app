@@ -11053,7 +11053,7 @@ def _materiais_consumo_estrutura(estrutura, _visitados=None):
     return {"por_materia_prima": linhas, "kg_total": round(kg_total, 4), "tem_kg": tem_kg, "incompleto": incompleto}
 
 
-_FORNECEDORES_MATERIA_PRIMA_PRINCIPAIS = {"AMINO", "COIM", "LANXESS", "TECPUR"}
+_FORNECEDORES_MATERIA_PRIMA_PRINCIPAIS = {"AMINO", "COIM", "LANXESS", "TECPUR", "DINATEC"}
 
 
 def _e_materia_prima_principal(mp):
@@ -11064,14 +11064,19 @@ def _e_materia_prima_principal(mp):
     "ao lado" (sempre visíveis no cabeçalho da coluna), sem precisar
     clicar — diferente do detalhamento completo (todas as matérias-primas,
     inclusive ferragem/acessório), que continua só no popup por clique.
+    Revisão de 23/09/2026 (mesmo dia, mensagem seguinte) acrescentou
+    "DINATEC" explicitamente à lista, ao pedir o volume por unidade/lote
+    "somente para itens AMINO, COIM, LANXESS, TECPUR e DINATEC" — ver
+    `_materiais_item_pedido`.
 
     Usa o campo `fornecedor` quando cadastrado (bate direto com AMINO/COIM/
-    LANXESS/TECPUR). "BLOCO DE ESPUMA" não é um fornecedor no cadastro (as
-    4 densidades estão como CBP ou DINATEC, inconsistente), então casa pela
-    descrição. Um caso como "Bumper PU (MP COIM) — HLCC PC" tem o nome do
-    fornecedor dentro da própria descrição mas o campo `fornecedor` ficou
-    em branco no cadastro (achado ao implementar isso) — usa a descrição
-    como fallback pra não perder esse caso."""
+    LANXESS/TECPUR/DINATEC). "BLOCO DE ESPUMA" nem sempre tem DINATEC no
+    cadastro (a densidade D26 está como CBP, inconsistente com D45/D60/D80
+    que já são DINATEC), então casa pela descrição também. Um caso como
+    "Bumper PU (MP COIM) — HLCC PC" tem o nome do fornecedor dentro da
+    própria descrição mas o campo `fornecedor` ficou em branco no cadastro
+    (achado ao implementar isso) — usa a descrição como fallback pra não
+    perder esse caso."""
     fornecedor = (mp.fornecedor or "").strip().upper()
     if fornecedor in _FORNECEDORES_MATERIA_PRIMA_PRINCIPAIS:
         return True
@@ -11079,6 +11084,23 @@ def _e_materia_prima_principal(mp):
     if "BLOCO ESPUMA" in descricao:
         return True
     return any(grupo in descricao for grupo in _FORNECEDORES_MATERIA_PRIMA_PRINCIPAIS)
+
+
+# Ordem de exibição dos volumes "principais" por unidade no card do Kanban
+# (pedido do Bruno, 23/09/2026) — m³ primeiro (bloco de espuma, a unidade
+# "errada" que ele corrigiu: "NOS PIGS H... EU QUERO QUE O CONSUMO DE MP DOS
+# BLOCOS FIQUE EM M³... VC DEIXOU EM KG, ESTA ERRADO"), kg depois (química
+# líquida AMINO/COIM/LANXESS/TECPUR), qualquer outra unidade por último.
+_ORDEM_UNIDADES_VOLUME_PRINCIPAL = {"m³": 0, "kg": 1}
+
+
+def _formatar_quantidade_pt_br(valor, unidade):
+    """Formatação pt-BR (vírgula decimal) da quantidade de matéria-prima,
+    com casas decimais por unidade — m³ usa 4 casas (os volumes de bloco de
+    espuma por DN pequena, ex. 0,0003665 m³/peça, sumiriam com menos
+    casas), kg e as demais usam 2."""
+    casas = 4 if unidade == "m³" else 2
+    return f"{valor:.{casas}f}".replace(".", ",")
 
 
 def _materiais_item_pedido(item_pedido):
@@ -11104,10 +11126,23 @@ def _materiais_item_pedido(item_pedido):
     `linhas`/`kg_total` — igual a qualquer outro material da estrutura, sem
     precisar de nenhuma tela nova pra enxergar. `acessorios` na resposta
     lista os códigos detectados, só pra transparência (nunca soma um
-    acessório em silêncio sem mostrar qual foi)."""
+    acessório em silêncio sem mostrar qual foi).
+
+    `principais_por_unidade` (pedido do Bruno, 23/09/2026, mesmo dia):
+    "QUERO QUE INCLUA DENTRO DO QUADRANTE O VOLUME PARA PRODUÇÃO DE UMA
+    UNIDADE / E AO LADO A PRODUÇÃO PARA O LOTE TOTAL... SOMENTE PARA ITENS
+    AMINO, COIM, LANXESS, TECPUR E DINATEC" — lista (1 entrada por unidade
+    de medida presente, ex. "m³" pro bloco de espuma DINATEC e "kg" pra
+    química líquida AMINO/COIM/LANXESS/TECPUR) só com as matérias-primas
+    "principais" (`_e_materia_prima_principal`), cada entrada já com
+    `unitario`/`lote` (float) e `unitario_fmt`/`lote_fmt` (string pt-BR,
+    casas decimais por unidade — ver `_formatar_quantidade_pt_br`). Nunca
+    mistura m³ com kg num único total (esse era o bug que o Bruno reportou:
+    bloco de espuma, medido em m³, sendo tratado como se fosse kg) — cada
+    unidade native fica separada."""
     estrutura = _matching_produto_pcp(item_pedido)
     if estrutura is None:
-        return {"matched": False, "kg_total": 0.0, "tem_kg": False, "linhas": [], "incompleto": False, "acessorios": []}
+        return {"matched": False, "kg_total": 0.0, "tem_kg": False, "linhas": [], "incompleto": False, "acessorios": [], "principais_por_unidade": []}
 
     consumo = _materiais_consumo_estrutura(estrutura)
     por_materia_prima = {
@@ -11133,6 +11168,23 @@ def _materiais_item_pedido(item_pedido):
     ]
     kg_total_unitario = sum(l["quantidade"] for l in linhas_unitarias if l["materia_prima"].unidade == "kg")
     tem_kg = any(l["materia_prima"].unidade == "kg" for l in linhas_unitarias)
+
+    principais_unitario_por_unidade = {}
+    for l in linhas_unitarias:
+        if _e_materia_prima_principal(l["materia_prima"]):
+            u = l["materia_prima"].unidade
+            principais_unitario_por_unidade[u] = principais_unitario_por_unidade.get(u, 0.0) + l["quantidade"]
+    principais_por_unidade = [
+        {
+            "unidade": u,
+            "unitario": round(v, 6),
+            "lote": round(v * quantidade, 6),
+            "unitario_fmt": _formatar_quantidade_pt_br(v, u),
+            "lote_fmt": _formatar_quantidade_pt_br(v * quantidade, u),
+        }
+        for u, v in sorted(principais_unitario_por_unidade.items(), key=lambda kv: _ORDEM_UNIDADES_VOLUME_PRINCIPAL.get(kv[0], 99))
+    ]
+
     return {
         "matched": True,
         "estrutura": estrutura,
@@ -11141,6 +11193,7 @@ def _materiais_item_pedido(item_pedido):
         "linhas": linhas,
         "incompleto": incompleto,
         "acessorios": [a.produto.codigo for a in acessorios_extra],
+        "principais_por_unidade": principais_por_unidade,
     }
 
 

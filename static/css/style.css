@@ -859,6 +859,38 @@ body.col-resizing-ativo {
   margin-right: 0.1rem;
 }
 
+/* Volume "principal" (1 unidade / lote total) sempre visível no card,
+   pedido do Bruno (23/09/2026): "quero que inclua dentro do quadrante o
+   volume para produção de uma unidade / e ao lado a produção para o lote
+   total... somente para itens AMINO, COIM, LANXESS, TECPUR e DINATEC" —
+   reset de botão (mesmo padrão de `.kanban-coluna-materia-prima`) pra
+   parecer texto discreto clicável, não um botão cheio. Uma linha por
+   unidade de medida (m³ separado de kg — nunca soma as duas). */
+.kanban-item-volume-principal {
+  display: block;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  margin-bottom: 0.35rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kanban-item-volume-principal:hover .kanban-item-volume-linha,
+.kanban-item-volume-principal:focus-visible .kanban-item-volume-linha {
+  text-decoration: underline;
+}
+
+.kanban-item-volume-linha {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--bs-primary, #0d6efd);
+  font-variant-numeric: tabular-nums;
+}
+
 .kanban-item-rodape {
   display: flex;
   justify-content: space-between;

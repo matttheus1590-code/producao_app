@@ -178,12 +178,35 @@
             {% endif %}
             {% endif %}
           </div>
+          {% if mat.matched and mat.principais_por_unidade %}
+          <!-- Pedido do Bruno (23/09/2026): "quero que inclua dentro do
+               quadrante o volume para produção de uma unidade / e ao lado a
+               produção para o lote total... somente para itens AMINO, COIM,
+               LANXESS, TECPUR e DINATEC". Cada unidade de medida (m³ pro
+               bloco de espuma, kg pra química líquida) fica numa linha
+               própria — nunca soma m³ com kg (era esse o "errado" que ele
+               apontou nos PIGs H da aba CORTE). -->
+          <button type="button" class="kanban-item-volume-principal" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Ver matéria-prima completa deste item">
+            {% for p in mat.principais_por_unidade %}
+            <span class="kanban-item-volume-linha">
+              <i class="bi bi-droplet-half"></i> 1 un: {{ p.unitario_fmt }} {{ p.unidade }} · Lote: {{ p.lote_fmt }} {{ p.unidade }}
+            </span>
+            {% endfor %}
+          </button>
+          {% endif %}
           <div class="kanban-item-rodape">
             <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
               {% if dias is none %}sem prazo{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
             </span>
             <div class="d-flex align-items-center gap-1">
-              {% if mat.matched and mat.tem_kg %}
+              {% if mat.matched and mat.principais_por_unidade %}
+              <!-- volume já mostrado acima, em cima do rodapé -- aqui só um
+                   ícone discreto pra abrir o mesmo popup, sem repetir o
+                   número duas vezes no card. -->
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Ver matéria-prima completa deste item (inclusive ferragem/acessório)">
+                <i class="bi bi-list-ul"></i>
+              </button>
+              {% elif mat.matched and mat.tem_kg %}
               <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Ver matéria-prima deste item">
                 <i class="bi bi-droplet-half"></i> {{ "%.2f"|format(mat.kg_total)|replace(".", ",") }} kg
               </button>
@@ -223,10 +246,25 @@
                 </div>
                 <div class="modal-body">
                   {% if mat.matched %}
+                  {% if mat.principais_por_unidade %}
+                  <!-- Pedido do Bruno (23/09/2026): não misturar m³ (bloco
+                       de espuma) com kg (química líquida) num total só —
+                       cada unidade de medida ganha sua própria linha aqui,
+                       igual ao card do Kanban. -->
+                  <div class="d-flex justify-content-between align-items-start mb-3">
+                    <span class="text-muted small">Total (para {{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s))</span>
+                    <span class="text-end">
+                      {% for p in mat.principais_por_unidade %}
+                      <span class="fs-5 fw-semibold d-block">{{ p.lote_fmt }} {{ p.unidade }}</span>
+                      {% endfor %}
+                    </span>
+                  </div>
+                  {% else %}
                   <div class="d-flex justify-content-between align-items-center mb-3">
                     <span class="text-muted small">Total em kg (para {{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s))</span>
                     <span class="fs-4 fw-semibold">{{ "%.3f"|format(mat.kg_total)|replace(".", ",") }} kg</span>
                   </div>
+                  {% endif %}
                   {% if mat.linhas %}
                   <table class="table table-sm mb-0">
                     <thead>
