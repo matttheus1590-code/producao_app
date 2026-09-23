@@ -1115,11 +1115,16 @@ class PedidoOperacao(db.Model):
         depender de ItemPedido/estação (isso é Gestão Produção, mundo à parte).
 
         Regras:
-          - OTD já registrado (SIM ou NÃO)             -> "FINALIZADO"
+          - Já entregue ao cliente (go_data_entregue_cliente) -> "FINALIZADO"
           - Já tem alguma data de PCP ou logística      -> "ANDAMENTO"
           - Só tem dado comercial preenchido ainda      -> "PENDENTE"
+
+        Até 23/09/2026 o teste de "FINALIZADO" era `go_otd_realizado`
+        (SIM/NÃO digitado à mão) — trocado pra `go_data_entregue_cliente`
+        quando o OTD virou automático (pedido do Bruno: "otd totalmente
+        automático"), já que o SIM/NÃO deixou de ser um campo digitado.
         """
-        if self.go_otd_realizado:
+        if self.go_data_entregue_cliente:
             return "FINALIZADO"
         if self.go_data_efetiva_liberacao_pcp or self.go_data_pedido_expedido or self.go_data_real_entrega:
             return "ANDAMENTO"

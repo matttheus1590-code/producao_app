@@ -7,15 +7,32 @@
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <h4 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Resultados / OTD</h4>
-  <span class="text-muted small">
-    {{ total_filtrado }} pedido(s)
-    {% if filtros.segmento == "planejamento" %}
-      <span class="badge bg-primary ms-1">Planejamento semanal PCP — {{ mes_label }}</span>
-    {% elif filtros.segmento == "faturados" %}
-      <span class="badge bg-success ms-1">Faturados — {{ mes_label }}</span>
-    {% endif %}
-  </span>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">
+      {{ total_filtrado }} pedido(s)
+      {% if filtros.segmento == "planejamento" %}
+        <span class="badge bg-primary ms-1">Planejamento semanal PCP — {{ mes_label }}</span>
+      {% elif filtros.segmento == "faturados" %}
+        <span class="badge bg-success ms-1">Faturados — {{ mes_label }}</span>
+      {% endif %}
+    </span>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('gestao_operacao_resultados_xlsx', periodo=periodo, **filtros) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-file-earmark-excel"></i> Excel
+      </a>
+      <a href="{{ url_for('gestao_operacao_resultados_pdf', periodo=periodo, **filtros) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-file-earmark-pdf"></i> PDF
+      </a>
+    </div>
+  </div>
 </div>
+
+{% set endpoint_limpar = "gestao_operacao_resultados" %}
+<form method="get">
+  <input type="hidden" name="periodo" value="{{ periodo }}">
+  {% if filtros.segmento %}<input type="hidden" name="segmento" value="{{ filtros.segmento }}">{% endif %}
+  {% include "_gestao_operacao_filtros.html" %}
+</form>
 
 <div class="card mb-4">
   <div class="card-body">
@@ -180,10 +197,11 @@
                         {% else %}—{% endif %}
                       </td>
                       <td>
-                        {% if p.go_otd_realizado == "SIM" %}
+                        {% set otd_p = otd_por_pedido_id.get(p.id, {}) %}
+                        {% if otd_p.status == "SIM" %}
                           <span class="badge bg-success">SIM</span>
-                        {% elif p.go_otd_realizado %}
-                          <span class="badge bg-danger">{{ p.go_otd_realizado }}</span>
+                        {% elif otd_p.status == "NAO" %}
+                          <span class="badge bg-danger">NÃO</span>
                         {% else %}—{% endif %}
                       </td>
                       <td class="text-end">
@@ -213,6 +231,9 @@
   <div class="card-body py-3">
     <form method="get" class="d-flex align-items-center flex-wrap gap-2">
       <input type="hidden" name="periodo" value="{{ periodo }}">
+      {% for chave, valor in filtros.items() if chave != "segmento" %}
+        <input type="hidden" name="{{ chave }}" value="{{ valor }}">
+      {% endfor %}
       <label class="form-label small text-muted mb-0 me-1" for="segmento-select">
         <i class="bi bi-funnel"></i> Ver OTD e pedidos de {{ mes_label }}:
       </label>
@@ -316,7 +337,7 @@
         <th>Pedido</th>
         <th>Cliente</th>
         <th>OTD</th>
-        <th>Solicitada cliente</th>
+        <th>Data solicitada</th>
         <th>Entregue cliente</th>
         <th>Dias atraso/antecipação</th>
         <th class="text-end" title="Custo produção real + Custo frete final">Custo total</th>
@@ -330,17 +351,18 @@
       <tr>
         <td>{{ p.pedido_venda or "—" }}</td>
         <td>{{ p.cliente }}</td>
+        {% set otd_p = otd_por_pedido_id.get(p.id, {}) %}
         <td>
-          {% if p.go_otd_realizado == "SIM" %}
+          {% if otd_p.status == "SIM" %}
             <span class="badge bg-success">SIM</span>
-          {% elif p.go_otd_realizado %}
-            <span class="badge bg-danger">{{ p.go_otd_realizado }}</span>
+          {% elif otd_p.status == "NAO" %}
+            <span class="badge bg-danger">NÃO</span>
           {% else %}—{% endif %}
         </td>
-        <td>{{ p.go_data_solicitada_cliente_final.strftime("%d/%m/%Y") if p.go_data_solicitada_cliente_final else "—" }}</td>
+        <td>{{ otd_p.solicitada.strftime("%d/%m/%Y") if otd_p.solicitada else "—" }}</td>
         <td>{{ p.go_data_entregue_cliente.strftime("%d/%m/%Y") if p.go_data_entregue_cliente else "—" }}</td>
         <td>
-          {% set dias = p.go_dias_atraso_antecipacao %}
+          {% set dias = otd_p.dias %}
           {% if dias is none %}—
           {% elif dias > 0 %}<span class="text-danger">{{ dias }}d atraso</span>
           {% elif dias < 0 %}<span class="text-success">{{ -dias }}d antecipado</span>

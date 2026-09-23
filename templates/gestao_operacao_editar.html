@@ -190,16 +190,19 @@
         <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">OTD (entregue no prazo?)</label>
-            <select class="form-select" name="go_otd_realizado">
-              <option value="">—</option>
-              <option value="SIM" {% if pedido.go_otd_realizado == "SIM" %}selected{% endif %}>SIM</option>
-              <option value="NÃO" {% if pedido.go_otd_realizado == "NÃO" %}selected{% endif %}>NÃO</option>
-            </select>
-            <div class="form-text">Meta mínima: {{ GO_OTD_META_PERCENTUAL }}%</div>
+            {% if otd_calculado.status == "SIM" %}
+              <input type="text" class="form-control-plaintext text-success fw-semibold" value="SIM" readonly tabindex="-1">
+            {% elif otd_calculado.status == "NAO" %}
+              <input type="text" class="form-control-plaintext text-danger fw-semibold" value="NÃO" readonly tabindex="-1">
+            {% else %}
+              <input type="text" class="form-control-plaintext text-muted" value="— (ainda sem Data entregue cliente)" readonly tabindex="-1">
+            {% endif %}
+            <div class="form-text">Automático — compara "Data solicitada (final)" (ou a automática, se essa não existir) com "Data entregue cliente". Meta mínima: {{ GO_OTD_META_PERCENTUAL }}%</div>
           </div>
           <div class="col-md-3">
             <label class="form-label">Data solicitada cliente (final)</label>
             <input type="date" class="form-control" name="go_data_solicitada_cliente_final" value="{{ pedido.go_data_solicitada_cliente_final or '' }}">
+            <div class="form-text">Preencher só se o prazo foi renegociado com o cliente — o OTD usa essa data no lugar da automática quando ela existir.</div>
           </div>
           <div class="col-md-3">
             <label class="form-label">Data entregue cliente</label>

@@ -195,7 +195,7 @@ GO_CAMPOS_POR_SECAO = {
         "go_data_real_entrega",
     ],
     "resultados": [
-        "go_otd_realizado", "go_data_solicitada_cliente_final", "go_data_entregue_cliente",
+        "go_data_solicitada_cliente_final", "go_data_entregue_cliente",
         "go_obs_operacao", "go_status_final_alinhamento",
     ],
 }
@@ -363,6 +363,19 @@ def create_app():
 
     app.jinja_env.filters["moeda_brl"] = _moeda_brl
 
+    # Filtro Jinja "otd_status_go" (pedido do Bruno, 23/09/2026: "otd
+    # totalmente automático") — pros partials que mostram um PedidoOperacao
+    # cru (_painel_busca_detalhe.html, _consulta_pedido_detalhe.html) sem
+    # passar por uma rota que já calcula o OTD em lote (ver
+    # _otd_calculado_por_pedido_id/_otd_status_pedido). "SIM"/"NAO"/
+    # "PENDENTE", igual ao status calculado em todo o resto do site.
+    def _otd_status_go(go):
+        if go is None:
+            return None
+        return _otd_status_pedido(go)["status"]
+
+    app.jinja_env.filters["otd_status_go"] = _otd_status_go
+
     @app.context_processor
     def inject_globals():
         estacoes_ativas = [e.nome for e in Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all()]
@@ -401,6 +414,17 @@ def create_app():
             GO_TIPO_PEDIDO_OPCOES=GO_TIPO_PEDIDO_OPCOES,
             GO_STATUS_PEDIDO_INFO_OPCOES=GO_STATUS_PEDIDO_INFO_OPCOES,
             GO_STATUS_PEDIDO_INFO_CORES=GO_STATUS_PEDIDO_INFO_CORES,
+            # Opções do filtro "Status produção" (pedido do Bruno,
+            # 10/09/2026, movido pra global em 23/09/2026 quando o painel de
+            # filtros compartilhado — _gestao_operacao_filtros.html — passou
+            # a ser usado em Operação 360/Logística/Resultados, não só numa
+            # tela): reaproveita _ETAPAS_ACOMPANHAMENTO_PEDIDO/_ETAPA_EMOJI
+            # pra nunca divergir dos rótulos já usados na coluna "Status
+            # pedido" e em Consulta Pedido.
+            GO_STATUS_PEDIDO_OPCOES=[
+                {"valor": str(idx), "label": etapa["label"], "emoji": _ETAPA_EMOJI[idx - 1]}
+                for idx, etapa in enumerate(_ETAPAS_ACOMPANHAMENTO_PEDIDO, start=1)
+            ],
             UFS_BRASIL=UFS_BRASIL,
             LEAD_TIME_MODALIDADE_OPCOES=LEAD_TIME_MODALIDADE_OPCOES,
             LEAD_TIME_UNIDADE_OPCOES=LEAD_TIME_UNIDADE_OPCOES,
@@ -3378,13 +3402,105 @@ def _calcular_resumo_filtrado(linhas):
     }
 
 
+def _calcular_otd(comprometida, entregue):
+    """Cálculo PURO do status de OTD (On-Time Delivery) — sem acesso a banco,
+    fácil de testar isoladamente (ver script de verificação usado antes do
+    deploy desta mudança). Pedido do Bruno (23/09/2026): "otd totalmente
+    automático" — troca o SIM/NÃO que era digitado à mão em Resultados/OTD
+    por esta comparação de datas.
+
+    `comprometida` = prazo comprometido com o cliente pra essa entrega — quem
+    chama resolve isso ANTES (ver _otd_status_pedido/_otd_calculado_por_
+    pedido_id): prioriza go_data_solicitada_cliente_final (renegociação
+    manual de prazo, quando preenchida) e só cai pra "Data solicitada"
+    automática (Pedido.data_cliente, com go_data_solicitada_entrega como
+    fallback) quando não houve renegociação registrada. Achado no script de
+    verificação (23/09/2026): comparar sempre com a data ORIGINAL, ignorando
+    renegociação, derrubava o OTD histórico de 89,6% pra 77,3% (abaixo da
+    meta) — em 89% dos casos que mudavam de SIM pra NÃO, existia uma "Data
+    solicitada cliente (final)" mais tardia batendo exatamente com a data de
+    entrega real. Bruno confirmou manter esse campo como override manual de
+    renegociação, não aposentá-lo.
+
+    `entregue` = PedidoOperacao.go_data_entregue_cliente — a confirmação de
+    recebimento pelo CLIENTE final, não go_data_real_entrega (aba Logística,
+    confirmação da transportadora). Bruno confirmou explicitamente manter
+    essa distinção (23/09/2026): em pedidos de exportação pode haver
+    trânsito/alfândega entre as duas, e o OTD deve refletir quando o cliente
+    realmente recebeu.
+
+    Retorna {"status": "SIM"|"NAO"|"PENDENTE", "dias": int|None}:
+    - "PENDENTE": falta `entregue` (ainda não chegou no cliente) OU falta
+      `comprometida` (pedido nunca lançado em Produção e sem "Data
+      solicitada entrega" preenchida à mão) — nunca classifica SIM/NÃO sem
+      as duas datas. Fica de fora do percentual, mesmo critério que o campo
+      manual antigo já usava pra "ainda não preenchido".
+    - "SIM": entregue <= comprometida. "NAO": entregue > comprometida.
+    `dias`: positivo = atraso, negativo = antecipação, só quando as duas
+    datas existem."""
+    if not entregue or not comprometida:
+        return {"status": "PENDENTE", "dias": None}
+    dias = (entregue - comprometida).days
+    return {"status": "SIM" if dias <= 0 else "NAO", "dias": dias}
+
+
+def _comprometida_otd(go, data_cliente=None):
+    """Resolve o prazo comprometido pro cálculo de OTD de UM PedidoOperacao —
+    prioriza go_data_solicitada_cliente_final (renegociação de prazo com o
+    cliente, digitada à mão), só cai pra "Data solicitada" automática
+    (`data_cliente`, de Pedido.data_cliente ao vivo, com
+    go_data_solicitada_entrega como fallback) quando não houve renegociação
+    registrada. Achado no script de verificação (23/09/2026, ver
+    _calcular_otd): sem essa prioridade, 47 pedidos históricos mudavam de
+    SIM pra NÃO e o OTD geral caía de 89,6% pra 77,3% — Bruno confirmou
+    manter go_data_solicitada_cliente_final como esse override manual, não
+    aposentá-lo (só o SIM/NÃO antigo, go_otd_realizado, saiu de cena)."""
+    return go.go_data_solicitada_cliente_final or data_cliente or go.go_data_solicitada_entrega
+
+
+def _otd_status_pedido(go, comprometida=None):
+    """Wrapper de _calcular_otd pra UM PedidoOperacao — resolve `comprometida`
+    via _comprometida_otd quando quem chamou não passou já calculada. Pra
+    processar várias linhas de uma vez, prefira resolver em lote via
+    _data_cliente_por_pedido_venda (evita 1 query por pedido) e chamar
+    _comprometida_otd/_calcular_otd diretamente — ver _resumo_otd."""
+    if comprometida is None:
+        chave = _normalizar_pedido_venda(go.pedido_venda)
+        data_cliente = _data_cliente_por_pedido_venda([go.pedido_venda]).get(chave)
+        comprometida = _comprometida_otd(go, data_cliente)
+    return _calcular_otd(comprometida, go.go_data_entregue_cliente)
+
+
+def _otd_calculado_por_pedido_id(pedidos):
+    """Versão em lote de _otd_status_pedido — devolve
+    {PedidoOperacao.id: {"status", "dias", "solicitada"}} pras telas que
+    mostram OTD/"Data solicitada"/"Dias atraso" numa tabela linha a linha
+    (Resultados, Operação 360) sem fazer 1 query por pedido. `solicitada`
+    aqui é o prazo COMPROMETIDO pro OTD (ver _comprometida_otd — pode ser a
+    data renegociada, quando existir) — não confundir com o campo
+    `solicitada` de _metricas_operacao_360, que é sempre a data comercial
+    original (usado ali pra "lead time comercial", conceito diferente)."""
+    data_cliente_map = _data_cliente_por_pedido_venda([p.pedido_venda for p in pedidos])
+    resultado = {}
+    for p in pedidos:
+        chave = _normalizar_pedido_venda(p.pedido_venda)
+        comprometida = _comprometida_otd(p, data_cliente_map.get(chave))
+        r = _calcular_otd(comprometida, p.go_data_entregue_cliente)
+        resultado[p.id] = {"status": r["status"], "dias": r["dias"], "solicitada": comprometida}
+    return resultado
+
+
 def _resumo_otd(query=None):
-    """Estatísticas de OTD (On-Time Delivery) da Gestão Operação — usa o campo
-    go_otd_realizado (SIM/NÃO preenchido manualmente na planilha/tela), bem
-    mais confiável que o _otd_percentual() antigo (que depende de datas quase
-    nunca preenchidas no histórico). Só considera pedidos com OTD preenchido —
-    quem ainda não tem essa informação fica de fora do percentual (não conta
-    como "não cumpriu").
+    """Estatísticas de OTD (On-Time Delivery) da Gestão Operação — calculado
+    automaticamente (pedido do Bruno, 23/09/2026: "otd totalmente
+    automático") comparando o prazo comprometido (ver _comprometida_otd —
+    prioriza renegociação manual de prazo, senão a "Data solicitada"
+    automática) com "Data entregue cliente" (go_data_entregue_cliente, o
+    único campo manual que resta do lado da entrega — ver _calcular_otd pro
+    detalhe da distinção entre essa data e "Real entrega" da Logística).
+    Substitui o antigo SIM/NÃO digitado à mão (go_otd_realizado) — mesmo
+    critério de antes pra quem ainda não tem `entregue`/`comprometida`: fica
+    de fora do percentual (não conta como "não cumpriu").
 
     `query` (opcional): uma query de PedidoOperacao já filtrada (ver
     _filtrar_pedidos_operacao) — pedido do Bruno (03/09/2026): filtrar
@@ -3395,21 +3511,31 @@ def _resumo_otd(query=None):
     Gestão Operação tem tabela própria (PedidoOperacao) — cada linha já é um
     pedido comercial, sem precisar agrupar nada em tempo de execução."""
     base = query if query is not None else PedidoOperacao.query
-    pedidos = base.filter(PedidoOperacao.go_otd_realizado.isnot(None)).all()
+    todos = base.all()
 
-    total = len(pedidos)
-    no_prazo = sum(1 for p in pedidos if p.go_otd_realizado == "SIM")
+    data_cliente_map = _data_cliente_por_pedido_venda([p.pedido_venda for p in todos])
+
+    def _resultado(p):
+        chave = _normalizar_pedido_venda(p.pedido_venda)
+        comprometida = _comprometida_otd(p, data_cliente_map.get(chave))
+        return _calcular_otd(comprometida, p.go_data_entregue_cliente)
+
+    avaliados = [(p, _resultado(p)) for p in todos]
+    avaliados = [(p, r) for p, r in avaliados if r["status"] != "PENDENTE"]
+
+    total = len(avaliados)
+    no_prazo = sum(1 for _, r in avaliados if r["status"] == "SIM")
     percentual = round((no_prazo / total) * 100, 1) if total else None
 
     def _quebra_por(atributo):
         contagem = {}
-        for p in pedidos:
+        for p, r in avaliados:
             chave = getattr(p, atributo)
             if not chave:
                 continue
             c = contagem.setdefault(chave, {"total": 0, "no_prazo": 0})
             c["total"] += 1
-            if p.go_otd_realizado == "SIM":
+            if r["status"] == "SIM":
                 c["no_prazo"] += 1
         top10 = sorted(contagem.items(), key=lambda kv: -kv[1]["total"])[:10]
         return [
@@ -6556,7 +6682,8 @@ def _filtrar_pedidos_operacao(args):
     _filtrar_inspecoes_finais): `status_pedido` é uma lista de "1".."5"
     (mesma classificação de _indice_etapa_pedido, OR entre as selecionadas —
     ver _aplicar_filtro_status_pedido_operacao); `otd` é uma lista com
-    "SIM"/"NAO"/"PENDENTE" (PENDENTE = go_otd_realizado ainda vazio); `frete`
+    "SIM"/"NAO"/"PENDENTE" (calculado automaticamente por _calcular_otd desde
+    23/09/2026 — PENDENTE = ainda sem "Data entregue cliente"); `frete`
     é uma lista com valores de FRETE_OPCOES e/ou "NAO_INFORMADO" (vazio ou
     fora da lista). `nf_mes_atual` continua um quadrante simples (não virou
     lista — não fazia parte do pedido de mudança) — ="1" filtra
@@ -6567,7 +6694,25 @@ def _filtrar_pedidos_operacao(args):
     NF — <input type="month"> ("AAAA-MM"), filtra go_data_emissao_nf dentro
     de QUALQUER mês escolhido (não só o mês corrente, diferente do quadrante
     `nf_mes_atual` acima — os dois convivem, um é atalho rápido pro mês de
-    hoje, o outro escolhe qualquer mês)."""
+    hoje, o outro escolhe qualquer mês).
+
+    `regiao` (pedido do Bruno, 23/09/2026: "o máximo de filtros... região"):
+    uma das REGIOES_OPCOES, mapeada pras UFs dela via REGIAO_POR_UF, filtra
+    PedidoOperacao.estado — mesmo padrão já usado em _faturamento_detalhado.
+
+    `nf_data_inicio`/`nf_data_fim` (mesmo pedido, "datas... emissão de nf"):
+    intervalo livre sobre go_data_emissao_nf — convive com `nf_mes`/
+    `nf_mes_atual` (atalhos de mês) sem substituí-los, pros casos em que o
+    intervalo não bate com um mês fechado (ex. "últimos 45 dias").
+
+    `expedicao_inicio`/`expedicao_fim` (mesmo pedido, "saídas... do
+    pedido" — interpretado como "saiu da fábrica"): intervalo sobre
+    go_data_pedido_expedido.
+
+    `entrega_inicio`/`entrega_fim` (mesmo pedido, "entrada... do pedido" no
+    sentido de chegada ao cliente — o outro lado do ciclo, junto do filtro
+    de expedição acima): intervalo sobre go_data_entregue_cliente (mesma
+    data que o OTD automático usa, ver _calcular_otd)."""
     query = PedidoOperacao.query
 
     cliente = args.get("cliente", "").strip()
@@ -6584,6 +6729,13 @@ def _filtrar_pedidos_operacao(args):
     frete_filtro = [v for v in _getlist_seguro(args, "frete") if v]
     nf_mes_atual = args.get("nf_mes_atual", "").strip()
     nf_mes = args.get("nf_mes", "").strip()
+    regiao = args.get("regiao", "").strip()
+    nf_data_inicio = args.get("nf_data_inicio", "").strip()
+    nf_data_fim = args.get("nf_data_fim", "").strip()
+    expedicao_inicio = args.get("expedicao_inicio", "").strip()
+    expedicao_fim = args.get("expedicao_fim", "").strip()
+    entrega_inicio = args.get("entrega_inicio", "").strip()
+    entrega_fim = args.get("entrega_fim", "").strip()
 
     if cliente:
         query = query.filter(PedidoOperacao.cliente.ilike(f"%{cliente}%"))
@@ -6605,6 +6757,33 @@ def _filtrar_pedidos_operacao(args):
         data_fim_parsed = _parse_data_form(data_fim)
         if data_fim_parsed:
             query = query.filter(PedidoOperacao.data_inclusao_pedido <= data_fim_parsed)
+    if regiao and regiao in REGIAO_POR_UF.values():
+        ufs_da_regiao = [uf for uf, r in REGIAO_POR_UF.items() if r == regiao]
+        query = query.filter(PedidoOperacao.estado.in_(ufs_da_regiao))
+    if nf_data_inicio:
+        nf_data_inicio_parsed = _parse_data_form(nf_data_inicio)
+        if nf_data_inicio_parsed:
+            query = query.filter(PedidoOperacao.go_data_emissao_nf >= nf_data_inicio_parsed)
+    if nf_data_fim:
+        nf_data_fim_parsed = _parse_data_form(nf_data_fim)
+        if nf_data_fim_parsed:
+            query = query.filter(PedidoOperacao.go_data_emissao_nf <= nf_data_fim_parsed)
+    if expedicao_inicio:
+        expedicao_inicio_parsed = _parse_data_form(expedicao_inicio)
+        if expedicao_inicio_parsed:
+            query = query.filter(PedidoOperacao.go_data_pedido_expedido >= expedicao_inicio_parsed)
+    if expedicao_fim:
+        expedicao_fim_parsed = _parse_data_form(expedicao_fim)
+        if expedicao_fim_parsed:
+            query = query.filter(PedidoOperacao.go_data_pedido_expedido <= expedicao_fim_parsed)
+    if entrega_inicio:
+        entrega_inicio_parsed = _parse_data_form(entrega_inicio)
+        if entrega_inicio_parsed:
+            query = query.filter(PedidoOperacao.go_data_entregue_cliente >= entrega_inicio_parsed)
+    if entrega_fim:
+        entrega_fim_parsed = _parse_data_form(entrega_fim)
+        if entrega_fim_parsed:
+            query = query.filter(PedidoOperacao.go_data_entregue_cliente <= entrega_fim_parsed)
     if planejamento_semanal:
         pedidos_venda_match = _pedidos_venda_com_planejamento_semanal(planejamento_semanal)
         if pedidos_venda_match:
@@ -6643,14 +6822,19 @@ def _filtrar_pedidos_operacao(args):
         query = _aplicar_filtro_status_pedido_operacao(query, [int(v) for v in status_pedido])
 
     if otd:
-        condicoes_otd = []
-        if "SIM" in otd:
-            condicoes_otd.append(PedidoOperacao.go_otd_realizado == "SIM")
-        if "NAO" in otd:
-            condicoes_otd.append(PedidoOperacao.go_otd_realizado == "NÃO")
-        if "PENDENTE" in otd:
-            condicoes_otd.append(or_(PedidoOperacao.go_otd_realizado.is_(None), PedidoOperacao.go_otd_realizado == ""))
-        query = query.filter(or_(*condicoes_otd))
+        # Pedido do Bruno (23/09/2026: "otd totalmente automático") — não dá
+        # pra filtrar OTD em SQL puro depois dessa mudança, porque a "Data
+        # solicitada" cruza com Pedido (outra tabela, sem FK). Resolve em
+        # Python (mesmo padrão já usado acima pra planejamento_semanal/
+        # mensal: casar fora do SQL, voltar como .in_(ids)) — mantém o resto
+        # da função (paginação, .count()) intocado.
+        pedidos_para_avaliar_otd = query.all()
+        otd_calculado = _otd_calculado_por_pedido_id(pedidos_para_avaliar_otd)
+        ids_otd = [
+            p.id for p in pedidos_para_avaliar_otd
+            if otd_calculado.get(p.id, {}).get("status", "PENDENTE") in otd
+        ]
+        query = query.filter(PedidoOperacao.id.in_(ids_otd))
 
     if frete_filtro:
         condicoes_frete = []
@@ -6692,7 +6876,10 @@ def _filtrar_pedidos_operacao(args):
         planejamento_semanal=planejamento_semanal, planejamento_mensal=planejamento_mensal,
         data_inicio=data_inicio, data_fim=data_fim,
         status_pedido=status_pedido, otd=otd, frete=frete_filtro, nf_mes_atual=nf_mes_atual,
-        nf_mes=nf_mes,
+        nf_mes=nf_mes, regiao=regiao,
+        nf_data_inicio=nf_data_inicio, nf_data_fim=nf_data_fim,
+        expedicao_inicio=expedicao_inicio, expedicao_fim=expedicao_fim,
+        entrega_inicio=entrega_inicio, entrega_fim=entrega_fim,
     )
     return query, filtros
 
@@ -6928,6 +7115,15 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
         etapa_idx = _indice_etapa_pedido(pedido_producao, p)
         etapa_base = _ETAPAS_ACOMPANHAMENTO_PEDIDO[etapa_idx - 1]
 
+        # OTD (pedido do Bruno, 23/09/2026: "otd totalmente automático") —
+        # NÃO usa a "solicitada" acima direto: o prazo pro OTD prioriza
+        # renegociação manual de prazo quando existir (ver _comprometida_otd
+        # — achado no script de verificação, sem isso o OTD histórico caía
+        # de 89,6% pra 77,3%). "solicitada" continua sendo só a data
+        # comercial original, pro lead time comercial acima — conceito
+        # diferente, não mexe.
+        otd_calc = _calcular_otd(_comprometida_otd(p, data_cliente_p), p.go_data_entregue_cliente)
+
         metricas[p.id] = {
             "solicitada": solicitada,
             "solicitada_automatica": bool(data_cliente_p),
@@ -6944,8 +7140,56 @@ def _metricas_operacao_360(pedidos, liberacao_pcp_por_pedido_venda, data_cliente
             "status_pedido_emoji": _ETAPA_EMOJI[etapa_idx - 1],
             "status_pedido_label": etapa_base["label"],
             "status_pedido_descricao": etapa_base["descricao"],
+            "otd_status": otd_calc["status"],
+            "otd_dias": otd_calc["dias"],
         }
     return metricas
+
+
+def _painel_operacao_logistica(pedidos_filtrados):
+    """Painel dinâmico de KPIs da tela Logística/NF (pedido do Bruno,
+    23/09/2026: "padrão gerencial... layout inteligente" — Logística era a
+    única das 3 telas de Gestão Operação sem nenhum card-resumo, só
+    tabela). Mesmo espírito de _painel_operacao_360: calculado sobre o
+    conjunto TOTAL filtrado (`pedidos_filtrados`, a query inteira sem
+    paginação), reage a cada mudança de filtro. Nenhuma métrica nova aqui —
+    todas de dados/propriedades que já existiam (go_lead_time_frete_dias,
+    go_custo_frete_previsto/final, go_data_pedido_expedido/
+    go_data_entregue_cliente). O card "Aguardando expedição" reaproveita
+    `kanban_expedicao` (site inteiro, não filtrado — já calculado na rota
+    pro Kanban em si) direto no template, não entra aqui."""
+    soma_lead_frete, n_lead_frete = 0, 0
+    nfs_emitidas = 0
+    soma_previsto, n_previsto = 0.0, 0
+    soma_final, n_final = 0.0, 0
+    em_transito = 0
+
+    for p in pedidos_filtrados:
+        lt = p.go_lead_time_frete_dias
+        if lt is not None:
+            soma_lead_frete += lt
+            n_lead_frete += 1
+        if p.go_data_emissao_nf is not None:
+            nfs_emitidas += 1
+        if p.go_custo_frete_previsto is not None:
+            soma_previsto += p.go_custo_frete_previsto
+            n_previsto += 1
+        if p.go_custo_frete_final is not None:
+            soma_final += p.go_custo_frete_final
+            n_final += 1
+        if p.go_data_pedido_expedido and not p.go_data_entregue_cliente:
+            em_transito += 1
+
+    return {
+        "total_pedidos": len(pedidos_filtrados),
+        "lead_time_frete_medio": round(soma_lead_frete / n_lead_frete, 1) if n_lead_frete else None,
+        "n_lead_time_frete": n_lead_frete,
+        "nfs_emitidas": nfs_emitidas,
+        "custo_frete_previsto": soma_previsto,
+        "custo_frete_final": soma_final,
+        "n_custo_frete": min(n_previsto, n_final),
+        "em_transito": em_transito,
+    }
 
 
 def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
@@ -7232,28 +7476,28 @@ def _otd_do_pedido(go):
     """OTD (On-Time Delivery) de UM pedido específico — pedido do Bruno
     (03/09/2026, tela Consulta Pedido): "incluir o OTD do pedido, se atendeu
     ou não, bem didático e informativo", ao lado da "Situação de entrega".
-    Mesma fonte de verdade da tela Resultados/OTD (go.go_otd_realizado,
-    preenchido manualmente na aba Resultados/OTD de Gestão Operação) — nunca
-    recalculado por conta própria a partir de datas, pra não divergir do
-    número que já aparece agregado em Resultados/OTD.
+    Calculado automaticamente via _otd_status_pedido (pedido do Bruno,
+    23/09/2026: "otd totalmente automático") — mesma fórmula usada em
+    _resumo_otd, pra nunca divergir do número que já aparece agregado em
+    Resultados/OTD.
 
-    go_dias_atraso_antecipacao (solicitado x entregue de verdade) entra só
-    como detalhe complementar, quando disponível — o "atendeu ou não" em si
-    sempre vem do campo manual."""
+    O "dias" de atraso/antecipação entra só como detalhe complementar,
+    quando disponível."""
     if go is None:
         return {
             "texto": "OTD não disponível — pedido ainda não lançado em Gestão Operação.",
             "cor": "secondary",
             "icone": "bi-question-circle",
         }
-    if not go.go_otd_realizado:
+    resultado = _otd_status_pedido(go)
+    if resultado["status"] == "PENDENTE":
         return {
             "texto": "OTD ainda não registrado para este pedido.",
             "cor": "secondary",
             "icone": "bi-hourglass",
         }
 
-    atraso = go.go_dias_atraso_antecipacao
+    atraso = resultado["dias"]
     if atraso is None:
         detalhe = ""
     elif atraso > 0:
@@ -7263,7 +7507,7 @@ def _otd_do_pedido(go):
     else:
         detalhe = " — entregue exatamente no dia solicitado."
 
-    if go.go_otd_realizado == "SIM":
+    if resultado["status"] == "SIM":
         return {
             "texto": f"Atendeu o OTD (dentro do prazo solicitado){detalhe}",
             "cor": "success",
@@ -8777,6 +9021,711 @@ def _gerar_pdf_risco_otd(linhas, resumo, filtros):
     buffer.seek(0)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
     nome_arquivo = f"torre_controle_otd_{date.today().isoformat()}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+# ----------------------------------------------------------------------
+# Gestão Operação — relatórios Excel/PDF das 3 telas (Operação 360 /
+# Logística / Resultados) — pedido do Bruno (23/09/2026: "com
+# disponibilidade de geração de relatório em Excel e PDF"). Mesmo padrão
+# estrutural da Torre de Controle OTD acima (_gerar_excel_risco_otd/
+# _gerar_pdf_risco_otd): Excel com Workbook multi-aba (openpyxl), PDF
+# paisagem A4 (reportlab). Cada relatório reflete o MESMO recorte filtrado
+# da URL da tela (nunca recalcula diferente) — pedido explícito do Bruno.
+# Cores de cabeçalho extraídas aqui em module-level (hex puro, sem
+# depender de `from reportlab.lib import colors` no topo do arquivo) já
+# que agora 4 geradores de PDF as usam (Torre de Controle + estes 3).
+# ----------------------------------------------------------------------
+_RELATORIO_GO_COR_CABECALHO_BG_HEX = "#d3e0f2"
+_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX = "#1b2a4a"
+
+
+def _formatar_moeda_br(valor):
+    """R$ 1.234,56 — mesma formatação já usada nos templates (filtro Jinja
+    moeda_brl) e em _gerar_pdf_risco_otd, reaproveitável aqui fora de
+    create_app() (os geradores de relatório vivem no módulo)."""
+    if valor is None:
+        return "—"
+    return "R$ " + "{:,.2f}".format(valor).replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _texto_filtros_operacao(filtros, extra=None):
+    """Descrição legível dos filtros aplicados nas 3 telas de Gestão
+    Operação — cabeçalho dos relatórios Excel/PDF, mesmo espírito de
+    _texto_filtros_risco_otd (deixar claro que o relatório reflete só o
+    que estava filtrado na tela, não a base inteira). `extra` acrescenta
+    pares (rótulo, valor) específicos de uma tela — ex. período/segmento em
+    Resultados, que não fazem parte do dict comum de
+    _filtrar_pedidos_operacao."""
+    partes = []
+    for rotulo, valor in (extra or []):
+        if valor:
+            partes.append(f"{rotulo}: {valor}")
+    if filtros.get("busca"):
+        partes.append(f'Busca: "{filtros["busca"]}"')
+    if filtros.get("vendedor"):
+        partes.append(f'Vendedor: "{filtros["vendedor"]}"')
+    if filtros.get("regiao"):
+        partes.append(f'Região: {filtros["regiao"]}')
+    if filtros.get("data_inicio") or filtros.get("data_fim"):
+        partes.append(f'Incluído: {filtros.get("data_inicio") or "..."} a {filtros.get("data_fim") or "..."}')
+    if filtros.get("planejamento_semanal"):
+        partes.append(f'Planejamento semanal PCP: {filtros["planejamento_semanal"]}')
+    if filtros.get("planejamento_mensal"):
+        partes.append(f'Planejamento mensal PCP: {filtros["planejamento_mensal"]}')
+    if filtros.get("nf_mes_atual") == "1":
+        partes.append("NF emitida no mês atual")
+    if filtros.get("nf_mes"):
+        partes.append(f'Mês NF emitida: {filtros["nf_mes"]}')
+    if filtros.get("nf_data_inicio") or filtros.get("nf_data_fim"):
+        partes.append(f'NF emitida: {filtros.get("nf_data_inicio") or "..."} a {filtros.get("nf_data_fim") or "..."}')
+    if filtros.get("expedicao_inicio") or filtros.get("expedicao_fim"):
+        partes.append(f'Expedido: {filtros.get("expedicao_inicio") or "..."} a {filtros.get("expedicao_fim") or "..."}')
+    if filtros.get("entrega_inicio") or filtros.get("entrega_fim"):
+        partes.append(f'Entregue: {filtros.get("entrega_inicio") or "..."} a {filtros.get("entrega_fim") or "..."}')
+    if filtros.get("status_pedido"):
+        idx_labels = {str(i): etapa["label"] for i, etapa in enumerate(_ETAPAS_ACOMPANHAMENTO_PEDIDO, start=1)}
+        labels = [idx_labels.get(v, v) for v in filtros["status_pedido"]]
+        partes.append("Status produção: " + ", ".join(labels))
+    if filtros.get("otd"):
+        mapa_otd = {"SIM": "Sim", "NAO": "Não", "PENDENTE": "Pendente"}
+        partes.append("OTD: " + ", ".join(mapa_otd.get(v, v) for v in filtros["otd"]))
+    if filtros.get("frete"):
+        mapa_frete = {"NAO_INFORMADO": "Não informado"}
+        partes.append("Modalidade de frete: " + ", ".join(mapa_frete.get(v, v) for v in filtros["frete"]))
+    if filtros.get("segmento") == "planejamento":
+        partes.append("Segmento: dentro do planejamento semanal PCP")
+    elif filtros.get("segmento") == "faturados":
+        partes.append("Segmento: faturados (NF emitida)")
+    return " · ".join(partes) if partes else "Nenhum filtro aplicado (todos os pedidos)"
+
+
+# ----------------------------------------------------------------------
+# Operação 360
+# ----------------------------------------------------------------------
+_COLUNAS_EXPORT_OPERACAO_360 = [
+    "Pedido", "Cliente", "Status pedido", "Data inclusão", "Data solicitada", "Expectativa PCP",
+    "Conclusão produção", "Nº NF", "Emissão NF", "Expedido em", "Real entrega",
+    "LT comercial (d)", "LT produção (d)", "LT operação (d)", "Dias atraso/antecipação",
+    "OTD", "Valor pedido", "Custo produção real", "Frete", "Estado", "Qualidade (c/ desvio)", "Semanal PCP",
+]
+
+
+def _dados_relatorio_operacao_360(args):
+    """Recalcula o conjunto TOTAL filtrado (nunca só a página) de Operação
+    360 — mesma sequência de helpers já usada dentro da rota de tela
+    (gestao_operacao_listagem_geral), extraída aqui pra não duplicar entre
+    tela/Excel/PDF."""
+    query, filtros = _filtrar_pedidos_operacao(args)
+    pedidos = query.all()
+    pedidos_venda = [p.pedido_venda for p in pedidos]
+    liberacao_pcp = _liberacao_pcp_por_pedido_venda(pedidos_venda)
+    data_cliente = _data_cliente_por_pedido_venda(pedidos_venda)
+    pedidos_producao = _pedidos_producao_por_pedido_venda(pedidos_venda)
+    rdim = _rdim_resumo_por_pedido_venda(pedidos_venda)
+    metricas = _metricas_operacao_360(pedidos, liberacao_pcp, data_cliente, pedidos_producao)
+    painel = _painel_operacao_360(filtros, pedidos, metricas)
+    return pedidos, metricas, rdim, painel, filtros
+
+
+def _linha_export_operacao_360(p, m, rdim):
+    return [
+        _normalizar_pedido_venda(p.pedido_venda) or "—", p.cliente,
+        f'{m.get("status_pedido_emoji", "")} {m.get("status_pedido_label", "")}'.strip(),
+        _formatar_data_br(p.data_inclusao_pedido), _formatar_data_br(m.get("solicitada")),
+        _formatar_data_br(m.get("expectativa_pcp")), _formatar_data_br(m.get("conclusao_producao")),
+        p.go_numero_nf or "", _formatar_data_br(p.go_data_emissao_nf), _formatar_data_br(p.go_data_pedido_expedido),
+        _formatar_data_br(p.go_data_entregue_cliente),
+        m.get("lead_comercial_dias") if m.get("lead_comercial_dias") is not None else "",
+        m.get("lead_producao_dias") if m.get("lead_producao_dias") is not None else "",
+        m.get("lead_operacao_dias") if m.get("lead_operacao_dias") is not None else "",
+        m.get("otd_dias") if m.get("otd_dias") is not None else "",
+        {"SIM": "Sim", "NAO": "Não"}.get(m.get("otd_status"), "—"),
+        p.go_valor_pedido_operacao if p.go_valor_pedido_operacao is not None else "",
+        p.go_custo_producao_real if p.go_custo_producao_real is not None else "",
+        p.frete or "", p.estado or "",
+        (rdim.get(_normalizar_pedido_venda(p.pedido_venda), {}).get("reprovadas", 0)
+         + rdim.get(_normalizar_pedido_venda(p.pedido_venda), {}).get("com_desvio", 0)) if rdim else 0,
+        m.get("termino_semanal") or "",
+    ]
+
+
+def _gerar_excel_operacao_360(pedidos, metricas, rdim, painel, filtros):
+    wb = Workbook()
+    ws_resumo = wb.active
+    ws_resumo.title = "Resumo"
+    d = painel["dinamico"]
+    linhas_resumo = [
+        ("Gestão Operação — Operação 360", ""),
+        ("Gerado em", _agora_brt().strftime("%d/%m/%Y %H:%M")),
+        ("Filtros aplicados", _texto_filtros_operacao(filtros)),
+        ("", ""),
+        ("Total de pedidos no recorte", d["total_pedidos"]),
+        ("Valor total dos pedidos", _formatar_moeda_br(d["valor_total"])),
+        ("Faturamento (NF emitida)", _formatar_moeda_br(d["faturamento_total"])),
+        ("LT comercial médio (dias)", d["lead_comercial_medio"] if d["lead_comercial_medio"] is not None else ""),
+        ("LT produção médio (dias)", d["lead_producao_medio"] if d["lead_producao_medio"] is not None else ""),
+        ("LT operação médio (dias)", d["lead_operacao_medio"] if d["lead_operacao_medio"] is not None else ""),
+        (painel["nf_mes"]["titulo"], painel["nf_mes"]["total"]),
+    ]
+    for linha in linhas_resumo:
+        ws_resumo.append(linha)
+    ws_resumo["A1"].font = Font(bold=True, size=14)
+    for i in (2, 3, 5, 6, 7, 8, 9, 10, 11):
+        ws_resumo.cell(row=i, column=1).font = Font(bold=True)
+    ws_resumo.column_dimensions["A"].width = 34
+    ws_resumo.column_dimensions["B"].width = 42
+
+    ws_pedidos = wb.create_sheet("Pedidos")
+    ws_pedidos.append(_COLUNAS_EXPORT_OPERACAO_360)
+    for celula in ws_pedidos[1]:
+        celula.font = Font(bold=True)
+    for p in pedidos:
+        m = metricas.get(p.id, {})
+        ws_pedidos.append(_linha_export_operacao_360(p, m, rdim))
+    for coluna in ws_pedidos.columns:
+        valores = [len(str(c.value)) for c in coluna if c.value is not None]
+        largura = max(valores) if valores else 10
+        ws_pedidos.column_dimensions[coluna[0].column_letter].width = min(largura + 2, 40)
+    ws_pedidos.freeze_panes = "A2"
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    resposta = Response(
+        buffer.getvalue(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    nome_arquivo = f"operacao_360_{date.today().isoformat()}.xlsx"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+def _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title="Gestão Operação — Operação 360",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8, leading=9.5)
+    estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+    COR_CABECALHO_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
+    COR_CABECALHO_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula_bold, fontSize=8.5, leading=10, textColor=COR_CABECALHO_TEXTO,
+    )
+
+    elementos = [
+        Paragraph("Gestão Operação — Operação 360", estilos["Title"]),
+        Paragraph(
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · {_texto_filtros_operacao(filtros)}',
+            estilos["Normal"],
+        ),
+        Spacer(1, 6 * mm),
+    ]
+
+    d = painel["dinamico"]
+
+    def _kpi(valor, rotulo):
+        return [
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=15, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8, alignment=1)),
+        ]
+
+    kpis = [
+        _kpi(d["total_pedidos"], "Pedidos no recorte"),
+        _kpi(_formatar_moeda_br(d["valor_total"]), "Valor total"),
+        _kpi(_formatar_moeda_br(d["faturamento_total"]), "Faturamento (NF)"),
+        _kpi(f'{d["lead_comercial_medio"]}d' if d["lead_comercial_medio"] is not None else "—", "LT comercial médio"),
+        _kpi(f'{d["lead_producao_medio"]}d' if d["lead_producao_medio"] is not None else "—", "LT produção médio"),
+        _kpi(f'{d["lead_operacao_medio"]}d' if d["lead_operacao_medio"] is not None else "—", "LT operação médio"),
+        _kpi(painel["nf_mes"]["total"], painel["nf_mes"]["titulo"]),
+    ]
+    largura_kpi = (landscape(A4)[0] - 20 * mm) / len(kpis)
+    tabela_kpis = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
+    tabela_kpis.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elementos.append(tabela_kpis)
+    elementos.append(Spacer(1, 6 * mm))
+
+    cabecalho = [
+        "Pedido", "Cliente", "Status pedido", "Data solicitada", "Conclusão produção", "Emissão NF",
+        "Real entrega", "LT operação", "OTD", "Dias atraso", "Valor pedido", "Frete", "Estado",
+    ]
+    dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+    for p in pedidos:
+        m = metricas.get(p.id, {})
+        dias_atraso = m.get("otd_dias")
+        dias_txt = "—" if dias_atraso is None else (f"{dias_atraso}d atraso" if dias_atraso > 0 else (f"{-dias_atraso}d antecip." if dias_atraso < 0 else "no dia"))
+        linha_tabela = [
+            Paragraph(_normalizar_pedido_venda(p.pedido_venda) or "—", estilo_celula),
+            Paragraph(p.cliente or "—", estilo_celula),
+            Paragraph(m.get("status_pedido_label", "—"), estilo_celula),
+            Paragraph(_formatar_data_br(m.get("solicitada")) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(m.get("conclusao_producao")) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(p.go_data_emissao_nf) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(p.go_data_entregue_cliente) or "—", estilo_celula),
+            Paragraph(f'{m["lead_operacao_dias"]}d' if m.get("lead_operacao_dias") is not None else "—", estilo_celula),
+            Paragraph({"SIM": "Sim", "NAO": "Não"}.get(m.get("otd_status"), "—"), estilo_celula_bold),
+            Paragraph(dias_txt, estilo_celula),
+            Paragraph(_formatar_moeda_br(p.go_valor_pedido_operacao), estilo_celula),
+            Paragraph(p.frete or "—", estilo_celula),
+            Paragraph(p.estado or "—", estilo_celula),
+        ]
+        dados_tabela.append(linha_tabela)
+
+    pesos = [8, 14, 12, 10, 11, 10, 10, 8, 6, 9, 10, 6, 6]
+    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    soma_pesos = sum(pesos)
+    larguras_mm = [pe / soma_pesos * largura_disponivel for pe in pesos]
+    tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
+    tabela.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    elementos.append(tabela)
+    if not pedidos:
+        elementos.append(Spacer(1, 6 * mm))
+        elementos.append(Paragraph("Nenhum pedido encontrado com o filtro aplicado.", estilos["Normal"]))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"operacao_360_{date.today().isoformat()}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+# ----------------------------------------------------------------------
+# Logística
+# ----------------------------------------------------------------------
+_COLUNAS_EXPORT_LOGISTICA = [
+    "Pedido", "Cliente", "Nº NF", "Emissão NF", "Status logística", "Expedido em", "Transportadora",
+    "Prevista entrega", "Real entrega", "Lead time frete (d)", "Custo frete previsto", "Custo frete final",
+]
+
+
+def _dados_relatorio_logistica(args):
+    query, filtros = _filtrar_pedidos_operacao(args)
+    pedidos = query.all()
+    painel = _painel_operacao_logistica(pedidos)
+    kanban_total = len(_pedidos_kanban_expedicao())
+    return pedidos, painel, kanban_total, filtros
+
+
+def _gerar_excel_logistica(pedidos, painel, kanban_total, filtros):
+    wb = Workbook()
+    ws_resumo = wb.active
+    ws_resumo.title = "Resumo"
+    linhas_resumo = [
+        ("Gestão Operação — Logística / NF", ""),
+        ("Gerado em", _agora_brt().strftime("%d/%m/%Y %H:%M")),
+        ("Filtros aplicados", _texto_filtros_operacao(filtros)),
+        ("", ""),
+        ("Total de pedidos no recorte", painel["total_pedidos"]),
+        ("Aguardando expedição (site inteiro)", kanban_total),
+        ("Lead time médio de frete (dias)", painel["lead_time_frete_medio"] if painel["lead_time_frete_medio"] is not None else ""),
+        ("NFs emitidas no recorte", painel["nfs_emitidas"]),
+        ("Custo frete previsto", _formatar_moeda_br(painel["custo_frete_previsto"])),
+        ("Custo frete final", _formatar_moeda_br(painel["custo_frete_final"])),
+        ("Expedidos sem confirmação de entrega (em trânsito)", painel["em_transito"]),
+    ]
+    for linha in linhas_resumo:
+        ws_resumo.append(linha)
+    ws_resumo["A1"].font = Font(bold=True, size=14)
+    for i in (2, 3, 5, 6, 7, 8, 9, 10, 11):
+        ws_resumo.cell(row=i, column=1).font = Font(bold=True)
+    ws_resumo.column_dimensions["A"].width = 42
+    ws_resumo.column_dimensions["B"].width = 40
+
+    ws_pedidos = wb.create_sheet("Pedidos")
+    ws_pedidos.append(_COLUNAS_EXPORT_LOGISTICA)
+    for celula in ws_pedidos[1]:
+        celula.font = Font(bold=True)
+    for p in pedidos:
+        ws_pedidos.append([
+            _normalizar_pedido_venda(p.pedido_venda) or "—", p.cliente, p.go_numero_nf or "",
+            _formatar_data_br(p.go_data_emissao_nf), p.go_status_logistica or "",
+            _formatar_data_br(p.go_data_pedido_expedido),
+            p.go_transportadora.nome if p.go_transportadora else "",
+            _formatar_data_br(p.go_data_prevista_entrega), _formatar_data_br(p.go_data_real_entrega),
+            p.go_lead_time_frete_dias if p.go_lead_time_frete_dias is not None else "",
+            p.go_custo_frete_previsto if p.go_custo_frete_previsto is not None else "",
+            p.go_custo_frete_final if p.go_custo_frete_final is not None else "",
+        ])
+    for coluna in ws_pedidos.columns:
+        valores = [len(str(c.value)) for c in coluna if c.value is not None]
+        largura = max(valores) if valores else 10
+        ws_pedidos.column_dimensions[coluna[0].column_letter].width = min(largura + 2, 40)
+    ws_pedidos.freeze_panes = "A2"
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    resposta = Response(
+        buffer.getvalue(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    nome_arquivo = f"logistica_{date.today().isoformat()}.xlsx"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+def _gerar_pdf_logistica(pedidos, painel, kanban_total, filtros):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title="Gestão Operação — Logística / NF",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8.5, leading=10.5)
+    estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+    COR_CABECALHO_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
+    COR_CABECALHO_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula_bold, fontSize=9, leading=11, textColor=COR_CABECALHO_TEXTO,
+    )
+
+    elementos = [
+        Paragraph("Gestão Operação — Logística / NF", estilos["Title"]),
+        Paragraph(
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · {_texto_filtros_operacao(filtros)}',
+            estilos["Normal"],
+        ),
+        Spacer(1, 6 * mm),
+    ]
+
+    def _kpi(valor, rotulo):
+        return [
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=15, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8, alignment=1)),
+        ]
+
+    kpis = [
+        _kpi(kanban_total, "Aguardando expedição"),
+        _kpi(f'{painel["lead_time_frete_medio"]}d' if painel["lead_time_frete_medio"] is not None else "—", "Lead time médio de frete"),
+        _kpi(painel["nfs_emitidas"], "NFs emitidas no recorte"),
+        _kpi(_formatar_moeda_br(painel["custo_frete_previsto"]), "Custo frete previsto"),
+        _kpi(_formatar_moeda_br(painel["custo_frete_final"]), "Custo frete final"),
+        _kpi(painel["em_transito"], "Em trânsito"),
+    ]
+    largura_kpi = (landscape(A4)[0] - 20 * mm) / len(kpis)
+    tabela_kpis = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
+    tabela_kpis.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elementos.append(tabela_kpis)
+    elementos.append(Spacer(1, 6 * mm))
+
+    cabecalho = ["Pedido", "Cliente", "Nº NF", "Emissão NF", "Status logística", "Expedido em", "Transportadora", "Real entrega", "Lead time frete"]
+    dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+    for p in pedidos:
+        linha_tabela = [
+            Paragraph(_normalizar_pedido_venda(p.pedido_venda) or "—", estilo_celula),
+            Paragraph(p.cliente or "—", estilo_celula),
+            Paragraph(p.go_numero_nf or "—", estilo_celula),
+            Paragraph(_formatar_data_br(p.go_data_emissao_nf) or "—", estilo_celula),
+            Paragraph(p.go_status_logistica or "—", estilo_celula),
+            Paragraph(_formatar_data_br(p.go_data_pedido_expedido) or "—", estilo_celula),
+            Paragraph(p.go_transportadora.nome if p.go_transportadora else "—", estilo_celula),
+            Paragraph(_formatar_data_br(p.go_data_real_entrega) or "—", estilo_celula),
+            Paragraph(f'{p.go_lead_time_frete_dias}d' if p.go_lead_time_frete_dias is not None else "—", estilo_celula),
+        ]
+        dados_tabela.append(linha_tabela)
+
+    pesos = [8, 16, 10, 11, 14, 11, 16, 11, 10]
+    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    soma_pesos = sum(pesos)
+    larguras_mm = [pe / soma_pesos * largura_disponivel for pe in pesos]
+    tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
+    tabela.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+    ]))
+    elementos.append(tabela)
+    if not pedidos:
+        elementos.append(Spacer(1, 6 * mm))
+        elementos.append(Paragraph("Nenhum pedido encontrado com o filtro aplicado.", estilos["Normal"]))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"logistica_{date.today().isoformat()}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+# ----------------------------------------------------------------------
+# Resultados / OTD
+# ----------------------------------------------------------------------
+def _dados_relatorio_resultados(args):
+    """Mesma sequência de cálculo já usada dentro da rota de tela
+    (gestao_operacao_resultados) — extraída aqui pra Excel/PDF nunca
+    divergirem do que a URL da tela mostrou."""
+    tipo_periodo, ano_periodo, valor_periodo, periodo_label = _parse_periodo(args.get("periodo", ""))
+    periodo_str = _periodo_para_str(tipo_periodo, ano_periodo, valor_periodo)
+    faturamento_semanal = _faturamento_por_periodo(tipo_periodo, ano_periodo, valor_periodo)
+    query, filtros = _filtrar_pedidos_operacao(args)
+    pedidos = query.all()
+    otd = _resumo_otd(query)
+    pedidos_semanais = [p for l in faturamento_semanal["linhas"] for p in l["pedidos"]]
+    pedidos_para_otd = list({p.id: p for p in (list(pedidos) + pedidos_semanais)}.values())
+    otd_por_pedido_id = _otd_calculado_por_pedido_id(pedidos_para_otd)
+    query_periodo = _pedidos_operacao_do_periodo(tipo_periodo, ano_periodo, valor_periodo)
+    otd_mes = _resumo_otd(query_periodo)
+    lead_times_mes = _resumo_lead_times(query_periodo)
+    return {
+        "pedidos": pedidos, "filtros": filtros, "otd": otd, "otd_por_pedido_id": otd_por_pedido_id,
+        "faturamento_semanal": faturamento_semanal, "otd_mes": otd_mes, "lead_times_mes": lead_times_mes,
+        "periodo": periodo_str, "mes_label": periodo_label,
+    }
+
+
+def _gerar_excel_resultados(dados):
+    filtros, pedidos, otd = dados["filtros"], dados["pedidos"], dados["otd"]
+    otd_por_pedido_id, otd_mes, lt_mes = dados["otd_por_pedido_id"], dados["otd_mes"], dados["lead_times_mes"]
+    fat = dados["faturamento_semanal"]
+    wb = Workbook()
+
+    ws_resumo = wb.active
+    ws_resumo.title = "Resumo do período"
+    linhas_resumo = [
+        (f'Gestão Operação — Resultados / OTD — {dados["mes_label"]}', ""),
+        ("Gerado em", _agora_brt().strftime("%d/%m/%Y %H:%M")),
+        ("Filtros aplicados", _texto_filtros_operacao(filtros, extra=[("Período", dados["mes_label"])])),
+        ("", ""),
+        ("Qtd. liberada no mês", fat["totais"]["qtd_liberada"]),
+        ("Valor liberado no mês", _formatar_moeda_br(fat["totais"]["valor_liberado"])),
+        ("Qtd. faturada no mês", fat["totais"]["qtd_faturada"]),
+        ("Valor faturado no mês", _formatar_moeda_br(fat["totais"]["valor_faturado"])),
+        ("", ""),
+        ("OTD do mês (%)", otd_mes["percentual"] if otd_mes["percentual"] is not None else ""),
+        ("Lead Time Operação médio (dias)", lt_mes["lt_operacao"]["media"] if lt_mes["lt_operacao"]["media"] is not None else ""),
+        ("Lead Time Operação CIF médio (dias)", lt_mes["lt_operacao_cif"]["media"] if lt_mes["lt_operacao_cif"]["media"] is not None else ""),
+        ("Lead Time Operação FOB médio (dias)", lt_mes["lt_operacao_fob"]["media"] if lt_mes["lt_operacao_fob"]["media"] is not None else ""),
+        ("Lead Time Frete médio (dias)", lt_mes["lt_frete"]["media"] if lt_mes["lt_frete"]["media"] is not None else ""),
+        ("Lead Time Chão de Fábrica médio (dias)", lt_mes["lt_producao"]["media"] if lt_mes["lt_producao"]["media"] is not None else ""),
+        ("", ""),
+        ("OTD geral do recorte filtrado (%)", otd["percentual"] if otd["percentual"] is not None else ""),
+        ("Entregues no prazo", otd["no_prazo"]),
+        ("Fora do prazo", (otd["total"] - otd["no_prazo"]) if otd["total"] else 0),
+        ("Pedidos com OTD registrado", otd["total"]),
+    ]
+    for linha in linhas_resumo:
+        ws_resumo.append(linha)
+    ws_resumo["A1"].font = Font(bold=True, size=14)
+    for i in (2, 3, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20):
+        ws_resumo.cell(row=i, column=1).font = Font(bold=True)
+    ws_resumo.column_dimensions["A"].width = 42
+    ws_resumo.column_dimensions["B"].width = 30
+
+    ws_vend = wb.create_sheet("OTD por vendedor")
+    ws_vend.append(["Vendedor", "Pedidos", "OTD (%)"])
+    for c in ws_vend[1]:
+        c.font = Font(bold=True)
+    for l in otd["por_vendedor"]:
+        ws_vend.append([l["chave"], l["total"], l["percentual"] if l["percentual"] is not None else ""])
+    ws_vend.column_dimensions["A"].width = 30
+
+    ws_cli = wb.create_sheet("OTD por cliente")
+    ws_cli.append(["Cliente", "Pedidos", "OTD (%)"])
+    for c in ws_cli[1]:
+        c.font = Font(bold=True)
+    for l in otd["por_cliente"]:
+        ws_cli.append([l["chave"], l["total"], l["percentual"] if l["percentual"] is not None else ""])
+    ws_cli.column_dimensions["A"].width = 30
+
+    ws_pedidos = wb.create_sheet("Pedidos")
+    ws_pedidos.append(["Pedido", "Cliente", "OTD", "Data solicitada", "Entregue cliente", "Dias atraso/antecipação", "Custo total", "Status final", "Obs."])
+    for c in ws_pedidos[1]:
+        c.font = Font(bold=True)
+    for p in pedidos:
+        otd_p = otd_por_pedido_id.get(p.id, {})
+        ws_pedidos.append([
+            _normalizar_pedido_venda(p.pedido_venda) or "—", p.cliente,
+            {"SIM": "Sim", "NAO": "Não"}.get(otd_p.get("status"), "—"),
+            _formatar_data_br(otd_p.get("solicitada")), _formatar_data_br(p.go_data_entregue_cliente),
+            otd_p.get("dias") if otd_p.get("dias") is not None else "",
+            p.go_custo_total if p.go_custo_total is not None else "",
+            p.go_status_final_alinhamento or "", p.go_obs_operacao or "",
+        ])
+    for coluna in ws_pedidos.columns:
+        valores = [len(str(c.value)) for c in coluna if c.value is not None]
+        largura = max(valores) if valores else 10
+        ws_pedidos.column_dimensions[coluna[0].column_letter].width = min(largura + 2, 45)
+    ws_pedidos.freeze_panes = "A2"
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    resposta = Response(
+        buffer.getvalue(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    nome_arquivo = f"resultados_otd_{date.today().isoformat()}.xlsx"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+def _gerar_pdf_resultados(dados):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    filtros, pedidos, otd = dados["filtros"], dados["pedidos"], dados["otd"]
+    otd_por_pedido_id, otd_mes, lt_mes = dados["otd_por_pedido_id"], dados["otd_mes"], dados["lead_times_mes"]
+    fat = dados["faturamento_semanal"]
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title="Gestão Operação — Resultados / OTD",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8.5, leading=10.5)
+    estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+    COR_CABECALHO_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
+    COR_CABECALHO_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula_bold, fontSize=9, leading=11, textColor=COR_CABECALHO_TEXTO,
+    )
+
+    elementos = [
+        Paragraph(f'Gestão Operação — Resultados / OTD — {dados["mes_label"]}', estilos["Title"]),
+        Paragraph(
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · {_texto_filtros_operacao(filtros, extra=[("Período", dados["mes_label"])])}',
+            estilos["Normal"],
+        ),
+        Spacer(1, 6 * mm),
+    ]
+
+    def _kpi(valor, rotulo):
+        return [
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=15, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8, alignment=1)),
+        ]
+
+    kpis = [
+        _kpi(fat["totais"]["qtd_liberada"], "Qtd. liberada no mês"),
+        _kpi(_formatar_moeda_br(fat["totais"]["valor_liberado"]), "Valor liberado no mês"),
+        _kpi(fat["totais"]["qtd_faturada"], "Qtd. faturada no mês"),
+        _kpi(_formatar_moeda_br(fat["totais"]["valor_faturado"]), "Valor faturado no mês"),
+        _kpi(f'{otd_mes["percentual"]}%' if otd_mes["percentual"] is not None else "—", "OTD do mês"),
+        _kpi(f'{lt_mes["lt_operacao"]["media"]}d' if lt_mes["lt_operacao"]["media"] is not None else "—", "LT Operação médio"),
+        _kpi(f'{lt_mes["lt_producao"]["media"]}d' if lt_mes["lt_producao"]["media"] is not None else "—", "LT Chão de Fábrica médio"),
+    ]
+    largura_kpi = (landscape(A4)[0] - 20 * mm) / len(kpis)
+    tabela_kpis = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
+    tabela_kpis.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elementos.append(tabela_kpis)
+    elementos.append(Spacer(1, 4 * mm))
+
+    kpis_otd_geral = [
+        _kpi(f'{otd["percentual"]}%' if otd["percentual"] is not None else "—", f'OTD geral (meta {GO_OTD_META_PERCENTUAL}%)'),
+        _kpi(otd["no_prazo"], "Entregues no prazo"),
+        _kpi((otd["total"] - otd["no_prazo"]) if otd["total"] else 0, "Fora do prazo"),
+        _kpi(otd["total"], "Pedidos com OTD registrado"),
+    ]
+    largura_kpi2 = (landscape(A4)[0] - 20 * mm) / len(kpis_otd_geral)
+    tabela_kpis2 = Table([[k[0] for k in kpis_otd_geral], [k[1] for k in kpis_otd_geral]], colWidths=[largura_kpi2] * len(kpis_otd_geral))
+    tabela_kpis2.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elementos.append(tabela_kpis2)
+    elementos.append(Spacer(1, 6 * mm))
+
+    cabecalho = ["Pedido", "Cliente", "OTD", "Data solicitada", "Entregue cliente", "Dias atraso/antecip.", "Custo total", "Status final"]
+    dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+    for p in pedidos:
+        otd_p = otd_por_pedido_id.get(p.id, {})
+        dias = otd_p.get("dias")
+        dias_txt = "—" if dias is None else (f"{dias}d atraso" if dias > 0 else (f"{-dias}d antecip." if dias < 0 else "no dia"))
+        linha_tabela = [
+            Paragraph(_normalizar_pedido_venda(p.pedido_venda) or "—", estilo_celula),
+            Paragraph(p.cliente or "—", estilo_celula),
+            Paragraph({"SIM": "Sim", "NAO": "Não"}.get(otd_p.get("status"), "—"), estilo_celula_bold),
+            Paragraph(_formatar_data_br(otd_p.get("solicitada")) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(p.go_data_entregue_cliente) or "—", estilo_celula),
+            Paragraph(dias_txt, estilo_celula),
+            Paragraph(_formatar_moeda_br(p.go_custo_total), estilo_celula),
+            Paragraph(p.go_status_final_alinhamento or "—", estilo_celula),
+        ]
+        dados_tabela.append(linha_tabela)
+
+    pesos = [8, 16, 8, 12, 12, 13, 11, 14]
+    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    soma_pesos = sum(pesos)
+    larguras_mm = [pe / soma_pesos * largura_disponivel for pe in pesos]
+    tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
+    tabela.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+    ]))
+    elementos.append(tabela)
+    if not pedidos:
+        elementos.append(Spacer(1, 6 * mm))
+        elementos.append(Paragraph("Nenhum pedido encontrado com o filtro aplicado.", estilos["Normal"]))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"resultados_otd_{date.today().isoformat()}.pdf"
     resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
     return resposta
 
@@ -13547,18 +14496,35 @@ def register_routes(app):
     @app.route("/gestao-operacao/logistica")
     @login_required
     def gestao_operacao_logistica():
-        pedidos, page, total_paginas, total_filtrado, filtros, _query_operacao = _linhas_gestao_operacao(request.args)
+        pedidos, page, total_paginas, total_filtrado, filtros, query_operacao = _linhas_gestao_operacao(request.args)
         # Kanban Expedição (pedido do Bruno, 16/09/2026) — ver
         # _pedidos_kanban_expedicao. Independente dos filtros/paginação da
         # tabela abaixo: mostra SEMPRE todos os pedidos parados na
         # expedição, no site inteiro.
         kanban_expedicao = _pedidos_kanban_expedicao()
+        # Painel de KPIs (pedido do Bruno, 23/09/2026: "padrão gerencial") —
+        # sobre o conjunto TOTAL filtrado, não só a página atual, mesma
+        # convenção de _painel_operacao_360.
+        painel_operacao_logistica = _painel_operacao_logistica(query_operacao.all())
         return render_template(
             "gestao_operacao_logistica.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
             kanban_expedicao=kanban_expedicao,
+            painel_operacao_logistica=painel_operacao_logistica,
         )
+
+    @app.route("/gestao-operacao/logistica/relatorio.xlsx")
+    @login_required
+    def gestao_operacao_logistica_xlsx():
+        pedidos, painel, kanban_total, filtros = _dados_relatorio_logistica(request.args)
+        return _gerar_excel_logistica(pedidos, painel, kanban_total, filtros)
+
+    @app.route("/gestao-operacao/logistica/relatorio.pdf")
+    @login_required
+    def gestao_operacao_logistica_pdf():
+        pedidos, painel, kanban_total, filtros = _dados_relatorio_logistica(request.args)
+        return _gerar_pdf_logistica(pedidos, painel, kanban_total, filtros)
 
     @app.route("/gestao-operacao/<int:pedido_id>/marcar-expedido", methods=["POST"])
     @requer_role("ADMIN", "PCP")
@@ -13609,6 +14575,14 @@ def register_routes(app):
         # abaixo usa o MESMO recorte, em vez de sempre olhar pra todos os
         # pedidos.
         otd = _resumo_otd(query_operacao)
+        # OTD/"Data solicitada"/"Dias atraso" calculados por pedido (pedido
+        # do Bruno, 23/09/2026: "otd totalmente automático") — cobre tanto a
+        # tabela de pedidos principal quanto a lista de pedidos de cada
+        # semana no quadro de Faturamento por Semana abaixo (ver
+        # _otd_calculado_por_pedido_id), um único dict pras duas.
+        pedidos_semanais = [p for l in faturamento_semanal["linhas"] for p in l["pedidos"]]
+        pedidos_para_otd = list({p.id: p for p in (list(pedidos) + pedidos_semanais)}.values())
+        otd_por_pedido_id = _otd_calculado_por_pedido_id(pedidos_para_otd)
 
         # Resumo fixo do período (pedido do Bruno, 03/09/2026: "preciso ver
         # os resultados detalhados de cada mês, como otd, lead time
@@ -13627,12 +14601,25 @@ def register_routes(app):
             "gestao_operacao_resultados.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros, otd=otd,
+            otd_por_pedido_id=otd_por_pedido_id,
             faturamento_semanal=faturamento_semanal,
             otd_mes=otd_mes, lead_times_mes=lead_times_mes,
             periodo=periodo_str, tipo_periodo=tipo_periodo, mes_label=periodo_label,
             periodo_anterior=periodo_anterior, periodo_seguinte=periodo_seguinte,
             opcoes_periodo=_opcoes_periodo(),
         )
+
+    @app.route("/gestao-operacao/resultados/relatorio.xlsx")
+    @login_required
+    def gestao_operacao_resultados_xlsx():
+        dados = _dados_relatorio_resultados(request.args)
+        return _gerar_excel_resultados(dados)
+
+    @app.route("/gestao-operacao/resultados/relatorio.pdf")
+    @login_required
+    def gestao_operacao_resultados_pdf():
+        dados = _dados_relatorio_resultados(request.args)
+        return _gerar_pdf_resultados(dados)
 
     @app.route("/gestao-operacao/listagem-geral")
     @login_required
@@ -13688,16 +14675,6 @@ def register_routes(app):
         )
         painel_operacao_360 = _painel_operacao_360(filtros, pedidos_filtrados_completo, metricas_completo)
 
-        # Opções do filtro "Status produção" (lista multi-seleção, pedido do
-        # Bruno 10/09/2026) — reaproveita _ETAPAS_ACOMPANHAMENTO_PEDIDO/
-        # _ETAPA_EMOJI (privados a este módulo, por isso montados aqui em vez
-        # de expostos via inject_globals) pra nunca divergir dos rótulos já
-        # usados na coluna "Status pedido" e em Consulta Pedido.
-        status_pedido_opcoes = [
-            {"valor": str(idx), "label": etapa["label"], "emoji": _ETAPA_EMOJI[idx - 1]}
-            for idx, etapa in enumerate(_ETAPAS_ACOMPANHAMENTO_PEDIDO, start=1)
-        ]
-
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -13707,8 +14684,19 @@ def register_routes(app):
             data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
             metricas_operacao_360=metricas_operacao_360,
             painel_operacao_360=painel_operacao_360,
-            status_pedido_opcoes=status_pedido_opcoes,
         )
+
+    @app.route("/gestao-operacao/listagem-geral/relatorio.xlsx")
+    @login_required
+    def gestao_operacao_listagem_geral_xlsx():
+        pedidos, metricas, rdim, painel, filtros = _dados_relatorio_operacao_360(request.args)
+        return _gerar_excel_operacao_360(pedidos, metricas, rdim, painel, filtros)
+
+    @app.route("/gestao-operacao/listagem-geral/relatorio.pdf")
+    @login_required
+    def gestao_operacao_listagem_geral_pdf():
+        pedidos, metricas, rdim, painel, filtros = _dados_relatorio_operacao_360(request.args)
+        return _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros)
 
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")
@@ -13784,11 +14772,15 @@ def register_routes(app):
         status_real = _status_producao_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
         liberacao_real = _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get(chave_pv) or {}
         data_cliente_real = _data_cliente_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
+        # OTD calculado (pedido do Bruno, 23/09/2026: "otd totalmente
+        # automático") — pro badge somente-leitura da aba Resultados/OTD.
+        otd_calculado = _otd_status_pedido(pedido, _comprometida_otd(pedido, data_cliente_real))
 
         return render_template(
             "gestao_operacao_editar.html", pedido=pedido, transportadoras=transportadoras,
             secao=secao, GO_SECOES=GO_SECOES, GO_SECAO_ENDPOINT=GO_SECAO_ENDPOINT, GO_SECAO_LABEL=GO_SECAO_LABEL,
             status_real=status_real, liberacao_real=liberacao_real, data_cliente_real=data_cliente_real,
+            otd_calculado=otd_calculado,
         )
 
     # ------------------------------------------------------------------

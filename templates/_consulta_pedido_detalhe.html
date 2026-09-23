@@ -265,7 +265,8 @@
 
       <div class="col-6 col-md-3">
         <div class="text-muted small">OTD (no prazo?)</div>
-        <div class="fw-semibold">{{ go.go_otd_realizado or "—" }}</div>
+        {% set otd_stat = go | otd_status_go %}
+        <div class="fw-semibold">{{ "SIM" if otd_stat == "SIM" else ("NÃO" if otd_stat == "NAO" else "—") }}</div>
       </div>
       <div class="col-6 col-md-3">
         <div class="text-muted small">Data entregue cliente</div>

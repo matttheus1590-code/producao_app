@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat_card %}
 {% block title %}Gestão Operação · Logística / NF · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
@@ -51,23 +52,49 @@
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <h4 class="mb-0"><i class="bi bi-truck"></i> Logística / Nota Fiscal</h4>
-  <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('gestao_operacao_logistica_xlsx', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-file-earmark-excel"></i> Excel
+      </a>
+      <a href="{{ url_for('gestao_operacao_logistica_pdf', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-file-earmark-pdf"></i> PDF
+      </a>
+    </div>
+  </div>
 </div>
 <p class="text-muted small mb-3">Emissão de nota fiscal, expedição e entrega de cada pedido.</p>
 
-<form class="row g-2 align-items-end mb-3" method="get">
-  <div class="col-md-3">
-    <label class="form-label small text-muted mb-1">Buscar (pedido, cliente)</label>
-    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Cliente</label>
-    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
-  </div>
-  <div class="col-md-2 d-grid">
-    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> Filtrar</button>
-  </div>
+{% set endpoint_limpar = "gestao_operacao_logistica" %}
+<form method="get">
+  {% include "_gestao_operacao_filtros.html" %}
 </form>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="text-muted small mb-2">
+      <i class="bi bi-graph-up"></i> Painel dinâmico — expedição e frete do conjunto filtrado acima ({{ painel_operacao_logistica.total_pedidos }} pedido(s))
+    </div>
+    <div class="row g-2">
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("Aguardando expedição", kanban_expedicao|length, sufixo="pedido(s), site inteiro") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("Lead time médio de frete", (painel_operacao_logistica.lead_time_frete_medio ~ "d") if painel_operacao_logistica.lead_time_frete_medio is not none else "—", sufixo=painel_operacao_logistica.n_lead_time_frete ~ " pedido(s) com as 2 datas") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("NFs emitidas no recorte", painel_operacao_logistica.nfs_emitidas) }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-3">
+        {{ stat_card("Custo frete: previsto x final", ("R$ " ~ "{:,.2f}".format(painel_operacao_logistica.custo_frete_previsto).replace(",", "X").replace(".", ",").replace("X", ".")) ~ " → " ~ ("R$ " ~ "{:,.2f}".format(painel_operacao_logistica.custo_frete_final).replace(",", "X").replace(".", ",").replace("X", ".")), sufixo=painel_operacao_logistica.n_custo_frete ~ " pedido(s) com os 2 valores") }}
+      </div>
+      <div class="col-6 col-md-4 col-lg-2">
+        {{ stat_card("Expedidos, sem confirmação de entrega", painel_operacao_logistica.em_transito, sufixo="em trânsito") }}
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="table-responsive">
   <table class="table table-hover table-sm align-middle bg-white">
