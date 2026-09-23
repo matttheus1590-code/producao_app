@@ -1031,6 +1031,11 @@ class PedidoOperacao(db.Model):
     go_valor_nf_emitida = db.Column(db.Float, nullable=True)
     go_numero_nf = db.Column(db.String(30), nullable=True)
     go_status_logistica = db.Column(db.String(60), nullable=True)
+    # Aposentado do formulário em 23/09/2026 (feature Expedição/Logística — pedido do
+    # Bruno): campo livre digitado à mão, substituído pelo Kanban de 3 colunas
+    # automáticas + pelos campos estruturados abaixo. Coluna mantida (sem DROP) só
+    # por causa do histórico já gravado; nenhum ponto novo do app escreve nela.
+    go_data_prevista_coleta = db.Column(db.Date, nullable=True)  # "Expectativa de Coleta/Embarque"
     go_data_pedido_expedido = db.Column(db.Date, nullable=True)
     # Mesmo padrão do ItemPedido.transportadora_id — sem FK de banco de verdade,
     # validado na aplicação.

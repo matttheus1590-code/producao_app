@@ -144,14 +144,6 @@
             <input type="text" class="form-control" name="go_valor_nf_emitida" value="{{ pedido.go_valor_nf_emitida if pedido.go_valor_nf_emitida is not none else '' }}">
           </div>
           <div class="col-md-3">
-            <label class="form-label">Status logística</label>
-            <input type="text" class="form-control" name="go_status_logistica" value="{{ pedido.go_status_logistica or '' }}">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Data pedido expedido</label>
-            <input type="date" class="form-control" name="go_data_pedido_expedido" value="{{ pedido.go_data_pedido_expedido or '' }}">
-          </div>
-          <div class="col-md-3">
             <label class="form-label">Transportadora</label>
             <select class="form-select" name="go_transportadora_id">
               <option value="">—</option>
@@ -160,25 +152,56 @@
               {% endfor %}
             </select>
           </div>
+        </div>
+
+        <hr class="my-3">
+        <div class="text-uppercase small text-muted mb-2">📦 Bloco Logística — Kanban Expedição</div>
+        <div class="row g-3">
           <div class="col-md-3">
-            <label class="form-label">Data prevista entrega/coleta</label>
+            <label class="form-label">📅 Expectativa de Coleta/Embarque</label>
+            <input type="date" class="form-control" name="go_data_prevista_coleta" value="{{ pedido.go_data_prevista_coleta or '' }}">
+            <div class="form-text">Se essa data passar sem "Data real de Coleta/Embarque" preenchida, o Kanban conta atraso automaticamente.</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">📦 Data Real de Coleta/Embarque</label>
+            <input type="date" class="form-control" name="go_data_pedido_expedido" value="{{ pedido.go_data_pedido_expedido or '' }}">
+            <div class="form-text">Mesma data do botão "Marcar como expedido" no Kanban Expedição — preencher aqui tem o mesmo efeito.</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">📅 Expectativa de Chegada no Cliente</label>
             <input type="date" class="form-control" name="go_data_prevista_entrega" value="{{ pedido.go_data_prevista_entrega or '' }}">
+            <div class="form-text">Comparada com "Data entregue cliente" (aba Resultados) pra calcular atraso de entrega.</div>
           </div>
           <div class="col-md-3">
-            <label class="form-label">Data real entrega/coleta</label>
-            <input type="date" class="form-control" name="go_data_real_entrega" value="{{ pedido.go_data_real_entrega or '' }}">
+            <label class="form-label">🏁 Data Real de Chegada no Cliente</label>
+            <input type="date" class="form-control" name="go_data_entregue_cliente" value="{{ pedido.go_data_entregue_cliente or '' }}">
+            <div class="form-text">Mesmo campo "Data entregue cliente" da aba Resultados (é o dado que fecha o OTD) — editável aqui também, sem duplicar.</div>
           </div>
-          <div class="col-md-4">
+        </div>
+
+        <hr class="my-3">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Data real entrega/coleta (transportadora)</label>
+            <input type="date" class="form-control" name="go_data_real_entrega" value="{{ pedido.go_data_real_entrega or '' }}">
+            <div class="form-text">Confirmação da TRANSPORTADORA (pode ser antes da chegada de fato ao cliente, comum em exportação) — alimenta só o "Lead time de frete"; não é usada no atraso de entrega nem no OTD.</div>
+          </div>
+          <div class="col-md-3">
             <label class="form-label">Custo frete previsto</label>
             <input type="text" class="form-control" name="go_custo_frete_previsto" value="{{ pedido.go_custo_frete_previsto if pedido.go_custo_frete_previsto is not none else '' }}">
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">Custo frete final</label>
             <input type="text" class="form-control" name="go_custo_frete_final" value="{{ pedido.go_custo_frete_final if pedido.go_custo_frete_final is not none else '' }}">
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">Custo frete sobre a nota (%)</label>
             <input type="text" class="form-control" name="go_custo_frete_sobre_nota" value="{{ pedido.go_custo_frete_sobre_nota if pedido.go_custo_frete_sobre_nota is not none else '' }}">
+          </div>
+          <div class="col-md-12">
+            <label class="form-label">Observação/Pendência</label>
+            <textarea class="form-control" name="go_obs_operacao" rows="2">{{ pedido.go_obs_operacao or '' }}</textarea>
+            <div class="form-text">Mesmo campo "Observações da operação" da aba Resultados (é o campo Observação/Pendência do card do Kanban) — editável aqui também, sem duplicar.</div>
           </div>
         </div>
       </div>

@@ -179,8 +179,8 @@
       </div>
 
       <div class="col-6 col-md-3">
-        <div class="text-muted small">Status logística</div>
-        <div class="fw-semibold">{{ go.go_status_logistica or "—" }}</div>
+        <div class="text-muted small">Expectativa de coleta/embarque</div>
+        <div class="fw-semibold">{{ go.go_data_prevista_coleta.strftime("%d/%m/%Y") if go.go_data_prevista_coleta else "—" }}</div>
       </div>
       <div class="col-6 col-md-3">
         <div class="text-muted small">Transportadora</div>

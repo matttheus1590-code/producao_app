@@ -147,7 +147,7 @@ CAMPOS_HISTORICO_GESTAO_OPERACAO = [
     "go_status_pedido_info",
     "go_previsao_liberacao_pcp",
     "go_data_efetiva_liberacao_pcp",
-    "go_status_logistica",
+    "go_data_prevista_coleta",
     "go_data_pedido_expedido",
     "go_transportadora_id",
     "go_data_real_entrega",
@@ -189,10 +189,11 @@ GO_CAMPOS_POR_SECAO = {
         "go_data_solicitada_cliente_retira", "go_custo_producao_real", "go_termino_semanal_pcp",
     ],
     "logistica": [
-        "go_data_emissao_nf", "go_valor_nf_emitida", "go_numero_nf", "go_status_logistica",
-        "go_data_pedido_expedido", "go_transportadora_id", "go_custo_frete_previsto",
-        "go_custo_frete_final", "go_custo_frete_sobre_nota", "go_data_prevista_entrega",
-        "go_data_real_entrega",
+        "go_data_emissao_nf", "go_valor_nf_emitida", "go_numero_nf",
+        "go_data_prevista_coleta", "go_data_pedido_expedido", "go_transportadora_id",
+        "go_custo_frete_previsto", "go_custo_frete_final", "go_custo_frete_sobre_nota",
+        "go_data_prevista_entrega", "go_data_real_entrega", "go_data_entregue_cliente",
+        "go_obs_operacao",
     ],
     "resultados": [
         "go_data_solicitada_cliente_final", "go_data_entregue_cliente",
@@ -219,9 +220,9 @@ GO_SECAO_LABEL = {
 }
 _GO_CAMPOS_DATA = {
     "go_data_solicitada_entrega", "go_previsao_liberacao_pcp", "go_data_efetiva_liberacao_pcp",
-    "go_data_solicitada_cliente_retira", "go_data_emissao_nf", "go_data_pedido_expedido",
-    "go_data_prevista_entrega", "go_data_real_entrega", "go_data_solicitada_cliente_final",
-    "go_data_entregue_cliente",
+    "go_data_solicitada_cliente_retira", "go_data_emissao_nf", "go_data_prevista_coleta",
+    "go_data_pedido_expedido", "go_data_prevista_entrega", "go_data_real_entrega",
+    "go_data_solicitada_cliente_final", "go_data_entregue_cliente",
 }
 _GO_CAMPOS_FLOAT = {
     "go_valor_pedido_operacao", "go_custo_producao_real", "go_valor_nf_emitida",
@@ -286,6 +287,11 @@ def create_app():
         _migrar_liberacao_real_itens(app)
         _migrar_atualizado_em_itens(app)
         _migrar_gestao_operacao_pedidos(app)
+        # Precisa rodar ANTES de qualquer query ORM em PedidoOperacao (a
+        # primeira é bem aqui embaixo, _migrar_dados_go_para_pedidos_operacao)
+        # — senão o SELECT do SQLAlchemy já pede a coluna nova antes dela
+        # existir de verdade no banco.
+        _migrar_pedidos_operacao_coleta(app)
         _migrar_dados_go_para_pedidos_operacao(app)
         # Só depois de TODAS as colunas de pedidos/itens existirem de verdade
         # (senão o ORM tenta selecionar coluna que ainda não foi criada nesta
@@ -800,6 +806,25 @@ def _migrar_faturamento_itens(app):
         if "valor_faturado" not in colunas:
             conn.execute(text("ALTER TABLE itens_pedido ADD COLUMN valor_faturado FLOAT"))
     app.logger.info("Migração automática: campos de faturamento (NF e valor faturado) adicionados aos itens.")
+
+
+def _migrar_pedidos_operacao_coleta(app):
+    """Feature Expedição/Logística (23/09/2026, pedido do Bruno): adiciona
+    `go_data_prevista_coleta` ("Expectativa de Coleta/Embarque") em
+    pedidos_operacao. Campo 100% novo — não há nada pra copiar de outro
+    lugar, só fica em branco nas linhas antigas e passa a ser preenchido
+    dali pra frente pela Expedição."""
+    inspector = inspect(db.engine)
+    if "pedidos_operacao" not in inspector.get_table_names():
+        return
+
+    colunas = {c["name"] for c in inspector.get_columns("pedidos_operacao")}
+    if "go_data_prevista_coleta" in colunas:
+        return
+
+    with db.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_data_prevista_coleta DATE"))
+    app.logger.info("Migração automática: campo go_data_prevista_coleta adicionado a pedidos_operacao.")
 
 
 def _migrar_logistica_itens(app):
@@ -7274,54 +7299,138 @@ def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
     }
 
 
-def _pedidos_kanban_expedicao():
-    """Kanban Expedição, dentro de Logística/Expedição (pedido do Bruno,
-    16/09/2026): "pedidos finalizados PCP e já aos cuidados da logística e
-    parados na expedição... só sai do kanban quando o material for
-    expedição". Reaproveita a MESMA régua de 5 etapas já usada em Consulta
-    Pedido e na coluna "Status pedido" da Operação 360
-    (_indice_etapa_pedido) — etapa 3 ("Inspeção / Expedição") já significa
-    exatamente isso: produção finalizada (Pedido.status_producao ==
-    "FINALIZADO" ou go_data_efetiva_liberacao_pcp preenchido) e AINDA sem
-    go_data_pedido_expedido. Assim que go_data_pedido_expedido é
-    preenchido a etapa vira 4 ("Em transporte") e o pedido sai do kanban
-    sozinho — não precisa de nenhum campo/estado novo.
+def _prevista_x_realizada(prevista, real):
+    """Compara PREVISTO x REALIZADO pra um par de datas — mesma função
+    reaproveitada pros 2 momentos da feature Expedição/Logística (23/09/2026,
+    pedido do Bruno): atraso de Coleta/Embarque (go_data_prevista_coleta x
+    go_data_pedido_expedido) e atraso de Entrega/Chegada no cliente
+    (go_data_prevista_entrega x go_data_entregue_cliente). "REGRA CENTRAL"
+    do pedido dele: sempre mostrar previsto x realizado x desvio.
 
-    Casamento com Produção pelo mesmo padrão de sempre (pedido_venda, trim,
-    sem FK, nunca aproximado — ver _liberacao_pcp_por_pedido_venda/
-    _pedidos_producao_por_pedido_venda)."""
-    candidatos = PedidoOperacao.query.filter(PedidoOperacao.go_data_pedido_expedido.is_(None)).all()
+    Retorna um dict {"status": ..., "dias": ...}:
+      - "sem_previsao": nenhuma data prevista lançada ainda.
+      - "no_prazo": previsto no futuro/hoje e ainda não realizado (dias=None),
+        OU realizado até a própria data prevista (dias=0) — cumpriu o prazo.
+      - "atrasando": prazo já vencido e AINDA não realizado — atraso em
+        andamento, contado até hoje (Bruno: "iniciar contagem automática de
+        atraso... parar quando a data real for preenchida").
+      - "atrasado": realizado depois do previsto — atraso final, fixo
+        (Bruno: "Previsto: DD/MM → Realizado: DD/MM → +X dias")."""
+    if not prevista:
+        return {"status": "sem_previsao", "dias": None}
+    if not real:
+        hoje = date.today()
+        if hoje > prevista:
+            return {"status": "atrasando", "dias": (hoje - prevista).days}
+        return {"status": "no_prazo", "dias": None}
+    dias = (real - prevista).days
+    if dias > 0:
+        return {"status": "atrasado", "dias": dias}
+    return {"status": "no_prazo", "dias": 0}
+
+
+def _semaforo_dias_parado(dias):
+    """Semáforo de TEMPO PARADO na Expedição após a Liberação Efetiva do PCP
+    (pedido do Bruno, feature Expedição/Logística, 23/09/2026) — limiares
+    PRÓPRIOS desta feature, diferentes de qualquer outro semáforo do site:
+    🟢 até 1 dia, 🟡 2 a 4 dias, 🔴 5 dias ou mais. De propósito separado do
+    atraso de Coleta/Embarque e de Entrega (_prevista_x_realizada) — Bruno
+    pediu explicitamente pra não confundir "tempo parado na Expedição" com
+    "atraso logístico"."""
+    if dias is None:
+        return "cinza"
+    if dias <= 1:
+        return "verde"
+    if dias <= 4:
+        return "amarelo"
+    return "vermelho"
+
+
+def _kanban_expedicao():
+    """Kanban Expedição — reescrito em 23/09/2026 (pedido do Bruno, feature
+    "Expedição/Logística integrada ao PCP e à Gestão 360"), substitui a
+    versão de 16/09/2026 (_pedidos_kanban_expedicao, 1 lista só). 3 colunas
+    100% automáticas (decisão do Bruno via pergunta de esclarecimento,
+    23/09/2026 — preferiu isso a 1-clique-por-etapa ou a 5 colunas literais,
+    já que 2 dos 5 pares do enunciado original não tinham sinal de dado
+    distinto):
+
+      - "aguardando_nf": liberado pelo PCP, NF ainda não emitida.
+      - "aguardando_coleta": NF emitida (go_numero_nf OU go_data_emissao_nf),
+        ainda não marcado como expedido.
+      - "expedido_hoje": go_data_pedido_expedido == hoje.
+
+    ENTRADA automática (item 1 do pedido do Bruno): assim que o PCP registra
+    a Liberação Efetiva — mesma fonte AO VIVO de sempre (Produção tem
+    prioridade sobre o campo digitado em Operação quando os dois existem,
+    _liberacao_pcp_por_pedido_venda), sem alterar nada da lógica de PCP em
+    si.
+
+    Sobre "expedido_hoje": Bruno aprovou ao mesmo tempo "3 colunas 100%
+    automáticas" (incluindo Expedido) e "sumir da lista assim que expedido,
+    como hoje" — as 2 respostas juntas tornariam a coluna Expedido sempre
+    vazia se lida ao pé da letra. Resolvido mostrando só o que foi expedido
+    HOJE (confirmação visual do dia, "acabou de sair"), sem acumular
+    pedidos de dias anteriores; no dia seguinte o pedido some do board
+    normalmente (continua existindo na tela/relatório, só não aqui).
+
+    Cada card carrega os campos do bloco "LOGÍSTICA" pedido pelo Bruno:
+    datas previstas x reais de Coleta/Embarque e de Chegada no Cliente, os
+    2 atrasos (via _prevista_x_realizada) e o semáforo de tempo parado
+    (via _semaforo_dias_parado). Casamento com Produção pelo mesmo padrão
+    de sempre (pedido_venda, trim, sem FK — ver
+    _liberacao_pcp_por_pedido_venda)."""
+    hoje = date.today()
+    # Só exclui quem já chegou no cliente (fluxo encerrado) — cards
+    # "expedido em dia anterior" também não entram aqui (saem do board),
+    # mas ainda passam pela query pra achar os "expedido_hoje" certos.
+    candidatos = PedidoOperacao.query.filter(PedidoOperacao.go_data_entregue_cliente.is_(None)).all()
     pedidos_venda = [go.pedido_venda for go in candidatos]
     liberacao_pcp = _liberacao_pcp_por_pedido_venda(pedidos_venda)
-    pedidos_producao = _pedidos_producao_por_pedido_venda(pedidos_venda)
 
-    linhas = []
+    colunas = {"aguardando_nf": [], "aguardando_coleta": [], "expedido_hoje": []}
+
     for go in candidatos:
         chave = _normalizar_pedido_venda(go.pedido_venda)
-        pedido_producao = pedidos_producao.get(chave)
-        if _indice_etapa_pedido(pedido_producao, go) != 3:
-            continue
-        conclusao = (liberacao_pcp.get(chave) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
-        dias_esperando = (date.today() - conclusao).days if conclusao else None
-        linhas.append(
-            {
-                "id": go.id,
-                "pedido_venda": chave or go.pedido_venda,
-                "cliente": go.cliente,
-                "frete": go.frete,
-                "estado": go.estado,
-                "valor": go.go_valor_pedido_operacao,
-                "conclusao_producao": conclusao,
-                "dias_esperando": dias_esperando,
-                "numero_nf": go.go_numero_nf,
-                "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
-            }
-        )
-    # Quem espera há mais tempo primeiro; sem data de conclusão (caso raro,
-    # pedido nunca lançado em Produção mas com liberação efetiva manual em
-    # Operação) fica por último, não no topo.
-    linhas.sort(key=lambda l: (l["dias_esperando"] is None, -(l["dias_esperando"] or 0)))
-    return linhas
+        liberacao_efetiva = (liberacao_pcp.get(chave) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
+        if not liberacao_efetiva:
+            continue  # PCP ainda não liberou — não entra no kanban
+
+        expedido_hoje = go.go_data_pedido_expedido == hoje
+        if go.go_data_pedido_expedido and not expedido_hoje:
+            continue  # expedido em dia anterior — some do board, como hoje
+
+        dias_parado = (hoje - liberacao_efetiva).days
+        card = {
+            "id": go.id,
+            "pedido_venda": chave or go.pedido_venda,
+            "cliente": go.cliente,
+            "liberacao_pcp": liberacao_efetiva,
+            "dias_parado": dias_parado,
+            "semaforo_parado": _semaforo_dias_parado(dias_parado),
+            "numero_nf": go.go_numero_nf,
+            "data_emissao_nf": go.go_data_emissao_nf,
+            "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
+            "frete": go.frete,
+            "prevista_coleta": go.go_data_prevista_coleta,
+            "real_coleta": go.go_data_pedido_expedido,
+            "atraso_coleta": _prevista_x_realizada(go.go_data_prevista_coleta, go.go_data_pedido_expedido),
+            "prevista_entrega": go.go_data_prevista_entrega,
+            "real_entrega": go.go_data_entregue_cliente,
+            "atraso_entrega": _prevista_x_realizada(go.go_data_prevista_entrega, go.go_data_entregue_cliente),
+            "observacao": go.go_obs_operacao,
+        }
+
+        if expedido_hoje:
+            colunas["expedido_hoje"].append(card)
+        elif go.go_numero_nf or go.go_data_emissao_nf:
+            colunas["aguardando_coleta"].append(card)
+        else:
+            colunas["aguardando_nf"].append(card)
+
+    for lista in colunas.values():
+        lista.sort(key=lambda c: -(c["dias_parado"] or 0))
+    return colunas
 
 
 def _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao):
@@ -9320,7 +9429,7 @@ def _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros):
 # Logística
 # ----------------------------------------------------------------------
 _COLUNAS_EXPORT_LOGISTICA = [
-    "Pedido", "Cliente", "Nº NF", "Emissão NF", "Status logística", "Expedido em", "Transportadora",
+    "Pedido", "Cliente", "Nº NF", "Emissão NF", "Prevista coleta/embarque", "Expedido em", "Transportadora",
     "Prevista entrega", "Real entrega", "Lead time frete (d)", "Custo frete previsto", "Custo frete final",
 ]
 
@@ -9329,7 +9438,12 @@ def _dados_relatorio_logistica(args):
     query, filtros = _filtrar_pedidos_operacao(args)
     pedidos = query.all()
     painel = _painel_operacao_logistica(pedidos)
-    kanban_total = len(_pedidos_kanban_expedicao())
+    kanban = _kanban_expedicao()
+    # "Aguardando expedição" no resumo do relatório = quem ainda não foi
+    # coletado/embarcado (as 2 colunas de espera); "expedido_hoje" já é uma
+    # confirmação de saída, não uma espera — mesmo recorte do badge
+    # kanban_expedicao|length que a tela mostrava antes desta feature.
+    kanban_total = len(kanban["aguardando_nf"]) + len(kanban["aguardando_coleta"])
     return pedidos, painel, kanban_total, filtros
 
 
@@ -9365,7 +9479,7 @@ def _gerar_excel_logistica(pedidos, painel, kanban_total, filtros):
     for p in pedidos:
         ws_pedidos.append([
             _normalizar_pedido_venda(p.pedido_venda) or "—", p.cliente, p.go_numero_nf or "",
-            _formatar_data_br(p.go_data_emissao_nf), p.go_status_logistica or "",
+            _formatar_data_br(p.go_data_emissao_nf), _formatar_data_br(p.go_data_prevista_coleta),
             _formatar_data_br(p.go_data_pedido_expedido),
             p.go_transportadora.nome if p.go_transportadora else "",
             _formatar_data_br(p.go_data_prevista_entrega), _formatar_data_br(p.go_data_real_entrega),
@@ -9447,7 +9561,7 @@ def _gerar_pdf_logistica(pedidos, painel, kanban_total, filtros):
     elementos.append(tabela_kpis)
     elementos.append(Spacer(1, 6 * mm))
 
-    cabecalho = ["Pedido", "Cliente", "Nº NF", "Emissão NF", "Status logística", "Expedido em", "Transportadora", "Real entrega", "Lead time frete"]
+    cabecalho = ["Pedido", "Cliente", "Nº NF", "Emissão NF", "Prevista coleta", "Expedido em", "Transportadora", "Real entrega", "Lead time frete"]
     dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
     for p in pedidos:
         linha_tabela = [
@@ -9455,7 +9569,7 @@ def _gerar_pdf_logistica(pedidos, painel, kanban_total, filtros):
             Paragraph(p.cliente or "—", estilo_celula),
             Paragraph(p.go_numero_nf or "—", estilo_celula),
             Paragraph(_formatar_data_br(p.go_data_emissao_nf) or "—", estilo_celula),
-            Paragraph(p.go_status_logistica or "—", estilo_celula),
+            Paragraph(_formatar_data_br(p.go_data_prevista_coleta) or "—", estilo_celula),
             Paragraph(_formatar_data_br(p.go_data_pedido_expedido) or "—", estilo_celula),
             Paragraph(p.go_transportadora.nome if p.go_transportadora else "—", estilo_celula),
             Paragraph(_formatar_data_br(p.go_data_real_entrega) or "—", estilo_celula),
@@ -9488,6 +9602,220 @@ def _gerar_pdf_logistica(pedidos, painel, kanban_total, filtros):
     buffer.seek(0)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
     nome_arquivo = f"logistica_{date.today().isoformat()}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+# Cores de indicador visual dos relatórios PDF de Expedição/Logística — mesmo
+# par piora/melhora já usado em _gerar_pdf_risco_otd (#f8d7da/#d1e7dd),
+# ampliado com amarelo (alerta) e cinza (sem dado). Fontes padrão do
+# reportlab não têm glyph colorido de emoji (mesmo motivo documentado em
+# _gerar_pdf_risco_otd) — aqui também não usamos emoji no texto da célula,
+# só pintamos o FUNDO da célula com a cor do indicador.
+_COR_INDICADOR_VERDE_HEX = "#d1e7dd"
+_COR_INDICADOR_AMARELO_HEX = "#fff3cd"
+_COR_INDICADOR_VERMELHO_HEX = "#f8d7da"
+_COR_INDICADOR_CINZA_HEX = "#e9ecef"
+_COR_POR_SEMAFORO = {
+    "verde": _COR_INDICADOR_VERDE_HEX, "amarelo": _COR_INDICADOR_AMARELO_HEX,
+    "vermelho": _COR_INDICADOR_VERMELHO_HEX, "cinza": _COR_INDICADOR_CINZA_HEX,
+}
+_COR_POR_STATUS_ATRASO = {
+    "sem_previsao": _COR_INDICADOR_CINZA_HEX, "no_prazo": _COR_INDICADOR_VERDE_HEX,
+    "atrasando": _COR_INDICADOR_AMARELO_HEX, "atrasado": _COR_INDICADOR_VERMELHO_HEX,
+}
+
+
+def _texto_atraso(info):
+    """Texto curto de UM lado do par PREVISTO x REALIZADO (_prevista_x_realizada)
+    pra célula de tabela/PDF/Excel — "REGRA CENTRAL" do pedido do Bruno:
+    sempre dar pra ver o desvio de cada pedido num relance. Sem emoji de
+    propósito (mesmo motivo de _gerar_pdf_risco_otd: fonte padrão do
+    reportlab não tem os glyphs coloridos) — quem chama pinta o FUNDO da
+    célula com a cor do indicador (ver _COR_POR_STATUS_ATRASO); nos
+    templates HTML (Kanban ao vivo) o emoji do enunciado do Bruno entra à
+    parte, direto no Jinja."""
+    status = info["status"]
+    if status == "sem_previsao":
+        return "—"
+    if status == "no_prazo":
+        return "No prazo"
+    if status == "atrasando":
+        return f'{info["dias"]}d em atraso'
+    return f'+{info["dias"]}d'
+
+
+def _dados_relatorio_expedicao_diario():
+    """Linhas do relatório PDF diário de Expedição (item 8 do pedido do
+    Bruno, 23/09/2026) — escopo mais AMPLO que o Kanban ao vivo da tela
+    (_kanban_expedicao): o Kanban esconde o pedido assim que ele é expedido
+    num dia anterior (pedido do Bruno: "sumir ao ser expedido, como hoje"),
+    mas o relatório impresso precisa continuar mostrando o pedido enquanto
+    ele estiver em trânsito, pra dar a visão PCP -> Coleta -> Chegada
+    completa (item 5 do pedido dele, atraso de entrega). Por isso aqui o
+    corte é só: já liberado pelo PCP e AINDA não entregue ao cliente —
+    sem excluir quem já foi expedido em dias anteriores.
+
+    "Status" (coluna pedida por ele) é a mesma régua de 3 estágios do
+    Kanban, ampliada com um 4º ("Expedido") pra cobrir quem já saiu mas
+    ainda não chegou — o Kanban ao vivo não precisa desse 4º estágio porque
+    esses pedidos já saíram do board."""
+    hoje = date.today()
+    candidatos = (
+        PedidoOperacao.query
+        .filter(PedidoOperacao.go_data_efetiva_liberacao_pcp.isnot(None))
+        .filter(PedidoOperacao.go_data_entregue_cliente.is_(None))
+        .all()
+    )
+    pedidos_venda = [go.pedido_venda for go in candidatos]
+    liberacao_pcp = _liberacao_pcp_por_pedido_venda(pedidos_venda)
+
+    linhas = []
+    for go in candidatos:
+        chave = _normalizar_pedido_venda(go.pedido_venda)
+        liberacao_efetiva = (liberacao_pcp.get(chave) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
+        if not liberacao_efetiva:
+            continue
+
+        if go.go_data_pedido_expedido:
+            status = "Expedido"
+        elif go.go_numero_nf or go.go_data_emissao_nf:
+            status = "Aguardando Coleta/Embarque"
+        else:
+            status = "Aguardando NF"
+
+        dias_parado = (hoje - liberacao_efetiva).days
+        linhas.append({
+            "pedido_venda": chave or go.pedido_venda,
+            "cliente": go.cliente,
+            "status": status,
+            "liberacao_pcp": liberacao_efetiva,
+            "dias_parado": dias_parado,
+            "semaforo_parado": _semaforo_dias_parado(dias_parado),
+            "frete": go.frete,
+            "numero_nf": go.go_numero_nf,
+            "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
+            "prevista_coleta": go.go_data_prevista_coleta,
+            "real_coleta": go.go_data_pedido_expedido,
+            "atraso_coleta": _prevista_x_realizada(go.go_data_prevista_coleta, go.go_data_pedido_expedido),
+            "prevista_entrega": go.go_data_prevista_entrega,
+            "real_entrega": go.go_data_entregue_cliente,
+            "atraso_entrega": _prevista_x_realizada(go.go_data_prevista_entrega, go.go_data_entregue_cliente),
+            "observacao": go.go_obs_operacao,
+        })
+
+    linhas.sort(key=lambda l: -(l["dias_parado"] or 0))
+    return linhas
+
+
+def _gerar_pdf_expedicao_diario(linhas):
+    """Relatório PDF diário da Expedição (item 8 do pedido do Bruno,
+    23/09/2026): "botão GERAR RELATÓRIO PDF... A4 horizontal, uma única
+    página sempre que possível, máxima utilização da área útil, otimizado
+    pra impressão e fixação no quadro físico da Expedição, leitura rápida
+    por Expedição/Logística/PCP/Comercial/Direção". As 15 colunas e a ordem
+    são exatamente as do enunciado dele. Mesmos indicadores visuais do
+    Kanban (semáforo de tempo parado + atraso de coleta/entrega), só que
+    como cor de fundo de célula em vez de emoji — reportlab não tem glyph
+    colorido de emoji nas fontes padrão (mesmo motivo já documentado em
+    _gerar_pdf_risco_otd)."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=8 * mm, rightMargin=8 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
+        title="Expedição — Relatório Diário",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=7, leading=8.5)
+    estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+    COR_CABECALHO_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
+    COR_CABECALHO_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela", parent=estilo_celula_bold, fontSize=7.5, leading=9, textColor=COR_CABECALHO_TEXTO,
+    )
+
+    elementos = [
+        Paragraph("Expedição — Relatório Diário", estilos["Title"]),
+        Paragraph(
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · {len(linhas)} pedido(s) em aberto '
+            "(liberados pelo PCP, ainda não entregues ao cliente)",
+            estilos["Normal"],
+        ),
+        Spacer(1, 4 * mm),
+    ]
+
+    cabecalho = [
+        "Pedido", "Cliente", "Status", "Liberação PCP", "Dias Parado", "CIF/FOB", "NF", "Transportadora",
+        "Prev. Coleta", "Real Coleta", "Atraso Coleta", "Prev. Chegada", "Real Chegada", "Atraso Entrega",
+        "Observação",
+    ]
+    dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+    cores_fundo = [None]  # cabeçalho pintado à parte (BACKGROUND geral abaixo)
+
+    for l in linhas:
+        linha_tabela = [
+            Paragraph(l["pedido_venda"] or "—", estilo_celula),
+            Paragraph(l["cliente"] or "—", estilo_celula),
+            Paragraph(l["status"], estilo_celula),
+            Paragraph(_formatar_data_br(l["liberacao_pcp"]) or "—", estilo_celula),
+            Paragraph(f'{l["dias_parado"]}d' if l["dias_parado"] is not None else "—", estilo_celula),
+            Paragraph(l["frete"] or "—", estilo_celula),
+            Paragraph(l["numero_nf"] or "—", estilo_celula),
+            Paragraph(l["transportadora"] or "—", estilo_celula),
+            Paragraph(_formatar_data_br(l["prevista_coleta"]) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(l["real_coleta"]) or "—", estilo_celula),
+            Paragraph(_texto_atraso(l["atraso_coleta"]), estilo_celula),
+            Paragraph(_formatar_data_br(l["prevista_entrega"]) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(l["real_entrega"]) or "—", estilo_celula),
+            Paragraph(_texto_atraso(l["atraso_entrega"]), estilo_celula),
+            Paragraph(l["observacao"] or "—", estilo_celula),
+        ]
+        dados_tabela.append(linha_tabela)
+        cores_fundo.append({
+            4: _COR_POR_SEMAFORO[l["semaforo_parado"]],
+            10: _COR_POR_STATUS_ATRASO[l["atraso_coleta"]["status"]],
+            13: _COR_POR_STATUS_ATRASO[l["atraso_entrega"]["status"]],
+        })
+
+    pesos = [6, 12, 9, 7, 5, 5, 6, 9, 6, 6, 6, 6, 6, 6, 10]
+    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    soma_pesos = sum(pesos)
+    larguras_mm = [pe / soma_pesos * largura_disponivel for pe in pesos]
+    tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
+
+    estilo_lista = [
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2.5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2.5),
+    ]
+    for linha_idx, cores_colunas in enumerate(cores_fundo):
+        if not cores_colunas:
+            continue
+        for col_idx, cor_hex in cores_colunas.items():
+            estilo_lista.append(("BACKGROUND", (col_idx, linha_idx), (col_idx, linha_idx), colors.HexColor(cor_hex)))
+    tabela.setStyle(TableStyle(estilo_lista))
+    elementos.append(tabela)
+
+    if not linhas:
+        elementos.append(Spacer(1, 6 * mm))
+        elementos.append(Paragraph("Nenhum pedido liberado pelo PCP em aberto na Expedição no momento.", estilos["Normal"]))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"expedicao_diario_{date.today().isoformat()}.pdf"
     resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
     return resposta
 
@@ -14497,11 +14825,11 @@ def register_routes(app):
     @login_required
     def gestao_operacao_logistica():
         pedidos, page, total_paginas, total_filtrado, filtros, query_operacao = _linhas_gestao_operacao(request.args)
-        # Kanban Expedição (pedido do Bruno, 16/09/2026) — ver
-        # _pedidos_kanban_expedicao. Independente dos filtros/paginação da
-        # tabela abaixo: mostra SEMPRE todos os pedidos parados na
-        # expedição, no site inteiro.
-        kanban_expedicao = _pedidos_kanban_expedicao()
+        # Kanban Expedição (reescrito 23/09/2026 — feature Expedição/
+        # Logística, ver _kanban_expedicao) — independente dos filtros/
+        # paginação da tabela abaixo: mostra SEMPRE todos os pedidos das 3
+        # colunas automáticas, no site inteiro.
+        kanban_expedicao = _kanban_expedicao()
         # Painel de KPIs (pedido do Bruno, 23/09/2026: "padrão gerencial") —
         # sobre o conjunto TOTAL filtrado, não só a página atual, mesma
         # convenção de _painel_operacao_360.
@@ -14526,15 +14854,26 @@ def register_routes(app):
         pedidos, painel, kanban_total, filtros = _dados_relatorio_logistica(request.args)
         return _gerar_pdf_logistica(pedidos, painel, kanban_total, filtros)
 
+    @app.route("/gestao-operacao/logistica/relatorio-expedicao.pdf")
+    @login_required
+    def gestao_operacao_relatorio_expedicao_pdf():
+        """Relatório PDF diário da Expedição (item 8 do pedido do Bruno,
+        23/09/2026) — botão "Gerar Relatório PDF" na tela Logística, A4
+        paisagem, 1 página, pra fixar no quadro físico. Ver
+        _dados_relatorio_expedicao_diario/_gerar_pdf_expedicao_diario."""
+        linhas = _dados_relatorio_expedicao_diario()
+        return _gerar_pdf_expedicao_diario(linhas)
+
     @app.route("/gestao-operacao/<int:pedido_id>/marcar-expedido", methods=["POST"])
     @requer_role("ADMIN", "PCP")
     def gestao_operacao_marcar_expedido(pedido_id):
         """Ação rápida do Kanban Expedição (pedido do Bruno, 16/09/2026): marca
         a Data de expedição de hoje sem precisar abrir o formulário de edição
-        completo — o pedido sai do kanban sozinho na próxima carga (ver
-        _pedidos_kanban_expedicao, que já filtra por go_data_pedido_expedido
-        vazio). Mesmo padrão de auditoria (_registrar_alteracoes) e de
-        permissão (@requer_role) já usados em gestao_operacao_editar."""
+        completo. É também a "Data Real de Coleta/Embarque" da feature
+        Expedição/Logística (23/09/2026) — o pedido passa pra coluna
+        "expedido_hoje" na mesma carga e some do board no dia seguinte (ver
+        _kanban_expedicao). Mesmo padrão de auditoria (_registrar_alteracoes)
+        e de permissão (@requer_role) já usados em gestao_operacao_editar."""
         pedido = db.session.get(PedidoOperacao, pedido_id)
         if pedido is None:
             flash("Pedido não encontrado.", "danger")
