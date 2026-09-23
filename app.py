@@ -6074,6 +6074,242 @@ def _construir_timeline(pedido):
     return eventos
 
 
+# Ícones coloridos pré-renderados (Noto Color Emoji -> PNG, gerados uma única
+# vez neste diretório) pro PDF "Espelho Pedido de Venda" (pedido do Bruno,
+# 23/09/2026: "intuitivo... se viável incluir emotions"). As fontes padrão do
+# reportlab (Helvetica) não têm glyph colorido de emoji — igual já documentado
+# em _gerar_pdf_risco_otd —, mas ali a solução foi trocar o emoji por cor de
+# fundo de célula; aqui, como o pedido foi por emoji de verdade num documento
+# de 1 pedido só (não uma lista grande), embutimos o PNG como imagem inline
+# dentro do texto (reportlab entende a tag <img> num Paragraph).
+_ESPELHO_ICONE_DIR = os.path.join(BASE_DIR, "static", "img", "emoji_pdf")
+_ESPELHO_LOGO_PATH = os.path.join(BASE_DIR, "static", "img", "logo_4pipe.png")
+_ESPELHO_BOOTSTRAP_COR_HEX = {
+    "secondary": "#6c757d", "warning": "#b8860b", "info": "#0a6e8c",
+    "success": "#198754", "danger": "#dc3545",
+}
+
+
+def _icone_pdf(nome, tamanho=9):
+    """Tag <img> inline (reportlab lê XML básico dentro de Paragraph) pra um
+    ícone colorido de static/img/emoji_pdf/<nome>.png. valign negativo alinha
+    o ícone com a linha de base do texto ao lado."""
+    caminho = os.path.join(_ESPELHO_ICONE_DIR, f"{nome}.png")
+    return f'<img src="{caminho}" width="{tamanho}" height="{tamanho}" valign="-1.5"/>'
+
+
+def _gerar_pdf_espelho_pedido(pedido):
+    """PDF "Espelho Pedido de Venda" (pedido do Bruno, 23/09/2026) — impressão
+    VERTICAL (A4 retrato) de UMA página só, com TODAS as informações do
+    pedido + itens/quantidade, de propósito SEM NENHUM valor monetário/
+    faturamento ("somente valores/faturamento que não quero que cite").
+
+    Junta Gestão Produção (Pedido/ItemPedido, sempre existe) com Gestão
+    Operação (PedidoOperacao, casada por pedido_venda — mesmo padrão de
+    sempre, sem duplicar cadastro) quando existir uma linha correspondente,
+    pra ficar "completo" de verdade: Comercial + PCP + Logística, sempre em
+    datas/textos, nunca em R$. Se o pedido não tem linha em Gestão Operação
+    ainda, essas 2 seções simplesmente não aparecem (documento só com o que
+    existe de verdade, sem campo vazio "decorativo").
+
+    histórico/linha do tempo (auditoria) ficam de fora de propósito — não é
+    isso que o Bruno pediu ("completo... do pedido e itens/quantidade"), e
+    manter fora ajuda a caber numa página só."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    go = None
+    if pedido.pedido_venda:
+        chave = _normalizar_pedido_venda(pedido.pedido_venda)
+        go = PedidoOperacao.query.filter(
+            _pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave
+        ).first()
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=14 * mm, rightMargin=14 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title=f"Espelho Pedido de Venda — {pedido.pedido_venda or pedido.id}",
+    )
+    estilos = getSampleStyleSheet()
+    # Fonte/espaçamento generosos de propósito (pedido do Bruno: "bem
+    # intuitivo"... "totalmente distribuído em uma única página") — pedidos
+    # típicos têm poucos itens, então o documento usa letra grande e
+    # confortável em vez de espremer tudo no topo da folha. Só pedidos com
+    # dezenas de itens (casos raros) estouram pra uma 2ª/3ª página — inevitável
+    # fisicamente, o cabeçalho de coluna repete sozinho nelas (repeatRows).
+    est_titulo = ParagraphStyle("titulo", parent=estilos["Title"], fontSize=22, leading=25, spaceAfter=0)
+    est_subtitulo = ParagraphStyle("subtitulo", parent=estilos["Normal"], fontSize=11, leading=14, textColor=colors.HexColor("#555"))
+    est_secao = ParagraphStyle(
+        "secao", parent=estilos["Normal"], fontSize=13, leading=16, fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#1b2a4a"), spaceBefore=9, spaceAfter=4,
+    )
+    est_campo = ParagraphStyle("campo", parent=estilos["Normal"], fontSize=9.5, leading=12.5)
+    est_campo_valor = ParagraphStyle("campo_valor", parent=est_campo, fontName="Helvetica-Bold", fontSize=10.5)
+    est_obs = ParagraphStyle("obs", parent=estilos["Normal"], fontSize=9.5, leading=13)
+    est_celula_item = ParagraphStyle("celula_item", parent=estilos["Normal"], fontSize=9, leading=11.5)
+    est_celula_item_bold = ParagraphStyle("celula_item_bold", parent=est_celula_item, fontName="Helvetica-Bold")
+    est_rodape = ParagraphStyle("rodape", parent=estilos["Normal"], fontSize=7.5, textColor=colors.HexColor("#888"))
+
+    largura_util = A4[0] - doc.leftMargin - doc.rightMargin
+    elementos = []
+
+    # ---------------- Cabeçalho: logo + título ----------------
+    if os.path.exists(_ESPELHO_LOGO_PATH):
+        logo = Image(_ESPELHO_LOGO_PATH, width=42 * mm, height=42 * mm * (63 / 261))
+    else:
+        logo = Paragraph("", est_subtitulo)
+    bloco_titulo = [
+        Paragraph(f'{_icone_pdf("receipt", 19)} ESPELHO PEDIDO DE VENDA', est_titulo),
+        Spacer(1, 1.5 * mm),
+        Paragraph(
+            f'Pedido <b>{pedido.pedido_venda or ("#" + str(pedido.id))}</b> · {pedido.cliente} · '
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")}',
+            est_subtitulo,
+        ),
+    ]
+    tabela_cabecalho = Table([[logo, bloco_titulo]], colWidths=[46 * mm, largura_util - 46 * mm])
+    tabela_cabecalho.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    elementos.append(tabela_cabecalho)
+    elementos.append(Spacer(1, 3 * mm))
+    elementos.append(HRFlowable(width="100%", thickness=1.6, color=colors.HexColor("#1b2a4a")))
+    elementos.append(Spacer(1, 3 * mm))
+
+    def campo(icone, rotulo, valor):
+        texto = f'{_icone_pdf(icone, 11)} {rotulo}<br/><font size="10.5"><b>{valor if valor not in (None, "") else "—"}</b></font>'
+        return Paragraph(texto, est_campo)
+
+    def grade_campos(campos, colunas=3):
+        linhas = []
+        for i in range(0, len(campos), colunas):
+            linha = campos[i:i + colunas]
+            while len(linha) < colunas:
+                linha.append(Paragraph("", est_campo))
+            linhas.append(linha)
+        larguras = [largura_util / colunas] * colunas
+        t = Table(linhas, colWidths=larguras)
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        return t
+
+    # ---------------- Dados do pedido (comercial) ----------------
+    cor_status = _ESPELHO_BOOTSTRAP_COR_HEX.get(STATUS_CORES.get(pedido.status_producao, "secondary"), "#6c757d")
+    cor_prioridade = _ESPELHO_BOOTSTRAP_COR_HEX.get(PRIORIDADE_CORES.get(pedido.prioridade, "secondary"), "#6c757d")
+    status_html = f'<font color="{cor_status}"><b>{pedido.status_producao}</b></font>'
+    prioridade_html = f'<font color="{cor_prioridade}"><b>{pedido.prioridade or "—"}</b></font>'
+    cidade_uf = " / ".join(x for x in (pedido.cidade, pedido.estado) if x) or "—"
+
+    elementos.append(Paragraph(f'{_icone_pdf("clipboard", 14)} DADOS DO PEDIDO', est_secao))
+    elementos.append(grade_campos([
+        campo("receipt", "Pedido de venda", pedido.pedido_venda),
+        campo("office", "Cliente", pedido.cliente),
+        campo("id", "CNPJ", pedido.cnpj),
+        campo("person", "Vendedor", pedido.vendedor),
+        campo("pin", "Cidade / UF", cidade_uf),
+        campo("globe", "País", pedido.pais),
+        campo("truck", "Modalidade de frete", pedido.frete),
+        campo("target", "Prioridade", prioridade_html),
+        campo("green_circle", "Status geral", status_html),
+        campo("calendar", "Data do cliente", _formatar_data_br(pedido.data_cliente)),
+        campo("calendar", "Data de inclusão", _formatar_data_br(pedido.data_inclusao_pedido)),
+        campo("hourglass", "Prazo total", f"{pedido.prazo_total_dias}d" if pedido.prazo_total_dias is not None else "—"),
+    ]))
+    if pedido.obs:
+        elementos.append(Paragraph(f'{_icone_pdf("memo", 12)} <b>Observações:</b> {pedido.obs}', est_obs))
+        elementos.append(Spacer(1, 2 * mm))
+
+    # ---------------- PCP / Logística (Gestão Operação, se existir) ----------------
+    if go:
+        elementos.append(Paragraph(f'{_icone_pdf("gear", 14)} PCP', est_secao))
+        elementos.append(grade_campos([
+            campo("calendar", "Planejamento semanal", go.go_termino_semanal_pcp),
+            campo("calendar", "Previsão liberação PCP", _formatar_data_br(go.go_previsao_liberacao_pcp)),
+            campo("calendar", "Liberação efetiva PCP", _formatar_data_br(go.go_data_efetiva_liberacao_pcp)),
+            campo("calendar", "Solicitada cliente/retira", _formatar_data_br(go.go_data_solicitada_cliente_retira)),
+        ]))
+
+        elementos.append(Paragraph(f'{_icone_pdf("truck", 14)} LOGÍSTICA', est_secao))
+        elementos.append(grade_campos([
+            campo("receipt", "Nº NF", go.go_numero_nf),
+            campo("calendar", "Emissão NF", _formatar_data_br(go.go_data_emissao_nf)),
+            campo("truck", "Transportadora", go.go_transportadora.nome if go.go_transportadora else None),
+            campo("calendar", "Expectativa coleta/embarque", _formatar_data_br(go.go_data_prevista_coleta)),
+            campo("package", "Data real coleta/embarque", _formatar_data_br(go.go_data_pedido_expedido)),
+            campo("flag_checkered", "Data entregue ao cliente", _formatar_data_br(go.go_data_entregue_cliente)),
+        ]))
+
+    # ---------------- Itens / quantidades ----------------
+    elementos.append(Paragraph(f'{_icone_pdf("package", 14)} ITENS DO PEDIDO', est_secao))
+    cabecalho_itens = ["Produto", "Qtd.", "Estação", "Status"]
+    dados_itens = [[Paragraph(f"<b>{c}</b>", est_celula_item_bold) for c in cabecalho_itens]]
+    for item in pedido.itens:
+        cor_item = _ESPELHO_BOOTSTRAP_COR_HEX.get(STATUS_CORES.get(item.status_producao, "secondary"), "#6c757d")
+        dados_itens.append([
+            Paragraph(item.descricao_produto or "—", est_celula_item),
+            Paragraph(f"{item.quantidade:g}" if item.quantidade is not None else "—", est_celula_item),
+            Paragraph(item.estacao or "—", est_celula_item),
+            Paragraph(f'<font color="{cor_item}"><b>{item.status_producao}</b></font>', est_celula_item),
+        ])
+    if not pedido.itens:
+        dados_itens.append([Paragraph("Nenhum item cadastrado.", est_celula_item), "", "", ""])
+    pesos_itens = [52, 12, 18, 18]
+    soma_pesos = sum(pesos_itens)
+    larguras_itens = [p / soma_pesos * largura_util for p in pesos_itens]
+    tabela_itens = Table(dados_itens, colWidths=larguras_itens, repeatRows=1)
+    tabela_itens.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef1f7")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elementos.append(tabela_itens)
+
+    # ---------------- Qualidade (RDIM) — resumo, sem valores ----------------
+    inspecoes_rdim = _inspecoes_rdim_por_item([i.id for i in pedido.itens])
+    resumo_rdim = _resumo_rdim_pedido(inspecoes_rdim.values())
+    if resumo_rdim:
+        elementos.append(Spacer(1, 4 * mm))
+        elementos.append(Paragraph(
+            f'{_icone_pdf("magnifier", 13)} <b>Qualidade (RDIM):</b> {resumo_rdim["total"]} inspeção(ões) — '
+            f'<font color="#198754"><b>{resumo_rdim["aprovadas"]} aprovadas</b></font> / '
+            f'<font color="#dc3545"><b>{resumo_rdim["reprovadas"]} reprovadas</b></font> / '
+            f'<font color="#b8860b"><b>{resumo_rdim["aprovadas_desvio"]} c/ desvio</b></font>',
+            est_obs,
+        ))
+
+    # ---------------- Rodapé ----------------
+    elementos.append(Spacer(1, 4 * mm))
+    elementos.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#ccc")))
+    elementos.append(Spacer(1, 1 * mm))
+    elementos.append(Paragraph(
+        "Documento gerado automaticamente pelo sistema de Gestão da Produção e Operação — uso interno, "
+        "sem validade fiscal e sem valores comerciais. 4PIPE Solutions.",
+        est_rodape,
+    ))
+
+    doc.build(elementos)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    nome_arquivo = f"espelho_pedido_{pedido.pedido_venda or pedido.id}.pdf"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
 def _filtrar_pedidos(args):
     """Aplica exatamente os mesmos filtros da tela de Listagem (rota "/") a
     partir de um dict tipo request.args, devolvendo a query já filtrada (sem
@@ -14744,6 +14980,18 @@ def register_routes(app):
             "detalhe_pedido.html", pedido=pedido, historico=historico, timeline=timeline,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
         )
+
+    @app.route("/pedidos/<int:pedido_id>/espelho.pdf")
+    @login_required
+    def espelho_pedido_pdf(pedido_id):
+        """"Espelho Pedido de Venda" (pedido do Bruno, 23/09/2026): PDF
+        vertical de 1 pedido só, com todas as informações + itens/quantidade,
+        sem nenhum valor monetário — ver _gerar_pdf_espelho_pedido."""
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(url_for("dashboard"))
+        return _gerar_pdf_espelho_pedido(pedido)
 
     @app.route("/pedidos/<int:pedido_id>/excluir", methods=["POST"])
     @requer_role("ADMIN", "PCP")
