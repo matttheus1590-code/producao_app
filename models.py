@@ -1983,6 +1983,17 @@ class EstruturaProduto(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     produto_id = db.Column(db.Integer, db.ForeignKey("custos_produtos.id"), nullable=False)
     dn = db.Column(db.String(20), nullable=False)
+    # Classificador de densidade/dureza (ex. "ALTA", "MÉDIA", "BAIXA") —
+    # pedido do Bruno (22/09/2026): "Modelo produto: HLR, DENSIDADE: ALTA,
+    # DN: 4''" — algumas famílias (H, HS, HL, HDISC, HLR e variações, HLB,
+    # HLCC, HLCC PC) têm mais de uma estrutura pra MESMA dn, diferindo só
+    # pela densidade (hoje embutida como texto dentro do próprio `dn`, ex.
+    # "10'' MÉDIA" — mantido como está, sem quebrar nada já cadastrado).
+    # Este campo é um classificador REDUNDANTE, derivado de `dn`, só pra
+    # `_matching_produto_pcp` conseguir desambiguar ALTA x MÉDIA a partir do
+    # texto do pedido em vez de casar com a estrutura errada às cegas —
+    # nulo pra famílias sem essa ambiguidade (segue funcionando como antes).
+    densidade = db.Column(db.String(30), nullable=True)
     ciclo_horas = db.Column(db.Float, nullable=False, default=0)
     escalonamento_padrao_pcs = db.Column(db.Integer, nullable=True)
     observacao = db.Column(db.Text, nullable=True)

@@ -3,6 +3,7 @@ import io
 import math
 import os
 import re
+import unicodedata
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from itertools import zip_longest
@@ -333,6 +334,9 @@ def create_app():
         # (precisa do catálogo completo pra classificar) — roda em todo
         # boot, não só uma vez (ver docstring da função).
         _migrar_materia_prima_origem_planilha(app)
+        # Depende dos seeds de espuma (H/HS/HL/HDISC/HLR.../HLB/HLCC) acima
+        # já terem rodado — roda em todo boot (ver docstring da função).
+        _migrar_densidade_estrutura_produto(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -2989,6 +2993,84 @@ def _migrar_materia_prima_origem_planilha(app):
     if atualizadas:
         db.session.commit()
         app.logger.info("Gestão de Custos: fornecedor/data preenchidos pra %d matérias-primas (aba PARÂMETROS).", atualizadas)
+
+
+# Famílias em que a MESMA dn tem mais de uma EstruturaProduto, diferindo só
+# pela densidade — hoje embutida como texto dentro do próprio `dn` (ex.
+# "10'' MÉDIA", "1'' BAIXA D26"). Mapeia produto.codigo -> regex que extrai
+# (numero_dn, densidade) do texto de `dn` já cadastrado. Usado só por
+# `_migrar_densidade_estrutura_produto` pra preencher o classificador
+# redundante `EstruturaProduto.densidade` — nunca reescreve `dn` (evita
+# qualquer risco de colidir com a UniqueConstraint(produto_id, dn) já
+# existente).
+_RE_DN_DENSIDADE_COMPOSTO = re.compile(r"^\s*[\d.,]+\s*''?\s*(ALTA|MÉDIA|MEDIA|BAIXA(?:\s+D\d+)?)\s*$", re.I)
+
+
+def _migrar_densidade_estrutura_produto(app):
+    """Pedido do Bruno (22/09/2026, junto com o pedido de mostrar kg de
+    matéria-prima no Kanban): "Modelo produto: HLR, DENSIDADE: ALTA, DN:
+    4''" — ele percebeu (confirmado investigando o matching real do PCP)
+    que hoje o casamento ItemPedido -> Produto pra família de espuma ou
+    ACEITA QUALQUER densidade pro mesmo DN (`_matching_produto_pcp` não
+    desambiguava ALTA x MÉDIA — risco real de casar com a estrutura ERRADA
+    e reportar kg errado) ou nem casa (família "H" tinha chave_busca NULL).
+
+    Adiciona a coluna `densidade` (ALTER TABLE idempotente, mesmo padrão de
+    `_migrar_materia_prima_origem_planilha`) e classifica TODA
+    EstruturaProduto das famílias com essa ambiguidade, extraindo o texto
+    de densidade de dentro do `dn` já cadastrado (nunca altera `dn` em si —
+    evita qualquer risco na UniqueConstraint(produto_id, dn)). Roda em todo
+    boot, 100% determinístico a partir de `dn`, então também classifica
+    qualquer estrutura nova que um seed futuro venha a criar."""
+    inspector = inspect(db.engine)
+    if "custos_estruturas_produto" not in inspector.get_table_names():
+        return  # banco novo — db.create_all() já cuidou de tudo
+
+    colunas = {c["name"] for c in inspector.get_columns("custos_estruturas_produto")}
+    if "densidade" not in colunas:
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE custos_estruturas_produto ADD COLUMN densidade VARCHAR(30)"))
+        app.logger.info("Migração automática: coluna densidade adicionada em custos_estruturas_produto.")
+
+    familias_com_densidade = (
+        "H", "HS", "HL", "HDISC", "HLR", "HLR X", "HLR R", "HLR V", "HLB", "HLCC", "HLCC PC",
+    )
+    produtos = Produto.query.filter(Produto.familia.in_(familias_com_densidade)).all()
+    reclassificadas = 0
+    for produto in produtos:
+        for estrutura in produto.estruturas:
+            m = _RE_DN_DENSIDADE_COMPOSTO.match(estrutura.dn or "")
+            nova_densidade = m.group(1).upper().replace("MEDIA", "MÉDIA") if m else None
+            if estrutura.densidade != nova_densidade:
+                estrutura.densidade = nova_densidade
+                reclassificadas += 1
+    if reclassificadas:
+        db.session.commit()
+        app.logger.info("Gestão de Custos: %d EstruturaProduto (re)classificadas por densidade.", reclassificadas)
+
+    # As 3 variantes do produto "H" (H, H-COM-SELO, H-COM-SELO-CORDA) nasceram
+    # com chave_busca NULL (nunca tinham `''` no meio do código pra virar
+    # chave, diferente de "HLR", "HS" etc.) — isso fazia `_matching_produto_pcp`
+    # NUNCA casar a família inteira, mesmo com dn/densidade corretos.
+    # Backfill único, idempotente (só preenche se ainda estiver vazio — nunca
+    # sobrescreve uma edição manual feita depois pelo Bruno).
+    # "HFLEX" (sem separador nenhum) nunca casava com o texto real dos
+    # pedidos ("H-FLEX", "H- FLEX") porque `_normalizar_texto_matching_custos`
+    # troca hífen por ESPAÇO dos dois lados — "H-FLEX" normaliza pra "H FLEX"
+    # (com espaço), que não é a mesma string que "HFLEX" (sem espaço).
+    # Corrigido pra "H FLEX" — idempotente, sempre reescreve pro valor
+    # canônico certo (diferente do backfill de família H acima, que só
+    # preenche se ainda estiver NULL).
+    chaves_corrigidas = {"H": "H", "H-COM-SELO": "H COM SELO", "H-COM-SELO-CORDA": "H COM SELO CORDA", "HFLEX": "H FLEX"}
+    mudou_chave = False
+    for codigo, chave in chaves_corrigidas.items():
+        p = Produto.query.filter_by(codigo=codigo).first()
+        if p and p.chave_busca != chave:
+            p.chave_busca = chave
+            mudou_chave = True
+    if mudou_chave:
+        db.session.commit()
+        app.logger.info("Gestão de Custos: chave_busca corrigida pra família H (H, H-COM-SELO, H-COM-SELO-CORDA) e HFLEX (-> \"H FLEX\").")
 
 
 def _pagina_inicial(usuario):
@@ -10770,6 +10852,94 @@ def _materias_primas_usadas(estrutura, _visitados=None):
     return sorted(vistos.values(), key=lambda mp: mp.codigo)
 
 
+def _materiais_consumo_estrutura(estrutura, _visitados=None):
+    """Quanto de CADA matéria-prima 1 unidade dessa EstruturaProduto consome
+    — mesma recursão de `_custo_estrutura_produto` (resolve SUBPRODUTO pela
+    mesma dn), mas soma QUANTIDADE em vez de custo. Pedido do Bruno
+    (22/09/2026): "quero enxergar o total de matéria prima" nas Estações —
+    a peça que faltava pra virar uma coisa só com o motor de custo já
+    existente, sem duplicar a lógica de explosão de estrutura.
+
+    Retorna dict com `por_materia_prima` (lista, 1 linha por MateriaPrima
+    usada, já consolidada mesmo se aparecer em mais de um ponto da árvore —
+    ex. ELASTOMERO aparece tanto direto quanto dentro do subproduto),
+    `kg_total` (soma só das linhas com unidade "kg" — as outras unidades
+    ficam listadas mas não entram nesse total, pedido do Bruno: "só o total
+    em kg") e `incompleto` (True se algum SUBPRODUTO não tinha estrutura
+    cadastrada na mesma dn — mesmo aviso já usado no custo)."""
+    _visitados = _visitados or set()
+    if estrutura.id in _visitados:
+        return {"por_materia_prima": [], "kg_total": 0.0, "tem_kg": False, "incompleto": True}
+    _visitados = _visitados | {estrutura.id}
+
+    por_materia_prima = {}  # materia_prima_id -> {"materia_prima": mp, "quantidade": float}
+    incompleto = False
+
+    for item in estrutura.itens:
+        if item.tipo == "SUBPRODUTO":
+            sub_estrutura = None
+            if item.subproduto_id:
+                sub_estrutura = EstruturaProduto.query.filter_by(
+                    produto_id=item.subproduto_id, dn=estrutura.dn, ativo=True
+                ).first()
+            if sub_estrutura is None:
+                incompleto = True
+                continue
+            sub_calc = _materiais_consumo_estrutura(sub_estrutura, _visitados)
+            incompleto = incompleto or sub_calc["incompleto"]
+            for linha in sub_calc["por_materia_prima"]:
+                mp_id = linha["materia_prima"].id
+                bucket = por_materia_prima.setdefault(mp_id, {"materia_prima": linha["materia_prima"], "quantidade": 0.0})
+                bucket["quantidade"] += linha["quantidade"] * item.quantidade
+        elif item.materia_prima is not None:
+            mp = item.materia_prima
+            bucket = por_materia_prima.setdefault(mp.id, {"materia_prima": mp, "quantidade": 0.0})
+            bucket["quantidade"] += item.quantidade
+        else:
+            incompleto = True
+
+    linhas = sorted(por_materia_prima.values(), key=lambda l: l["materia_prima"].codigo)
+    tem_kg = any(l["materia_prima"].unidade == "kg" for l in linhas)
+    kg_total = sum(l["quantidade"] for l in linhas if l["materia_prima"].unidade == "kg")
+    return {"por_materia_prima": linhas, "kg_total": round(kg_total, 4), "tem_kg": tem_kg, "incompleto": incompleto}
+
+
+def _materiais_item_pedido(item_pedido):
+    """Versão "por item do PCP" de `_materiais_consumo_estrutura` — casa o
+    item via `_matching_produto_pcp` e multiplica o consumo de 1 unidade
+    pela quantidade pedida (`item_pedido.quantidade`). É a função que a tela
+    de Estações (Kanban) chama pra cada card — pedido do Bruno (22/09/2026):
+    ver o total de matéria-prima ao abrir um item.
+
+    Retorna sempre um dict com `matched` (False quando `_matching_produto_pcp`
+    não achou correspondência — nunca inventa um número nesse caso, mesma
+    régua de sempre: "não identificado" explícito em vez de estimar errado)
+    e `tem_kg` (False quando o produto casou normalmente mas a estrutura
+    dele só tem matéria-prima em outra unidade — ex. os subprodutos "DG"/
+    "DE"/"DS"/"COPO..." da família PU CAST, importados com o custo já
+    consolidado numa única linha "un" em vez de decompostos em química;
+    nesse caso 0,00 kg seria um zero ENGANOSO — a tela mostra "sem detalhe
+    em kg" em vez de um zero que parece resposta confirmada)."""
+    estrutura = _matching_produto_pcp(item_pedido)
+    if estrutura is None:
+        return {"matched": False, "kg_total": 0.0, "tem_kg": False, "linhas": [], "incompleto": False}
+
+    consumo = _materiais_consumo_estrutura(estrutura)
+    quantidade = item_pedido.quantidade or 0
+    linhas = [
+        {"materia_prima": l["materia_prima"], "quantidade": round(l["quantidade"] * quantidade, 4)}
+        for l in consumo["por_materia_prima"]
+    ]
+    return {
+        "matched": True,
+        "estrutura": estrutura,
+        "kg_total": round(consumo["kg_total"] * quantidade, 3),
+        "tem_kg": consumo["tem_kg"],
+        "linhas": linhas,
+        "incompleto": consumo["incompleto"],
+    }
+
+
 def _produtos_catalogo(familia=None, apenas_ativos=True):
     """Lista Produto + EstruturaProduto com custo calculado — equivalente
     funcional da aba BUSCA DE CUSTO (índice consolidado), item 1/2 do
@@ -10828,6 +10998,42 @@ def _dn_extraido_para_matching_custos(descricao):
     return _classificar_dn_mm(descricao)
 
 
+_RE_DENSIDADE_PEDIDO = re.compile(r"\b(ALTA|M[ÉE]DIA|BAIXA)\b", re.I)
+
+
+def _numero_dn_lider(texto):
+    """Extrai só os dígitos LÍDERES de um texto de DN (ex. "10" de
+    "10'' MÉDIA", "6" de "6\""). Não usar um `re.sub(r"[^\d.,]", "", ...)`
+    ingênuo aqui — ele pegaria TODO dígito solto no texto, inclusive os que
+    vêm depois de letras (ex. "10'' BAIXA D26" viraria "1026" em vez de
+    "10") — bug real encontrado ao habilitar o casamento da família H
+    (dn cadastrado com o sufixo de variante de bloco embutido, ex. "D26")."""
+    m = re.match(r"\s*([\d.,]+)", texto or "")
+    return m.group(1) if m else ""
+
+
+def _normalizar_texto_matching_custos(texto):
+    """Normalização de texto compartilhada entre a descrição do pedido E o
+    `chave_busca` do catálogo, pros dois lados ficarem no mesmo formato
+    antes de comparar (pedido do Bruno, 22/09/2026, depois de investigar
+    casos reais que não casavam por diferença pura de formatação):
+    - espaços duplos (digitação livre, ex. "DISCO  GUIA  DN 18\"");
+    - hífen vs espaço (ex. "H-FLEX" no pedido x "HFLEX" no catálogo,
+      "HLCC-PC" x "HLCC PC") — trata os dois como equivalentes;
+    - "C/SELO" / "C/ SELO" (abreviação comum na digitação do pedido) vira
+      "COM SELO", pra casar com o chave_busca escrito por extenso;
+    - acento (ex. "CÔNICO" x "CONICO", "ESPAÇADOR" x "ESPACADOR") — comum
+      faltar acento na digitação livre do pedido — vira sempre a forma sem
+      acento dos dois lados, mesma técnica já usada no filtro de busca
+      client-side do Kanban (`estacoes_kanban.html`, NFD + remove marca de
+      combinação)."""
+    txt = (texto or "").upper()
+    txt = txt.replace("-", " ")
+    txt = re.sub(r"C\s*/\s*SELO", "COM SELO", txt)
+    txt = "".join(c for c in unicodedata.normalize("NFD", txt) if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", txt).strip()
+
+
 def _matching_produto_pcp(item_pedido):
     """Casa um ItemPedido com um (Produto, EstruturaProduto) do catálogo de
     custos, por correspondência de texto — mesmo princípio já usado em
@@ -10836,41 +11042,70 @@ def _matching_produto_pcp(item_pedido):
     `_dn_extraido_para_matching_custos` (ver docstring — protege contra
     tamanhos fracionários mal interpretados pela extração genérica de DN).
 
+    O casamento de `chave_busca` usa fronteira de palavra (não substring
+    solto) pra um código curto (ex. "H") nunca casar no meio de outra
+    palavra, e exige DENSIDADE (ALTA/MÉDIA/BAIXA) quando a EstruturaProduto
+    tem esse classificador preenchido (`densidade`, ver
+    `_migrar_densidade_estrutura_produto`) — pedido do Bruno (22/09/2026:
+    "Modelo produto: HLR, DENSIDADE: ALTA, DN: 4''"), depois de confirmar
+    que o casamento antigo aceitava QUALQUER densidade pro mesmo DN e podia
+    reportar a matéria-prima da estrutura ERRADA em silêncio. Quando a
+    densidade não dá pra identificar no texto do pedido (ou não bate com
+    nenhuma estrutura candidata), o item fica "não identificado" — a régua
+    aqui é a mesma de sempre: preferir não identificar a identificar
+    errado.
+
     Retorna a EstruturaProduto casada, ou None se não achou correspondência
     (o chamador trata como "não identificado automaticamente" — nunca some
     o item da conta, sempre aparece explicitamente como não-casado)."""
-    # espaços duplos são comuns na digitação livre dos pedidos (ex. "DISCO  GUIA  DN 18\"") —
-    # normaliza pra não perder correspondências óbvias por causa de formatação.
-    descricao = re.sub(r"\s+", " ", (item_pedido.descricao_produto or "").upper()).strip()
+    descricao = _normalizar_texto_matching_custos(item_pedido.descricao_produto)
     if not descricao:
         return None
 
     dn_extraido = _dn_extraido_para_matching_custos(item_pedido.descricao_produto)
     if dn_extraido is None:
         return None
+    numero_extraido = _numero_dn_lider(dn_extraido)
+
+    m_densidade = _RE_DENSIDADE_PEDIDO.search(descricao)
+    densidade_pedido = m_densidade.group(1).upper().replace("MEDIA", "MÉDIA") if m_densidade else None
 
     candidatos = Produto.query.filter(Produto.ativo == True, Produto.chave_busca.isnot(None)).all()  # noqa: E712
     melhor = None
     melhor_especificidade = -1
     for produto in candidatos:
-        chave = re.sub(r"\s+", " ", (produto.chave_busca or "").upper()).strip()
-        if not chave or chave not in descricao:
+        chave = _normalizar_texto_matching_custos(produto.chave_busca)
+        if not chave:
+            continue
+        # fronteira de palavra: o caractere logo antes/depois da chave (se
+        # existir) não pode ser letra/número/acento — impede que uma chave
+        # curta (ex. "H") case no meio de outra palavra.
+        if not re.search(r"(?<![A-ZÀ-Ü0-9])" + re.escape(chave) + r"(?![A-ZÀ-Ü0-9])", descricao):
             continue
         for estrutura in produto.estruturas:
             if not estrutura.ativo:
                 continue
-            dn_produto = (estrutura.dn or "").strip()
             # compara o número puro do DN (ignora aspas/"mm"/espaços) —
             # dn_extraido vem no formato 6" ou 150MM; estrutura.dn é só o
             # número (ex. "6") como na planilha original.
-            numero_extraido = re.sub(r"[^\d.,]", "", dn_extraido)
-            numero_estrutura = re.sub(r"[^\d.,]", "", dn_produto)
-            if numero_extraido and numero_estrutura and numero_extraido == numero_estrutura:
-                # produto mais específico (chave de busca mais longa) ganha
-                # em caso de mais de um bater (ex. "LBD" e "LBD-DG2-DS4")
-                if len(chave) > melhor_especificidade:
-                    melhor = estrutura
-                    melhor_especificidade = len(chave)
+            numero_estrutura = _numero_dn_lider(estrutura.dn)
+            if not (numero_extraido and numero_estrutura and numero_extraido == numero_estrutura):
+                continue
+            if estrutura.densidade:
+                # primeiro "token" de densidade.densidade (ex. "BAIXA" de
+                # "BAIXA D26") — a variante de bloco (D26/D45/D60/D80) nunca
+                # aparece no texto do pedido, então não dá pra (nem precisa,
+                # ver docstring de _migrar_densidade_estrutura_produto: as
+                # matérias-primas em kg são idênticas entre variantes de
+                # bloco) desambiguar além do 1º token.
+                densidade_estrutura = estrutura.densidade.split(" ")[0]
+                if densidade_pedido != densidade_estrutura:
+                    continue
+            # produto mais específico (chave de busca mais longa) ganha em
+            # caso de mais de um bater (ex. "LBD" e "LBD-DG2-DS4")
+            if len(chave) > melhor_especificidade:
+                melhor = estrutura
+                melhor_especificidade = len(chave)
     return melhor
 
 
@@ -13952,6 +14187,21 @@ def register_routes(app):
 
         colunas_agrupadas = {chave: _agrupar_por_pedido(colunas[chave]) for chave in STATUS_CHAO_OPCOES}
 
+        # Total de matéria-prima (kg) por item e por coluna — pedido do
+        # Bruno (22/09/2026): "quero enxergar o total de materia prima" nas
+        # Estações, "quando eu abrir um item, ou colunas do kanban".
+        # `_materiais_item_pedido` casa cada item com o catálogo de Gestão
+        # de Custos (Produto/EstruturaProduto/MateriaPrima) — item sem
+        # correspondência automática fica com matched=False, mostrado como
+        # "não identificado" no card em vez de forjar um número.
+        materiais_por_item = {item.id: _materiais_item_pedido(item) for item in itens}
+        kg_por_coluna = {}
+        nao_identificados_por_coluna = {}
+        for chave in STATUS_CHAO_OPCOES:
+            info_coluna = [materiais_por_item[item.id] for item in colunas[chave]]
+            kg_por_coluna[chave] = round(sum(i["kg_total"] for i in info_coluna), 1)
+            nao_identificados_por_coluna[chave] = sum(1 for i in info_coluna if not i["matched"])
+
         return render_template(
             "estacoes_kanban.html",
             estacao=estacao,
@@ -13960,6 +14210,9 @@ def register_routes(app):
             colunas_agrupadas=colunas_agrupadas,
             pode_editar=pode_editar_estacao(current_user, nome),
             RELATORIO_ESTACAO_STATUS_INFO=RELATORIO_ESTACAO_STATUS_INFO,
+            materiais_por_item=materiais_por_item,
+            kg_por_coluna=kg_por_coluna,
+            nao_identificados_por_coluna=nao_identificados_por_coluna,
         )
 
     @app.route("/estacoes/<nome>/relatorio.pdf")

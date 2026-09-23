@@ -56,8 +56,17 @@
   {% for etapa in STATUS_CHAO_OPCOES %}
   <div class="kanban-coluna">
     <div class="kanban-coluna-titulo bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }} bg-opacity-25">
-      {{ STATUS_CHAO_LABELS.get(etapa, etapa) }}
-      <span class="badge bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }}" id="badge-{{ etapa }}" data-total="{{ colunas[etapa] | length }}">{{ colunas[etapa] | length }}</span>
+      <div class="kanban-coluna-titulo-linha">
+        {{ STATUS_CHAO_LABELS.get(etapa, etapa) }}
+        <span class="badge bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }}" id="badge-{{ etapa }}" data-total="{{ colunas[etapa] | length }}">{{ colunas[etapa] | length }}</span>
+      </div>
+      {% if kg_por_coluna[etapa] > 0 or nao_identificados_por_coluna[etapa] > 0 %}
+      <div class="kanban-coluna-materia-prima text-muted mt-1"
+           title="≈ {{ "%.1f"|format(kg_por_coluna[etapa])|replace(".", ",") }} kg de matéria-prima identificada automaticamente (Gestão de Custos){% if nao_identificados_por_coluna[etapa] > 0 %} — {{ nao_identificados_por_coluna[etapa] }} item(ns) desta coluna não identificado(s), não entram nesse total{% endif %}">
+        <i class="bi bi-droplet-half"></i> ≈ {{ "%.1f"|format(kg_por_coluna[etapa])|replace(".", ",") }} kg
+        {%- if nao_identificados_por_coluna[etapa] > 0 %} · <span class="text-warning">{{ nao_identificados_por_coluna[etapa] }} não identif.</span>{% endif %}
+      </div>
+      {% endif %}
     </div>
     <div class="kanban-coluna-corpo" id="coluna-corpo-{{ etapa }}">
       {% for pedido, itens_pedido in colunas_agrupadas[etapa] %}
@@ -77,6 +86,7 @@
         </div>
         {% for item in itens_pedido %}
         {% set cor, dias = item.semaforo %}
+        {% set mat = materiais_por_item[item.id] %}
         <div class="kanban-item border-start border-3 border-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">
           <div class="kanban-item-titulo">{{ item.descricao_produto }}</div>
           <div class="kanban-item-meta">
@@ -101,6 +111,19 @@
               {% if dias is none %}sem prazo{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
             </span>
             <div class="d-flex align-items-center gap-1">
+              {% if mat.matched and mat.tem_kg %}
+              <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Ver matéria-prima deste item">
+                <i class="bi bi-droplet-half"></i> {{ "%.2f"|format(mat.kg_total)|replace(".", ",") }} kg
+              </button>
+              {% elif mat.matched %}
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 text-muted" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Este produto foi identificado, mas o cadastro dele em Gestão de Custos não tem matéria-prima detalhada em kg">
+                <i class="bi bi-droplet-half"></i> sem detalhe em kg
+              </button>
+              {% else %}
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 text-muted" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Este produto ainda não está identificado no catálogo de Gestão de Custos">
+                <i class="bi bi-droplet-half"></i> não identificado
+              </button>
+              {% endif %}
               <a href="{{ url_for('detalhe_pedido', pedido_id=item.pedido_id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Ver pedido">
                 <i class="bi bi-eye"></i>
               </a>
@@ -110,6 +133,71 @@
                 <button type="submit" class="btn btn-sm btn-primary" title="Avançar pra próxima etapa">Avançar ▶</button>
               </form>
               {% endif %}
+            </div>
+          </div>
+
+          <!-- Popup de matéria-prima do item (pedido do Bruno, 22/09/2026:
+               "quando eu abrir um item... quero enxergar o total de materia
+               prima"). Casamento automático via chave_busca/DN/densidade do
+               catálogo de Gestão de Custos (_matching_produto_pcp) — quando
+               não identifica, mostra isso explicitamente em vez de inventar
+               um número (mesma régua já usada nas telas de Custos). -->
+          <div class="modal fade" id="modalMateriais{{ item.id }}" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title"><i class="bi bi-droplet-half"></i> Matéria-prima — {{ item.descricao_produto }}</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body">
+                  {% if mat.matched %}
+                  <div class="d-flex justify-content-between align-items-center mb-3">
+                    <span class="text-muted small">Total em kg (para {{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s))</span>
+                    <span class="fs-4 fw-semibold">{{ "%.3f"|format(mat.kg_total)|replace(".", ",") }} kg</span>
+                  </div>
+                  {% if mat.linhas %}
+                  <table class="table table-sm mb-0">
+                    <thead>
+                      <tr>
+                        <th>Matéria-prima</th>
+                        <th class="text-end">Quantidade</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for l in mat.linhas %}
+                      <tr>
+                        <td>{{ l.materia_prima.descricao }}</td>
+                        <td class="text-end">{{ "%.3f"|format(l.quantidade)|replace(".", ",") }} {{ l.materia_prima.unidade }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                  {% else %}
+                  <div class="text-muted small">Nenhuma matéria-prima cadastrada na estrutura deste produto.</div>
+                  {% endif %}
+                  {% if mat.incompleto %}
+                  <div class="small text-warning mt-2">
+                    <i class="bi bi-exclamation-triangle"></i> Estrutura incompleta — parte da composição deste produto ainda não está cadastrada em Gestão de Custos, então este total pode estar parcial.
+                  </div>
+                  {% endif %}
+                  {% if not mat.tem_kg %}
+                  <div class="small text-muted mt-2">
+                    <i class="bi bi-info-circle"></i> Este produto foi identificado, mas o cadastro dele em Gestão de Custos não tem matéria-prima medida em kg (só em outras unidades, como acima) — por isso o total em kg fica em 0.
+                  </div>
+                  {% endif %}
+                  <div class="small text-muted mt-3">
+                    <i class="bi bi-info-circle"></i> Calculado a partir do cadastro de Gestão de Custos (Produto <strong>{{ mat.estrutura.produto.codigo }}</strong>, DN {{ mat.estrutura.dn }}).
+                  </div>
+                  {% else %}
+                  <div class="text-muted">
+                    <i class="bi bi-question-circle"></i> Este produto ainda não foi identificado automaticamente no catálogo de Gestão de Custos (nome do produto ou DN não bateram com nenhum cadastro). Não entra nos totais de matéria-prima até ser identificado.
+                  </div>
+                  <a href="{{ url_for('custos_produtos') }}" class="btn btn-sm btn-outline-primary mt-3">
+                    <i class="bi bi-box-seam"></i> Ver catálogo de produtos
+                  </a>
+                  {% endif %}
+                </div>
+              </div>
             </div>
           </div>
         </div>

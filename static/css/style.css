@@ -577,6 +577,12 @@ body.col-resizing-ativo {
   font-size: 1.35rem;
   border-radius: 0.6rem 0.6rem 0 0;
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.kanban-coluna-titulo-linha {
+  display: flex;
   justify-content: space-between;
   align-items: center;
 }
@@ -584,6 +590,20 @@ body.col-resizing-ativo {
 .kanban-coluna-titulo .badge {
   font-size: 1.05rem;
   padding: 0.4em 0.75em;
+}
+
+/* Total de matéria-prima (kg) por coluna (pedido do Bruno, 22/09/2026) —
+   linha própria abaixo do título/badge (não dentro do mesmo flex row, senão
+   o texto mais longo espreme e quebra o cabeçalho inteiro em várias
+   linhas). Fonte pequena e discreta — é um dado de apoio, não o foco
+   principal da coluna. */
+.kanban-coluna-materia-prima {
+  font-weight: 400;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .kanban-coluna-corpo {
