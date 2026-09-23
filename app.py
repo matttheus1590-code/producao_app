@@ -11103,6 +11103,39 @@ def _formatar_quantidade_pt_br(valor, unidade):
     return f"{valor:.{casas}f}".replace(".", ",")
 
 
+# Nome curto de exibição pras matérias-primas "principais" no card do
+# Kanban — pedido do Bruno (23/09/2026, terceira revisão do mesmo pedido):
+# "QUERO QUE OBRIGATORIAMENTE MOSTRE AS MATERIAS PRIMAS 2471, 2475 E 122
+# AMINO, E NAS OUTRAS ESTAÇÕES 12-70 E ATS 85... EM UM PIG HS MÉDIA, EU
+# QUERO VER 2475 E 122, EM UM DISCO SELO, EU QUERO VER 12-70, EM UM
+# DISCOGUIA ATS 85" — ele quer o código curto que já usa no dia a dia (o
+# nome comercial do químico), não a descrição completa do cadastro
+# ("SISTEMA AMINO 2475 A MÉDIA (kg)"). Mapeamento explícito (não um regex
+# genérico "adivinhando" a partir da descrição) pra nunca mostrar um nome
+# errado por engano — qualquer matéria-prima fora desse mapa cai pra
+# descrição completa (nunca fica sem nome nenhum). ATP 85/MOCA entram junto
+# por aparecerem nas mesmas estruturas (DISCO ESPAÇADOR e DISCO SELO/GUIA/
+# ESPAÇADOR respectivamente) e seguirem o mesmo padrão de nome curto.
+_NOMES_CURTOS_MATERIA_PRIMA = {
+    "ESPUMA-AMINO-A-ALTA": "2471",
+    "ESPUMA-AMINO-A-MEDIA": "2475",
+    "ESPUMA-AMINO-B-ISO": "122",
+    "QUIM-1270APRÉPOLÍMEROTDI": "12-70",
+    "QUIM-ATS85PRÉPOLÍMEROAMINOTDI": "ATS 85",
+    "QUIM-ATP85PRÉPOLÍMEROAMINOTDI": "ATP 85",
+    "QUIM-MOCACURATIVOTDI": "MOCA",
+}
+
+
+def _nome_curto_materia_prima(mp):
+    if mp.codigo in _NOMES_CURTOS_MATERIA_PRIMA:
+        return _NOMES_CURTOS_MATERIA_PRIMA[mp.codigo]
+    # mesma limpeza já usada na lista "principais" da coluna (estacoes_kanban.html)
+    # pro sufixo de unidade não aparecer duplicado (a unidade já é mostrada
+    # ao lado da quantidade).
+    return (mp.descricao or mp.codigo).replace(" (kg)", "").replace(" (m³)", "")
+
+
 def _materiais_item_pedido(item_pedido):
     """Versão "por item do PCP" de `_materiais_consumo_estrutura` — casa o
     item via `_matching_produto_pcp` e multiplica o consumo de 1 unidade
@@ -11128,21 +11161,22 @@ def _materiais_item_pedido(item_pedido):
     lista os códigos detectados, só pra transparência (nunca soma um
     acessório em silêncio sem mostrar qual foi).
 
-    `principais_por_unidade` (pedido do Bruno, 23/09/2026, mesmo dia):
-    "QUERO QUE INCLUA DENTRO DO QUADRANTE O VOLUME PARA PRODUÇÃO DE UMA
-    UNIDADE / E AO LADO A PRODUÇÃO PARA O LOTE TOTAL... SOMENTE PARA ITENS
-    AMINO, COIM, LANXESS, TECPUR E DINATEC" — lista (1 entrada por unidade
-    de medida presente, ex. "m³" pro bloco de espuma DINATEC e "kg" pra
-    química líquida AMINO/COIM/LANXESS/TECPUR) só com as matérias-primas
-    "principais" (`_e_materia_prima_principal`), cada entrada já com
-    `unitario`/`lote` (float) e `unitario_fmt`/`lote_fmt` (string pt-BR,
-    casas decimais por unidade — ver `_formatar_quantidade_pt_br`). Nunca
-    mistura m³ com kg num único total (esse era o bug que o Bruno reportou:
-    bloco de espuma, medido em m³, sendo tratado como se fosse kg) — cada
-    unidade native fica separada."""
+    `principais` (pedido do Bruno, 23/09/2026, terceira revisão do mesmo
+    pedido): "QUERO QUE OBRIGATORIAMENTE MOSTRE AS MATERIAS PRIMAS 2471,
+    2475 E 122 AMINO, E NAS OUTRAS ESTAÇÕES 12-70 E ATS 85... FOCANDO NO
+    CONSUMO DE UMA PEÇA... EM UM PIG HS MÉDIA, EU QUERO VER 2475 E 122, EM
+    UM DISCO SELO, EU QUERO VER 12-70, EM UM DISCO GUIA ATS 85" — a
+    primeira versão deste campo (`principais_por_unidade`) só somava tudo
+    por unidade de medida (ex. "0,93 kg" misturando AMINO 2475 + AMINO 122
+    + MOCA num total só); esta revisão quebra CADA matéria-prima principal
+    (`_e_materia_prima_principal`) em sua própria linha, pelo nome curto
+    (`_nome_curto_materia_prima` — ex. "2475", "122", "12-70", "ATS 85"),
+    cada uma já com `unitario`/`lote` (float) e `unitario_fmt`/`lote_fmt`
+    (string pt-BR). Continua nunca misturando m³ com kg (cada matéria-prima
+    já carrega sua própria unidade nativa)."""
     estrutura = _matching_produto_pcp(item_pedido)
     if estrutura is None:
-        return {"matched": False, "kg_total": 0.0, "tem_kg": False, "linhas": [], "incompleto": False, "acessorios": [], "principais_por_unidade": []}
+        return {"matched": False, "kg_total": 0.0, "tem_kg": False, "linhas": [], "incompleto": False, "acessorios": [], "principais": []}
 
     consumo = _materiais_consumo_estrutura(estrutura)
     por_materia_prima = {
@@ -11169,21 +11203,21 @@ def _materiais_item_pedido(item_pedido):
     kg_total_unitario = sum(l["quantidade"] for l in linhas_unitarias if l["materia_prima"].unidade == "kg")
     tem_kg = any(l["materia_prima"].unidade == "kg" for l in linhas_unitarias)
 
-    principais_unitario_por_unidade = {}
-    for l in linhas_unitarias:
-        if _e_materia_prima_principal(l["materia_prima"]):
-            u = l["materia_prima"].unidade
-            principais_unitario_por_unidade[u] = principais_unitario_por_unidade.get(u, 0.0) + l["quantidade"]
-    principais_por_unidade = [
+    principais = [
         {
-            "unidade": u,
-            "unitario": round(v, 6),
-            "lote": round(v * quantidade, 6),
-            "unitario_fmt": _formatar_quantidade_pt_br(v, u),
-            "lote_fmt": _formatar_quantidade_pt_br(v * quantidade, u),
+            "materia_prima": l["materia_prima"],
+            "nome_curto": _nome_curto_materia_prima(l["materia_prima"]),
+            "unitario": round(l["quantidade"], 6),
+            "lote": round(l["quantidade"] * quantidade, 6),
+            "unitario_fmt": _formatar_quantidade_pt_br(l["quantidade"], l["materia_prima"].unidade),
+            "lote_fmt": _formatar_quantidade_pt_br(l["quantidade"] * quantidade, l["materia_prima"].unidade),
         }
-        for u, v in sorted(principais_unitario_por_unidade.items(), key=lambda kv: _ORDEM_UNIDADES_VOLUME_PRINCIPAL.get(kv[0], 99))
+        for l in linhas_unitarias if _e_materia_prima_principal(l["materia_prima"])
     ]
+    principais.sort(key=lambda p: (
+        _ORDEM_UNIDADES_VOLUME_PRINCIPAL.get(p["materia_prima"].unidade, 99),
+        -p["unitario"],
+    ))
 
     return {
         "matched": True,
@@ -11193,7 +11227,7 @@ def _materiais_item_pedido(item_pedido):
         "linhas": linhas,
         "incompleto": incompleto,
         "acessorios": [a.produto.codigo for a in acessorios_extra],
-        "principais_por_unidade": principais_por_unidade,
+        "principais": principais,
     }
 
 

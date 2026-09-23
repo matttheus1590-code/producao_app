@@ -178,18 +178,20 @@
             {% endif %}
             {% endif %}
           </div>
-          {% if mat.matched and mat.principais_por_unidade %}
-          <!-- Pedido do Bruno (23/09/2026): "quero que inclua dentro do
-               quadrante o volume para produção de uma unidade / e ao lado a
-               produção para o lote total... somente para itens AMINO, COIM,
-               LANXESS, TECPUR e DINATEC". Cada unidade de medida (m³ pro
-               bloco de espuma, kg pra química líquida) fica numa linha
-               própria — nunca soma m³ com kg (era esse o "errado" que ele
-               apontou nos PIGs H da aba CORTE). -->
+          {% if mat.matched and mat.principais %}
+          <!-- Pedido do Bruno (23/09/2026, 3ª revisão): "QUERO QUE
+               OBRIGATORIAMENTE MOSTRE AS MATERIAS PRIMAS 2471, 2475 E 122
+               AMINO, E NAS OUTRAS ESTAÇÕES 12-70 E ATS 85... FOCANDO NO
+               CONSUMO DE UMA PEÇA... EM UM PIG HS MÉDIA, EU QUERO VER 2475
+               E 122, EM UM DISCO SELO, EU QUERO VER 12-70" — cada
+               matéria-prima "principal" (AMINO/COIM/LANXESS/TECPUR/
+               DINATEC) numa linha própria, pelo nome curto, nunca somada
+               com as outras (era esse o "errado" que ele apontou: um
+               único total misturado escondia qual químico era qual). -->
           <button type="button" class="kanban-item-volume-principal" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Ver matéria-prima completa deste item">
-            {% for p in mat.principais_por_unidade %}
+            {% for p in mat.principais %}
             <span class="kanban-item-volume-linha">
-              <i class="bi bi-droplet-half"></i> 1 un: {{ p.unitario_fmt }} {{ p.unidade }} · Lote: {{ p.lote_fmt }} {{ p.unidade }}
+              <i class="bi bi-droplet-half"></i> {{ p.nome_curto }} — 1 un: {{ p.unitario_fmt }} {{ p.materia_prima.unidade }} · Lote: {{ p.lote_fmt }} {{ p.materia_prima.unidade }}
             </span>
             {% endfor %}
           </button>
@@ -199,7 +201,7 @@
               {% if dias is none %}sem prazo{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
             </span>
             <div class="d-flex align-items-center gap-1">
-              {% if mat.matched and mat.principais_por_unidade %}
+              {% if mat.matched and mat.principais %}
               <!-- volume já mostrado acima, em cima do rodapé -- aqui só um
                    ícone discreto pra abrir o mesmo popup, sem repetir o
                    número duas vezes no card. -->
@@ -246,16 +248,16 @@
                 </div>
                 <div class="modal-body">
                   {% if mat.matched %}
-                  {% if mat.principais_por_unidade %}
-                  <!-- Pedido do Bruno (23/09/2026): não misturar m³ (bloco
-                       de espuma) com kg (química líquida) num total só —
-                       cada unidade de medida ganha sua própria linha aqui,
+                  {% if mat.principais %}
+                  <!-- Pedido do Bruno (23/09/2026, 3ª revisão): cada
+                       matéria-prima principal pelo nome curto (2471/2475/
+                       122/12-70/ATS 85/...), nunca somada com as outras —
                        igual ao card do Kanban. -->
                   <div class="d-flex justify-content-between align-items-start mb-3">
                     <span class="text-muted small">Total (para {{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s))</span>
                     <span class="text-end">
-                      {% for p in mat.principais_por_unidade %}
-                      <span class="fs-5 fw-semibold d-block">{{ p.lote_fmt }} {{ p.unidade }}</span>
+                      {% for p in mat.principais %}
+                      <span class="fs-6 fw-semibold d-block">{{ p.nome_curto }}: {{ p.lote_fmt }} {{ p.materia_prima.unidade }}</span>
                       {% endfor %}
                     </span>
                   </div>
