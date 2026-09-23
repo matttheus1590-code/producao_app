@@ -14201,9 +14201,22 @@ def register_routes(app):
         # ("≈ 75,1 kg") não é o que ele quer ver de cara — quer o consumo
         # discriminado por matéria-prima (ex. "2471 200 kg, 2475 200 kg, 122
         # 200 kg"), a mesma lista nomeada do pedido original. Agrega as
-        # `linhas` (já em kg, por definição de `_materiais_consumo_estrutura`)
-        # de todo item IDENTIFICADO da coluna, consolidando por matéria-prima
-        # — abre num modal por coluna (mesmo padrão do modal por item).
+        # `linhas` de todo item IDENTIFICADO da coluna, consolidando por
+        # matéria-prima — abre num modal por coluna (mesmo padrão do modal
+        # por item).
+        #
+        # Pedido do Bruno (22/09/2026, à noite): "eu não quero que você deixe
+        # escondido, quero que deixe visível... isso vale pra todas as
+        # matérias-primas AMINO, COIM, LANXESS, BLOCO DE ESPUMA, TECPUR" —
+        # ou seja, TODAS as matérias-primas da estrutura, não só as em kg.
+        # A primeira versão deste agregado filtrava `unidade != "kg"` (pra
+        # bater com a decisão anterior de só SOMAR em kg no total do topo),
+        # mas isso escondia por completo do popup da coluna matérias como
+        # BLOCO ESPUMA D26/D45/D60/D80 (m³) — que aparecem certinho no popup
+        # de cada ITEM, só não estavam sendo agregadas aqui na coluna. Agora
+        # agrega TODAS, cada uma na sua própria unidade — o total em kg no
+        # topo do popup continua só em kg (decisão de 22/09/2026 cedo, "só o
+        # total em kg"), mas nenhuma matéria-prima fica de fora da lista.
         materiais_agrupados_por_coluna = {}
         for chave in STATUS_CHAO_OPCOES:
             info_coluna = [materiais_por_item[item.id] for item in colunas[chave]]
@@ -14214,12 +14227,13 @@ def register_routes(app):
             for info in info_coluna:
                 for linha in info["linhas"]:
                     mp = linha["materia_prima"]
-                    if mp.unidade != "kg":
-                        continue
                     bucket = agregados.setdefault(mp.id, {"materia_prima": mp, "quantidade": 0.0})
                     bucket["quantidade"] += linha["quantidade"]
+            # kg primeiro (bate com o total do topo do popup), depois as
+            # demais unidades — dentro de cada grupo, maior quantidade primeiro.
             materiais_agrupados_por_coluna[chave] = sorted(
-                agregados.values(), key=lambda l: l["quantidade"], reverse=True
+                agregados.values(),
+                key=lambda l: (l["materia_prima"].unidade != "kg", -l["quantidade"]),
             )
 
         return render_template(

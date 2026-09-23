@@ -97,13 +97,17 @@
                 {% for l in materiais_agrupados_por_coluna[etapa] %}
                 <tr>
                   <td>{{ l.materia_prima.descricao }}</td>
+                  {% if l.materia_prima.unidade == "kg" %}
                   <td class="text-end">{{ "%.1f"|format(l.quantidade)|replace(".", ",") }} kg</td>
+                  {% else %}
+                  <td class="text-end">{{ "%.3f"|format(l.quantidade)|replace(".", ",") }} {{ l.materia_prima.unidade }}</td>
+                  {% endif %}
                 </tr>
                 {% endfor %}
               </tbody>
             </table>
             {% else %}
-            <div class="text-muted small">Nenhuma matéria-prima em kg identificada nesta coluna ainda.</div>
+            <div class="text-muted small">Nenhuma matéria-prima identificada nesta coluna ainda.</div>
             {% endif %}
             {% if nao_identificados_por_coluna[etapa] > 0 %}
             <div class="small text-warning mt-3">
