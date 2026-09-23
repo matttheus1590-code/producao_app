@@ -11096,24 +11096,51 @@ def _materiais_item_pedido(item_pedido):
     "DE"/"DS"/"COPO..." da família PU CAST, importados com o custo já
     consolidado numa única linha "un" em vez de decompostos em química;
     nesse caso 0,00 kg seria um zero ENGANOSO — a tela mostra "sem detalhe
-    em kg" em vez de um zero que parece resposta confirmada)."""
+    em kg" em vez de um zero que parece resposta confirmada).
+
+    Quando `estrutura.acessorios_extra` vem preenchido (LBD/LUN com ELC/
+    ELP/MG/PC no texto — ver `_acessorios_extras_lbd_lun`, pedido do Bruno
+    23/09/2026), o consumo de cada acessório entra somado nas mesmas
+    `linhas`/`kg_total` — igual a qualquer outro material da estrutura, sem
+    precisar de nenhuma tela nova pra enxergar. `acessorios` na resposta
+    lista os códigos detectados, só pra transparência (nunca soma um
+    acessório em silêncio sem mostrar qual foi)."""
     estrutura = _matching_produto_pcp(item_pedido)
     if estrutura is None:
-        return {"matched": False, "kg_total": 0.0, "tem_kg": False, "linhas": [], "incompleto": False}
+        return {"matched": False, "kg_total": 0.0, "tem_kg": False, "linhas": [], "incompleto": False, "acessorios": []}
 
     consumo = _materiais_consumo_estrutura(estrutura)
+    por_materia_prima = {
+        l["materia_prima"].id: {"materia_prima": l["materia_prima"], "quantidade": l["quantidade"]}
+        for l in consumo["por_materia_prima"]
+    }
+    incompleto = consumo["incompleto"]
+
+    acessorios_extra = getattr(estrutura, "acessorios_extra", [])
+    for acessorio in acessorios_extra:
+        consumo_acessorio = _materiais_consumo_estrutura(acessorio)
+        incompleto = incompleto or consumo_acessorio["incompleto"]
+        for l in consumo_acessorio["por_materia_prima"]:
+            mp_id = l["materia_prima"].id
+            bucket = por_materia_prima.setdefault(mp_id, {"materia_prima": l["materia_prima"], "quantidade": 0.0})
+            bucket["quantidade"] += l["quantidade"]
+
     quantidade = item_pedido.quantidade or 0
+    linhas_unitarias = sorted(por_materia_prima.values(), key=lambda l: l["materia_prima"].codigo)
     linhas = [
         {"materia_prima": l["materia_prima"], "quantidade": round(l["quantidade"] * quantidade, 4)}
-        for l in consumo["por_materia_prima"]
+        for l in linhas_unitarias
     ]
+    kg_total_unitario = sum(l["quantidade"] for l in linhas_unitarias if l["materia_prima"].unidade == "kg")
+    tem_kg = any(l["materia_prima"].unidade == "kg" for l in linhas_unitarias)
     return {
         "matched": True,
         "estrutura": estrutura,
-        "kg_total": round(consumo["kg_total"] * quantidade, 3),
-        "tem_kg": consumo["tem_kg"],
+        "kg_total": round(kg_total_unitario * quantidade, 3),
+        "tem_kg": tem_kg,
         "linhas": linhas,
-        "incompleto": consumo["incompleto"],
+        "incompleto": incompleto,
+        "acessorios": [a.produto.codigo for a in acessorios_extra],
     }
 
 
@@ -11223,6 +11250,61 @@ def _normalizar_texto_matching_custos(texto):
     return re.sub(r"\s+", " ", txt).strip()
 
 
+# Acessórios da família ELC_MG_PC que podem vir "embutidos" no código de um
+# item LBD/LUN do PCP (ex. "LBD-DG2-DS4-ELC-MG-PC DN 20''") — pedido do
+# Bruno (23/09/2026): "PARA LBD E LUN, PRECISO INCLUIR O ACESSSORIO... TIPO
+# ELC, PC OU MG... PRECISO QUE OS CUSTOS DESSES ACESSORIOS QUE COMPOEM O LBD
+# ACOMPNHEM NESSA AREA DE CUSTOS". As 3 siglas que ele citou (ELC/MG/PC) são
+# literalmente as que dão nome à família "ELC_MG_PC" já cadastrada (seed de
+# 20/09/2026) — ELP entra junto por ser a variante em PP do mesmo ELC (AÇO),
+# usando a mesma sigla que já aparece nos pedidos reais (ex. "LBD-DG2-DS4-
+# ELP-PC"). Cada sigla mapeia pro `codigo` exato do Produto acessório já
+# cadastrado — ver `_acessorios_extras_lbd_lun`.
+_ACESSORIOS_LBD_LUN = (
+    ("ELC", "ELC (AÇO)"),
+    ("ELP", "ELP (PP)"),
+    ("MG", "CINTA MAGNÉTICA"),
+    ("PC", "PLACA CALIBRADORA"),
+)
+
+
+def _acessorios_extras_lbd_lun(estrutura, descricao_normalizada, numero_dn):
+    """Detecta, na descrição já normalizada de um item do PCP, siglas de
+    acessório (ELC/ELP/MG/PC — ver `_ACESSORIOS_LBD_LUN`) e retorna a lista
+    de EstruturaProduto (mesma DN do item) desses acessórios — só quando o
+    produto casado é da família LBD ou LUN (pedido explícito do Bruno,
+    23/09/2026, restrito a essas duas famílias pra não arriscar falso
+    positivo em outras famílias onde "PC"/"MG" podem não significar
+    acessório nenhum).
+
+    Cada sigla usa a mesma fronteira de palavra do casamento de
+    `chave_busca` (evita, por exemplo, "MG" casar no meio de outra
+    palavra). Quando a sigla aparece mas o acessório não tem estrutura
+    cadastrada nessa DN específica, simplesmente não entra na lista — nunca
+    quebra o casamento do produto base nem inventa custo."""
+    if estrutura is None or numero_dn is None:
+        return []
+    produto = estrutura.produto
+    if produto is None or produto.familia not in ("LBD", "LUN"):
+        return []
+    extras = []
+    codigos_adicionados = set()
+    for sigla, codigo_produto in _ACESSORIOS_LBD_LUN:
+        if codigo_produto in codigos_adicionados:
+            continue
+        if not re.search(r"(?<![A-ZÀ-Ü0-9])" + re.escape(sigla) + r"(?![A-ZÀ-Ü0-9])", descricao_normalizada):
+            continue
+        produto_acessorio = Produto.query.filter_by(codigo=codigo_produto, ativo=True).first()
+        if produto_acessorio is None:
+            continue
+        for e in produto_acessorio.estruturas:
+            if e.ativo and _numero_dn_lider(e.dn) == numero_dn:
+                extras.append(e)
+                codigos_adicionados.add(codigo_produto)
+                break
+    return extras
+
+
 def _matching_produto_pcp(item_pedido):
     """Casa um ItemPedido com um (Produto, EstruturaProduto) do catálogo de
     custos, por correspondência de texto — mesmo princípio já usado em
@@ -11246,10 +11328,20 @@ def _matching_produto_pcp(item_pedido):
 
     Retorna a EstruturaProduto casada, ou None se não achou correspondência
     (o chamador trata como "não identificado automaticamente" — nunca some
-    o item da conta, sempre aparece explicitamente como não-casado)."""
+    o item da conta, sempre aparece explicitamente como não-casado). Quando
+    o produto casado é LBD/LUN, a EstruturaProduto retornada ganha um
+    atributo extra `acessorios_extra` (lista, pode ser vazia) com os
+    acessórios ELC/ELP/MG/PC detectados no texto — ver
+    `_acessorios_extras_lbd_lun`. É um atributo só em memória (nunca
+    persistido), lido pelos chamadores que somam consumo/custo (
+    `_materiais_item_pedido`, `_necessidades_pcp_materia_prima`,
+    `_visao_rapida_custos`)."""
     descricao = _normalizar_texto_matching_custos(item_pedido.descricao_produto)
     if not descricao:
         return None
+
+    dn_extraido = _dn_extraido_para_matching_custos(item_pedido.descricao_produto)
+    numero_extraido = _numero_dn_lider(dn_extraido) if dn_extraido is not None else None
 
     # Correspondência manual (ferramenta pedida pelo Bruno, 23/09/2026, pra
     # cobrir os casos em que o casamento automático genuinamente não dá
@@ -11263,15 +11355,14 @@ def _matching_produto_pcp(item_pedido):
             produto_id=correspondencia.produto_id, dn=correspondencia.dn, ativo=True
         ).first()
         if estrutura_manual is not None:
+            estrutura_manual.acessorios_extra = _acessorios_extras_lbd_lun(estrutura_manual, descricao, numero_extraido)
             return estrutura_manual
         # a correspondência aponta pra um produto/DN que foi desativado
         # desde então — cai pro casamento automático abaixo em vez de
         # travar o item em silêncio.
 
-    dn_extraido = _dn_extraido_para_matching_custos(item_pedido.descricao_produto)
     if dn_extraido is None:
         return None
-    numero_extraido = _numero_dn_lider(dn_extraido)
 
     m_densidade = _RE_DENSIDADE_PEDIDO.search(descricao)
     densidade_pedido = m_densidade.group(1).upper().replace("MEDIA", "MÉDIA") if m_densidade else None
@@ -11312,6 +11403,8 @@ def _matching_produto_pcp(item_pedido):
             if len(chave) > melhor_especificidade:
                 melhor = estrutura
                 melhor_especificidade = len(chave)
+    if melhor is not None:
+        melhor.acessorios_extra = _acessorios_extras_lbd_lun(melhor, descricao, numero_extraido)
     return melhor
 
 
@@ -11367,6 +11460,12 @@ def _necessidades_pcp_materia_prima():
             nao_identificados.append(item)
             continue
         _explodir(estrutura, item.quantidade or 0, item)
+        # Acessórios LBD/LUN detectados no texto (ELC/ELP/MG/PC — pedido do
+        # Bruno 23/09/2026) entram na mesma necessidade prevista, cada um
+        # explodido do zero (_visitados novo por chamada, sem interferir na
+        # árvore do produto base).
+        for acessorio in getattr(estrutura, "acessorios_extra", []):
+            _explodir(acessorio, item.quantidade or 0, item)
 
     linhas = sorted(necessidades.values(), key=lambda b: b["materia_prima"].descricao)
     for linha in linhas:
@@ -11395,8 +11494,13 @@ def _visao_rapida_custos():
         estrutura = _matching_produto_pcp(item)
         if estrutura is None:
             continue
-        calc = _custo_estrutura_produto(estrutura)
-        custo_total_previsto += calc["custo_total"] * (item.quantidade or 0)
+        custo_unitario = _custo_estrutura_produto(estrutura)["custo_total"]
+        # Acessórios LBD/LUN (ELC/ELP/MG/PC) somam custo no mesmo item —
+        # pedido do Bruno (23/09/2026): "precisO que os custos desses
+        # acessórios que compõem o LBD acompanhem nessa área de custos".
+        for acessorio in getattr(estrutura, "acessorios_extra", []):
+            custo_unitario += _custo_estrutura_produto(acessorio)["custo_total"]
+        custo_total_previsto += custo_unitario * (item.quantidade or 0)
 
     mps_sem_custo = [
         linha["materia_prima"] for linha in necessidades["linhas"]

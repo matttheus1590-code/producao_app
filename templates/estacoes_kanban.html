@@ -260,6 +260,11 @@
                   <div class="small text-muted mt-3">
                     <i class="bi bi-info-circle"></i> Calculado a partir do cadastro de Gestão de Custos (Produto <strong>{{ mat.estrutura.produto.codigo }}</strong>, DN {{ mat.estrutura.dn }}).
                   </div>
+                  {% if mat.acessorios %}
+                  <div class="small text-muted mt-1">
+                    <i class="bi bi-plus-circle"></i> Acessório(s) detectado(s) na descrição e somado(s) automaticamente: <strong>{{ mat.acessorios | join(", ") }}</strong>.
+                  </div>
+                  {% endif %}
                   {% else %}
                   <div class="text-muted">
                     <i class="bi bi-question-circle"></i> Este produto ainda não foi identificado automaticamente no catálogo de Gestão de Custos (nome do produto ou DN não bateram com nenhum cadastro). Não entra nos totais de matéria-prima até ser identificado.
