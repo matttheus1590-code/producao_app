@@ -14197,10 +14197,30 @@ def register_routes(app):
         materiais_por_item = {item.id: _materiais_item_pedido(item) for item in itens}
         kg_por_coluna = {}
         nao_identificados_por_coluna = {}
+        # Pedido do Bruno (22/09/2026, revisão): o total borrado da coluna
+        # ("≈ 75,1 kg") não é o que ele quer ver de cara — quer o consumo
+        # discriminado por matéria-prima (ex. "2471 200 kg, 2475 200 kg, 122
+        # 200 kg"), a mesma lista nomeada do pedido original. Agrega as
+        # `linhas` (já em kg, por definição de `_materiais_consumo_estrutura`)
+        # de todo item IDENTIFICADO da coluna, consolidando por matéria-prima
+        # — abre num modal por coluna (mesmo padrão do modal por item).
+        materiais_agrupados_por_coluna = {}
         for chave in STATUS_CHAO_OPCOES:
             info_coluna = [materiais_por_item[item.id] for item in colunas[chave]]
             kg_por_coluna[chave] = round(sum(i["kg_total"] for i in info_coluna), 1)
             nao_identificados_por_coluna[chave] = sum(1 for i in info_coluna if not i["matched"])
+
+            agregados = {}
+            for info in info_coluna:
+                for linha in info["linhas"]:
+                    mp = linha["materia_prima"]
+                    if mp.unidade != "kg":
+                        continue
+                    bucket = agregados.setdefault(mp.id, {"materia_prima": mp, "quantidade": 0.0})
+                    bucket["quantidade"] += linha["quantidade"]
+            materiais_agrupados_por_coluna[chave] = sorted(
+                agregados.values(), key=lambda l: l["quantidade"], reverse=True
+            )
 
         return render_template(
             "estacoes_kanban.html",
@@ -14213,6 +14233,7 @@ def register_routes(app):
             materiais_por_item=materiais_por_item,
             kg_por_coluna=kg_por_coluna,
             nao_identificados_por_coluna=nao_identificados_por_coluna,
+            materiais_agrupados_por_coluna=materiais_agrupados_por_coluna,
         )
 
     @app.route("/estacoes/<nome>/relatorio.pdf")

@@ -61,13 +61,60 @@
         <span class="badge bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }}" id="badge-{{ etapa }}" data-total="{{ colunas[etapa] | length }}">{{ colunas[etapa] | length }}</span>
       </div>
       {% if kg_por_coluna[etapa] > 0 or nao_identificados_por_coluna[etapa] > 0 %}
-      <div class="kanban-coluna-materia-prima text-muted mt-1"
-           title="≈ {{ "%.1f"|format(kg_por_coluna[etapa])|replace(".", ",") }} kg de matéria-prima identificada automaticamente (Gestão de Custos){% if nao_identificados_por_coluna[etapa] > 0 %} — {{ nao_identificados_por_coluna[etapa] }} item(ns) desta coluna não identificado(s), não entram nesse total{% endif %}">
+      <button type="button" class="kanban-coluna-materia-prima text-muted mt-1" data-bs-toggle="modal" data-bs-target="#modalColuna{{ etapa }}"
+           title="Ver consumo desta coluna discriminado por matéria-prima">
         <i class="bi bi-droplet-half"></i> ≈ {{ "%.1f"|format(kg_por_coluna[etapa])|replace(".", ",") }} kg
         {%- if nao_identificados_por_coluna[etapa] > 0 %} · <span class="text-warning">{{ nao_identificados_por_coluna[etapa] }} não identif.</span>{% endif %}
-      </div>
+      </button>
       {% endif %}
     </div>
+
+    <!-- Detalhamento por matéria-prima da coluna (pedido do Bruno,
+         22/09/2026, revisão): não só o total em kg — a lista nomeada, ex.
+         "2471 200 kg, 2475 200 kg, 122 200 kg". Consolidado a partir de
+         `_materiais_item_pedido` de cada item identificado da coluna. -->
+    <div class="modal fade" id="modalColuna{{ etapa }}" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="bi bi-droplet-half"></i> Matéria-prima — {{ STATUS_CHAO_LABELS.get(etapa, etapa) }}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+          </div>
+          <div class="modal-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <span class="text-muted small">Total em kg (itens identificados nesta coluna)</span>
+              <span class="fs-4 fw-semibold">{{ "%.1f"|format(kg_por_coluna[etapa])|replace(".", ",") }} kg</span>
+            </div>
+            {% if materiais_agrupados_por_coluna[etapa] %}
+            <table class="table table-sm mb-0">
+              <thead>
+                <tr>
+                  <th>Matéria-prima</th>
+                  <th class="text-end">Quantidade</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for l in materiais_agrupados_por_coluna[etapa] %}
+                <tr>
+                  <td>{{ l.materia_prima.descricao }}</td>
+                  <td class="text-end">{{ "%.1f"|format(l.quantidade)|replace(".", ",") }} kg</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% else %}
+            <div class="text-muted small">Nenhuma matéria-prima em kg identificada nesta coluna ainda.</div>
+            {% endif %}
+            {% if nao_identificados_por_coluna[etapa] > 0 %}
+            <div class="small text-warning mt-3">
+              <i class="bi bi-exclamation-triangle"></i> {{ nao_identificados_por_coluna[etapa] }} item(ns) desta coluna não identificado(s) automaticamente no catálogo de Gestão de Custos — não entram nesses totais.
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="kanban-coluna-corpo" id="coluna-corpo-{{ etapa }}">
       {% for pedido, itens_pedido in colunas_agrupadas[etapa] %}
       {% set busca_texto = (pedido.pedido_venda or ('#' + pedido.id|string)) ~ ' ' ~ (pedido.cliente or '') ~ ' ' ~ (itens_pedido | map(attribute='descricao_produto') | join(' ')) %}
