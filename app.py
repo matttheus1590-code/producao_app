@@ -77,6 +77,7 @@ from models import (
     STATUS_OPCOES,
     UFS_BRASIL,
     ControleSistema,
+    CorrespondenciaManualCusto,
     Estacao,
     EstruturaProduto,
     EstruturaProdutoItem,
@@ -11202,11 +11203,23 @@ def _normalizar_texto_matching_custos(texto):
       faltar acento na digitação livre do pedido — vira sempre a forma sem
       acento dos dois lados, mesma técnica já usada no filtro de busca
       client-side do Kanban (`estacoes_kanban.html`, NFD + remove marca de
-      combinação)."""
+      combinação);
+    - palavra de preenchimento "TIPO" (ex. "DISCO TIPO GUIA", "COPO TIPO
+      CONICO") — pedido do Bruno (23/09/2026: "DISCO TIPO GUIA OU TIIPO
+      SELO ELE NAO ESTA RELACIONANDO... ACREDITO QUE SEJA POR CAUS DA
+      PALAVRA 'TIPO'.... CORRIGA ISSO, POIS O TIPO É SO UM TERMO"). O
+      `chave_busca` do catálogo é escrito sem essa palavra (ex. "DISCO
+      GUIA"), então "TIPO" no meio quebrava o casamento por substring
+      contíguo. Confirmado empiricamente contra os 286 itens reais do PCP
+      com "TIPO" na descrição: 236 passam a casar (0 regressões) removendo
+      só essa palavra — os ~50 restantes continuam sem casar por motivo
+      NÃO relacionado a "TIPO" (ex. "COPO TIPO PISTÃO DN 24\"" — lacuna
+      real de catálogo, não tem DN 24 cadastrado pra COPO PISTAO)."""
     txt = (texto or "").upper()
     txt = txt.replace("-", " ")
     txt = re.sub(r"C\s*/\s*SELO", "COM SELO", txt)
     txt = "".join(c for c in unicodedata.normalize("NFD", txt) if unicodedata.category(c) != "Mn")
+    txt = re.sub(r"\bTIPO\b", " ", txt)
     return re.sub(r"\s+", " ", txt).strip()
 
 
@@ -11237,6 +11250,23 @@ def _matching_produto_pcp(item_pedido):
     descricao = _normalizar_texto_matching_custos(item_pedido.descricao_produto)
     if not descricao:
         return None
+
+    # Correspondência manual (ferramenta pedida pelo Bruno, 23/09/2026, pra
+    # cobrir os casos em que o casamento automático genuinamente não dá
+    # conta — ex. "HS DN 5''" sem nenhuma EstruturaProduto cadastrada na DN
+    # 5, mas o Bruno quer usar a DN 6'' como base) sempre tem prioridade
+    # sobre a heurística automática abaixo — casamento exato pela descrição
+    # já normalizada (mesma normalização usada nos dois lados).
+    correspondencia = CorrespondenciaManualCusto.query.filter_by(descricao_normalizada=descricao).first()
+    if correspondencia is not None:
+        estrutura_manual = EstruturaProduto.query.filter_by(
+            produto_id=correspondencia.produto_id, dn=correspondencia.dn, ativo=True
+        ).first()
+        if estrutura_manual is not None:
+            return estrutura_manual
+        # a correspondência aponta pra um produto/DN que foi desativado
+        # desde então — cai pro casamento automático abaixo em vez de
+        # travar o item em silêncio.
 
     dn_extraido = _dn_extraido_para_matching_custos(item_pedido.descricao_produto)
     if dn_extraido is None:
@@ -12518,6 +12548,93 @@ def register_routes(app):
             return redirect(url_for("custos_hora_homem"))
 
         return render_template("custos_hora_homem.html", param=param, historico=historico)
+
+    @app.route("/custos/correspondencias-manuais")
+    @requer_role("ADMIN", "PCP", "GESTAO")
+    def custos_correspondencias_manuais():
+        """Ferramenta visível de correlação manual pedida pelo Bruno
+        (23/09/2026) — lista/gerencia as correspondências já cadastradas.
+        Ver docstring de CorrespondenciaManualCusto (models.py) e da checagem
+        em _matching_produto_pcp pro racional completo."""
+        correspondencias = CorrespondenciaManualCusto.query.order_by(CorrespondenciaManualCusto.criado_em.desc()).all()
+        return render_template("custos_correspondencias_manuais.html", correspondencias=correspondencias)
+
+    @app.route("/custos/correspondencias-manuais/nova", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def custos_correspondencias_manuais_nova():
+        item_id = request.values.get("item_id", type=int)
+        item_pedido = db.session.get(ItemPedido, item_id) if item_id else None
+
+        produtos = Produto.query.filter_by(ativo=True).order_by(Produto.familia, Produto.codigo).all()
+        produtos_dns = {
+            p.id: sorted([e.dn for e in p.estruturas if e.ativo], key=_chave_ordenacao_dn)
+            for p in produtos
+        }
+
+        if request.method == "POST":
+            descricao_original = (request.form.get("descricao_original") or "").strip()
+            produto_id = request.form.get("produto_id", type=int)
+            dn = (request.form.get("dn") or "").strip()
+            observacao = (request.form.get("observacao") or "").strip() or None
+            produto_selecionado = db.session.get(Produto, produto_id) if produto_id else None
+
+            erro = None
+            estrutura_base = None
+            if not descricao_original:
+                erro = "Informe a descrição do item do PCP que deve usar esta correspondência."
+            elif produto_selecionado is None:
+                erro = "Selecione um produto do catálogo de custos."
+            elif not dn:
+                erro = "Selecione a DN (estrutura) do produto que servirá de base."
+            else:
+                estrutura_base = EstruturaProduto.query.filter_by(produto_id=produto_selecionado.id, dn=dn, ativo=True).first()
+                if estrutura_base is None:
+                    erro = "Essa DN não tem estrutura de custo cadastrada para o produto selecionado."
+
+            if erro:
+                flash(erro, "danger")
+                return render_template(
+                    "custos_correspondencia_manual_form.html", item_pedido=item_pedido,
+                    produtos=produtos, produtos_dns=produtos_dns, produto_selecionado=produto_selecionado,
+                    dn_selecionado=dn, descricao_original=descricao_original, observacao=observacao,
+                )
+
+            descricao_normalizada = _normalizar_texto_matching_custos(descricao_original)
+            existente = CorrespondenciaManualCusto.query.filter_by(descricao_normalizada=descricao_normalizada).first()
+            nome_usuario = current_user.nome if current_user.is_authenticated else None
+            if existente is not None:
+                existente.descricao_original = descricao_original
+                existente.produto_id = produto_selecionado.id
+                existente.dn = dn
+                existente.observacao = observacao
+                existente.criado_por = nome_usuario
+                flash(f'Correspondência manual de "{descricao_original}" atualizada com sucesso.', "success")
+            else:
+                db.session.add(CorrespondenciaManualCusto(
+                    descricao_normalizada=descricao_normalizada, descricao_original=descricao_original,
+                    produto_id=produto_selecionado.id, dn=dn, observacao=observacao, criado_por=nome_usuario,
+                ))
+                flash(f'Correspondência manual de "{descricao_original}" cadastrada com sucesso — a partir de agora, qualquer item do PCP com essa descrição usa {produto_selecionado.codigo} DN {dn} automaticamente.', "success")
+            db.session.commit()
+            return redirect(url_for("custos_correspondencias_manuais"))
+
+        descricao_inicial = item_pedido.descricao_produto if item_pedido else (request.args.get("descricao_original") or "")
+        return render_template(
+            "custos_correspondencia_manual_form.html", item_pedido=item_pedido,
+            produtos=produtos, produtos_dns=produtos_dns, produto_selecionado=None,
+            dn_selecionado=None, descricao_original=descricao_inicial, observacao="",
+        )
+
+    @app.route("/custos/correspondencias-manuais/<int:corr_id>/excluir", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def custos_correspondencias_manuais_excluir(corr_id):
+        corr = db.session.get(CorrespondenciaManualCusto, corr_id)
+        if corr is not None:
+            descricao = corr.descricao_original
+            db.session.delete(corr)
+            db.session.commit()
+            flash(f'Correspondência manual de "{descricao}" removida.', "success")
+        return redirect(url_for("custos_correspondencias_manuais"))
 
     @app.route("/custos/necessidades-pcp")
     @requer_role("ADMIN", "PCP", "GESTAO")

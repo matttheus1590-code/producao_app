@@ -2030,3 +2030,39 @@ class EstruturaProdutoItem(db.Model):
 
     materia_prima = db.relationship("MateriaPrima", foreign_keys=[materia_prima_id])
     subproduto = db.relationship("Produto", foreign_keys=[subproduto_id])
+
+
+class CorrespondenciaManualCusto(db.Model):
+    """Ferramenta de correlação manual pedida pelo Bruno (23/09/2026): "deixa
+    uma ferramenta visivel onde de forma manual eu consiga correlacionar o
+    produto para algum produto já cadastrado no banco de dados de custos de
+    produtos.. ex: HS DN 5'' nao tem nada cadastrado, mas, eu consiga
+    manualmente mencionar ele como base de HS 6''".
+
+    Cobre os casos em que `_matching_produto_pcp` genuinamente não consegue
+    (e nunca vai conseguir) casar sozinho — porque o cadastro que faria
+    sentido simplesmente não existe (ex. nenhuma EstruturaProduto na DN do
+    pedido) — em vez de forçar o Bruno a esperar uma nova fase de cadastro
+    ou a aceitar "não identificado" pra sempre.
+
+    `descricao_normalizada` é a chave de casamento: o texto de
+    `ItemPedido.descricao_produto` já passado por
+    `_normalizar_texto_matching_custos` (mesma normalização usada nos dois
+    lados do casamento automático, pra continuar funcionando mesmo com
+    pequenas variações de digitação — maiúscula/minúscula, acento, hífen).
+    `_matching_produto_pcp` consulta esta tabela ANTES da heurística
+    automática — uma correspondência manual cadastrada aqui sempre vence."""
+
+    __tablename__ = "custos_correspondencias_manuais"
+
+    id = db.Column(db.Integer, primary_key=True)
+    descricao_normalizada = db.Column(db.String(200), nullable=False, unique=True, index=True)
+    descricao_original = db.Column(db.String(200), nullable=False)
+    produto_id = db.Column(db.Integer, db.ForeignKey("custos_produtos.id"), nullable=False)
+    dn = db.Column(db.String(20), nullable=False)
+    observacao = db.Column(db.Text, nullable=True)
+    criado_por = db.Column(db.String(120), nullable=True)
+    criado_em = db.Column(db.DateTime, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    produto = db.relationship("Produto", foreign_keys=[produto_id])

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Correspondências Manuais · Gestão de Custos{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-link-45deg"></i> Correspondências Manuais</h4>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('custos_correspondencias_manuais_nova') }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-lg"></i> Nova correspondência
+    </a>
+    <a href="{{ url_for('custos_painel') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Painel de Custos
+    </a>
+  </div>
+</div>
+<p class="text-muted small mb-3">
+  Quando um item do PCP genuinamente não tem nenhum cadastro correspondente no catálogo de custos (ex. uma DN que
+  ainda não existe pra aquele produto), cadastre aqui uma correspondência manual apontando pra um produto+DN já
+  existente pra usar como base (ex. "HS DN 5''" usando "HS DN 6''"). Essa correspondência sempre tem prioridade
+  sobre o casamento automático por texto, e vale pra qualquer item futuro com a mesma descrição.
+</p>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Descrição do item do PCP</th>
+          <th>Produto base</th>
+          <th>DN base</th>
+          <th>Observação</th>
+          <th>Cadastrado por</th>
+          <th>Cadastrado em</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in correspondencias %}
+        <tr>
+          <td>{{ c.descricao_original }}</td>
+          <td>{{ c.produto.familia }} — {{ c.produto.codigo }}{% if c.produto.descricao %} ({{ c.produto.descricao }}){% endif %}</td>
+          <td>{{ c.dn }}</td>
+          <td class="text-muted small">{{ c.observacao or "—" }}</td>
+          <td class="text-muted small">{{ c.criado_por or "—" }}</td>
+          <td class="text-muted small">{{ c.criado_em.strftime("%d/%m/%Y %H:%M") if c.criado_em else "—" }}</td>
+          <td class="text-end">
+            <form method="post" action="{{ url_for('custos_correspondencias_manuais_excluir', corr_id=c.id) }}" onsubmit="return confirm('Remover esta correspondência manual? O item voltará a depender só do casamento automático.');">
+              <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1" title="Remover">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted py-4">Nenhuma correspondência manual cadastrada ainda.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Nova Correspondência Manual · Gestão de Custos{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-link-45deg"></i> Nova Correspondência Manual</h4>
+  <a href="{{ url_for('custos_correspondencias_manuais') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left"></i> Correspondências Manuais
+  </a>
+</div>
+<p class="text-muted small mb-3">
+  Use isso quando um item do PCP genuinamente não tem nenhum cadastro correspondente no catálogo de custos (ex.
+  "HS DN 5''" sem nenhuma estrutura cadastrada pra DN 5) — escolha um produto+DN já existente pra usar como base
+  (ex. HS DN 6''). A partir de então, qualquer item do PCP com essa mesma descrição passa a usar essa
+  correspondência automaticamente, com prioridade sobre o casamento por texto.
+</p>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" class="row g-3">
+      <div class="col-12">
+        <label class="form-label small text-muted">Descrição do item do PCP</label>
+        <input type="text" name="descricao_original" class="form-control" value="{{ descricao_original }}" {% if item_pedido %}readonly{% endif %} required>
+        {% if item_pedido %}
+        <div class="form-text">
+          Vindo do item #{{ item_pedido.id }}{% if item_pedido.pedido %} — pedido {{ item_pedido.pedido.pedido_venda or ("#" ~ item_pedido.pedido.id) }}{% endif %}.
+        </div>
+        {% else %}
+        <div class="form-text">
+          Digite exatamente como aparece na descrição do item do PCP — não precisa se preocupar com
+          maiúsculas/minúsculas, acento ou hífen, o sistema já normaliza os dois lados antes de comparar.
+        </div>
+        {% endif %}
+      </div>
+      <div class="col-md-7">
+        <label class="form-label small text-muted">Produto do catálogo de custos (usar como base)</label>
+        <select name="produto_id" id="selectProdutoCorrespondencia" class="form-select" required>
+          <option value="">Selecione…</option>
+          {% for p in produtos %}
+          <option value="{{ p.id }}" data-dns="{{ produtos_dns.get(p.id, []) | join(',') }}" {{ "selected" if produto_selecionado and produto_selecionado.id == p.id else "" }}>
+            {{ p.familia }} — {{ p.codigo }}{% if p.descricao %} ({{ p.descricao }}){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label small text-muted">DN (estrutura a usar como base)</label>
+        <select name="dn" id="selectDnCorrespondencia" class="form-select" required>
+          <option value="">Selecione um produto primeiro…</option>
+        </select>
+      </div>
+      <div class="col-12">
+        <label class="form-label small text-muted">Observação (opcional)</label>
+        <textarea name="observacao" class="form-control" rows="2" placeholder="Ex.: sem cadastro próprio ainda, usando DN mais próxima como base">{{ observacao or "" }}</textarea>
+      </div>
+      <div class="col-12">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Salvar correspondência</button>
+        <a href="{{ url_for('custos_correspondencias_manuais') }}" class="btn btn-outline-secondary">Cancelar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  var produtoSelect = document.getElementById('selectProdutoCorrespondencia');
+  var dnSelect = document.getElementById('selectDnCorrespondencia');
+
+  function populateDns(dnSelecionada) {
+    var opt = produtoSelect.options[produtoSelect.selectedIndex];
+    var dns = (opt && opt.dataset.dns) ? opt.dataset.dns.split(',').filter(Boolean) : [];
+    dnSelect.innerHTML = '';
+    if (!dns.length) {
+      var vazio = document.createElement('option');
+      vazio.value = '';
+      vazio.textContent = opt && opt.value ? 'Nenhuma estrutura ativa pra este produto' : 'Selecione um produto primeiro…';
+      dnSelect.appendChild(vazio);
+      return;
+    }
+    dns.forEach(function (dn) {
+      var o = document.createElement('option');
+      o.value = dn;
+      o.textContent = dn;
+      if (dn === dnSelecionada) { o.selected = true; }
+      dnSelect.appendChild(o);
+    });
+  }
+
+  produtoSelect.addEventListener('change', function () { populateDns(null); });
+
+  {% if produto_selecionado %}
+  populateDns({{ (dn_selecionado or "") | tojson }});
+  {% endif %}
+})();
+</script>
+{% endblock %}

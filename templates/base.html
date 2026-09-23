@@ -153,6 +153,9 @@
         <a class="app-nav-link {% if request.endpoint == 'custos_necessidades_pcp' %}active{% endif %}" href="{{ url_for('custos_necessidades_pcp') }}">
           <span>📐 Necessidades do PCP</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('custos_correspondencias_manuais') %}active{% endif %}" href="{{ url_for('custos_correspondencias_manuais') }}">
+          <span>🔗 Correspondências Manuais</span>
+        </a>
         <a class="app-nav-link {% if request.endpoint == 'custos_simulacao' %}active{% endif %}" href="{{ url_for('custos_simulacao') }}">
           <span>🧮 Simulação/Histórico</span>
         </a>

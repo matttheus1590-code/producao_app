@@ -61,7 +61,7 @@
   <div class="table-responsive">
     <table class="table table-sm align-middle mb-0">
       <thead class="table-light">
-        <tr><th>Pedido</th><th>Produto (descrição)</th><th class="text-end">Quantidade</th></tr>
+        <tr><th>Pedido</th><th>Produto (descrição)</th><th class="text-end">Quantidade</th><th></th></tr>
       </thead>
       <tbody>
         {% for item in nao_identificados[:50] %}
@@ -69,6 +69,11 @@
           <td><a href="{{ url_for('detalhe_pedido', pedido_id=item.pedido.id) }}" class="text-decoration-none">{{ item.pedido.pedido_venda or ("#" ~ item.pedido.id) }}</a></td>
           <td>{{ item.descricao_produto }}</td>
           <td class="text-end">{{ item.quantidade }}</td>
+          <td class="text-end">
+            <a href="{{ url_for('custos_correspondencias_manuais_nova', item_id=item.id) }}" class="btn btn-sm btn-outline-primary py-0 px-1" title="Correlacionar manualmente com um produto já cadastrado">
+              <i class="bi bi-link-45deg"></i> Corresponder
+            </a>
+          </td>
         </tr>
         {% endfor %}
       </tbody>

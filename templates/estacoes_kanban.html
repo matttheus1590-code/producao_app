@@ -264,9 +264,14 @@
                   <div class="text-muted">
                     <i class="bi bi-question-circle"></i> Este produto ainda não foi identificado automaticamente no catálogo de Gestão de Custos (nome do produto ou DN não bateram com nenhum cadastro). Não entra nos totais de matéria-prima até ser identificado.
                   </div>
-                  <a href="{{ url_for('custos_produtos') }}" class="btn btn-sm btn-outline-primary mt-3">
-                    <i class="bi bi-box-seam"></i> Ver catálogo de produtos
-                  </a>
+                  <div class="d-flex flex-wrap gap-2 mt-3">
+                    <a href="{{ url_for('custos_correspondencias_manuais_nova', item_id=item.id) }}" class="btn btn-sm btn-primary">
+                      <i class="bi bi-link-45deg"></i> Corresponder manualmente
+                    </a>
+                    <a href="{{ url_for('custos_produtos') }}" class="btn btn-sm btn-outline-primary">
+                      <i class="bi bi-box-seam"></i> Ver catálogo de produtos
+                    </a>
+                  </div>
                   {% endif %}
                 </div>
               </div>
