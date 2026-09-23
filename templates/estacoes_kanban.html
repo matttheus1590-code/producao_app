@@ -62,10 +62,31 @@
       </div>
       {% if kg_por_coluna[etapa] > 0 or nao_identificados_por_coluna[etapa] > 0 %}
       <button type="button" class="kanban-coluna-materia-prima text-muted mt-1" data-bs-toggle="modal" data-bs-target="#modalColuna{{ etapa }}"
-           title="Ver consumo desta coluna discriminado por matéria-prima">
+           title="Ver detalhamento completo por matéria-prima desta coluna (inclusive ferragem/acessório)">
         <i class="bi bi-droplet-half"></i> ≈ {{ "%.1f"|format(kg_por_coluna[etapa])|replace(".", ",") }} kg
         {%- if nao_identificados_por_coluna[etapa] > 0 %} · <span class="text-warning">{{ nao_identificados_por_coluna[etapa] }} não identif.</span>{% endif %}
       </button>
+      {% endif %}
+      {% if materiais_principais_por_coluna[etapa] %}
+      <!-- Pedido do Bruno (23/09/2026): "quero que detalhe AO LADO a
+           somatória de cada material... focado nos principais" (AMINO,
+           COIM, LANXESS, BLOCO DE ESPUMA, TECPUR) — sempre visível, sem
+           precisar clicar (diferente do botão acima, que abre o popup
+           completo com TUDO, inclusive ferragem/acessório). -->
+      <div class="kanban-coluna-principais">
+        {% for l in materiais_principais_por_coluna[etapa] %}
+        <div class="kanban-coluna-principal-linha">
+          <span class="kanban-coluna-principal-nome" title="{{ l.materia_prima.descricao }}">{{ l.materia_prima.descricao | replace(" (kg)", "") | replace(" (m³)", "") }}</span>
+          <span class="kanban-coluna-principal-qtd">
+            {%- if l.materia_prima.unidade == "kg" -%}
+            {{ "%.1f"|format(l.quantidade)|replace(".", ",") }}
+            {%- else -%}
+            {{ "%.3f"|format(l.quantidade)|replace(".", ",") }}
+            {%- endif %} {{ l.materia_prima.unidade }}
+          </span>
+        </div>
+        {% endfor %}
+      </div>
       {% endif %}
     </div>
 

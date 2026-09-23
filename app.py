@@ -10904,6 +10904,34 @@ def _materiais_consumo_estrutura(estrutura, _visitados=None):
     return {"por_materia_prima": linhas, "kg_total": round(kg_total, 4), "tem_kg": tem_kg, "incompleto": incompleto}
 
 
+_FORNECEDORES_MATERIA_PRIMA_PRINCIPAIS = {"AMINO", "COIM", "LANXESS", "TECPUR"}
+
+
+def _e_materia_prima_principal(mp):
+    """Classifica se uma MateriaPrima está entre os grupos "principais" que
+    o Bruno pediu pra NUNCA ficar escondidos (23/09/2026, revisão): "isso
+    vale pra todas as matérias primas AMINO, COIM, LANXESS, BLOCO DE
+    ESPUMA, TECPUR" — e, na mensagem seguinte, pediu pra essas aparecerem
+    "ao lado" (sempre visíveis no cabeçalho da coluna), sem precisar
+    clicar — diferente do detalhamento completo (todas as matérias-primas,
+    inclusive ferragem/acessório), que continua só no popup por clique.
+
+    Usa o campo `fornecedor` quando cadastrado (bate direto com AMINO/COIM/
+    LANXESS/TECPUR). "BLOCO DE ESPUMA" não é um fornecedor no cadastro (as
+    4 densidades estão como CBP ou DINATEC, inconsistente), então casa pela
+    descrição. Um caso como "Bumper PU (MP COIM) — HLCC PC" tem o nome do
+    fornecedor dentro da própria descrição mas o campo `fornecedor` ficou
+    em branco no cadastro (achado ao implementar isso) — usa a descrição
+    como fallback pra não perder esse caso."""
+    fornecedor = (mp.fornecedor or "").strip().upper()
+    if fornecedor in _FORNECEDORES_MATERIA_PRIMA_PRINCIPAIS:
+        return True
+    descricao = (mp.descricao or "").upper()
+    if "BLOCO ESPUMA" in descricao:
+        return True
+    return any(grupo in descricao for grupo in _FORNECEDORES_MATERIA_PRIMA_PRINCIPAIS)
+
+
 def _materiais_item_pedido(item_pedido):
     """Versão "por item do PCP" de `_materiais_consumo_estrutura` — casa o
     item via `_matching_produto_pcp` e multiplica o consumo de 1 unidade
@@ -14236,6 +14264,21 @@ def register_routes(app):
                 key=lambda l: (l["materia_prima"].unidade != "kg", -l["quantidade"]),
             )
 
+        # Pedido do Bruno (23/09/2026): "eu quero que detalhe AO LADO a
+        # somatória de cada material... focado nos principais como citei
+        # acima" (AMINO, COIM, LANXESS, BLOCO DE ESPUMA, TECPUR) — ele não
+        # quer precisar clicar pra ver isso (o popup completo continua
+        # existindo, mas só pra ferragem/acessório e pro resto que não é
+        # um desses 5 grupos). Subconjunto de `materiais_agrupados_por_coluna`
+        # já calculado acima, filtrado por `_e_materia_prima_principal` —
+        # normalmente só 3 a 8 linhas por coluna (bem menor que o total de
+        # matérias-primas de uma coluna cheia), então cabe direto no
+        # cabeçalho sem repetir o estouro de layout que já corrigimos antes.
+        materiais_principais_por_coluna = {
+            chave: [l for l in linhas if _e_materia_prima_principal(l["materia_prima"])]
+            for chave, linhas in materiais_agrupados_por_coluna.items()
+        }
+
         return render_template(
             "estacoes_kanban.html",
             estacao=estacao,
@@ -14248,6 +14291,7 @@ def register_routes(app):
             kg_por_coluna=kg_por_coluna,
             nao_identificados_por_coluna=nao_identificados_por_coluna,
             materiais_agrupados_por_coluna=materiais_agrupados_por_coluna,
+            materiais_principais_por_coluna=materiais_principais_por_coluna,
         )
 
     @app.route("/estacoes/<nome>/relatorio.pdf")

@@ -622,6 +622,46 @@ body.col-resizing-ativo {
   text-decoration: underline;
 }
 
+/* Matérias-primas "principais" sempre visíveis no cabeçalho da coluna,
+   sem precisar clicar (pedido do Bruno, 23/09/2026: "quero que detalhe AO
+   LADO a somatória de cada material... focado nos principais" — AMINO,
+   COIM, LANXESS, BLOCO DE ESPUMA, TECPUR). Só essas (normalmente poucas
+   linhas — ver `_e_materia_prima_principal` no app.py) ficam sempre à
+   mostra; o resto (ferragem/acessório) continua só no popup por clique,
+   senão o cabeçalho estoura de novo (mesmo problema já corrigido antes
+   com o total borrado). max-height + scroll é uma rede de segurança caso
+   uma coluna específica acabe tendo muitas mesmo assim. */
+.kanban-coluna-principais {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  max-height: 6.2rem;
+  overflow-y: auto;
+}
+
+.kanban-coluna-principal-linha {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-weight: 400;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.kanban-coluna-principal-nome {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kanban-coluna-principal-qtd {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 .kanban-coluna-corpo {
   padding: 0.85rem;
   overflow-y: auto;
