@@ -10503,19 +10503,26 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         d.add(Circle(diam / 2, diam / 2, diam / 2 - 0.2, fillColor=COR_SEMAFORO_PINGO.get(cor_nome, colors.grey), strokeColor=None))
         return d
 
-    def _faixa_grupo(texto, cor_fundo):
+    def _faixa_grupo(texto, cor_fundo, compacta=False):
         """Faixa colorida de largura total marcando o início de um bloco
         (Em produção / Pendente) — pedido do Bruno (17/09/2026): "agrupe
-        separadamente... de forma totalmente visual e dinâmica"."""
+        separadamente... de forma totalmente visual e dinâmica".
+
+        `compacta=True` (pedido do Bruno, 24/09/2026, revisão: "quero o
+        maximo compacto") — usada nas faixas de MATÉRIA-PRIMA/TOTAL GERAL,
+        fonte e padding menores que a faixa de bloco (Pendente/Em produção)
+        acima, que continua do tamanho original."""
+        tamanho_fonte = 9 if compacta else 11
+        padding = 3 if compacta else 5
         estilo_faixa = ParagraphStyle(
-            "faixa_grupo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=11,
-            textColor=colors.white, leading=13,
+            "faixa_grupo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=tamanho_fonte,
+            textColor=colors.white, leading=tamanho_fonte + 2,
         )
         t = Table([[Paragraph(texto, estilo_faixa)]], colWidths=[largura_disponivel])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), cor_fundo),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), padding),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), padding),
             ("LEFTPADDING", (0, 0), (-1, -1), 7),
         ]))
         return t
@@ -10641,14 +10648,27 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
     # alimenta os popups da tela de Estações) — nunca soma um item "não
     # identificado" no catálogo de Gestão de Custos num total, mesma régua
     # de transparência de sempre neste app.
+    #
+    # Revisão (pedido do Bruno, 24/09/2026, mesma tarde): "quero que foque
+    # nas principais materiais primas = amino, coim, e tecpur... ou seja,
+    # nao quero tubo, flanges, parafusos etc... quero o maximo compacto" —
+    # usa `info["principais"]` (já filtrado por `_e_materia_prima_principal`
+    # — AMINO/COIM/LANXESS/TECPUR/DINATEC/BLOCO DE ESPUMA, MESMO conjunto já
+    # usado nos cabeçalhos de coluna do Kanban) em vez de `info["linhas"]`
+    # (que tinha TUDO, inclusive ferragem/acessório: arruela, parafuso,
+    # porca, flange, tubo). Ferragem/acessório continua disponível pra quem
+    # quiser — só não aqui, que é o "foco" pedido; o popup de cada item na
+    # tela de Estações continua mostrando tudo, sem filtro.
     # ------------------------------------------------------------------
 
     def _agregar_materiais(itens_grupo):
-        """Soma o consumo de cada matéria-prima entre TODOS os itens do
-        bloco (mesma agregação que `materiais_agrupados_por_coluna` já faz
-        na tela de Estações, aqui reaproveitada pro PDF) — é o "total dentro
-        do pendente e andamento" que o Bruno pediu. Item não identificado
-        entra na contagem `nao_identificados`, mas não no total."""
+        """Soma o consumo de cada matéria-prima PRINCIPAL entre TODOS os
+        itens do bloco (mesma agregação que `materiais_agrupados_por_coluna`
+        faz na tela de Estações pro popup completo, mas aqui já filtrada
+        pra só AMINO/COIM/LANXESS/TECPUR/DINATEC/BLOCO DE ESPUMA) — é o
+        "total dentro do pendente e andamento" que o Bruno pediu. Item não
+        identificado entra na contagem `nao_identificados`, mas não no
+        total."""
         agregados = {}
         nao_identificados = 0
         for item in itens_grupo:
@@ -10656,10 +10676,10 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
             if not info["matched"]:
                 nao_identificados += 1
                 continue
-            for linha in info["linhas"]:
-                mp = linha["materia_prima"]
+            for p in info["principais"]:
+                mp = p["materia_prima"]
                 bucket = agregados.setdefault(mp.id, {"materia_prima": mp, "quantidade": 0.0})
-                bucket["quantidade"] += linha["quantidade"]
+                bucket["quantidade"] += p["lote"]
         linhas = sorted(
             agregados.values(),
             key=lambda l: (l["materia_prima"].unidade != "kg", -l["quantidade"]),
@@ -10668,11 +10688,19 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
 
     def _materiais_por_produto(itens_grupo):
         """Agrupa os itens do bloco por DESCRIÇÃO DE PRODUTO (podem vir de
-        pedidos diferentes) e soma o consumo de matéria-prima entre eles —
-        "detalhado por produto, total produto" do pedido do Bruno. Ordem
-        alfabética do nome do produto (facilita achar um produto específico
-        num relatório de conferência, diferente da ordem por urgência da
-        tabela de itens acima)."""
+        pedidos diferentes) e soma o consumo de matéria-prima PRINCIPAL
+        entre eles — "detalhado por produto, total produto, focado nas
+        principais" do pedido do Bruno. Ordem alfabética do nome do produto
+        (facilita achar um produto específico num relatório de conferência,
+        diferente da ordem por urgência da tabela de itens acima).
+
+        Produto cujos itens identificados não têm NENHUMA matéria-prima
+        principal (só ferragem/acessório — ex. um item 100% "un") fica de
+        fora do resultado, a menos que também tenha algum item não
+        identificado (aí entra só pra manter a transparência do "não
+        identificado", nunca por causa de ferragem) — é o "máximo compacto"
+        pedido: sem essa poda, produtos 100% ferragem apareceriam com uma
+        linha vazia "sem matéria-prima principal", só ocupando espaço."""
         grupos = {}
         for item in itens_grupo:
             nome = item.descricao_produto or "—"
@@ -10694,15 +10722,18 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
                     algum_nao_identificado = True
                     continue
                 algum_identificado = True
-                kg_total_produto += info["kg_total"]
-                for linha in info["linhas"]:
-                    mp = linha["materia_prima"]
+                for p in info["principais"]:
+                    mp = p["materia_prima"]
+                    if mp.unidade == "kg":
+                        kg_total_produto += p["lote"]
                     bucket = materiais_agregados.setdefault(mp.id, {"materia_prima": mp, "quantidade": 0.0})
-                    bucket["quantidade"] += linha["quantidade"]
+                    bucket["quantidade"] += p["lote"]
             linhas_produto = sorted(
                 materiais_agregados.values(),
                 key=lambda l: (l["materia_prima"].unidade != "kg", -l["quantidade"]),
             )
+            if not linhas_produto and not algum_nao_identificado:
+                continue
             resultado.append({
                 "produto": nome,
                 "pecas": g["pecas"],
@@ -10760,7 +10791,11 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
                         ])
                         linha_atual += 1
                 else:
-                    dados_tabela.append([cel_produto, Paragraph("Estrutura sem matéria-prima cadastrada.", estilo_mp_aviso), ""])
+                    dados_tabela.append([
+                        cel_produto,
+                        Paragraph("Sem matéria-prima principal (AMINO/COIM/LANXESS/TECPUR/DINATEC) nos itens identificados.", estilo_mp_aviso),
+                        "",
+                    ])
                     linha_atual += 1
                 if produto["parcial"]:
                     dados_tabela.append([
@@ -10783,10 +10818,14 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
             ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+            # Padding reduzido (pedido do Bruno, 24/09/2026: "quero o maximo
+            # compacto") — 2.5/2 em vez dos 4/3.5 da tabela de itens acima,
+            # já que agora só tem 1 a 3 linhas de química por produto (sem
+            # ferragem), não precisa do mesmo respiro.
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ]
         for linha_inicio, linha_fim in spans_produto:
             estilo_tabela.append(("SPAN", (0, linha_inicio), (0, linha_fim)))
@@ -10816,44 +10855,51 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
             ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ]))
         return tabela
 
     def _secao_materia_prima_bloco(itens_grupo, titulo_bloco):
-        """Monta a seção completa de matéria-prima de UM bloco: faixa,
-        detalhamento por produto, e o total do bloco — nessa ordem, pra ler
-        de forma didática (primeiro o detalhe, depois o resumo). Nome
-        deliberadamente diferente do `_secao_materia_prima(codigo)` que já
-        existe em outro módulo (classificação de aba de Parâmetros) — são
-        coisas diferentes, só evitando reaproveitar o mesmo nome."""
+        """Monta a seção completa de matéria-prima PRINCIPAL de UM bloco:
+        faixa, detalhamento por produto, e o total do bloco — nessa ordem,
+        pra ler de forma didática (primeiro o detalhe, depois o resumo).
+        Nome deliberadamente diferente do `_secao_materia_prima(codigo)` que
+        já existe em outro módulo (classificação de aba de Parâmetros) —
+        são coisas diferentes, só evitando reaproveitar o mesmo nome.
+
+        Pedido do Bruno (24/09/2026, revisão): "máximo compacto" — quando
+        `produtos_info` vem vazio (bloco inteiro sem NENHUMA matéria-prima
+        principal e sem item não identificado — ex. um bloco só de
+        ferragem/acessório avulso), a seção inteira nem aparece, faixa
+        incluída, em vez de mostrar um bloco vazio "0 resultados"."""
         produtos_info = _materiais_por_produto(itens_grupo)
+        if not produtos_info:
+            return []
         linhas_totais, nao_identificados = _agregar_materiais(itens_grupo)
 
-        flow = [_faixa_grupo(f"MATÉRIA-PRIMA — {titulo_bloco}", COR_MATERIA_PRIMA)]
-        if produtos_info:
-            flow.append(_tabela_materia_prima_produtos(produtos_info))
+        flow = [_faixa_grupo(f"MATÉRIA-PRIMA PRINCIPAL — {titulo_bloco}", COR_MATERIA_PRIMA, compacta=True)]
+        flow.append(_tabela_materia_prima_produtos(produtos_info))
         # Aviso de não identificados logo após a tabela de detalhe (antes do
         # total) — colado a uma tabela maior, em vez de depois do bloco de
         # total, evita deixar essa única linha "órfã" sozinha numa página
         # nova quando o total já preencheu o resto da página anterior.
         if nao_identificados:
-            flow.append(Spacer(1, 1.5 * mm))
+            flow.append(Spacer(1, 1 * mm))
             flow.append(Paragraph(
                 f'<font color="#856404">{nao_identificados} item(ns) deste bloco não identificado(s) automaticamente '
                 'no catálogo de Gestão de Custos — não entram nesses totais.</font>',
                 estilo_celula,
             ))
-        flow.append(Spacer(1, 3 * mm))
-        flow.append(Paragraph(f"Total de matéria-prima — {titulo_bloco}", estilo_mp_total_titulo))
-        flow.append(Spacer(1, 1.5 * mm))
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph(f"Total de matéria-prima principal — {titulo_bloco}", estilo_mp_total_titulo))
+        flow.append(Spacer(1, 1 * mm))
         if linhas_totais:
             flow.append(_tabela_total_materiais(linhas_totais))
         else:
-            flow.append(Paragraph("Nenhuma matéria-prima identificada neste bloco.", estilos["Normal"]))
+            flow.append(Paragraph("Nenhuma matéria-prima principal identificada neste bloco.", estilos["Normal"]))
         return flow
 
     if status_filtro == "ambos":
@@ -10872,7 +10918,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
             elementos.append(_faixa_grupo(f"{titulo} — {len(itens_grupo)} ITEM(NS)", cor_fundo))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
-                elementos.append(Spacer(1, 4 * mm))
+                elementos.append(Spacer(1, 2 * mm))
                 elementos.extend(_secao_materia_prima_bloco(itens_grupo, titulo))
             else:
                 elementos.append(Spacer(1, 2 * mm))
@@ -10886,18 +10932,24 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         # inteiro sem somar os 2 blocos na mão.
         if itens:
             linhas_geral, nao_identificados_geral = _agregar_materiais(itens)
-            elementos.append(_faixa_grupo("TOTAL GERAL DE MATÉRIA-PRIMA — PENDENTE + EM PRODUÇÃO", COR_TOTAL_GERAL))
-            if linhas_geral:
-                elementos.append(_tabela_total_materiais(linhas_geral))
-            else:
-                elementos.append(Paragraph("Nenhuma matéria-prima identificada.", estilos["Normal"]))
-            if nao_identificados_geral:
-                elementos.append(Spacer(1, 1.5 * mm))
-                elementos.append(Paragraph(
-                    f'<font color="#856404">{nao_identificados_geral} item(ns) não identificado(s) automaticamente '
-                    'no catálogo de Gestão de Custos — não entram nesses totais.</font>',
-                    estilo_celula,
+            # "Máximo compacto" (pedido do Bruno, 24/09/2026): sem nenhuma
+            # matéria-prima principal em NENHUM dos 2 blocos e sem item não
+            # identificado, o total geral nem aparece — não tem o que somar.
+            if linhas_geral or nao_identificados_geral:
+                elementos.append(_faixa_grupo(
+                    "TOTAL GERAL DE MATÉRIA-PRIMA PRINCIPAL — PENDENTE + EM PRODUÇÃO", COR_TOTAL_GERAL, compacta=True,
                 ))
+                if linhas_geral:
+                    elementos.append(_tabela_total_materiais(linhas_geral))
+                else:
+                    elementos.append(Paragraph("Nenhuma matéria-prima principal identificada.", estilos["Normal"]))
+                if nao_identificados_geral:
+                    elementos.append(Spacer(1, 1 * mm))
+                    elementos.append(Paragraph(
+                        f'<font color="#856404">{nao_identificados_geral} item(ns) não identificado(s) automaticamente '
+                        'no catálogo de Gestão de Custos — não entram nesses totais.</font>',
+                        estilo_celula,
+                    ))
     else:
         # Filtro já veio de um status só (Pendente OU Em produção) — mantém a
         # MESMA linguagem visual (faixa + tabela sem coluna Status), só com 1
@@ -10907,7 +10959,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         elementos.append(_faixa_grupo(f"{titulo_unico} — {len(itens)} ITEM(NS)", cor_unica))
         if itens:
             elementos.append(_tabela_itens(itens))
-            elementos.append(Spacer(1, 4 * mm))
+            elementos.append(Spacer(1, 2 * mm))
             elementos.extend(_secao_materia_prima_bloco(itens, titulo_unico))
         else:
             elementos.append(Spacer(1, 2 * mm))
