@@ -10329,7 +10329,7 @@ def _itens_relatorio_estacao(nome, status_filtro):
     return itens
 
 
-def _gerar_pdf_estacao(estacao, itens, status_filtro):
+def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
     """Relatório PDF de UMA estação (pedido do Bruno, 11/09/2026, revisado
     17/09/2026 — "deixe mais intuitivo e visual... AGRUPE SEPARADAMENTE o que
     está em produção e o que está pendente, de forma totalmente visual e
@@ -10361,7 +10361,16 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
     tela) seguida do total consolidado daquele bloco; logo da empresa no
     cabeçalho (mesmo arquivo/técnica do Espelho Pedido de Venda,
     `_ESPELHO_LOGO_PATH`); data/hora de geração já existia (`_agora_brt()`
-    no subtítulo) e continua."""
+    no subtítulo) e continua.
+
+    `incluir_mp` (pedido do Bruno, 24/09/2026, 4ª rodada: "onde eu possa
+    optar por imprimir somente os status das estações (sem a materia
+    prima), e uma impressao com materia prima... isso tanto pendente e
+    tanto em produção") — quando False, a tabela de itens volta a ter só as
+    10 colunas originais (sem "Matéria-prima") e NENHUMA seção/total de
+    matéria-prima é montada; o resto do relatório (KPIs, blocos Em
+    produção/Pendente, agrupamento por pedido, pingo de semáforo) fica
+    idêntico nos dois casos, só a camada de matéria-prima liga/desliga."""
     from xml.sax.saxutils import escape as _xml_escape
 
     from reportlab.graphics.shapes import Circle, Drawing
@@ -10404,8 +10413,10 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
     # Mesma fonte de dados que a tela de Estações (Kanban) já usa por trás
     # dos popups de matéria-prima — calculado 1x pra todos os itens do
     # relatório (independe do status_filtro escolhido), reaproveitado pelas
-    # seções de matéria-prima de cada bloco mais abaixo.
-    materiais_por_item = {item.id: _materiais_item_pedido(item) for item in itens}
+    # seções de matéria-prima de cada bloco mais abaixo. Só calculado
+    # quando `incluir_mp` (senão fica vazio — economiza o trabalho quando a
+    # pessoa pediu explicitamente "só o status").
+    materiais_por_item = {item.id: _materiais_item_pedido(item) for item in itens} if incluir_mp else {}
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -10429,10 +10440,12 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
     # arquivo/proporção já usados no Espelho Pedido de Venda
     # (_ESPELHO_LOGO_PATH); segue existindo mesmo sem o logo (arquivo
     # ausente não pode quebrar a geração do relatório).
+    detalhe_txt = "com matéria-prima principal" if incluir_mp else "somente status (sem matéria-prima)"
     bloco_titulo = [
         Paragraph(f"{rotulo} — Relatório de Produção", estilos["Title"]),
         Paragraph(
-            f'Filtro: {info_filtro["titulo"]} · Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")}',
+            f'Filtro: {info_filtro["titulo"]} · Detalhe: {detalhe_txt} · '
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")}',
             estilos["Normal"],
         ),
     ]
@@ -10555,7 +10568,20 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         lote calculado pra quantidade do item, que os popups da tela de
         Estações usam), 1 linha por matéria-prima dentro da célula. Item
         não identificado no catálogo de Gestão de Custos aparece como tal,
-        nunca com um número inventado."""
+        nunca com um número inventado.
+
+        Mostra unitário E lote (pedido do Bruno, 24/09/2026, revisão da 4ª
+        rodada: "quero a quantidade unitaria para um produto, e quantidade
+        total para o lote total") — MESMO par de números
+        (`p.unitario_fmt`/`p.lote_fmt`) que o popup da tela de Estações já
+        usa (estacoes_kanban.html), em notação compacta "unitário/lote"
+        (cabeçalho da coluna explica a ordem 1x, em vez de repetir "un"/
+        "Lote" por linha) — testado que o formato por extenso ("un X ·
+        Lote Y") deixava a célula alta demais em pedidos com MUITOS itens
+        agrupados (SPAN vertical de Pedido/Cliente não pode quebrar entre
+        páginas; um grupo grande o bastante — ex. PU, pedido 819/INSERCOR
+        SAS, 14 itens — estourava a altura de 1 página inteira e quebrava a
+        geração do PDF). Compacto é também mais rápido de ler."""
         info = materiais_por_item[item.id]
         if not info["matched"]:
             return Paragraph("não identificado", estilo_mp_aviso)
@@ -10563,7 +10589,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         if not principais:
             return Paragraph("—", estilo_celula)
         partes = [
-            f'{_xml_escape(p["nome_curto"])}: {p["lote_fmt"]} {_xml_escape(p["materia_prima"].unidade)}'
+            f'{_xml_escape(p["nome_curto"])}: {p["unitario_fmt"]}/{p["lote_fmt"]} '
+            f'{_xml_escape(p["materia_prima"].unidade)}'
             for p in principais
         ]
         return Paragraph("<br/>".join(partes), estilo_celula)
@@ -10577,12 +10604,15 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         "não repita o mesmo nome do cliente e o mesmo número do pedido".
 
         Coluna "Matéria-prima" (pedido do Bruno, 24/09/2026, 3ª rodada)
-        mostra a pesagem principal de CADA item na própria linha dele —
-        ver `_celula_materia_item`."""
-        cabecalho = [
-            "", "Pedido", "Cliente", "Produto", "Qtd", "Matéria-prima",
-            "Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo",
-        ]
+        mostra a pesagem principal de CADA item na própria linha dele — ver
+        `_celula_materia_item`. Some da tabela quando `incluir_mp=False`
+        (pedido do Bruno, 24/09/2026, 4ª rodada: "imprimir somente os
+        status das estações, sem a matéria prima") — mesmas 10 colunas
+        originais do relatório antes da 3ª rodada."""
+        cabecalho = ["", "Pedido", "Cliente", "Produto", "Qtd"]
+        if incluir_mp:
+            cabecalho.append('Matéria-prima<br/><font size="6.2">(unitário/lote)</font>')
+        cabecalho += ["Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo"]
         dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) if c else "" for c in cabecalho]]
         cores_linhas = [COR_CABECALHO_BG]
         spans_pedido = []  # (linha_inicio, linha_fim) 1-based (linha 0 = cabeçalho)
@@ -10619,7 +10649,10 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
                     cel_cliente,
                     Paragraph(item.descricao_produto or "—", estilo_celula),
                     Paragraph(str(qtd_txt), estilo_celula),
-                    _celula_materia_item(item),
+                ]
+                if incluir_mp:
+                    linha_tabela.append(_celula_materia_item(item))
+                linha_tabela += [
                     Paragraph((_formatar_data_br(pedido.data_inclusao_pedido) if pedido else "") or "—", estilo_celula),
                     Paragraph((_formatar_data_br(pedido.data_cliente) if pedido else "") or "—", estilo_celula),
                     Paragraph(_formatar_data_br(item.liberacao_prevista) or "—", estilo_celula),
@@ -10634,7 +10667,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
                 spans_pedido.append((linha_inicio_grupo, linha_atual - 1))
             divisores_grupo.append(linha_atual - 1)
 
-        pesos = [4, 9, 13, 17, 5, 15, 8, 8, 8, 8, 9]
+        pesos = [4, 9, 13, 17, 5, 15, 8, 8, 8, 8, 9] if incluir_mp else [4, 11, 16, 22, 6, 10, 10, 10, 10, 11]
         soma_pesos = sum(pesos)
         larguras_mm = [p / soma_pesos * largura_disponivel for p in pesos]
 
@@ -10802,8 +10835,9 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
             elementos.append(_faixa_grupo(f"{titulo} — {len(itens_grupo)} ITEM(NS)", cor_fundo))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
-                elementos.append(Spacer(1, 2 * mm))
-                elementos.extend(_secao_materia_prima_bloco(itens_grupo, titulo))
+                if incluir_mp:
+                    elementos.append(Spacer(1, 2 * mm))
+                    elementos.extend(_secao_materia_prima_bloco(itens_grupo, titulo))
             else:
                 elementos.append(Spacer(1, 2 * mm))
                 elementos.append(Paragraph("Nenhum item nesta situação no momento.", estilos["Normal"]))
@@ -10813,8 +10847,9 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         # (24/09/2026) pediu o total "dentro do pendente e andamento", o que
         # os 2 totais de bloco acima já cobrem; este fecha com a soma geral,
         # pra quem quer só o número final de matéria-prima do relatório
-        # inteiro sem somar os 2 blocos na mão.
-        if itens:
+        # inteiro sem somar os 2 blocos na mão. Some inteiro quando
+        # `incluir_mp=False` (4ª rodada: relatório "somente status").
+        if incluir_mp and itens:
             linhas_geral, nao_identificados_geral = _agregar_materiais(itens)
             # "Máximo compacto" (pedido do Bruno, 24/09/2026): sem nenhuma
             # matéria-prima principal em NENHUM dos 2 blocos e sem item não
@@ -10843,8 +10878,9 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         elementos.append(_faixa_grupo(f"{titulo_unico} — {len(itens)} ITEM(NS)", cor_unica))
         if itens:
             elementos.append(_tabela_itens(itens))
-            elementos.append(Spacer(1, 2 * mm))
-            elementos.extend(_secao_materia_prima_bloco(itens, titulo_unico))
+            if incluir_mp:
+                elementos.append(Spacer(1, 2 * mm))
+                elementos.extend(_secao_materia_prima_bloco(itens, titulo_unico))
         else:
             elementos.append(Spacer(1, 2 * mm))
             elementos.append(Paragraph("Nenhum item encontrado com o filtro aplicado.", estilos["Normal"]))
@@ -10852,7 +10888,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
     doc.build(elementos)
     buffer.seek(0)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
-    nome_arquivo = f"estacao_{estacao.nome}_{status_filtro}_{date.today().isoformat()}.pdf"
+    sufixo_mp = "com_mp" if incluir_mp else "somente_status"
+    nome_arquivo = f"estacao_{estacao.nome}_{status_filtro}_{sufixo_mp}_{date.today().isoformat()}.pdf"
     resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
     return resposta
 
@@ -10869,7 +10906,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
 # estação vira sua própria seção, na mesma ordem de agrupamento por processo
 # que a tela /estacoes já usa (ver ESTACOES_GRUPOS_MONITORAMENTO).
 # ----------------------------------------------------------------------
-def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
+def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=False):
     """`estacoes_com_itens` é uma lista de tuplas (Estacao, [ItemPedido...]),
     já filtrada pelo `status_filtro` escolhido (mesma _itens_relatorio_estacao
     do relatório de uma estação só, pra nunca divergir do que a tela mostra).
@@ -10885,7 +10922,22 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
     Bruno 22/09/2026: "gere na vertical, aproveitando maximo de espaço na
     folha") — aqui a tabela tem só 10 colunas (contra as 13 do relatório de
     Planejamento), então sobra bem mais largura pra Cliente/Produto sem
-    precisar espremer tanto as colunas de data quanto foi preciso lá."""
+    precisar espremer tanto as colunas de data quanto foi preciso lá.
+
+    `incluir_mp` (pedido do Bruno, 24/09/2026, 4ª rodada: "onde eu possa
+    optar por imprimir somente os status das estações (sem a materia
+    prima), e uma impressao com materia prima... isso tanto pendente e
+    tanto em produção... em todas as areas") — quando True, cada estação
+    ganha a MESMA camada de matéria-prima que o relatório de uma estação só
+    já tem: coluna "Matéria-prima" na tabela de itens (pesagem principal —
+    AMINO/COIM/LANXESS/TECPUR/DINATEC — na própria linha do item) e, ao
+    final de cada bloco Em produção/Pendente daquela estação, o total
+    consolidado; quando o filtro é "ambos", fecha com o total geral daquela
+    estação (Pendente + Em produção). Mesma fonte de dados
+    (`_materiais_item_pedido`) e mesmo filtro (`_e_materia_prima_principal`)
+    do relatório de uma estação — nunca diverge do que a tela/popup mostra."""
+    from xml.sax.saxutils import escape as _xml_escape
+
     from reportlab.graphics.shapes import Circle, Drawing
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
@@ -10913,6 +10965,12 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
     COR_GRUPO_EM_PRODUCAO = colors.HexColor("#0d6efd")
     COR_GRUPO_PENDENTE = colors.HexColor("#6c757d")
     COR_ESTACAO_BANNER = colors.HexColor("#1b2a4a")
+    # Mesmas cores da seção de matéria-prima do relatório de uma estação só
+    # (_gerar_pdf_estacao) — reaproveitadas aqui pra nunca destoar visualmente
+    # entre os dois relatórios.
+    COR_MATERIA_PRIMA = colors.HexColor("#5a4a9c")
+    COR_MATERIA_PRIMA_TOTAL_BG = colors.HexColor("#ece8f7")
+    COR_TOTAL_GERAL = colors.HexColor("#343a40")
 
     info_filtro = RELATORIO_ESTACAO_STATUS_INFO.get(status_filtro, RELATORIO_ESTACAO_STATUS_INFO["ambos"])
 
@@ -10930,15 +10988,18 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
         "cabecalho_tabela", parent=estilo_celula, fontName="Helvetica-Bold", fontSize=7.8, leading=9.1,
         textColor=COR_CABECALHO_TEXTO,
     )
+    estilo_mp_aviso = ParagraphStyle("mp_aviso", parent=estilo_celula, textColor=colors.HexColor("#856404"), fontName="Helvetica-Oblique")
 
     largura_disponivel = A4[0] - doc.leftMargin - doc.rightMargin
 
+    detalhe_txt = "com matéria-prima principal" if incluir_mp else "somente status (sem matéria-prima)"
     rotulos_selecionados = [rotulo_estacao(e.nome) for e, _ in estacoes_com_itens]
     elementos = [
         Paragraph("Relatório de Estações Selecionadas", estilos["Title"]),
         Paragraph(f'Estações: {", ".join(rotulos_selecionados) or "—"}', estilos["Normal"]),
         Paragraph(
-            f'Filtro: {info_filtro["titulo"]} · Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")}',
+            f'Filtro: {info_filtro["titulo"]} · Detalhe: {detalhe_txt} · '
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")}',
             estilos["Normal"],
         ),
         Spacer(1, 5 * mm),
@@ -10952,6 +11013,12 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
 
     hoje = date.today()
     todos_itens = [item for _, itens in estacoes_com_itens for item in itens]
+    # Mesma fonte de dados que o relatório de uma estação só e que os
+    # popups da tela de Estações (Kanban) já usam — calculado 1x pra todos
+    # os itens de TODAS as estações escolhidas. Só calculado quando
+    # `incluir_mp` (senão fica vazio — sem trabalho extra quando a pessoa
+    # pediu "só o status").
+    materiais_por_item = {item.id: _materiais_item_pedido(item) for item in todos_itens} if incluir_mp else {}
     total_itens = len(todos_itens)
     total_pecas = sum(item.quantidade or 0 for item in todos_itens)
     total_pecas_txt = int(total_pecas) if total_pecas == int(total_pecas) else total_pecas
@@ -11025,20 +11092,127 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
             grupos[indice_por_pedido[chave]].append(item)
         return grupos
 
+    # ------------------------------------------------------------------
+    # Matéria-prima principal por item (pedido do Bruno, 24/09/2026, 4ª
+    # rodada: "em todas as areas") — MESMA camada que o relatório de uma
+    # estação só (_gerar_pdf_estacao) já tem: célula por item na tabela +
+    # total consolidado por bloco/estação, ligada só quando `incluir_mp`.
+    # ------------------------------------------------------------------
+
+    def _celula_materia_item(item):
+        """Pesagem de matéria-prima PRINCIPAL do item — MESMO par
+        unitário/lote do relatório de uma estação só e do popup da tela de
+        Estações (`_celula_materia_item` em `_gerar_pdf_estacao`,
+        estacoes_kanban.html), em notação compacta "unitário/lote" (ver
+        nota na versão de `_gerar_pdf_estacao` sobre por que o formato por
+        extenso "un X · Lote Y" estourava a altura de página em pedidos com
+        muitos itens agrupados — MESMO risco aqui, com várias estações no
+        mesmo documento)."""
+        info = materiais_por_item[item.id]
+        if not info["matched"]:
+            return Paragraph("não identificado", estilo_mp_aviso)
+        principais = info["principais"]
+        if not principais:
+            return Paragraph("—", estilo_celula)
+        partes = [
+            f'{_xml_escape(p["nome_curto"])}: {p["unitario_fmt"]}/{p["lote_fmt"]} '
+            f'{_xml_escape(p["materia_prima"].unidade)}'
+            for p in principais
+        ]
+        return Paragraph("<br/>".join(partes), estilo_celula)
+
+    def _agregar_materiais(itens_grupo):
+        """Soma o consumo de cada matéria-prima PRINCIPAL entre TODOS os
+        itens do bloco — MESMA agregação de `_gerar_pdf_estacao`."""
+        agregados = {}
+        nao_identificados = 0
+        for item in itens_grupo:
+            info = materiais_por_item[item.id]
+            if not info["matched"]:
+                nao_identificados += 1
+                continue
+            for p in info["principais"]:
+                mp = p["materia_prima"]
+                bucket = agregados.setdefault(mp.id, {"materia_prima": mp, "quantidade": 0.0})
+                bucket["quantidade"] += p["lote"]
+        linhas = sorted(
+            agregados.values(),
+            key=lambda l: (l["materia_prima"].unidade != "kg", -l["quantidade"]),
+        )
+        return linhas, nao_identificados
+
+    def _tabela_total_materiais(linhas):
+        """Tabela-resumo com o total de cada matéria-prima do bloco/estação
+        — MESMO visual (fundo lilás) de `_gerar_pdf_estacao`."""
+        cabecalho = ["Matéria-prima", "Quantidade total"]
+        estilo_total_celula = ParagraphStyle("mp_total_celula_multi", parent=estilo_celula, fontName="Helvetica-Bold")
+        dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+        for linha_mp in linhas:
+            mp = linha_mp["materia_prima"]
+            qtd_fmt = _formatar_quantidade_pt_br(linha_mp["quantidade"], mp.unidade)
+            dados_tabela.append([
+                Paragraph(mp.descricao, estilo_total_celula),
+                Paragraph(f"{qtd_fmt} {mp.unidade}", estilo_total_celula),
+            ])
+        largura_1 = largura_disponivel * 0.62
+        tabela = Table(dados_tabela, colWidths=[largura_1, largura_disponivel - largura_1], repeatRows=1)
+        tabela.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("BACKGROUND", (0, 1), (-1, -1), COR_MATERIA_PRIMA_TOTAL_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        return tabela
+
+    def _secao_materia_prima_bloco(itens_grupo, titulo_bloco):
+        """Total consolidado de matéria-prima PRINCIPAL de um bloco (Em
+        produção/Pendente) ou de uma estação inteira — mesma estrutura
+        simplificada (faixa + tabela de total, sem detalhamento por
+        produto) de `_gerar_pdf_estacao`. `[]` quando não há nada pra
+        mostrar (nem total nem item não identificado)."""
+        linhas_totais, nao_identificados = _agregar_materiais(itens_grupo)
+        if not linhas_totais and not nao_identificados:
+            return []
+        flow = [_faixa(f"TOTAL DE MATÉRIA-PRIMA PRINCIPAL — {titulo_bloco}", COR_MATERIA_PRIMA, fonte=9)]
+        if linhas_totais:
+            flow.append(_tabela_total_materiais(linhas_totais))
+        else:
+            flow.append(Paragraph("Nenhuma matéria-prima principal identificada.", estilos["Normal"]))
+        if nao_identificados:
+            flow.append(Spacer(1, 1 * mm))
+            flow.append(Paragraph(
+                f'<font color="#856404">{nao_identificados} item(ns) não identificado(s) automaticamente '
+                'no catálogo de Gestão de Custos — não entram nesse total.</font>',
+                estilo_celula,
+            ))
+        return flow
+
     # Larguras calculadas medindo o texto real que cai em cada coluna nessa
     # fonte (reportlab.stringWidth), mesmo cuidado do relatório de
     # Planejamento Mensal PCP (22/09/2026) — datas ("dd/mm/aaaa") e
     # "Situação prazo" (ex.: "15d atrasado") têm largura mínima garantida
     # pra nunca cortar no meio do texto; Cliente/Produto ficam com o que
-    # sobra (aqui, bem mais folga que lá — só 10 colunas, não 13).
-    pesos = [18, 40, 104, 120, 30, 46, 46, 46, 46, 54]
+    # sobra (aqui, bem mais folga que lá — só 10/11 colunas, não 13). Coluna
+    # "Matéria-prima" (pedido do Bruno, 24/09/2026, 4ª rodada) tira espaço
+    # só de Cliente/Produto — Pedido, Qtd, datas e Situação prazo mantêm a
+    # MESMA largura absoluta (soma de pesos igual, 550) nos dois casos.
+    pesos = (
+        [18, 40, 67, 77, 30, 80, 46, 46, 46, 46, 54] if incluir_mp
+        else [18, 40, 104, 120, 30, 46, 46, 46, 46, 54]
+    )
     soma_pesos = sum(pesos)
     larguras_colunas = [p / soma_pesos * largura_disponivel for p in pesos]
 
     def _tabela_itens(itens_grupo):
-        cabecalho = [
-            "", "Pedido", "Cliente", "Produto", "Qtd", "Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo",
-        ]
+        cabecalho = ["", "Pedido", "Cliente", "Produto", "Qtd"]
+        if incluir_mp:
+            cabecalho.append('Matéria-prima<br/><font size="6.2">(unitário/lote)</font>')
+        cabecalho += ["Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo"]
         dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) if c else "" for c in cabecalho]]
         cores_linhas = [COR_CABECALHO_BG]
         spans_pedido = []
@@ -11073,6 +11247,10 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
                     cel_cliente,
                     Paragraph(item.descricao_produto or "—", estilo_celula),
                     Paragraph(str(qtd_txt), estilo_celula),
+                ]
+                if incluir_mp:
+                    linha_tabela.append(_celula_materia_item(item))
+                linha_tabela += [
                     Paragraph((_formatar_data_br(pedido.data_inclusao_pedido) if pedido else "") or "—", estilo_celula),
                     Paragraph((_formatar_data_br(pedido.data_cliente) if pedido else "") or "—", estilo_celula),
                     Paragraph(_formatar_data_br(item.liberacao_prevista) or "—", estilo_celula),
@@ -11135,17 +11313,45 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro):
             elementos.append(_faixa(f"{titulo} — {len(itens_grupo)} item(ns)", cor_fundo, fonte=10))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
+                if incluir_mp:
+                    elementos.append(Spacer(1, 2 * mm))
+                    elementos.extend(_secao_materia_prima_bloco(itens_grupo, f"{titulo} — {rotulo}"))
             else:
                 elementos.append(Spacer(1, 2 * mm))
                 elementos.append(Paragraph("Nenhum item nesta situação no momento.", estilos["Normal"]))
             elementos.append(Spacer(1, 5 * mm))
+
+        # Total geral da ESTAÇÃO (Pendente + Em produção), quando o filtro é
+        # "ambos" — mesmo padrão do relatório de uma estação só: os totais
+        # de bloco acima já cobrem cada situação separada, este fecha com a
+        # soma das duas pra essa estação específica.
+        if incluir_mp and status_filtro == "ambos" and itens:
+            linhas_geral, nao_identificados_geral = _agregar_materiais(itens)
+            if linhas_geral or nao_identificados_geral:
+                elementos.append(_faixa(
+                    f"TOTAL GERAL DE MATÉRIA-PRIMA PRINCIPAL — {rotulo} — PENDENTE + EM PRODUÇÃO",
+                    COR_TOTAL_GERAL, fonte=9,
+                ))
+                if linhas_geral:
+                    elementos.append(_tabela_total_materiais(linhas_geral))
+                else:
+                    elementos.append(Paragraph("Nenhuma matéria-prima principal identificada.", estilos["Normal"]))
+                if nao_identificados_geral:
+                    elementos.append(Spacer(1, 1 * mm))
+                    elementos.append(Paragraph(
+                        f'<font color="#856404">{nao_identificados_geral} item(ns) não identificado(s) automaticamente '
+                        'no catálogo de Gestão de Custos — não entram nesses totais.</font>',
+                        estilo_celula,
+                    ))
+                elementos.append(Spacer(1, 3 * mm))
 
         elementos.append(Spacer(1, 4 * mm))
 
     doc.build(elementos)
     buffer.seek(0)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
-    nome_arquivo = f"estacoes_selecionadas_{status_filtro}_{date.today().isoformat()}.pdf"
+    sufixo_mp = "com_mp" if incluir_mp else "somente_status"
+    nome_arquivo = f"estacoes_selecionadas_{status_filtro}_{sufixo_mp}_{date.today().isoformat()}.pdf"
     resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
     return resposta
 
@@ -16572,9 +16778,15 @@ def register_routes(app):
         status_filtro = request.args.get("status", "ambos")
         if status_filtro not in RELATORIO_ESTACAO_STATUS_INFO:
             status_filtro = "ambos"
+        # "onde eu possa optar por imprimir somente os status das estações
+        # (sem a materia prima), e uma impressao com materia prima" (pedido
+        # do Bruno, 24/09/2026, 4ª rodada) — mp=0 desliga a coluna/seções de
+        # matéria-prima; qualquer outro valor (inclusive ausente) mantém o
+        # padrão de sempre (com matéria-prima).
+        incluir_mp = request.args.get("mp", "1") != "0"
 
         itens = _itens_relatorio_estacao(nome, status_filtro)
-        return _gerar_pdf_estacao(estacao, itens, status_filtro)
+        return _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=incluir_mp)
 
     @app.route("/estacoes/relatorio-multiplo.pdf")
     @login_required
@@ -16590,6 +16802,11 @@ def register_routes(app):
         status_filtro = request.args.get("status", "ambos")
         if status_filtro not in RELATORIO_ESTACAO_STATUS_INFO:
             status_filtro = "ambos"
+        # "onde eu possa optar por imprimir somente os status das estações
+        # (sem a materia prima), e uma impressao com materia prima... em
+        # todas as areas" (pedido do Bruno, 24/09/2026, 4ª rodada) — mesmo
+        # parâmetro `mp` do relatório de uma estação só.
+        incluir_mp = request.args.get("mp", "1") != "0"
 
         if not nomes:
             flash("Selecione ao menos uma estação para gerar o relatório.", "warning")
@@ -16618,7 +16835,7 @@ def register_routes(app):
             (estacoes_por_nome[nome_ord], _itens_relatorio_estacao(nome_ord, status_filtro))
             for nome_ord in ordem
         ]
-        return _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro)
+        return _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=incluir_mp)
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
     @login_required
