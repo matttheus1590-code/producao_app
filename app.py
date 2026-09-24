@@ -10346,13 +10346,30 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
     fonte padrão do PDF (Helvetica/WinAnsi) não tem esses glifos, então cada
     emoji viraria um quadrado preto ao imprimir. O efeito "visual/intuitivo"
     pedido é feito com cor e forma (faixas coloridas, pingo de semáforo),
-    que funciona em qualquer impressora sem depender de fonte nenhuma."""
+    que funciona em qualquer impressora sem depender de fonte nenhuma.
+
+    Revisão (pedido do Bruno, 24/09/2026): "passa a incluir os volumes de
+    materia prima... de forma detalhada por produto, total produto, e total
+    dentro do pendente e andamento... detalhando cada materia prima etc...
+    de forma clara, intuitiva e didatica... quero que inclua hora e datas
+    atualizadas... quero o logo da empresa" — acrescenta, dentro de CADA
+    bloco (Em produção / Pendente), uma seção "MATÉRIA-PRIMA" com o
+    detalhamento por produto (reaproveitando `_materiais_item_pedido`, a
+    MESMA fonte de dados que já alimenta os popups da tela de Estações —
+    nunca inventa um número: item sem correspondência automática no
+    catálogo de Gestão de Custos aparece como "não identificado", igual à
+    tela) seguida do total consolidado daquele bloco; logo da empresa no
+    cabeçalho (mesmo arquivo/técnica do Espelho Pedido de Venda,
+    `_ESPELHO_LOGO_PATH`); data/hora de geração já existia (`_agora_brt()`
+    no subtítulo) e continua."""
+    from xml.sax.saxutils import escape as _xml_escape
+
     from reportlab.graphics.shapes import Circle, Drawing
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     COR_SEMAFORO_BG = {
         "vermelho": colors.HexColor("#f8d7da"),
@@ -10371,9 +10388,24 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
     # "Pendente" = secondary.
     COR_GRUPO_EM_PRODUCAO = colors.HexColor("#0d6efd")
     COR_GRUPO_PENDENTE = colors.HexColor("#6c757d")
+    # Cor própria pra seção de matéria-prima (pedido do Bruno, 24/09/2026) —
+    # roxo/teal escuro, deliberadamente diferente do azul (Em produção) e do
+    # cinza (Pendente) usados nas faixas de bloco acima, pra nunca confundir
+    # "início de um novo bloco de status" com "início da seção de matéria-
+    # prima dentro do bloco atual". Total geral (Pendente + Em produção,
+    # abaixo) usa um cinza-chumbo ainda mais escuro, reforçando que é a
+    # soma de tudo, não mais um bloco.
+    COR_MATERIA_PRIMA = colors.HexColor("#5a4a9c")
+    COR_MATERIA_PRIMA_TOTAL_BG = colors.HexColor("#ece8f7")
+    COR_TOTAL_GERAL = colors.HexColor("#343a40")
 
     info_filtro = RELATORIO_ESTACAO_STATUS_INFO.get(status_filtro, RELATORIO_ESTACAO_STATUS_INFO["ambos"])
     rotulo = rotulo_estacao(estacao.nome)
+    # Mesma fonte de dados que a tela de Estações (Kanban) já usa por trás
+    # dos popups de matéria-prima — calculado 1x pra todos os itens do
+    # relatório (independe do status_filtro escolhido), reaproveitado pelas
+    # seções de matéria-prima de cada bloco mais abaixo.
+    materiais_por_item = {item.id: _materiais_item_pedido(item) for item in itens}
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -10392,14 +10424,30 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
 
     largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
 
-    elementos = [
+    # Logo da empresa no cabeçalho (pedido do Bruno, 24/09/2026) — mesmo
+    # arquivo/proporção já usados no Espelho Pedido de Venda
+    # (_ESPELHO_LOGO_PATH); segue existindo mesmo sem o logo (arquivo
+    # ausente não pode quebrar a geração do relatório).
+    bloco_titulo = [
         Paragraph(f"{rotulo} — Relatório de Produção", estilos["Title"]),
         Paragraph(
             f'Filtro: {info_filtro["titulo"]} · Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")}',
             estilos["Normal"],
         ),
-        Spacer(1, 6 * mm),
     ]
+    if os.path.exists(_ESPELHO_LOGO_PATH):
+        logo = Image(_ESPELHO_LOGO_PATH, width=36 * mm, height=36 * mm * (63 / 261))
+        cabecalho = Table([[logo, bloco_titulo]], colWidths=[40 * mm, largura_disponivel - 40 * mm])
+        cabecalho.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        elementos = [cabecalho, Spacer(1, 6 * mm)]
+    else:
+        elementos = bloco_titulo + [Spacer(1, 6 * mm)]
 
     def _kpi(valor, rotulo_kpi):
         return [
@@ -10584,6 +10632,230 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         tabela.setStyle(TableStyle(estilo_tabela))
         return tabela
 
+    # ------------------------------------------------------------------
+    # Seção de matéria-prima por bloco (pedido do Bruno, 24/09/2026): "passa
+    # a incluir os volumes de materia prima... de forma detalhada por
+    # produto, total produto, e total dentro do pendente e andamento...
+    # detalhando cada materia prima". Reaproveita `materiais_por_item`
+    # (calculado acima, MESMA função `_materiais_item_pedido` que já
+    # alimenta os popups da tela de Estações) — nunca soma um item "não
+    # identificado" no catálogo de Gestão de Custos num total, mesma régua
+    # de transparência de sempre neste app.
+    # ------------------------------------------------------------------
+
+    def _agregar_materiais(itens_grupo):
+        """Soma o consumo de cada matéria-prima entre TODOS os itens do
+        bloco (mesma agregação que `materiais_agrupados_por_coluna` já faz
+        na tela de Estações, aqui reaproveitada pro PDF) — é o "total dentro
+        do pendente e andamento" que o Bruno pediu. Item não identificado
+        entra na contagem `nao_identificados`, mas não no total."""
+        agregados = {}
+        nao_identificados = 0
+        for item in itens_grupo:
+            info = materiais_por_item[item.id]
+            if not info["matched"]:
+                nao_identificados += 1
+                continue
+            for linha in info["linhas"]:
+                mp = linha["materia_prima"]
+                bucket = agregados.setdefault(mp.id, {"materia_prima": mp, "quantidade": 0.0})
+                bucket["quantidade"] += linha["quantidade"]
+        linhas = sorted(
+            agregados.values(),
+            key=lambda l: (l["materia_prima"].unidade != "kg", -l["quantidade"]),
+        )
+        return linhas, nao_identificados
+
+    def _materiais_por_produto(itens_grupo):
+        """Agrupa os itens do bloco por DESCRIÇÃO DE PRODUTO (podem vir de
+        pedidos diferentes) e soma o consumo de matéria-prima entre eles —
+        "detalhado por produto, total produto" do pedido do Bruno. Ordem
+        alfabética do nome do produto (facilita achar um produto específico
+        num relatório de conferência, diferente da ordem por urgência da
+        tabela de itens acima)."""
+        grupos = {}
+        for item in itens_grupo:
+            nome = item.descricao_produto or "—"
+            g = grupos.setdefault(nome, {"itens": [], "pecas": 0.0, "pedidos": set()})
+            g["itens"].append(item)
+            g["pecas"] += item.quantidade or 0
+            g["pedidos"].add(item.pedido_id)
+
+        resultado = []
+        for nome in sorted(grupos, key=lambda n: n.upper()):
+            g = grupos[nome]
+            materiais_agregados = {}
+            algum_identificado = False
+            algum_nao_identificado = False
+            kg_total_produto = 0.0
+            for item in g["itens"]:
+                info = materiais_por_item[item.id]
+                if not info["matched"]:
+                    algum_nao_identificado = True
+                    continue
+                algum_identificado = True
+                kg_total_produto += info["kg_total"]
+                for linha in info["linhas"]:
+                    mp = linha["materia_prima"]
+                    bucket = materiais_agregados.setdefault(mp.id, {"materia_prima": mp, "quantidade": 0.0})
+                    bucket["quantidade"] += linha["quantidade"]
+            linhas_produto = sorted(
+                materiais_agregados.values(),
+                key=lambda l: (l["materia_prima"].unidade != "kg", -l["quantidade"]),
+            )
+            resultado.append({
+                "produto": nome,
+                "pecas": g["pecas"],
+                "n_pedidos": len(g["pedidos"]),
+                "linhas": linhas_produto,
+                "kg_total": round(kg_total_produto, 3),
+                "identificado": algum_identificado,
+                "parcial": algum_identificado and algum_nao_identificado,
+            })
+        return resultado
+
+    estilo_mp_produto = ParagraphStyle("mp_produto", parent=estilo_celula, fontName="Helvetica-Bold")
+    estilo_mp_aviso = ParagraphStyle("mp_aviso", parent=estilo_celula, textColor=colors.HexColor("#856404"), fontName="Helvetica-Oblique")
+    estilo_mp_total_titulo = ParagraphStyle("mp_total_titulo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=9.5, textColor=COR_MATERIA_PRIMA)
+
+    def _tabela_materia_prima_produtos(produtos_info):
+        """Tabela de detalhamento por produto — Produto/Peças mescladas
+        verticalmente (MESMA técnica de SPAN já usada em `_tabela_itens` pra
+        Pedido/Cliente), uma linha por matéria-prima ao lado, com o total em
+        kg do produto já junto do nome (pedido do Bruno: "total produto")."""
+        cabecalho = ["Produto", "Matéria-prima", "Quantidade"]
+        dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+        spans_produto = []
+        linha_atual = 1
+
+        for produto in produtos_info:
+            linha_inicio = linha_atual
+            pecas = produto["pecas"]
+            pecas_txt = int(pecas) if pecas == int(pecas) else pecas
+            meta_txt = f'{pecas_txt} peça(s) em {produto["n_pedidos"]} pedido(s)'
+            if produto["identificado"] and produto["kg_total"]:
+                meta_txt += f' · Total: {_formatar_quantidade_pt_br(produto["kg_total"], "kg")} kg'
+            cel_produto = Paragraph(
+                f'{_xml_escape(produto["produto"])}<br/>'
+                f'<font size="7.5" color="#495057">{_xml_escape(meta_txt)}</font>',
+                estilo_mp_produto,
+            )
+
+            if not produto["identificado"]:
+                dados_tabela.append([
+                    cel_produto,
+                    Paragraph("Não identificado no catálogo de Gestão de Custos — não entra nos totais.", estilo_mp_aviso),
+                    "",
+                ])
+                linha_atual += 1
+            else:
+                if produto["linhas"]:
+                    for indice, linha_mp in enumerate(produto["linhas"]):
+                        mp = linha_mp["materia_prima"]
+                        qtd_fmt = _formatar_quantidade_pt_br(linha_mp["quantidade"], mp.unidade)
+                        dados_tabela.append([
+                            cel_produto if indice == 0 else "",
+                            Paragraph(mp.descricao, estilo_celula),
+                            Paragraph(f"{qtd_fmt} {mp.unidade}", estilo_celula),
+                        ])
+                        linha_atual += 1
+                else:
+                    dados_tabela.append([cel_produto, Paragraph("Estrutura sem matéria-prima cadastrada.", estilo_mp_aviso), ""])
+                    linha_atual += 1
+                if produto["parcial"]:
+                    dados_tabela.append([
+                        "",
+                        Paragraph("+ item(ns) deste produto não identificado(s) — fora do total acima.", estilo_mp_aviso),
+                        "",
+                    ])
+                    linha_atual += 1
+
+            if linha_atual - 1 > linha_inicio:
+                spans_produto.append((linha_inicio, linha_atual - 1))
+
+        pesos = [32, 43, 25]
+        soma_pesos = sum(pesos)
+        larguras_mm = [p / soma_pesos * largura_disponivel for p in pesos]
+
+        tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
+        estilo_tabela = [
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+        ]
+        for linha_inicio, linha_fim in spans_produto:
+            estilo_tabela.append(("SPAN", (0, linha_inicio), (0, linha_fim)))
+        tabela.setStyle(TableStyle(estilo_tabela))
+        return tabela
+
+    def _tabela_total_materiais(linhas):
+        """Tabela-resumo com o total de cada matéria-prima do bloco inteiro
+        (pedido do Bruno: "total dentro do pendente e andamento") — fundo
+        lilás claro pra destacar visualmente que é um total, não mais uma
+        linha de detalhe."""
+        cabecalho = ["Matéria-prima", "Quantidade total"]
+        estilo_total_celula = ParagraphStyle("mp_total_celula", parent=estilo_celula, fontName="Helvetica-Bold")
+        dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho]]
+        for linha_mp in linhas:
+            mp = linha_mp["materia_prima"]
+            qtd_fmt = _formatar_quantidade_pt_br(linha_mp["quantidade"], mp.unidade)
+            dados_tabela.append([
+                Paragraph(mp.descricao, estilo_total_celula),
+                Paragraph(f"{qtd_fmt} {mp.unidade}", estilo_total_celula),
+            ])
+        largura_1 = largura_disponivel * 0.62
+        tabela = Table(dados_tabela, colWidths=[largura_1, largura_disponivel - largura_1], repeatRows=1)
+        tabela.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("BACKGROUND", (0, 1), (-1, -1), COR_MATERIA_PRIMA_TOTAL_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+        ]))
+        return tabela
+
+    def _secao_materia_prima_bloco(itens_grupo, titulo_bloco):
+        """Monta a seção completa de matéria-prima de UM bloco: faixa,
+        detalhamento por produto, e o total do bloco — nessa ordem, pra ler
+        de forma didática (primeiro o detalhe, depois o resumo). Nome
+        deliberadamente diferente do `_secao_materia_prima(codigo)` que já
+        existe em outro módulo (classificação de aba de Parâmetros) — são
+        coisas diferentes, só evitando reaproveitar o mesmo nome."""
+        produtos_info = _materiais_por_produto(itens_grupo)
+        linhas_totais, nao_identificados = _agregar_materiais(itens_grupo)
+
+        flow = [_faixa_grupo(f"MATÉRIA-PRIMA — {titulo_bloco}", COR_MATERIA_PRIMA)]
+        if produtos_info:
+            flow.append(_tabela_materia_prima_produtos(produtos_info))
+        # Aviso de não identificados logo após a tabela de detalhe (antes do
+        # total) — colado a uma tabela maior, em vez de depois do bloco de
+        # total, evita deixar essa única linha "órfã" sozinha numa página
+        # nova quando o total já preencheu o resto da página anterior.
+        if nao_identificados:
+            flow.append(Spacer(1, 1.5 * mm))
+            flow.append(Paragraph(
+                f'<font color="#856404">{nao_identificados} item(ns) deste bloco não identificado(s) automaticamente '
+                'no catálogo de Gestão de Custos — não entram nesses totais.</font>',
+                estilo_celula,
+            ))
+        flow.append(Spacer(1, 3 * mm))
+        flow.append(Paragraph(f"Total de matéria-prima — {titulo_bloco}", estilo_mp_total_titulo))
+        flow.append(Spacer(1, 1.5 * mm))
+        if linhas_totais:
+            flow.append(_tabela_total_materiais(linhas_totais))
+        else:
+            flow.append(Paragraph("Nenhuma matéria-prima identificada neste bloco.", estilos["Normal"]))
+        return flow
+
     if status_filtro == "ambos":
         # "PRINCIPAL: agrupe separadamente o que está em produção e o que
         # está pendente" (pedido do Bruno, 17/09/2026) — 2 blocos sempre
@@ -10600,10 +10872,32 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
             elementos.append(_faixa_grupo(f"{titulo} — {len(itens_grupo)} ITEM(NS)", cor_fundo))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
+                elementos.append(Spacer(1, 4 * mm))
+                elementos.extend(_secao_materia_prima_bloco(itens_grupo, titulo))
             else:
                 elementos.append(Spacer(1, 2 * mm))
                 elementos.append(Paragraph("Nenhum item nesta situação no momento.", estilos["Normal"]))
             elementos.append(Spacer(1, 7 * mm))
+
+        # Total combinado (Pendente + Em produção) — pedido do Bruno
+        # (24/09/2026) pediu o total "dentro do pendente e andamento", o que
+        # os 2 totais de bloco acima já cobrem; este fecha com a soma geral,
+        # pra quem quer só o número final de matéria-prima do relatório
+        # inteiro sem somar os 2 blocos na mão.
+        if itens:
+            linhas_geral, nao_identificados_geral = _agregar_materiais(itens)
+            elementos.append(_faixa_grupo("TOTAL GERAL DE MATÉRIA-PRIMA — PENDENTE + EM PRODUÇÃO", COR_TOTAL_GERAL))
+            if linhas_geral:
+                elementos.append(_tabela_total_materiais(linhas_geral))
+            else:
+                elementos.append(Paragraph("Nenhuma matéria-prima identificada.", estilos["Normal"]))
+            if nao_identificados_geral:
+                elementos.append(Spacer(1, 1.5 * mm))
+                elementos.append(Paragraph(
+                    f'<font color="#856404">{nao_identificados_geral} item(ns) não identificado(s) automaticamente '
+                    'no catálogo de Gestão de Custos — não entram nesses totais.</font>',
+                    estilo_celula,
+                ))
     else:
         # Filtro já veio de um status só (Pendente OU Em produção) — mantém a
         # MESMA linguagem visual (faixa + tabela sem coluna Status), só com 1
@@ -10613,6 +10907,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro):
         elementos.append(_faixa_grupo(f"{titulo_unico} — {len(itens)} ITEM(NS)", cor_unica))
         if itens:
             elementos.append(_tabela_itens(itens))
+            elementos.append(Spacer(1, 4 * mm))
+            elementos.extend(_secao_materia_prima_bloco(itens, titulo_unico))
         else:
             elementos.append(Spacer(1, 2 * mm))
             elementos.append(Paragraph("Nenhum item encontrado com o filtro aplicado.", estilos["Normal"]))
