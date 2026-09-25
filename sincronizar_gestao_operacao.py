@@ -36,7 +36,16 @@ divergem). `_coalesce_numero` lê a coluna original primeiro e só usa a
 duplicata de Resultados quando a original está vazia/ilegível — pedido do
 Bruno: "quero que extraia o máximo de números e informações". Também
 rastreamos (sem bloquear a sincronização) criticidade/OTD com valor fora do
-esperado, pra aparecer no relatório em vez de sumir silenciosamente."""
+esperado, pra aparecer no relatório em vez de sumir silenciosamente.
+
+Ampliação de 25/09/2026 — parâmetro opcional `filtro_nf_ano_mes` (pedido do
+Bruno: sincronizar só os pedidos cuja "DATA EMISSÃO NF", coluna AB, caia num
+ano/mês específico — ex. `(2026, 8)` pra "notas emitidas em agosto"). Quando
+informado, linhas cuja NF não caia nesse ano/mês são ignoradas por completo
+(não atualizam pedido existente nem viram PedidoOperacao novo) — mesmo
+critério usado só pra decidir SE a linha entra, o resto do comportamento
+(nunca apaga valor existente, casamento exato/aproximado, etc.) não muda.
+Sem o parâmetro (`None`, padrão), sincroniza a planilha inteira como sempre."""
 
 import re
 
@@ -120,7 +129,10 @@ def _prioridade_da_criticidade(v):
     return None
 
 
-def sincronizar_gestao_operacao(xlsx_path):
+def sincronizar_gestao_operacao(xlsx_path, filtro_nf_ano_mes=None):
+    """`filtro_nf_ano_mes`: opcional, tupla `(ano, mes)`. Quando informado, só
+    processa linhas cuja "DATA EMISSÃO NF" (coluna AB) caia nesse ano/mês —
+    ver nota de 25/09/2026 no docstring do módulo."""
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     ws = wb[SHEET_NAME]
 
@@ -160,6 +172,12 @@ def sincronizar_gestao_operacao(xlsx_path):
         cliente = _parse_texto(_cell(ws, row, "cliente"))
         if not cliente:
             continue
+
+        if filtro_nf_ano_mes is not None:
+            data_nf = _parse_data(_cell(ws, row, "data_emissao_nf"))
+            if data_nf is None or (data_nf.year, data_nf.month) != tuple(filtro_nf_ano_mes):
+                continue
+
         stats["linhas_lidas"] += 1
 
         pedido_venda_raw = _parse_texto(_cell(ws, row, "pedido_venda")) or ""

@@ -347,6 +347,9 @@ def create_app():
         # Depende dos seeds de espuma (H/HS/HL/HDISC/HLR.../HLB/HLCC) acima
         # já terem rodado — roda em todo boot (ver docstring da função).
         _migrar_densidade_estrutura_produto(app)
+        # Roda por último de todos: depende de PedidoOperacao já existir e de
+        # todas as migrações de coluna acima já terem rodado.
+        _sincronizar_gestao_operacao_agosto_25_09_2026(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -1385,6 +1388,71 @@ def _sincronizar_gestao_operacao_03_09_2026(app):
         app.logger.warning(
             "Sincronização Gestão Operação 03/09/2026 — valores de OTD fora do padrão SIM/NÃO "
             "(gravados como texto truncado, checar manualmente): %s",
+            stats["otd_nao_reconhecidos"],
+        )
+
+
+_CHAVE_SINCRONIZACAO_GO_AGOSTO_25_09_2026 = "sincronizacao_gestao_operacao_agosto_25_09_2026"
+
+
+def _sincronizar_gestao_operacao_agosto_25_09_2026(app):
+    """Sincroniza Gestão Operação (PedidoOperacao) com a planilha "agosto
+    Gestão de Fluxo Produtivo 2026" enviada pelo Bruno em 25/09/2026 — mesmo
+    layout de coluna já usado em 28/08 e 03/09 (conferido coluna a coluna
+    antes de reaproveitar sincronizar_gestao_operacao.py).
+
+    Pedido explícito do Bruno (confirmado por pergunta direta, já que a
+    planilha tem pedidos de dez/2025 a set/2026): sincronizar SÓ os pedidos
+    cuja "DATA EMISSÃO NF" (coluna AB) caia em agosto/2026 — não a planilha
+    inteira. Usa o parâmetro `filtro_nf_ano_mes=(2026, 8)`, novo em
+    sincronizar_gestao_operacao.py (25/09/2026) — todo o resto do
+    comportamento é o mesmo de sempre (nunca apaga valor já existente, só
+    atualiza/completa; casamento exato + aproximado por token numérico).
+
+    Protegido por `ControleSistema` — roda exatamente uma vez, e nunca lança
+    exceção (mesmo padrão das sincronizações anteriores: um erro aqui não
+    pode derrubar o boot do site inteiro)."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SINCRONIZACAO_GO_AGOSTO_25_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "sincronizacao_gestao_operacao_agosto_25_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from sincronizar_gestao_operacao import sincronizar_gestao_operacao
+
+    try:
+        stats = sincronizar_gestao_operacao(xlsx_path, filtro_nf_ano_mes=(2026, 8))
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Sincronização Gestão Operação (agosto) 25/09/2026 falhou com erro inesperado.")
+        return
+
+    db.session.add(ControleSistema(chave=_CHAVE_SINCRONIZACAO_GO_AGOSTO_25_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Sincronização Gestão Operação (agosto) 25/09/2026: %d linhas (NF emitida em ago/2026) | "
+        "%d pedidos atualizados | %d pedidos criados | %d campos atualizados | %d casamentos exatos | "
+        "%d aproximados | %d sem match de pedido_venda (viraram novos).",
+        stats["linhas_lidas"],
+        stats["pedidos_atualizados"],
+        stats["pedidos_criados"],
+        stats["campos_atualizados"],
+        stats["exato"],
+        stats["aproximado"],
+        stats["sem_match_pedido_venda"],
+    )
+    if stats["criticidades_nao_reconhecidas"]:
+        app.logger.warning(
+            "Sincronização Gestão Operação (agosto) 25/09/2026 — valores de CRITICIDADE não "
+            "reconhecidos (prioridade não atualizada automaticamente nessas linhas, checar "
+            "manualmente): %s",
+            stats["criticidades_nao_reconhecidas"],
+        )
+    if stats["otd_nao_reconhecidos"]:
+        app.logger.warning(
+            "Sincronização Gestão Operação (agosto) 25/09/2026 — valores de OTD fora do padrão "
+            "SIM/NÃO (gravados como texto truncado, checar manualmente): %s",
             stats["otd_nao_reconhecidos"],
         )
 
