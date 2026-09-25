@@ -355,6 +355,9 @@ def create_app():
         # Resultados dependem de pedidos fora de agosto). Depende da
         # sincronização de agosto acima só por ordem lógica, não por dado.
         _sincronizar_gestao_operacao_agosto_completa_25_09_2026(app)
+        # Depende das 2 sincronizações acima já terem rodado (usa go_data_
+        # efetiva_liberacao_pcp, que também é preenchido por elas).
+        _backfill_coleta_chegada_via_liberacao_pcp_25_09_2026(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -1531,6 +1534,103 @@ def _sincronizar_gestao_operacao_agosto_completa_25_09_2026(app):
             "padrão SIM/NÃO (gravados como texto truncado, checar manualmente): %s",
             stats["otd_nao_reconhecidos"],
         )
+
+
+_CHAVE_BACKFILL_COLETA_CHEGADA_VIA_LIBERACAO_PCP_25_09_2026 = (
+    "backfill_coleta_chegada_via_liberacao_pcp_25_09_2026"
+)
+
+
+def _backfill_coleta_chegada_via_liberacao_pcp_25_09_2026(app):
+    """Pedido do Bruno em 25/09/2026, depois das 2 sincronizações acima: pra
+    pedidos que JÁ TÊM "Data efetiva de liberação PCP" (`go_data_efetiva_
+    liberacao_pcp`, aba PCP) preenchida — ou seja, já saíram da produção —
+    mas que ficaram sem "Data Real de Coleta/Embarque"
+    (`go_data_pedido_expedido`) e/ou "Data Real de Chegada no Cliente"
+    (`go_data_entregue_cliente`) na aba Logística porque a planilha de
+    logística não tinha esse dado pra esses pedidos específicos, usa a
+    liberação efetiva PCP como estimativa/base pra essas duas datas —
+    melhor uma estimativa (baseada num evento real e próximo no tempo) do
+    que deixar em branco pra sempre.
+
+    Importante, confirmado com o Bruno antes de implementar (regra "se algo
+    não bater, pare e avise" — isso mexe direto no OTD/lead time, então avisei
+    o impacto antes): é só um BACKFILL de uma vez só pra pedidos JÁ
+    PRODUZIDOS — não é lógica permanente. Pedidos novos (a partir do
+    planejamento PCP de setembro/2026 em diante) ele vai preencher esses 2
+    campos manualmente conforme forem acontecendo de verdade; por isso essa
+    função só roda uma vez (protegida por `ControleSistema`, igual as
+    sincronizações acima) e nunca mais depois disso — não fica reaplicando
+    a cada pedido novo.
+
+    Nunca sobrescreve valor já existente (só entra quando o campo está
+    None) — mesmo princípio não-destrutivo do resto da sincronização."""
+    if (
+        ControleSistema.query.filter_by(
+            chave=_CHAVE_BACKFILL_COLETA_CHEGADA_VIA_LIBERACAO_PCP_25_09_2026
+        ).first()
+        is not None
+    ):
+        return
+
+    candidatos = PedidoOperacao.query.filter(
+        PedidoOperacao.go_data_efetiva_liberacao_pcp.isnot(None)
+    ).filter(
+        db.or_(
+            PedidoOperacao.go_data_pedido_expedido.is_(None),
+            PedidoOperacao.go_data_entregue_cliente.is_(None),
+        )
+    ).all()
+
+    exemplos = []
+    n_expedido = 0
+    n_entregue = 0
+    try:
+        for pedido in candidatos:
+            lib = pedido.go_data_efetiva_liberacao_pcp
+            mudou_expedido = False
+            mudou_entregue = False
+            if pedido.go_data_pedido_expedido is None:
+                pedido.go_data_pedido_expedido = lib
+                n_expedido += 1
+                mudou_expedido = True
+            if pedido.go_data_entregue_cliente is None:
+                pedido.go_data_entregue_cliente = lib
+                n_entregue += 1
+                mudou_entregue = True
+            if len(exemplos) < 15 and (mudou_expedido or mudou_entregue):
+                campos_preenchidos = " + ".join(
+                    filter(None, [
+                        "Coleta/Embarque" if mudou_expedido else None,
+                        "Chegada no Cliente" if mudou_entregue else None,
+                    ])
+                )
+                exemplos.append(
+                    "%s (%s): liberação PCP %s -> %s"
+                    % (
+                        pedido.pedido_venda or "—",
+                        pedido.cliente or "—",
+                        lib.strftime("%d/%m/%Y"),
+                        campos_preenchidos,
+                    )
+                )
+    except Exception:
+        db.session.rollback()
+        app.logger.exception(
+            "Backfill Coleta/Chegada via liberação PCP 25/09/2026 falhou com erro inesperado."
+        )
+        return
+
+    db.session.add(
+        ControleSistema(chave=_CHAVE_BACKFILL_COLETA_CHEGADA_VIA_LIBERACAO_PCP_25_09_2026)
+    )
+    db.session.commit()
+    app.logger.warning(
+        "Backfill Coleta/Chegada via liberação PCP 25/09/2026: %d pedidos candidatos | "
+        "%d 'Coleta/Embarque real' preenchidos | %d 'Chegada no Cliente real' preenchidos "
+        "(estimativa a partir da liberação efetiva PCP, só onde estava em branco). Exemplos: %s",
+        len(candidatos), n_expedido, n_entregue, exemplos,
+    )
 
 
 _CHAVE_BACKFILL_SOLICITADA_CLIENTE_RETIRA_01_09_2026 = "backfill_go_data_solicitada_cliente_retira_01_09_2026"
