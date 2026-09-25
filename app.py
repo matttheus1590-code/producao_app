@@ -350,6 +350,11 @@ def create_app():
         # Roda por último de todos: depende de PedidoOperacao já existir e de
         # todas as migrações de coluna acima já terem rodado.
         _sincronizar_gestao_operacao_agosto_25_09_2026(app)
+        # Pedido do Bruno logo em seguida: a mesma planilha, mas sem o filtro
+        # de agosto — cobre os outros meses também (Expedição/Logística e
+        # Resultados dependem de pedidos fora de agosto). Depende da
+        # sincronização de agosto acima só por ordem lógica, não por dado.
+        _sincronizar_gestao_operacao_agosto_completa_25_09_2026(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -1453,6 +1458,77 @@ def _sincronizar_gestao_operacao_agosto_25_09_2026(app):
         app.logger.warning(
             "Sincronização Gestão Operação (agosto) 25/09/2026 — valores de OTD fora do padrão "
             "SIM/NÃO (gravados como texto truncado, checar manualmente): %s",
+            stats["otd_nao_reconhecidos"],
+        )
+
+
+_CHAVE_SINCRONIZACAO_GO_AGOSTO_COMPLETA_25_09_2026 = "sincronizacao_gestao_operacao_agosto_completa_25_09_2026"
+
+
+def _sincronizar_gestao_operacao_agosto_completa_25_09_2026(app):
+    """Segunda passada sobre a MESMA planilha "agosto Gestão de Fluxo
+    Produtivo 2026" (data/sincronizacao_gestao_operacao_agosto_25_09_2026.xlsx)
+    já usada em `_sincronizar_gestao_operacao_agosto_25_09_2026` — dessa vez
+    SEM o filtro de mês/ano da NF (planilha inteira, dez/2025 a set/2026).
+
+    Pedido do Bruno em 25/09/2026, depois de ver a 1ª sincronização (só
+    agosto) rodar: "preciso que todos esses campos atualize... pois todas as
+    info já existe, mas o sistema não atualizou automaticamente. quero que
+    expedição e resultados também atualize" — ele quer a planilha inteira
+    processada agora, não só o recorte de agosto (as telas de Expedição/
+    Logística e Resultados dependem de dados de pedidos de outros meses
+    também, ex. pedidos ainda em trânsito/aguardando expedição de julho,
+    setembro etc.). Mesmo método seguro de sempre: nunca apaga valor já
+    existente, só atualiza/completa; casamento exato + aproximado por token
+    numérico. Roda por cima da sincronização de agosto acima sem conflito —
+    os pedidos de agosto batem de novo (update sem diferença, já que os
+    dados já estão certos) e o resto da planilha (todos os outros meses)
+    entra agora pela primeira vez.
+
+    Protegido por `ControleSistema` — roda exatamente uma vez, e nunca lança
+    exceção (mesmo padrão das sincronizações anteriores: um erro aqui não
+    pode derrubar o boot do site inteiro)."""
+    if ControleSistema.query.filter_by(chave=_CHAVE_SINCRONIZACAO_GO_AGOSTO_COMPLETA_25_09_2026).first() is not None:
+        return
+
+    xlsx_path = os.path.join(BASE_DIR, "data", "sincronizacao_gestao_operacao_agosto_25_09_2026.xlsx")
+    if not os.path.exists(xlsx_path):
+        return
+
+    from sincronizar_gestao_operacao import sincronizar_gestao_operacao
+
+    try:
+        stats = sincronizar_gestao_operacao(xlsx_path)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Sincronização Gestão Operação (agosto completa) 25/09/2026 falhou com erro inesperado.")
+        return
+
+    db.session.add(ControleSistema(chave=_CHAVE_SINCRONIZACAO_GO_AGOSTO_COMPLETA_25_09_2026))
+    db.session.commit()
+    app.logger.info(
+        "Sincronização Gestão Operação (agosto completa, planilha inteira) 25/09/2026: %d linhas | "
+        "%d pedidos atualizados | %d pedidos criados | %d campos atualizados | %d casamentos exatos | "
+        "%d aproximados | %d sem match de pedido_venda (viraram novos).",
+        stats["linhas_lidas"],
+        stats["pedidos_atualizados"],
+        stats["pedidos_criados"],
+        stats["campos_atualizados"],
+        stats["exato"],
+        stats["aproximado"],
+        stats["sem_match_pedido_venda"],
+    )
+    if stats["criticidades_nao_reconhecidas"]:
+        app.logger.warning(
+            "Sincronização Gestão Operação (agosto completa) 25/09/2026 — valores de CRITICIDADE não "
+            "reconhecidos (prioridade não atualizada automaticamente nessas linhas, checar "
+            "manualmente): %s",
+            stats["criticidades_nao_reconhecidas"],
+        )
+    if stats["otd_nao_reconhecidos"]:
+        app.logger.warning(
+            "Sincronização Gestão Operação (agosto completa) 25/09/2026 — valores de OTD fora do "
+            "padrão SIM/NÃO (gravados como texto truncado, checar manualmente): %s",
             stats["otd_nao_reconhecidos"],
         )
 
