@@ -375,6 +375,10 @@ def create_app():
         # passadas (a correção nova em si já roda no parsing de
         # sincronizações futuras, ver _corrigir_data_expedido_invertida).
         _corrigir_datas_expedido_invertidas_28_09_2026(app)
+        # Independente das anteriores — mescla/apaga PedidoOperacao
+        # duplicado por pedido_venda (achado: pedido 713 contado 2x,
+        # inflando "NFs emitidas em agosto" pra 47 contra as 46 da planilha).
+        _corrigir_duplicatas_pedido_operacao_28_09_2026(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -1745,6 +1749,98 @@ def _corrigir_datas_expedido_invertidas_28_09_2026(app):
         "Emissão NF) | %d corrigidos (dia/mês trocados) | %d sem correção segura. "
         "Corrigidos: %s | Sem correção segura: %s",
         len(candidatos), len(corrigidos), len(nao_corrigiveis), corrigidos, nao_corrigiveis,
+    )
+
+
+_CHAVE_CORRIGIR_DUPLICATAS_PEDIDO_OPERACAO_28_09_2026 = "corrigir_duplicatas_pedido_operacao_28_09_2026"
+
+
+def _corrigir_duplicatas_pedido_operacao_28_09_2026(app):
+    """Pedido do Bruno em 28/09/2026: "PQ NO MES DE AGOSTO NO SITE POSSUI 47
+    NF E NA PLANILHA POSSUI 46 NF? QUERO QUE CORRIJA O SITE PARA 46 NFS".
+
+    Investigação: o pedido 713 (BAKER HUGHES, NF 7849, 19/08/2026) tinha DOIS
+    registros de `PedidoOperacao` no banco — id 349 (criado no import
+    original, 16/09/2026) e id 472 (criado numa sincronização de 25/09/2026,
+    sem que o casamento por pedido_venda encontrasse o registro já
+    existente daquela vez) — os dois com os mesmos dados de identidade e
+    comerciais, cada um só com um subconjunto diferente de campos
+    preenchidos do lado Logística/Resultados (id 472 tinha "Status
+    logística", "Data real entrega", "OTD realizado" e "Status final
+    alinhamento" preenchidos, que id 349 não tinha). Na planilha só existe
+    UMA linha pro pedido 713 (confirmado) — a duplicata é só no banco, e é
+    ela que fazia o site contar 47 NFs de agosto contra as 46 da planilha
+    (o pedido 713 entrava duas vezes na contagem).
+
+    Corrige de forma genérica (não só o caso específico do 713, caso surja
+    outro igual no futuro por algum problema de sincronização) — scan
+    confirmou que hoje é o único caso na base, dos 483 `pedido_venda`
+    distintos cadastrados. Pra cada `pedido_venda` não-vazio com mais de um
+    registro, mantém o mais ANTIGO (`criado_em` menor) como canônico, copia
+    pra ele qualquer campo preenchido só no(s) duplicado(s) mais recente(s)
+    — nunca sobrescreve um valor que o canônico já tem, mesmo princípio
+    não-destrutivo do resto da sincronização — e apaga o(s) duplicado(s)
+    (`PedidoOperacao` não tem FK/relação de nenhuma outra tabela apontando
+    pro seu id, então apagar é seguro). Guardado por `ControleSistema`, roda
+    uma única vez."""
+    if (
+        ControleSistema.query.filter_by(
+            chave=_CHAVE_CORRIGIR_DUPLICATAS_PEDIDO_OPERACAO_28_09_2026
+        ).first()
+        is not None
+    ):
+        return
+
+    grupos = {}
+    for p in PedidoOperacao.query.all():
+        pv = (p.pedido_venda or "").strip()
+        if pv:
+            grupos.setdefault(pv, []).append(p)
+
+    campos_mergeaveis = [
+        c.name for c in PedidoOperacao.__table__.columns
+        if c.name not in ("id", "pedido_venda", "criado_em", "atualizado_em")
+    ]
+
+    relatorio = []
+    try:
+        for pv, registros in grupos.items():
+            if len(registros) < 2:
+                continue
+            registros.sort(key=lambda p: p.criado_em or datetime.min)
+            canonico, *duplicados = registros
+            campos_copiados = []
+            for dup in duplicados:
+                for campo in campos_mergeaveis:
+                    if getattr(canonico, campo) is None:
+                        valor_dup = getattr(dup, campo)
+                        if valor_dup is not None:
+                            setattr(canonico, campo, valor_dup)
+                            campos_copiados.append(campo)
+            relatorio.append(
+                "%s (%s): mantido id %d, removido(s) id %s — campos copiados do "
+                "duplicado: %s"
+                % (pv, canonico.cliente or "—", canonico.id,
+                   [d.id for d in duplicados], campos_copiados or "nenhum")
+            )
+            for dup in duplicados:
+                db.session.delete(dup)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception(
+            "Correção de duplicatas de PedidoOperacao 28/09/2026 falhou com erro inesperado."
+        )
+        return
+
+    db.session.add(
+        ControleSistema(chave=_CHAVE_CORRIGIR_DUPLICATAS_PEDIDO_OPERACAO_28_09_2026)
+    )
+    db.session.commit()
+    app.logger.warning(
+        "Correção de duplicatas de PedidoOperacao 28/09/2026: %d pedido_venda com "
+        "duplicata encontrados e mesclados (registro mais antigo mantido, mais "
+        "recente(s) apagado(s)). Detalhe: %s",
+        len(relatorio), relatorio,
     )
 
 
