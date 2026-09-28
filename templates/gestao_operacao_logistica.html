@@ -5,95 +5,12 @@
 
 {% include "_gestao_operacao_subnav.html" with context %}
 
-{% set _go_semaforo_classe = {"verde": "border-success", "amarelo": "border-warning", "vermelho": "border-danger", "cinza": "border-secondary"} %}
-{% set _go_semaforo_badge = {"verde": "bg-success", "amarelo": "bg-warning text-dark", "vermelho": "bg-danger", "cinza": "bg-secondary"} %}
-{% set _go_semaforo_emoji = {"verde": "🟢", "amarelo": "🟡", "vermelho": "🔴", "cinza": "⚪"} %}
+{# Kanban Expedição (cards visuais) removido a pedido do Bruno (28/09/2026) — o
+   acompanhamento desses pedidos passa a ser feito pela Operação 360. O total
+   "Aguardando expedição" do painel dinâmico abaixo continua calculado do
+   mesmo jeito (soma aguardando_nf + aguardando_coleta), só não vira mais
+   cards aqui. #}
 {% set _go_kanban_total = (kanban_expedicao.aguardando_nf|length) + (kanban_expedicao.aguardando_coleta|length) %}
-<div class="card mb-4 border-warning-subtle">
-  <div class="card-body">
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-      <h6 class="text-uppercase text-muted small mb-0">
-        📦 <i class="bi bi-kanban"></i> Kanban Expedição
-      </h6>
-      <div class="d-flex align-items-center gap-2">
-        <a href="{{ url_for('gestao_operacao_relatorio_expedicao_pdf') }}" class="btn btn-outline-danger btn-sm" target="_blank">
-          <i class="bi bi-file-earmark-pdf"></i> Gerar Relatório PDF
-        </a>
-      </div>
-    </div>
-    <p class="text-muted small mb-3">
-      Pedido do Bruno (28/09/2026): tirou as colunas "Aguardando NF" e "Aguardando Coleta/Embarque" do board — o
-      acompanhamento desses pedidos passa a ser feito pela Operação 360, não aqui. Fica só a confirmação visual de
-      quem foi expedido hoje.
-    </p>
-    <div class="row g-3">
-      {% for coluna_key, coluna_titulo, coluna_icone in [
-        ("expedido_hoje", "Expedido hoje", "bi-truck"),
-      ] %}
-      <div class="col-lg-6">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <span class="fw-semibold small text-uppercase text-muted"><i class="bi {{ coluna_icone }}"></i> {{ coluna_titulo }}</span>
-          <span class="badge bg-light text-dark border">{{ kanban_expedicao[coluna_key]|length }}</span>
-        </div>
-        <div class="d-flex flex-column gap-2">
-          {% for p in kanban_expedicao[coluna_key] %}
-          <div class="kanban-expedicao-card border-start border-4 {{ _go_semaforo_classe[p.semaforo_parado] }}">
-            <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
-              <span class="fw-semibold">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
-              {% if p.frete %}
-                <span class="badge bg-secondary">{% if p.frete == "CIF" %}🚚{% else %}📦{% endif %} {{ p.frete }}</span>
-              {% endif %}
-            </div>
-            <div class="small text-muted mb-1">
-              Liberação PCP: {{ p.liberacao_pcp.strftime("%d/%m/%Y") if p.liberacao_pcp else "—" }}
-              · <span class="badge {{ _go_semaforo_badge[p.semaforo_parado] }}">{{ _go_semaforo_emoji[p.semaforo_parado] }} {{ p.dias_parado }}d parado</span>
-            </div>
-            <div class="small text-muted mb-1">
-              {% if p.numero_nf %}NF {{ p.numero_nf }}{% else %}Sem NF{% endif %}
-              {% if p.transportadora %} · {{ p.transportadora }}{% endif %}
-            </div>
-            <div class="small border-top pt-1 mt-1">
-              <div class="text-uppercase text-muted" style="font-size: 0.68rem;">Logística</div>
-              <div>📅 Prev. coleta: {{ p.prevista_coleta.strftime("%d/%m/%Y") if p.prevista_coleta else "—" }}
-                📦 Real: {{ p.real_coleta.strftime("%d/%m/%Y") if p.real_coleta else "—" }}
-                {% if p.atraso_coleta.status == "atrasando" %}
-                  <span class="badge bg-danger">🔴 {{ p.atraso_coleta.dias }}d em atraso</span>
-                {% elif p.atraso_coleta.status == "atrasado" %}
-                  <span class="badge bg-danger">🔴 +{{ p.atraso_coleta.dias }}d atraso</span>
-                {% endif %}
-              </div>
-              <div>📅 Prev. chegada: {{ p.prevista_entrega.strftime("%d/%m/%Y") if p.prevista_entrega else "—" }}
-                🏁 Real: {{ p.real_entrega.strftime("%d/%m/%Y") if p.real_entrega else "—" }}
-                {% if p.atraso_entrega.status == "atrasando" %}
-                  <span class="badge bg-danger">🔴 {{ p.atraso_entrega.dias }}d em atraso</span>
-                {% elif p.atraso_entrega.status == "atrasado" %}
-                  <span class="badge bg-danger">🔴 +{{ p.atraso_entrega.dias }}d atraso</span>
-                {% endif %}
-              </div>
-            </div>
-            {% if p.observacao %}
-            <div class="small text-muted mt-1"><i class="bi bi-sticky"></i> {{ p.observacao }}</div>
-            {% endif %}
-            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mt-2">
-              <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='logistica') }}" class="btn btn-sm btn-outline-primary">
-                <i class="bi bi-pencil-square"></i> Editar
-              </a>
-              {% if coluna_key != "expedido_hoje" %}
-              <form method="post" action="{{ url_for('gestao_operacao_marcar_expedido', pedido_id=p.id) }}" class="m-0">
-                <button type="submit" class="btn btn-sm btn-outline-success"><i class="bi bi-truck"></i> Marcar como expedido</button>
-              </form>
-              {% endif %}
-            </div>
-          </div>
-          {% else %}
-          <p class="text-muted small mb-0">Nenhum pedido nesta coluna.</p>
-          {% endfor %}
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-</div>
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <h4 class="mb-0"><i class="bi bi-truck"></i> Logística / Nota Fiscal</h4>
