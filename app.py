@@ -370,6 +370,11 @@ def create_app():
         # Depende das 2 sincronizações acima já terem rodado (usa go_data_
         # efetiva_liberacao_pcp, que também é preenchido por elas).
         _backfill_coleta_chegada_via_liberacao_pcp_25_09_2026(app)
+        # Independente das anteriores — corrige dia/mês invertido em
+        # "Expedido" que já tenha entrado no banco em sincronizações
+        # passadas (a correção nova em si já roda no parsing de
+        # sincronizações futuras, ver _corrigir_data_expedido_invertida).
+        _corrigir_datas_expedido_invertidas_28_09_2026(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -1642,6 +1647,104 @@ def _backfill_coleta_chegada_via_liberacao_pcp_25_09_2026(app):
         "%d 'Coleta/Embarque real' preenchidos | %d 'Chegada no Cliente real' preenchidos "
         "(estimativa a partir da liberação efetiva PCP, só onde estava em branco). Exemplos: %s",
         len(candidatos), n_expedido, n_entregue, exemplos,
+    )
+
+
+_CHAVE_CORRIGIR_DATAS_EXPEDIDO_INVERTIDAS_28_09_2026 = "corrigir_datas_expedido_invertidas_28_09_2026"
+
+
+def _corrigir_datas_expedido_invertidas_28_09_2026(app):
+    """Pedido do Bruno em 28/09/2026 (print da tela Logística com "Lead time
+    frete" de 146d/165d/235d/191d etc.): "ESTA INVERTENDO A ORDME DAS DATAS
+    MES/DIA... CORRIJA ISSO... POIS ELE ESTA AUMENTANDO DEMAIS OS DIAS/LEAD
+    TIME".
+
+    Investigação (célula por célula, `data_only=False`, na planilha de
+    origem) confirmou que o valor errado já vem GRAVADO na planilha em
+    "DATA PEDIDO EXPEDIDO" pra um subconjunto de linhas — não é bug de
+    parsing/sync. Ex.: pedido com NF emitida 31/08/2026, "Expedido" gravado
+    como 09/04/2026 (mês e dia trocados; o certo era 04/09/2026) — como
+    "Lead time frete" = Real entrega − Expedido, uma data de expedição que
+    "volta" pra meses antes da própria NF infla o lead time em centenas de
+    dias. Scan na planilha inteira (358 pedidos com NF + Expedido
+    preenchidos): 38 casos em que Expedido < Emissão NF (logicamente
+    impossível — não existe expedição antes da nota fiscal), dos quais 34
+    ficam plausíveis (Expedido >= Emissão NF) trocando dia por mês — os
+    outros 4 não têm uma correção segura e ficam como estavam.
+
+    Esta função corrige de uma vez só os pedidos JÁ SINCRONIZADOS antes da
+    correção entrar no parsing (`_corrigir_data_expedido_invertida`, em
+    `importar_gestao_operacao.py`) — sincronizações futuras já aplicam a
+    correção no momento da leitura da planilha, mas os dados que já estão
+    no banco desde sincronizações anteriores precisam desse backfill pra
+    ficar corretos também. Guardado por `ControleSistema`, roda uma única
+    vez, mesmo padrão das outras migrações de uma vez só desta sessão."""
+    if (
+        ControleSistema.query.filter_by(
+            chave=_CHAVE_CORRIGIR_DATAS_EXPEDIDO_INVERTIDAS_28_09_2026
+        ).first()
+        is not None
+    ):
+        return
+
+    candidatos = PedidoOperacao.query.filter(
+        PedidoOperacao.go_data_pedido_expedido.isnot(None),
+        PedidoOperacao.go_data_emissao_nf.isnot(None),
+        PedidoOperacao.go_data_pedido_expedido < PedidoOperacao.go_data_emissao_nf,
+    ).all()
+
+    corrigidos = []
+    nao_corrigiveis = []
+    try:
+        for pedido in candidatos:
+            original = pedido.go_data_pedido_expedido
+            nf = pedido.go_data_emissao_nf
+            if original.day > 12:
+                nao_corrigiveis.append(
+                    "%s (%s): expedido %s < NF %s"
+                    % (pedido.pedido_venda or "—", pedido.cliente or "—",
+                       original.strftime("%d/%m/%Y"), nf.strftime("%d/%m/%Y"))
+                )
+                continue
+            try:
+                invertida = date(original.year, original.day, original.month)
+            except ValueError:
+                nao_corrigiveis.append(
+                    "%s (%s): expedido %s < NF %s"
+                    % (pedido.pedido_venda or "—", pedido.cliente or "—",
+                       original.strftime("%d/%m/%Y"), nf.strftime("%d/%m/%Y"))
+                )
+                continue
+            if invertida >= nf:
+                pedido.go_data_pedido_expedido = invertida
+                corrigidos.append(
+                    "%s (%s): %s -> %s (NF %s)"
+                    % (pedido.pedido_venda or "—", pedido.cliente or "—",
+                       original.strftime("%d/%m/%Y"), invertida.strftime("%d/%m/%Y"),
+                       nf.strftime("%d/%m/%Y"))
+                )
+            else:
+                nao_corrigiveis.append(
+                    "%s (%s): expedido %s < NF %s"
+                    % (pedido.pedido_venda or "—", pedido.cliente or "—",
+                       original.strftime("%d/%m/%Y"), nf.strftime("%d/%m/%Y"))
+                )
+    except Exception:
+        db.session.rollback()
+        app.logger.exception(
+            "Correção de datas 'Expedido' invertidas 28/09/2026 falhou com erro inesperado."
+        )
+        return
+
+    db.session.add(
+        ControleSistema(chave=_CHAVE_CORRIGIR_DATAS_EXPEDIDO_INVERTIDAS_28_09_2026)
+    )
+    db.session.commit()
+    app.logger.warning(
+        "Correção de datas 'Expedido' invertidas 28/09/2026: %d candidatos (Expedido < "
+        "Emissão NF) | %d corrigidos (dia/mês trocados) | %d sem correção segura. "
+        "Corrigidos: %s | Sem correção segura: %s",
+        len(candidatos), len(corrigidos), len(nao_corrigiveis), corrigidos, nao_corrigiveis,
     )
 
 

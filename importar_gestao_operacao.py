@@ -131,6 +131,42 @@ def _parse_data(v):
     return None
 
 
+def _corrigir_data_expedido_invertida(data_expedido, data_emissao_nf):
+    """Corrige dia/mês invertido em "DATA PEDIDO EXPEDIDO" — bug encontrado
+    em 28/09/2026 (pedido do Bruno, com print da tela Logística: "ESTA
+    INVERTENDO A ORDEM DAS DATAS MES/DIA... CORRIJA ISSO... POIS ELE ESTA
+    AUMENTANDO DEMAIS OS DIAS/LEAD TIME"). Investigação confirmou que a
+    célula da planilha já vem com o valor errado (não é bug de parsing) —
+    ex. pedido com NF emitida em 31/08, "Expedido" gravado como 09/04
+    (dia/mês trocados; o certo era 04/09). Isso empurra "Lead time frete"
+    pra centena de dias porque a data de referência vira meses antes da
+    própria NF.
+
+    Só corrige quando dá pra confirmar com segurança, comparando com a
+    "Data emissão NF" da MESMA linha (não existe expedição antes da nota
+    fiscal — logicamente impossível):
+      1. `data_expedido` tem que vir ANTES de `data_emissao_nf` (senão já
+         está plausível, não mexe).
+      2. Trocar dia por mês tem que resultar numa data VÁLIDA (dia
+         original <= 12, senão não dá pra virar mês) e que deixe de ser
+         impossível (>= `data_emissao_nf`).
+    Fora desses dois casos, devolve a data como veio — nunca "adivinha"
+    uma correção sem confirmar contra outro dado da própria linha."""
+    if data_expedido is None or data_emissao_nf is None:
+        return data_expedido
+    if data_expedido >= data_emissao_nf:
+        return data_expedido
+    if data_expedido.day > 12:
+        return data_expedido
+    try:
+        invertida = date(data_expedido.year, data_expedido.day, data_expedido.month)
+    except ValueError:
+        return data_expedido
+    if invertida >= data_emissao_nf:
+        return invertida
+    return data_expedido
+
+
 def _parse_numero(v):
     if v is None or v == "":
         return None
@@ -342,7 +378,10 @@ def importar_gestao_operacao(xlsx_path):
             go_valor_nf_emitida=_parse_numero(_cell(ws, row, "valor_nf_emitida")),
             go_numero_nf=_parse_texto(_cell(ws, row, "numero_nf"), 30),
             go_status_logistica=_parse_texto(_cell(ws, row, "status_logistica"), 60),
-            go_data_pedido_expedido=_parse_data(_cell(ws, row, "data_pedido_expedido")),
+            go_data_pedido_expedido=_corrigir_data_expedido_invertida(
+                _parse_data(_cell(ws, row, "data_pedido_expedido")),
+                _parse_data(_cell(ws, row, "data_emissao_nf")),
+            ),
             go_transportadora_id=transportadora_obj.id if transportadora_obj else None,
             go_custo_frete_previsto=_parse_numero(_cell(ws, row, "custo_frete_previsto")),
             go_custo_frete_final=_parse_numero(_cell(ws, row, "custo_frete_final")),
