@@ -252,6 +252,18 @@ def _resolve_database_uri():
         # Render/Heroku às vezes fornecem "postgres://", mas o SQLAlchemy 2.x exige "postgresql://"
         if url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql://", 1)
+        # Correção de 25/09/2026: passou a dar "ModuleNotFoundError: No module
+        # named 'psycopg'" de forma consistente em todo deploy novo (não é
+        # mais o flake antigo em que a 2ª réplica subia limpa — os últimos
+        # deploys falharam TODOS, o site só continuou no ar porque a réplica
+        # antiga, de antes dessa mudança de ambiente, nunca caiu). Causa: com
+        # "postgresql://" sem driver explícito, o SQLAlchemy passou a tentar
+        # primeiro o dialeto "psycopg" (psycopg3) nesse ambiente — só o
+        # psycopg2-binary (requirements.txt) está instalado. Fixa o driver
+        # explicitamente pra nunca mais depender de qual dialeto o SQLAlchemy
+        # escolhe por padrão.
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
         return url
     return "sqlite:///" + os.path.join(BASE_DIR, "instance", "pedidos.db")
 
