@@ -16,24 +16,21 @@
         📦 <i class="bi bi-kanban"></i> Kanban Expedição
       </h6>
       <div class="d-flex align-items-center gap-2">
-        <span class="badge bg-warning text-dark">{{ _go_kanban_total }} pedido(s) parado(s)</span>
         <a href="{{ url_for('gestao_operacao_relatorio_expedicao_pdf') }}" class="btn btn-outline-danger btn-sm" target="_blank">
           <i class="bi bi-file-earmark-pdf"></i> Gerar Relatório PDF
         </a>
       </div>
     </div>
     <p class="text-muted small mb-3">
-      Entra sozinho assim que o PCP registra a Liberação Efetiva — casa ao vivo com Gestão Produção (mesmo dado da
-      Operação 360). 3 colunas 100% automáticas; some da lista assim que marcado como expedido (coluna "Expedido"
-      mostra só o que saiu hoje).
+      Pedido do Bruno (28/09/2026): tirou as colunas "Aguardando NF" e "Aguardando Coleta/Embarque" do board — o
+      acompanhamento desses pedidos passa a ser feito pela Operação 360, não aqui. Fica só a confirmação visual de
+      quem foi expedido hoje.
     </p>
     <div class="row g-3">
       {% for coluna_key, coluna_titulo, coluna_icone in [
-        ("aguardando_nf", "Aguardando NF", "bi-hourglass-split"),
-        ("aguardando_coleta", "Aguardando Coleta/Embarque", "bi-box-seam"),
         ("expedido_hoje", "Expedido hoje", "bi-truck"),
       ] %}
-      <div class="col-lg-4">
+      <div class="col-lg-6">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <span class="fw-semibold small text-uppercase text-muted"><i class="bi {{ coluna_icone }}"></i> {{ coluna_titulo }}</span>
           <span class="badge bg-light text-dark border">{{ kanban_expedicao[coluna_key]|length }}</span>
