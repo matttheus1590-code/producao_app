@@ -379,6 +379,10 @@ def create_app():
         # duplicado por pedido_venda (achado: pedido 713 contado 2x,
         # inflando "NFs emitidas em agosto" pra 47 contra as 46 da planilha).
         _corrigir_duplicatas_pedido_operacao_28_09_2026(app)
+        # 2ª passada, depende da 1ª já ter rodado — pega duplicata que só
+        # bate por pedido_venda NORMALIZADO (ex. "0846" vs "846"), que a
+        # igualdade exata da 1ª passada não cobre.
+        _corrigir_duplicatas_pedido_operacao_normalizado_28_09_2026(app)
 
     # Filtro Jinja "normalizar_pedido_venda" (pedido do Bruno, 10/09/2026):
     # mesma normalização usada no casamento Produção<->Operação em Python
@@ -1840,6 +1844,92 @@ def _corrigir_duplicatas_pedido_operacao_28_09_2026(app):
         "Correção de duplicatas de PedidoOperacao 28/09/2026: %d pedido_venda com "
         "duplicata encontrados e mesclados (registro mais antigo mantido, mais "
         "recente(s) apagado(s)). Detalhe: %s",
+        len(relatorio), relatorio,
+    )
+
+
+_CHAVE_CORRIGIR_DUPLICATAS_PEDIDO_OPERACAO_NORMALIZADO_28_09_2026 = (
+    "corrigir_duplicatas_pedido_operacao_normalizado_28_09_2026"
+)
+
+
+def _corrigir_duplicatas_pedido_operacao_normalizado_28_09_2026(app):
+    """Segunda passada da correção de duplicatas acima (mesmo pedido do
+    Bruno em 28/09/2026 sobre a contagem de NF/OTD de agosto) — cobre um
+    caso que a primeira passada (igualdade EXATA de `pedido_venda`, depois
+    de só tirar espaço) não pega: dois registros pro MESMO pedido real, mas
+    digitados de forma diferente em sincronizações diferentes — o caso mais
+    comum é zero à esquerda ("0846" vs "846"), o mesmo problema que
+    `_normalizar_pedido_venda` já existe pra resolver no casamento com
+    Gestão Produção (ver docstring lá, pedido do Bruno de 10/09/2026), mas
+    que a Fase de dedup anterior não usou.
+
+    Roda DEPOIS de `_corrigir_duplicatas_pedido_operacao_28_09_2026` (que já
+    cuidou da igualdade exata) — agrupa o que sobrou por
+    `_normalizar_pedido_venda(pedido_venda)` em vez do texto cru. Mesma
+    regra de mesclagem (mantém o mais antigo, copia campo só preenchido no
+    duplicado, nunca sobrescreve, apaga o duplicado) e mesmo guard de rodar
+    uma única vez."""
+    if (
+        ControleSistema.query.filter_by(
+            chave=_CHAVE_CORRIGIR_DUPLICATAS_PEDIDO_OPERACAO_NORMALIZADO_28_09_2026
+        ).first()
+        is not None
+    ):
+        return
+
+    grupos = {}
+    for p in PedidoOperacao.query.all():
+        pv = (p.pedido_venda or "").strip()
+        if not pv:
+            continue
+        chave = _normalizar_pedido_venda(pv)
+        if chave:
+            grupos.setdefault(chave, []).append(p)
+
+    campos_mergeaveis = [
+        c.name for c in PedidoOperacao.__table__.columns
+        if c.name not in ("id", "pedido_venda", "criado_em", "atualizado_em")
+    ]
+
+    relatorio = []
+    try:
+        for chave, registros in grupos.items():
+            if len(registros) < 2:
+                continue
+            registros.sort(key=lambda p: p.criado_em or datetime.min)
+            canonico, *duplicados = registros
+            campos_copiados = []
+            for dup in duplicados:
+                for campo in campos_mergeaveis:
+                    if getattr(canonico, campo) is None:
+                        valor_dup = getattr(dup, campo)
+                        if valor_dup is not None:
+                            setattr(canonico, campo, valor_dup)
+                            campos_copiados.append(campo)
+            relatorio.append(
+                "%s: mantido id %d (pedido_venda=%r, %s), removido(s) %s — campos "
+                "copiados do duplicado: %s"
+                % (chave, canonico.id, canonico.pedido_venda, canonico.cliente or "—",
+                   [(d.id, d.pedido_venda) for d in duplicados], campos_copiados or "nenhum")
+            )
+            for dup in duplicados:
+                db.session.delete(dup)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception(
+            "Correção de duplicatas de PedidoOperacao (normalizado) 28/09/2026 falhou "
+            "com erro inesperado."
+        )
+        return
+
+    db.session.add(
+        ControleSistema(chave=_CHAVE_CORRIGIR_DUPLICATAS_PEDIDO_OPERACAO_NORMALIZADO_28_09_2026)
+    )
+    db.session.commit()
+    app.logger.warning(
+        "Correção de duplicatas de PedidoOperacao (normalizado, zero à esquerda etc.) "
+        "28/09/2026: %d chave(s) com duplicata encontrada(s) e mesclada(s). Detalhe: %s",
         len(relatorio), relatorio,
     )
 
