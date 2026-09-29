@@ -200,49 +200,25 @@
             {% endif %}
             {% endif %}
           </div>
-          {% if mat.matched and mat.principais %}
-          <!-- Pedido do Bruno (23/09/2026, 3ª revisão): "QUERO QUE
-               OBRIGATORIAMENTE MOSTRE AS MATERIAS PRIMAS 2471, 2475 E 122
-               AMINO, E NAS OUTRAS ESTAÇÕES 12-70 E ATS 85... FOCANDO NO
-               CONSUMO DE UMA PEÇA... EM UM PIG HS MÉDIA, EU QUERO VER 2475
-               E 122, EM UM DISCO SELO, EU QUERO VER 12-70" — cada
-               matéria-prima "principal" (AMINO/COIM/LANXESS/TECPUR/
-               DINATEC) numa linha própria, pelo nome curto, nunca somada
-               com as outras (era esse o "errado" que ele apontou: um
-               único total misturado escondia qual químico era qual). -->
-          <button type="button" class="kanban-item-volume-principal" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Ver matéria-prima completa deste item">
-            {% for p in mat.principais %}
-            <span class="kanban-item-volume-linha">
-              <i class="bi bi-droplet-half"></i> {{ p.nome_curto }} — 1 un: {{ p.unitario_fmt }} {{ p.materia_prima.unidade }} · Lote: {{ p.lote_fmt }} {{ p.materia_prima.unidade }}
-            </span>
-            {% endfor %}
-          </button>
-          {% endif %}
           <div class="kanban-item-rodape">
             <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
               {% if dias is none %}sem prazo{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
             </span>
             <div class="d-flex align-items-center gap-1">
-              {% if mat.matched and mat.principais %}
-              <!-- volume já mostrado acima, em cima do rodapé -- aqui só um
-                   ícone discreto pra abrir o mesmo popup, sem repetir o
-                   número duas vezes no card. -->
-              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Ver matéria-prima completa deste item (inclusive ferragem/acessório)">
-                <i class="bi bi-list-ul"></i>
+              <!-- Pedido do Bruno (29/09/2026): card do item só com o
+                   básico — matéria-prima não fica mais sempre visível no
+                   corpo do card, só neste ícone: passa o mouse (tooltip,
+                   ver JS abaixo) pra um resumo rápido, ou clica pra abrir o
+                   popup completo (inclusive ferragem/acessório). Mesmo
+                   ícone pras 4 situações (identificado com detalhe em kg,
+                   sem detalhe em kg, não identificado) — quem quiser saber
+                   qual é olha o hover ou clica. -->
+              <button type="button" class="btn btn-sm btn-outline-{{ 'primary' if (mat.matched and mat.tem_kg) else 'secondary' }} py-0 px-1 kanban-item-mp-hover"
+                      data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}"
+                      data-mp-tooltip="{{ tooltip_materiais_por_item[item.id] }}"
+                      aria-label="Matéria-prima deste item — passe o mouse pra ver, clique pro detalhe completo">
+                🧪{% if mat.matched and mat.tem_kg %} {{ "%.2f"|format(mat.kg_total)|replace(".", ",") }} kg{% endif %}
               </button>
-              {% elif mat.matched and mat.tem_kg %}
-              <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Ver matéria-prima deste item">
-                <i class="bi bi-droplet-half"></i> {{ "%.2f"|format(mat.kg_total)|replace(".", ",") }} kg
-              </button>
-              {% elif mat.matched %}
-              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 text-muted" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Este produto foi identificado, mas o cadastro dele em Gestão de Custos não tem matéria-prima detalhada em kg">
-                <i class="bi bi-droplet-half"></i> sem detalhe em kg
-              </button>
-              {% else %}
-              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 text-muted" data-bs-toggle="modal" data-bs-target="#modalMateriais{{ item.id }}" title="Este produto ainda não está identificado no catálogo de Gestão de Custos">
-                <i class="bi bi-droplet-half"></i> não identificado
-              </button>
-              {% endif %}
               <a href="{{ url_for('detalhe_pedido', pedido_id=item.pedido_id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Ver pedido">
                 <i class="bi bi-eye"></i>
               </a>
@@ -428,6 +404,29 @@
       input.focus();
     });
   }
+})();
+
+(function () {
+  // Tooltip de matéria-prima no hover do ícone 🧪 dos cards (pedido do
+  // Bruno, 29/09/2026: "quero que apareça somente quando passar o mouse").
+  // Inicializado manualmente (em vez de data-bs-toggle="tooltip") porque o
+  // MESMO botão também abre o popup completo no clique
+  // (data-bs-toggle="modal") — Bootstrap não deixa dois toggles na mesma
+  // origem de atributo, mas Tooltip e Modal são componentes independentes,
+  // então dá pra ligar os dois no mesmo elemento sem conflito. Texto plano
+  // (sem HTML) — a quebra de linha vem de "\n" no texto + CSS
+  // white-space: pre-line em .kanban-tooltip-mp (style.css).
+  if (typeof bootstrap === "undefined" || !bootstrap.Tooltip) return;
+  document.querySelectorAll("[data-mp-tooltip]").forEach(function (el) {
+    var texto = el.getAttribute("data-mp-tooltip");
+    if (!texto) return;
+    new bootstrap.Tooltip(el, {
+      title: texto,
+      placement: "top",
+      trigger: "hover focus",
+      customClass: "kanban-tooltip-mp",
+    });
+  });
 })();
 </script>
 {% endblock %}

@@ -13727,6 +13727,47 @@ def _materiais_item_pedido(item_pedido):
     }
 
 
+_TOOLTIP_MATERIAIS_MAX_LINHAS = 12
+
+
+def _tooltip_materiais_item(mat):
+    """Texto curto (uma matéria-prima por linha) pro hover do ícone 🧪 nos
+    cards de Estações — pedido do Bruno (29/09/2026): a tela de Estações
+    estava "muito poluida" com a matéria-prima sempre visível em cada
+    item; ele quer o card só com o básico (produto, datas, cliente, nº
+    pedido, quantidade) e a matéria-prima só aparecendo "quando passar o
+    mouse" sobre um ícone dedicado — o popup completo (clique) continua
+    existindo pra quem quiser o detalhe cheio, inclusive ferragem/acessório.
+
+    Mesma prioridade de dado que o card já usava antes (principais > linhas
+    completas > mensagens de estado) — só que como TEXTO PLANO (sem HTML),
+    pra caber num tooltip nativo do Bootstrap; a quebra de linha entre
+    matérias-primas é feita com "\\n" e vira quebra visual de verdade via
+    CSS `white-space: pre-line` na classe `.kanban-tooltip-mp` (style.css),
+    sem precisar de `html: true` no tooltip (evita qualquer risco de
+    interpretar texto de matéria-prima como HTML)."""
+    if not mat["matched"]:
+        return "Produto ainda não identificado no catálogo de Gestão de Custos."
+    if mat["principais"]:
+        return "\n".join(
+            "%s: %s %s" % (p["nome_curto"], p["lote_fmt"], p["materia_prima"].unidade)
+            for p in mat["principais"]
+        )
+    if mat["linhas"]:
+        linhas_fmt = [
+            "%s: %s %s" % (
+                l["materia_prima"].descricao,
+                _formatar_quantidade_pt_br(l["quantidade"], l["materia_prima"].unidade),
+                l["materia_prima"].unidade,
+            )
+            for l in mat["linhas"][:_TOOLTIP_MATERIAIS_MAX_LINHAS]
+        ]
+        if len(mat["linhas"]) > _TOOLTIP_MATERIAIS_MAX_LINHAS:
+            linhas_fmt.append("+ %d outra(s)..." % (len(mat["linhas"]) - _TOOLTIP_MATERIAIS_MAX_LINHAS))
+        return "\n".join(linhas_fmt)
+    return "Sem matéria-prima detalhada em kg para este produto."
+
+
 def _produtos_catalogo(familia=None, apenas_ativos=True):
     """Lista Produto + EstruturaProduto com custo calculado — equivalente
     funcional da aba BUSCA DE CUSTO (índice consolidado), item 1/2 do
@@ -17241,6 +17282,13 @@ def register_routes(app):
         # correspondência automática fica com matched=False, mostrado como
         # "não identificado" no card em vez de forjar um número.
         materiais_por_item = {item.id: _materiais_item_pedido(item) for item in itens}
+        # Pedido do Bruno (29/09/2026): card do item só com o básico
+        # (produto/datas/cliente/pedido/quantidade) — matéria-prima só no
+        # hover do ícone 🧪 (ver _tooltip_materiais_item), não mais sempre
+        # visível no corpo do card.
+        tooltip_materiais_por_item = {
+            item.id: _tooltip_materiais_item(materiais_por_item[item.id]) for item in itens
+        }
         kg_por_coluna = {}
         nao_identificados_por_coluna = {}
         # Pedido do Bruno (22/09/2026, revisão): o total borrado da coluna
@@ -17306,6 +17354,7 @@ def register_routes(app):
             pode_editar=pode_editar_estacao(current_user, nome),
             RELATORIO_ESTACAO_STATUS_INFO=RELATORIO_ESTACAO_STATUS_INFO,
             materiais_por_item=materiais_por_item,
+            tooltip_materiais_por_item=tooltip_materiais_por_item,
             kg_por_coluna=kg_por_coluna,
             nao_identificados_por_coluna=nao_identificados_por_coluna,
             materiais_agrupados_por_coluna=materiais_agrupados_por_coluna,
