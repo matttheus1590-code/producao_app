@@ -36,6 +36,16 @@
 
 <div class="card mb-4">
   <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-2">
+      <i class="bi bi-graph-up-arrow"></i> OTD por mês {% if ano_grafico_otd %}— {{ ano_grafico_otd }}{% endif %}
+      <span class="text-muted">(meta mínima {{ GO_OTD_META_PERCENTUAL }}%)</span>
+    </h6>
+    <canvas id="graficoOtdMensal" height="90"></canvas>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
       <h5 class="mb-0"><i class="bi bi-cash-stack"></i> Faturamento por Semana — {{ mes_label }}</h5>
       <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -72,6 +82,8 @@
       Com base no Planejamento Semanal de PCP (Término Semanal PCP). "Liberado" = todo pedido planejado pra encerrar naquele período (liberado ou não);
       "Faturado" = Valor NF Emitida dos pedidos daquele período.
     </p>
+
+    <canvas id="graficoFaturamentoSemanal" height="90" class="mb-3"></canvas>
 
     <div class="row g-3 mb-3">
       <div class="col-6 col-lg-3">
@@ -143,6 +155,9 @@
         ) }}
       </div>
     </div>
+
+    <h6 class="text-uppercase text-muted small mb-2"><i class="bi bi-bar-chart-steps"></i> Comparativo de Lead Times — {{ mes_label }}</h6>
+    <canvas id="graficoLeadTimes" height="130" class="mb-3"></canvas>
 
     <p class="text-muted small mb-2">
       <i class="bi bi-hand-index-thumb"></i> Clique numa semana pra ver os pedidos dela — clique de novo pra encolher.
@@ -282,6 +297,9 @@
     <div class="card h-100">
       <div class="card-body">
         <h6 class="text-uppercase text-muted small mb-3">OTD por vendedor</h6>
+        {% if otd.por_vendedor %}
+        <canvas id="graficoOtdVendedor" height="180" class="mb-3"></canvas>
+        {% endif %}
         <table class="table table-sm mb-0">
           <thead><tr><th>Vendedor</th><th class="text-center">Pedidos</th><th class="text-end">OTD</th></tr></thead>
           <tbody>
@@ -307,6 +325,9 @@
     <div class="card h-100">
       <div class="card-body">
         <h6 class="text-uppercase text-muted small mb-3">OTD por cliente</h6>
+        {% if otd.por_cliente %}
+        <canvas id="graficoOtdCliente" height="180" class="mb-3"></canvas>
+        {% endif %}
         <table class="table table-sm mb-0">
           <thead><tr><th>Cliente</th><th class="text-center">Pedidos</th><th class="text-end">OTD</th></tr></thead>
           <tbody>
@@ -400,4 +421,161 @@
 </nav>
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  Chart.defaults.color = "#495057";
+  Chart.defaults.font.size = 12;
+
+  // OTD mensal (ano do período selecionado), com linha de meta — mesmo
+  // padrão do gráfico equivalente em templates/painel.html.
+  const otdAnual = {{ otd_mensal_ano | tojson }};
+  const otdMeta = {{ GO_OTD_META_PERCENTUAL }};
+  const elOtdMensal = document.getElementById("graficoOtdMensal");
+  if (elOtdMensal) {
+    new Chart(elOtdMensal, {
+      data: {
+        labels: otdAnual.map(function (p) { return p.mes; }),
+        datasets: [
+          {
+            type: "bar",
+            label: "OTD (%)",
+            data: otdAnual.map(function (p) { return p.percentual; }),
+            backgroundColor: otdAnual.map(function (p) {
+              if (p.percentual === null) return "#dee2e6";
+              return p.atinge_meta ? "#198754" : "#dc3545";
+            }),
+          },
+          {
+            type: "line",
+            label: "Meta mínima (" + otdMeta + "%)",
+            data: otdAnual.map(function () { return otdMeta; }),
+            borderColor: "#6c757d",
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              afterLabel: function (ctx) {
+                if (ctx.datasetIndex !== 0) return "";
+                const p = otdAnual[ctx.dataIndex];
+                return p.total ? p.total + " pedido(s) com OTD registrado" : "sem OTD registrado ainda";
+              },
+            },
+          },
+        },
+        scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + "%"; } } } },
+      },
+    });
+  }
+
+  // Faturamento por semana — liberado x faturado (mesmo dado da tabela
+  // abaixo, só re-visualizado como tendência).
+  const faturamentoLinhas = {{ faturamento_semanal_grafico | tojson }};
+  const elFatSemanal = document.getElementById("graficoFaturamentoSemanal");
+  if (elFatSemanal && faturamentoLinhas.length) {
+    new Chart(elFatSemanal, {
+      type: "line",
+      data: {
+        labels: faturamentoLinhas.map(function (l) { return l.semana_curta; }),
+        datasets: [
+          { label: "Valor liberado (R$)", data: faturamentoLinhas.map(function (l) { return l.valor_liberado; }), borderColor: "#6ea8fe", backgroundColor: "#6ea8fe", tension: 0.2 },
+          { label: "Valor faturado (R$)", data: faturamentoLinhas.map(function (l) { return l.valor_faturado; }), borderColor: "#198754", backgroundColor: "#198754", tension: 0.2 },
+        ],
+      },
+      options: {
+        plugins: { legend: { position: "bottom" } },
+        scales: { y: { beginAtZero: true, title: { display: true, text: "R$" } } },
+      },
+    });
+  }
+
+  // Comparativo de lead times do período — mesmo dado dos stat_card acima.
+  const leadTimes = {{ lead_times_mes | tojson }};
+  const leadTimeLabels = [
+    ["lt_operacao", "Lead Time Operação"],
+    ["lt_operacao_cif", "Operação — CIF"],
+    ["lt_operacao_fob", "Operação — FOB"],
+    ["lt_frete", "Lead Time Frete"],
+    ["lt_producao", "Chão de Fábrica (Produção)"],
+  ];
+  const elLeadTimes = document.getElementById("graficoLeadTimes");
+  if (elLeadTimes) {
+    new Chart(elLeadTimes, {
+      type: "bar",
+      data: {
+        labels: leadTimeLabels.map(function (p) { return p[1]; }),
+        datasets: [{
+          label: "Média (dias)",
+          data: leadTimeLabels.map(function (p) { return (leadTimes[p[0]] || {}).media; }),
+          backgroundColor: "#6ea8fe",
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              afterLabel: function (ctx) {
+                const chave = leadTimeLabels[ctx.dataIndex][0];
+                const n = (leadTimes[chave] || {}).n;
+                return n ? n + " registro(s)" : "sem dado suficiente";
+              },
+            },
+          },
+        },
+        scales: { x: { beginAtZero: true, title: { display: true, text: "dias" } } },
+      },
+    });
+  }
+
+  // OTD por vendedor / cliente — mesmo dado das tabelas logo abaixo.
+  function graficoOtdRanking(elId, linhas) {
+    const el = document.getElementById(elId);
+    if (!el || !linhas.length) return;
+    new Chart(el, {
+      type: "bar",
+      data: {
+        labels: linhas.map(function (l) { return l.chave; }),
+        datasets: [{
+          label: "OTD (%)",
+          data: linhas.map(function (l) { return l.percentual; }),
+          backgroundColor: linhas.map(function (l) {
+            if (l.percentual === null) return "#dee2e6";
+            return l.percentual >= otdMeta ? "#198754" : "#dc3545";
+          }),
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              afterLabel: function (ctx) {
+                const l = linhas[ctx.dataIndex];
+                return l.total + " pedido(s)";
+              },
+            },
+          },
+        },
+        scales: { x: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + "%"; } } } },
+      },
+    });
+  }
+  graficoOtdRanking("graficoOtdVendedor", {{ otd.por_vendedor | tojson }});
+  graficoOtdRanking("graficoOtdCliente", {{ otd.por_cliente | tojson }});
+})();
+</script>
 {% endblock %}

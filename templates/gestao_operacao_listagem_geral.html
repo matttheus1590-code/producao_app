@@ -60,6 +60,13 @@
   </div>
 </div>
 
+<div class="card mb-3">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-2"><i class="bi bi-funnel"></i> Pipeline operacional — onde os pedidos estão travados</h6>
+    <canvas id="graficoPipelineOperacional" height="90"></canvas>
+  </div>
+</div>
+
 <div class="d-flex justify-content-end align-items-center gap-2 mb-2">
   <button type="button" id="btnResetLargurasOperacao360" class="btn btn-outline-secondary btn-sm" title="Redefinir a largura de todas as colunas para o padrão">
     <i class="bi bi-arrows-angle-contract"></i> Redefinir colunas
@@ -243,6 +250,39 @@
 
 {% endblock %}
 {% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  Chart.defaults.color = "#495057";
+  Chart.defaults.font.size = 12;
+
+  // Pipeline por etapa (pedido do Bruno, 29/09/2026: camada visual) — mesma
+  // classificação de 5 etapas do badge "Status pedido" de cada linha, só
+  // agregada. Cor de cada barra reaproveita a MESMA cor de cada etapa (ver
+  // _ETAPAS_ACOMPANHAMENTO_PEDIDO em app.py), pra bater com o badge da
+  // tabela abaixo.
+  const pipeline = {{ painel_operacao_360.pipeline | tojson }};
+  const elPipeline = document.getElementById("graficoPipelineOperacional");
+  if (elPipeline && pipeline.length) {
+    new Chart(elPipeline, {
+      type: "bar",
+      data: {
+        labels: pipeline.map(function (p) { return p.emoji + " " + p.label; }),
+        datasets: [{
+          label: "Pedidos",
+          data: pipeline.map(function (p) { return p.total; }),
+          backgroundColor: pipeline.map(function (p) { return p.cor; }),
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+      },
+    });
+  }
+})();
+</script>
 <script>
 (function () {
   // Larguras de coluna ajustáveis na Operação 360 (pedido do Bruno,

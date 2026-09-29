@@ -7969,12 +7969,23 @@ def _painel_operacao_logistica(pedidos_filtrados):
     soma_previsto, n_previsto = 0.0, 0
     soma_final, n_final = 0.0, 0
     em_transito = 0
+    # Histograma de Lead Time de Frete (pedido do Bruno, 29/09/2026: camada
+    # visual da tela Logística) — mesmas faixas usadas informalmente pro
+    # semáforo de prazo do site (curto/médio/longo/crítico), só que aqui
+    # aplicadas ao lead time de frete já calculado (go_lead_time_frete_dias),
+    # sem dado novo nenhum.
+    faixas_lead_frete = [("0-2d", 0, 2), ("3-5d", 3, 5), ("6-10d", 6, 10), ("10d+", 11, None)]
+    contagem_faixas = {rotulo: 0 for rotulo, _, _ in faixas_lead_frete}
 
     for p in pedidos_filtrados:
         lt = p.go_lead_time_frete_dias
         if lt is not None:
             soma_lead_frete += lt
             n_lead_frete += 1
+            for rotulo, minimo, maximo in faixas_lead_frete:
+                if lt >= minimo and (maximo is None or lt <= maximo):
+                    contagem_faixas[rotulo] += 1
+                    break
         if p.go_data_emissao_nf is not None:
             nfs_emitidas += 1
         if p.go_custo_frete_previsto is not None:
@@ -7995,6 +8006,9 @@ def _painel_operacao_logistica(pedidos_filtrados):
         "custo_frete_final": soma_final,
         "n_custo_frete": min(n_previsto, n_final),
         "em_transito": em_transito,
+        "lead_time_frete_faixas": [
+            {"faixa": rotulo, "total": contagem_faixas[rotulo]} for rotulo, _, _ in faixas_lead_frete
+        ],
     }
 
 
@@ -8029,9 +8043,20 @@ def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
     faturamento_total, n_faturamento = 0.0, 0
     soma_lead_comercial = soma_lead_producao = soma_lead_operacao = 0
     n_lead_comercial = n_lead_producao = n_lead_operacao = 0
+    # Funil/pipeline por etapa (pedido do Bruno, 29/09/2026: camada visual
+    # da Operação 360 — "onde minha operação está travada", de relance).
+    # Reaproveita a MESMA classificação de 5 etapas que já vem pronta em
+    # `metricas_filtrados` (status_pedido_idx/emoji/label, ver
+    # _metricas_operacao_360/_indice_etapa_pedido) — nenhum cálculo novo,
+    # só uma contagem por etapa sobre o conjunto já filtrado.
+    contagem_etapas = {i: 0 for i in range(1, len(_ETAPAS_ACOMPANHAMENTO_PEDIDO) + 1)}
 
     for p in pedidos_filtrados:
         m = metricas_filtrados.get(p.id, {})
+
+        etapa_idx = m.get("status_pedido_idx")
+        if etapa_idx in contagem_etapas:
+            contagem_etapas[etapa_idx] += 1
 
         if p.go_data_emissao_nf and primeiro_dia_mes <= p.go_data_emissao_nf <= ultimo_dia_mes:
             nfs_mes += 1
@@ -8074,9 +8099,20 @@ def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
         "lead_operacao_medio": round(soma_lead_operacao / n_lead_operacao, 1) if n_lead_operacao else None,
     }
 
+    pipeline = [
+        {
+            "label": etapa["label"],
+            "emoji": _ETAPA_EMOJI[idx - 1],
+            "cor": etapa["cor"],
+            "total": contagem_etapas[idx],
+        }
+        for idx, etapa in enumerate(_ETAPAS_ACOMPANHAMENTO_PEDIDO, start=1)
+    ]
+
     return {
         "nf_mes": card_nf_mes,
         "dinamico": dinamico,
+        "pipeline": pipeline,
     }
 
 
@@ -8125,6 +8161,36 @@ def _semaforo_dias_parado(dias):
     if dias <= 4:
         return "amarelo"
     return "vermelho"
+
+
+def _semaforo_linha_logistica(p):
+    """Semáforo de status pra colorir cada LINHA da tabela principal da tela
+    Logística/NF (pedido do Bruno, 29/09/2026: camada visual pro grupo
+    Gestão Operação inteiro — "extremamente visual, didático"). Antes desta
+    mudança essa era a única tabela do grupo sem cor de linha nenhuma
+    (Operação 360 já tem `linha-op360-entregue/pendente`, Gestão de Risco já
+    tem `linha-risco-*`). Reaproveita 100% os 2 helpers que já existem pra
+    essa mesma tela (`_prevista_x_realizada`, hoje só alimentam o Kanban
+    Expedição/PDF) — nenhum dado novo, só uma leitura priorizada dos dois:
+    entrega manda (é o desfecho final do pedido); coleta só decide quando
+    a entrega ainda não tem sinal de atraso.
+
+      - vermelho: entrega atrasada (realizada com atraso) ou atrasando
+        (prazo vencido, ainda sem confirmação de entrega).
+      - verde: já entregue dentro do prazo.
+      - amarelo: ainda não entregue, mas a coleta/embarque atrasou ou está
+        atrasando — alerta precoce antes de virar atraso de entrega.
+      - cinza: sem sinal de atraso em nenhum dos dois (inclui "sem previsão
+        lançada ainda")."""
+    entrega = _prevista_x_realizada(p.go_data_prevista_entrega, p.go_data_entregue_cliente)
+    if entrega["status"] in ("atrasado", "atrasando"):
+        return "vermelho"
+    if entrega["status"] == "no_prazo" and p.go_data_entregue_cliente:
+        return "verde"
+    coleta = _prevista_x_realizada(p.go_data_prevista_coleta, p.go_data_pedido_expedido)
+    if coleta["status"] in ("atrasado", "atrasando"):
+        return "amarelo"
+    return "cinza"
 
 
 def _kanban_expedicao():
@@ -16106,12 +16172,16 @@ def register_routes(app):
         # sobre o conjunto TOTAL filtrado, não só a página atual, mesma
         # convenção de _painel_operacao_360.
         painel_operacao_logistica = _painel_operacao_logistica(query_operacao.all())
+        # Semáforo por linha (pedido do Bruno, 29/09/2026: camada visual) —
+        # só sobre a página atual já carregada, sem query nova.
+        semaforo_por_pedido = {p.id: _semaforo_linha_logistica(p) for p in pedidos}
         return render_template(
             "gestao_operacao_logistica.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
             kanban_expedicao=kanban_expedicao,
             painel_operacao_logistica=painel_operacao_logistica,
+            semaforo_por_pedido=semaforo_por_pedido,
         )
 
     @app.route("/gestao-operacao/logistica/relatorio.xlsx")
@@ -16208,13 +16278,40 @@ def register_routes(app):
         otd_mes = _resumo_otd(query_periodo)
         lead_times_mes = _resumo_lead_times(query_periodo)
 
+        # Camada visual (pedido do Bruno, 29/09/2026: "gerente de operações/
+        # produção... algo extremamente visual, didático, dinâmico e
+        # intuitivo" pro grupo Gestão Operação inteiro) — gráfico de
+        # tendência de OTD mês a mês, mesmo dado/mesma função que já
+        # alimenta o gráfico equivalente do Painel (_otd_mensal_ano,
+        # `templates/painel.html`), só que aqui no ano do período
+        # selecionado (ou o ano corrente quando o período é "todos", que
+        # não tem um ano único). Nenhuma query nova: `_otd_mensal_ano`
+        # já existe e já roda 12x `_resumo_otd` internamente.
+        ano_grafico_otd = ano_periodo or date.today().year
+        otd_mensal_ano = _otd_mensal_ano(ano_grafico_otd)
+        # `faturamento_semanal["linhas"]` carrega uma lista de objetos
+        # PedidoOperacao (chave "pedidos", usada pela tabela detalhe de cada
+        # semana) — não dá pra jogar direto num `| tojson` no template pro
+        # gráfico de tendência (não é serializável). Extrai só os 3 campos
+        # numéricos/rótulo que o gráfico usa.
+        faturamento_semanal_grafico = [
+            {
+                "semana_curta": l["semana_curta"],
+                "valor_liberado": l["valor_liberado"],
+                "valor_faturado": l["valor_faturado"],
+            }
+            for l in faturamento_semanal["linhas"]
+        ]
+
         return render_template(
             "gestao_operacao_resultados.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros, otd=otd,
             otd_por_pedido_id=otd_por_pedido_id,
             faturamento_semanal=faturamento_semanal,
+            faturamento_semanal_grafico=faturamento_semanal_grafico,
             otd_mes=otd_mes, lead_times_mes=lead_times_mes,
+            otd_mensal_ano=otd_mensal_ano, ano_grafico_otd=ano_grafico_otd,
             periodo=periodo_str, tipo_periodo=tipo_periodo, mes_label=periodo_label,
             periodo_anterior=periodo_anterior, periodo_seguinte=periodo_seguinte,
             opcoes_periodo=_opcoes_periodo(),

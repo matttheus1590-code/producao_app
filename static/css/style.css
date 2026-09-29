@@ -231,6 +231,40 @@ body.col-resizing-ativo {
   background-color: #f1f3f5;
 }
 
+/* Logística/NF (pedido do Bruno, 29/09/2026): semáforo de linha, mesmo
+   espírito de .tabela-operacao-360/.tabela-risco-otd acima — ver
+   _semaforo_linha_logistica em app.py. "cinza" fica sem cor (branco padrão
+   da tabela), só os 3 níveis com sinal ganham destaque. */
+.tabela-logistica > tbody > tr.linha-logistica-vermelho > * {
+  --bs-table-bg: #f8d7da;
+  background-color: #f8d7da;
+}
+
+.tabela-logistica.table-hover > tbody > tr.linha-logistica-vermelho:hover > * {
+  --bs-table-bg: #f1aeb5;
+  background-color: #f1aeb5;
+}
+
+.tabela-logistica > tbody > tr.linha-logistica-amarelo > * {
+  --bs-table-bg: #fff3cd;
+  background-color: #fff3cd;
+}
+
+.tabela-logistica.table-hover > tbody > tr.linha-logistica-amarelo:hover > * {
+  --bs-table-bg: #ffe69c;
+  background-color: #ffe69c;
+}
+
+.tabela-logistica > tbody > tr.linha-logistica-verde > * {
+  --bs-table-bg: #7ee495;
+  background-color: #7ee495;
+}
+
+.tabela-logistica.table-hover > tbody > tr.linha-logistica-verde:hover > * {
+  --bs-table-bg: #4cc773;
+  background-color: #4cc773;
+}
+
 .normal-case {
   text-transform: none;
 }
