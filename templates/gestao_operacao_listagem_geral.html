@@ -73,7 +73,7 @@
   </button>
 </div>
 <p class="text-muted small mb-2">
-  <i class="bi bi-arrows"></i> Dica: arraste a borda direita de qualquer coluna pra ajustar a largura — o site lembra do ajuste da próxima vez que você abrir esta tela. Linha verde = entrega realizada. Linha vermelha = pendente produção.
+  <i class="bi bi-arrows"></i> Dica: arraste a borda direita de qualquer coluna pra ajustar a largura — o site lembra do ajuste da próxima vez que você abrir esta tela. Linha vermelha = pendente produção OU entregue fora do prazo (OTD "Não"). Linha verde = entrega realizada dentro do prazo.
 </p>
 
 <div class="table-responsive tabela-listagem-geral-wrap">
@@ -136,7 +136,7 @@
       {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
       {% set rdim = rdim_por_pedido_venda.get(chave_pv) %}
       {% set m = metricas_operacao_360.get(p.id, {}) %}
-      <tr class="{% if m.status_pedido_idx == 5 %}linha-op360-entregue{% elif m.status_pedido_idx == 1 %}linha-op360-pendente{% endif %}">
+      <tr class="{% if m.otd_status == 'NAO' %}linha-op360-pendente{% elif m.status_pedido_idx == 5 %}linha-op360-entregue{% elif m.status_pedido_idx == 1 %}linha-op360-pendente{% endif %}">
         <td>{{ (p.pedido_venda | normalizar_pedido_venda) or "—" }}</td>
         <td>
           <div class="go-itens-wrap">
