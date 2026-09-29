@@ -10072,7 +10072,16 @@ def _dados_relatorio_operacao_360(args):
     """Recalcula o conjunto TOTAL filtrado (nunca só a página) de Operação
     360 — mesma sequência de helpers já usada dentro da rota de tela
     (gestao_operacao_listagem_geral), extraída aqui pra não duplicar entre
-    tela/Excel/PDF."""
+    tela/Excel/PDF.
+
+    `dados_periodo` (pedido do Bruno, 29/09/2026: Relatório Gerencial PDF
+    "mes a mes selecionavel... planejamento pcp, emissao de nf") — MESMO
+    recorte por Término Semanal PCP já usado na tela Resultados/OTD
+    (_pedidos_operacao_do_periodo/_resumo_otd/_resumo_lead_times/
+    _faturamento_por_periodo, todos reaproveitados sem nenhuma query nova),
+    só que aqui a favor do relatório de Operação 360 — independente dos
+    filtros normais da tabela acima (mesmo espírito do dropdown de período
+    da rota de tela)."""
     query, filtros = _filtrar_pedidos_operacao(args)
     pedidos = query.all()
     pedidos_venda = [p.pedido_venda for p in pedidos]
@@ -10082,7 +10091,16 @@ def _dados_relatorio_operacao_360(args):
     rdim = _rdim_resumo_por_pedido_venda(pedidos_venda)
     metricas = _metricas_operacao_360(pedidos, liberacao_pcp, data_cliente, pedidos_producao)
     painel = _painel_operacao_360(filtros, pedidos, metricas)
-    return pedidos, metricas, rdim, painel, filtros
+
+    tipo_p, ano_p, valor_p, periodo_label = _parse_periodo(args.get("periodo", ""))
+    query_periodo = _pedidos_operacao_do_periodo(tipo_p, ano_p, valor_p)
+    dados_periodo = {
+        "label": periodo_label,
+        "otd": _resumo_otd(query_periodo),
+        "lead_times": _resumo_lead_times(query_periodo),
+        "faturamento": _faturamento_por_periodo(tipo_p, ano_p, valor_p),
+    }
+    return pedidos, metricas, rdim, painel, filtros, dados_periodo
 
 
 def _linha_export_operacao_360(p, m, rdim):
@@ -10157,65 +10175,243 @@ def _gerar_excel_operacao_360(pedidos, metricas, rdim, painel, filtros):
     return resposta
 
 
-def _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros):
+def _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros, dados_periodo):
+    """Relatório Gerencial em PDF da Operação 360 (pedido do Bruno,
+    29/09/2026, na sequência da camada visual dessa mesma tela: "quero um
+    relatorio completo... tanto para planejamento pcp, emissao de nf
+    etc... e mes a mes selecionavel... incluir toda a gestao 360, painel e
+    cards da aba, pipeline operacional etc... quero emotions e logo, data e
+    horario de emissao"). Reaproveita 100% dado já calculado em outro lugar
+    — nenhuma query nova além do já existente `dados_periodo` (ver
+    _dados_relatorio_operacao_360):
+      - Painel dinâmico + pipeline por etapa: mesmo `painel` que já alimenta
+        os cards/funil da tela (_painel_operacao_360).
+      - Planejamento PCP / Emissão de NF do mês (ou trimestre/semestre/ano)
+        escolhido no dropdown de período: MESMO dado que já alimenta
+        "Faturamento por Semana"/"OTD do mês"/Lead Times do mês na tela
+        Resultados/OTD (_faturamento_por_periodo/_resumo_otd/
+        _resumo_lead_times) — só reapresentado aqui dentro do relatório de
+        Operação 360, pra não obrigar o Bruno a gerar 2 PDFs.
+      - Tabela de pedidos: igual já era antes desta mudança.
+
+    Ícones coloridos + logo: mesmo mecanismo já usado no PDF "Espelho Pedido
+    de Venda" (_icone_pdf/_ESPELHO_LOGO_PATH) — fontes padrão do reportlab
+    não têm glyph de emoji, por isso os ícones são PNG pré-renderados em
+    static/img/emoji_pdf/."""
+    from reportlab.graphics.charts.barcharts import HorizontalBarChart
+    from reportlab.graphics.shapes import Drawing
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import HRFlowable, Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    LARGURA_PAGINA, ALTURA_PAGINA = landscape(A4)
+    COR_CABECALHO_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
+    COR_CABECALHO_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
+    COR_VERDE = colors.HexColor("#198754")
+    COR_VERDE_CLARO = colors.HexColor("#d1e7dd")
+    COR_VERMELHO = colors.HexColor("#dc3545")
+    COR_VERMELHO_CLARO = colors.HexColor("#f8d7da")
+    COR_BORDA = colors.HexColor("#dee2e6")
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=landscape(A4),
-        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
-        title="Gestão Operação — Operação 360",
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=14 * mm,
+        title="Relatório Gerencial — Operação 360",
     )
     estilos = getSampleStyleSheet()
     estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8, leading=9.5)
     estilo_celula_bold = ParagraphStyle("celula_bold", parent=estilo_celula, fontName="Helvetica-Bold")
-    COR_CABECALHO_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
-    COR_CABECALHO_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
     estilo_cabecalho_tabela = ParagraphStyle(
         "cabecalho_tabela", parent=estilo_celula_bold, fontSize=8.5, leading=10, textColor=COR_CABECALHO_TEXTO,
     )
+    est_titulo = ParagraphStyle("titulo_go360", parent=estilos["Title"], fontSize=20, leading=23, spaceAfter=0)
+    est_subtitulo = ParagraphStyle("subtitulo_go360", parent=estilos["Normal"], fontSize=9.5, leading=13, textColor=colors.HexColor("#555"))
+    est_secao = ParagraphStyle(
+        "secao_go360", parent=estilos["Normal"], fontSize=12.5, leading=15, fontName="Helvetica-Bold",
+        textColor=COR_CABECALHO_TEXTO, spaceBefore=8, spaceAfter=3,
+    )
+    est_legenda = ParagraphStyle("legenda_go360", parent=estilos["Normal"], fontSize=8, leading=11, textColor=colors.HexColor("#6c757d"))
+    largura_util = LARGURA_PAGINA - doc.leftMargin - doc.rightMargin
 
-    elementos = [
-        Paragraph("Gestão Operação — Operação 360", estilos["Title"]),
-        Paragraph(
-            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · {_texto_filtros_operacao(filtros)}',
-            estilos["Normal"],
-        ),
-        Spacer(1, 6 * mm),
-    ]
-
-    d = painel["dinamico"]
-
-    def _kpi(valor, rotulo):
+    def _kpi(valor, icone, rotulo, cor_valor=None):
+        estilo_valor = ParagraphStyle(
+            "kpi_valor", parent=estilos["Normal"], fontSize=15, fontName="Helvetica-Bold",
+            alignment=1, textColor=cor_valor or colors.black,
+        )
         return [
-            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=15, fontName="Helvetica-Bold", alignment=1)),
-            Paragraph(rotulo, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8, alignment=1)),
+            Paragraph(str(valor), estilo_valor),
+            Paragraph(f'{_icone_pdf(icone, 9)} {rotulo}', ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=7.7, alignment=1, leading=9.5)),
         ]
 
-    kpis = [
-        _kpi(d["total_pedidos"], "Pedidos no recorte"),
-        _kpi(_formatar_moeda_br(d["valor_total"]), "Valor total"),
-        _kpi(_formatar_moeda_br(d["faturamento_total"]), "Faturamento (NF)"),
-        _kpi(f'{d["lead_comercial_medio"]}d' if d["lead_comercial_medio"] is not None else "—", "LT comercial médio"),
-        _kpi(f'{d["lead_producao_medio"]}d' if d["lead_producao_medio"] is not None else "—", "LT produção médio"),
-        _kpi(f'{d["lead_operacao_medio"]}d' if d["lead_operacao_medio"] is not None else "—", "LT operação médio"),
-        _kpi(painel["nf_mes"]["total"], painel["nf_mes"]["titulo"]),
+    def _tabela_kpis(kpis, cores_fundo=None):
+        largura_kpi = largura_util / len(kpis)
+        t = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
+        estilo = [
+            ("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, COR_BORDA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]
+        for i, cor in enumerate(cores_fundo or []):
+            if cor:
+                estilo.append(("BACKGROUND", (i, 0), (i, -1), cor))
+        t.setStyle(TableStyle(estilo))
+        return t
+
+    # ---------------- Cabeçalho: logo + título + gerado em ----------------
+    if os.path.exists(_ESPELHO_LOGO_PATH):
+        logo = Image(_ESPELHO_LOGO_PATH, width=48 * mm, height=48 * mm * (63 / 261))
+    else:
+        logo = Paragraph("", est_subtitulo)
+    bloco_titulo = [
+        Paragraph(f'{_icone_pdf("bar_chart", 17)} RELATÓRIO GERENCIAL — OPERAÇÃO 360', est_titulo),
+        Spacer(1, 1.5 * mm),
+        Paragraph(
+            f'{_icone_pdf("alarm_clock", 11)} Gerado em <b>{_agora_brt().strftime("%d/%m/%Y às %H:%M")}</b> · '
+            f'Planejamento PCP / Emissão de NF: <b>{dados_periodo["label"]}</b>',
+            est_subtitulo,
+        ),
+        Spacer(1, 0.8 * mm),
+        Paragraph(f'{_icone_pdf("clipboard", 10)} Filtros da tabela: {_texto_filtros_operacao(filtros)}', est_subtitulo),
     ]
-    largura_kpi = (landscape(A4)[0] - 20 * mm) / len(kpis)
-    tabela_kpis = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
-    tabela_kpis.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+    tabela_cabecalho = Table([[logo, bloco_titulo]], colWidths=[52 * mm, largura_util - 52 * mm])
+    tabela_cabecalho.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
     ]))
-    elementos.append(tabela_kpis)
+    elementos = [
+        tabela_cabecalho,
+        Spacer(1, 2.5 * mm),
+        HRFlowable(width="100%", thickness=1.6, color=COR_CABECALHO_TEXTO),
+        Spacer(1, 4 * mm),
+    ]
+
+    # ---------------- Painel dinâmico (mesmos cards da tela) ----------------
+    d = painel["dinamico"]
+    elementos.append(Paragraph(f'{_icone_pdf("moneybag", 13)} PAINEL DINÂMICO — CONJUNTO FILTRADO ({d["total_pedidos"]} pedido(s))', est_secao))
+    kpis_painel = [
+        _kpi(d["total_pedidos"], "receipt", "Pedidos no recorte"),
+        _kpi(_formatar_moeda_br(d["valor_total"]), "moneybag", "Valor total"),
+        _kpi(_formatar_moeda_br(d["faturamento_total"]), "moneybag", "Faturamento (NF)"),
+        _kpi(f'{d["lead_comercial_medio"]}d' if d["lead_comercial_medio"] is not None else "—", "stopwatch", "LT comercial médio"),
+        _kpi(f'{d["lead_producao_medio"]}d' if d["lead_producao_medio"] is not None else "—", "stopwatch", "LT produção médio"),
+        _kpi(f'{d["lead_operacao_medio"]}d' if d["lead_operacao_medio"] is not None else "—", "stopwatch", "LT operação médio"),
+        _kpi(painel["nf_mes"]["total"], "receipt", painel["nf_mes"]["titulo"]),
+    ]
+    elementos.append(_tabela_kpis(kpis_painel))
     elementos.append(Spacer(1, 6 * mm))
+
+    # ---------------- Pipeline operacional (funil por etapa) ----------------
+    pipeline = painel.get("pipeline") or []
+    if pipeline:
+        elementos.append(Paragraph(f'{_icone_pdf("funnel", 13)} PIPELINE OPERACIONAL — ONDE OS PEDIDOS ESTÃO TRAVADOS', est_secao))
+        elementos.append(Paragraph(
+            "Quantos pedidos do recorte acima estão em cada etapa, da inclusão até a entrega final ao cliente.",
+            est_legenda,
+        ))
+        elementos.append(Spacer(1, 1.5 * mm))
+        # reportlab desenha a 1ª barra embaixo — inverte a ordem pra "Pendente
+        # produção" aparecer no topo, igual ao gráfico da tela.
+        etapas_invertidas = list(reversed(pipeline))
+        altura_grafico = 20 * mm + len(etapas_invertidas) * 9 * mm
+        largura_grafico = largura_util - 4 * mm
+        dw = Drawing(largura_grafico, altura_grafico)
+        chart = HorizontalBarChart()
+        chart.x = 42 * mm
+        chart.y = 8 * mm
+        chart.width = largura_grafico - 55 * mm
+        chart.height = altura_grafico - 16 * mm
+        chart.data = [[e["total"] for e in etapas_invertidas]]
+        # obs.: NÃO usar o emoji (e["emoji"]) aqui — a fonte padrão do
+        # reportlab usada pelos rótulos do eixo do gráfico não tem glyph de
+        # emoji colorido (diferente do truque de <img> dentro de Paragraph
+        # que os ícones _icone_pdf usam), então o emoji virava um quadrado
+        # preto (tofu) colado no texto. A cor de cada barra já identifica a
+        # etapa, igual ao gráfico da tela.
+        chart.categoryAxis.categoryNames = [e["label"] for e in etapas_invertidas]
+        chart.categoryAxis.labels.fontSize = 8
+        chart.categoryAxis.labels.fontName = "Helvetica"
+        chart.valueAxis.valueMin = 0
+        chart.valueAxis.labels.fontSize = 7.5
+        chart.barLabels.fontSize = 8
+        chart.barLabels.fontName = "Helvetica-Bold"
+        chart.barLabelFormat = "%d"
+        chart.barLabels.nudge = 8
+        chart.barWidth = 5 * mm
+        chart.groupSpacing = 3 * mm
+        for i, etapa in enumerate(etapas_invertidas):
+            chart.bars[(0, i)].fillColor = colors.HexColor(etapa["cor"])
+        dw.add(chart)
+        elementos.append(dw)
+        elementos.append(Spacer(1, 5 * mm))
+
+    # ---------------- Planejamento PCP / Emissão de NF do período ----------------
+    dp = dados_periodo
+    otd_p, lt_p, fat_p = dp["otd"], dp["lead_times"], dp["faturamento"]
+    cor_otd = COR_VERDE_CLARO if otd_p["atinge_meta"] else (COR_VERMELHO_CLARO if otd_p["total"] else None)
+    cor_valor_otd = COR_VERDE if otd_p["atinge_meta"] else (COR_VERMELHO if otd_p["total"] else None)
+    kpis_periodo = [
+        _kpi(f'{otd_p["percentual"]}%' if otd_p["percentual"] is not None else "—", "target", f'OTD do período (meta {GO_OTD_META_PERCENTUAL}%)', cor_valor_otd),
+        _kpi(f'{lt_p["lt_operacao"]["media"]}d' if lt_p["lt_operacao"]["media"] is not None else "—", "stopwatch", "Lead Time Operação"),
+        _kpi(fat_p["totais"]["qtd_liberada"], "calendar", "Qtd. liberada (PCP)"),
+        _kpi(_formatar_moeda_br(fat_p["totais"]["valor_liberado"]), "moneybag", "Valor liberado"),
+        _kpi(fat_p["totais"]["qtd_faturada"], "receipt", "Qtd. faturada (NF)"),
+        _kpi(_formatar_moeda_br(fat_p["totais"]["valor_faturado"]), "moneybag", "Valor faturado"),
+    ]
+    # KeepTogether: sem isso o reportlab pode cortar a tabela de 2 linhas
+    # (valores numa linha, ícone+rótulo na outra) bem no meio, jogando a
+    # linha de rótulo sozinha, órfã, pro topo da página seguinte — junta
+    # título + legenda + tabela como um bloco único que só quebra de
+    # página inteiro, nunca no meio.
+    elementos.append(KeepTogether([
+        Paragraph(f'{_icone_pdf("calendar", 13)} PLANEJAMENTO PCP &amp; EMISSÃO DE NF — {dp["label"].upper()}', est_secao),
+        Paragraph(
+            "Todo pedido cujo Término Semanal do Planejamento PCP cai no período escolhido acima no site "
+            "(liberado ou não) — mesmo recorte já usado na tela Resultados/OTD.",
+            est_legenda,
+        ),
+        Spacer(1, 1.5 * mm),
+        _tabela_kpis(kpis_periodo, cores_fundo=[cor_otd, None, None, None, None, None]),
+    ]))
+    elementos.append(Spacer(1, 4 * mm))
+
+    if fat_p["linhas"]:
+        cab_semana = ["Semana (Término PCP)", "Qtd. liberada", "Valor liberado", "Qtd. faturada", "Valor faturado"]
+        dados_semana = [[Paragraph(c, estilo_cabecalho_tabela) for c in cab_semana]]
+        for l in fat_p["linhas"]:
+            dados_semana.append([
+                Paragraph(l["semana_curta"], estilo_celula),
+                Paragraph(str(l["qtd_liberada"]), estilo_celula),
+                Paragraph(_formatar_moeda_br(l["valor_liberado"]), estilo_celula),
+                Paragraph(str(l["qtd_faturada"]), estilo_celula),
+                Paragraph(_formatar_moeda_br(l["valor_faturado"]), estilo_celula),
+            ])
+        pesos_semana = [26, 16, 22, 16, 22]
+        soma_semana = sum(pesos_semana)
+        larguras_semana = [pe / soma_semana * largura_util for pe in pesos_semana]
+        tabela_semana = Table(dados_semana, colWidths=larguras_semana, repeatRows=1)
+        tabela_semana.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        elementos.append(tabela_semana)
+    else:
+        elementos.append(Paragraph("Nenhuma semana de Planejamento PCP nesse período.", est_legenda))
+
+    # ---------------- Tabela detalhada de pedidos (recorte da tela) ----------------
+    elementos.append(PageBreak())
+    elementos.append(Paragraph(f'{_icone_pdf("clipboard", 13)} PEDIDOS DO RECORTE FILTRADO ({len(pedidos)})', est_secao))
+    elementos.append(Spacer(1, 1.5 * mm))
 
     cabecalho = [
         "Pedido", "Cliente", "Status pedido", "Data solicitada", "Conclusão produção", "Emissão NF",
@@ -10244,9 +10440,8 @@ def _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros):
         dados_tabela.append(linha_tabela)
 
     pesos = [8, 14, 12, 10, 11, 10, 10, 8, 6, 9, 10, 6, 6]
-    largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
     soma_pesos = sum(pesos)
-    larguras_mm = [pe / soma_pesos * largura_disponivel for pe in pesos]
+    larguras_mm = [pe / soma_pesos * largura_util for pe in pesos]
     tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
     tabela.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
@@ -10264,10 +10459,21 @@ def _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros):
         elementos.append(Spacer(1, 6 * mm))
         elementos.append(Paragraph("Nenhum pedido encontrado com o filtro aplicado.", estilos["Normal"]))
 
-    doc.build(elementos)
+    def _rodape(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        canvas_obj.setFont("Helvetica", 7.5)
+        canvas_obj.setFillColor(colors.HexColor("#888"))
+        canvas_obj.drawString(doc_obj.leftMargin, 7 * mm, "4PIPE Solutions · Gestão da Produção e Operação")
+        canvas_obj.drawRightString(
+            LARGURA_PAGINA - doc_obj.rightMargin, 7 * mm,
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · Página {doc_obj.page}',
+        )
+        canvas_obj.restoreState()
+
+    doc.build(elementos, onFirstPage=_rodape, onLaterPages=_rodape)
     buffer.seek(0)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
-    nome_arquivo = f"operacao_360_{date.today().isoformat()}.pdf"
+    nome_arquivo = f"operacao_360_relatorio_gerencial_{date.today().isoformat()}.pdf"
     resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
     return resposta
 
@@ -16383,6 +16589,20 @@ def register_routes(app):
         )
         painel_operacao_360 = _painel_operacao_360(filtros, pedidos_filtrados_completo, metricas_completo)
 
+        # Mês/período do Relatório Gerencial em PDF (pedido do Bruno,
+        # 29/09/2026: "relatorio... mes a mes selecionavel" pro relatório
+        # completo de Operação 360) — dropdown SEPARADO dos filtros da
+        # tabela acima (mesmo componente/rótulos de Resultados/OTD, ver
+        # _opcoes_periodo/_parse_periodo), só decide qual "Planejamento PCP
+        # / Emissão de NF" o PDF mostra; nunca filtra os pedidos desta tela
+        # (`periodo` não é uma chave de `filtros` — _filtrar_pedidos_operacao
+        # só aplica período quando `segmento` vem preenchido, e esta tela não
+        # tem esse controle).
+        tipo_periodo_relatorio, ano_periodo_relatorio, valor_periodo_relatorio, periodo_relatorio_label = (
+            _parse_periodo(request.args.get("periodo", ""))
+        )
+        periodo_relatorio_str = _periodo_para_str(tipo_periodo_relatorio, ano_periodo_relatorio, valor_periodo_relatorio)
+
         return render_template(
             "gestao_operacao_listagem_geral.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
@@ -16392,19 +16612,21 @@ def register_routes(app):
             data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
             metricas_operacao_360=metricas_operacao_360,
             painel_operacao_360=painel_operacao_360,
+            periodo_relatorio=periodo_relatorio_str, tipo_periodo_relatorio=tipo_periodo_relatorio,
+            periodo_relatorio_label=periodo_relatorio_label, opcoes_periodo=_opcoes_periodo(),
         )
 
     @app.route("/gestao-operacao/listagem-geral/relatorio.xlsx")
     @login_required
     def gestao_operacao_listagem_geral_xlsx():
-        pedidos, metricas, rdim, painel, filtros = _dados_relatorio_operacao_360(request.args)
+        pedidos, metricas, rdim, painel, filtros, dados_periodo = _dados_relatorio_operacao_360(request.args)
         return _gerar_excel_operacao_360(pedidos, metricas, rdim, painel, filtros)
 
     @app.route("/gestao-operacao/listagem-geral/relatorio.pdf")
     @login_required
     def gestao_operacao_listagem_geral_pdf():
-        pedidos, metricas, rdim, painel, filtros = _dados_relatorio_operacao_360(request.args)
-        return _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros)
+        pedidos, metricas, rdim, painel, filtros, dados_periodo = _dados_relatorio_operacao_360(request.args)
+        return _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros, dados_periodo)
 
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")
