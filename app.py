@@ -98,6 +98,7 @@ from models import (
     Programacao,
     ProjetoPD,
     RdimComponenteDesvio,
+    RdimComponenteMedicao,
     RdimMedicao,
     RdimPecaDesvio,
     RncQualidade,
@@ -9254,6 +9255,16 @@ def _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=Fal
     (`componente_desvio_{i}` == "SIM"); os demais não geram registro, mesmo
     espírito de _salvar_pecas_desvio_rdim (só quem teve desvio entra).
 
+    Cada componente marcado também carrega sua PRÓPRIA tabela de medições
+    (RdimComponenteMedicao) — pedido do Bruno (30/09/2026, RDIM Fase 6):
+    "tenho os itens disco selo e disco guia, sendo que ambos podem
+    apresentar desvios... quero detalhar os apontamentos de cada
+    componente". Os campos vêm em arrays paralelos indexados pelo MESMO i
+    do componente (`componente_grandeza_{i}[]`, `componente_especificado_
+    min_{i}[]` etc.) — combina os dois padrões já usados no resto do RDIM:
+    índice fixo por componente (lista fechada) + arrays paralelos dentro de
+    cada um (grandezas livres, mesmo espírito de _salvar_medicoes_rdim).
+
     Retorna None em sucesso, ou uma mensagem de erro (validação de
     quantidade_com_desvio por componente, mesma regra do campo do lote
     inteiro) — quando há erro, NADA é salvo (a rota deve mostrar o flash e
@@ -9265,12 +9276,37 @@ def _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=Fal
         qtd, erro_qtd = _validar_quantidade_com_desvio(f.get(f"componente_quantidade_com_desvio_{i}"), quantidade_item)
         if erro_qtd:
             return f'Componente "{componente}": {erro_qtd}'
+
+        grandezas = f.getlist(f"componente_grandeza_{i}[]")
+        esp_mins = f.getlist(f"componente_especificado_min_{i}[]")
+        esp_maxs = f.getlist(f"componente_especificado_max_{i}[]")
+        med_mins = f.getlist(f"componente_medido_min_{i}[]")
+        med_maxs = f.getlist(f"componente_medido_max_{i}[]")
+        medicoes_componente = []
+        ordem_med = 0
+        for grandeza, esp_min, esp_max, med_min, med_max in zip(grandezas, esp_mins, esp_maxs, med_mins, med_maxs):
+            grandeza = grandeza.strip()
+            if not grandeza:
+                continue
+            medicoes_componente.append(
+                RdimComponenteMedicao(
+                    grandeza=grandeza,
+                    especificado_min=_parse_float_form(esp_min, default=None),
+                    especificado_max=_parse_float_form(esp_max, default=None),
+                    medido_min=_parse_float_form(med_min, default=None),
+                    medido_max=_parse_float_form(med_max, default=None),
+                    ordem=ordem_med,
+                )
+            )
+            ordem_med += 1
+
         linhas.append({
             "componente": componente,
             "categoria_desvio": (f.get(f"componente_categoria_desvio_{i}", "") or "").strip() or None,
             "subcategoria_desvio": (f.get(f"componente_subcategoria_desvio_{i}", "") or "").strip() or None,
             "quantidade_com_desvio": qtd,
             "desvio_encontrado": (f.get(f"componente_desvio_encontrado_{i}", "") or "").strip() or None,
+            "medicoes": medicoes_componente,
         })
 
     if substituir:
@@ -14352,6 +14388,7 @@ def _construir_backup_pedidos_wb():
     _add_sheet("RDIM Medicoes", RdimMedicao, RdimMedicao.query.order_by(RdimMedicao.id).all())
     _add_sheet("RDIM Pecas Desvio", RdimPecaDesvio, RdimPecaDesvio.query.order_by(RdimPecaDesvio.id).all())
     _add_sheet("RDIM Componentes Desvio", RdimComponenteDesvio, RdimComponenteDesvio.query.order_by(RdimComponenteDesvio.id).all())
+    _add_sheet("RDIM Componente Medicoes", RdimComponenteMedicao, RdimComponenteMedicao.query.order_by(RdimComponenteMedicao.id).all())
 
     # ---- P&D (novo, 03/09/2026) ----
     _add_sheet("Projetos PD", ProjetoPD, ProjetoPD.query.order_by(ProjetoPD.id).all())

@@ -1382,8 +1382,17 @@ class InspecaoFinal(db.Model):
     def tem_desvio_fora_tolerancia(self):
         """True se alguma medição registrada estourou a especificação — usado
         pra sinalização visual e pros KPIs do dashboard, sempre recalculado a
-        partir das medições reais (nunca guardado como campo à parte)."""
-        return any(m.dentro_da_tolerancia is False for m in self.medicoes)
+        partir das medições reais (nunca guardado como campo à parte).
+        Também olha as medições POR COMPONENTE (modelo PIG LBD/LUN/SUPERFLEX,
+        RdimComponenteMedicao) além das medições "clássicas" do lote inteiro
+        — uma inspeção pode usar só um dos dois modelos, nunca os dois."""
+        if any(m.dentro_da_tolerancia is False for m in self.medicoes):
+            return True
+        return any(
+            m.dentro_da_tolerancia is False
+            for c in self.componentes_desvio
+            for m in c.medicoes
+        )
 
     @property
     def resumo_pecas_desvio(self):
@@ -1603,6 +1612,61 @@ class RdimComponenteDesvio(db.Model):
     desvio_encontrado = db.Column(db.Text, nullable=True)
 
     ordem = db.Column(db.Integer, nullable=False, default=0)
+
+    medicoes = db.relationship(
+        "RdimComponenteMedicao",
+        backref="componente_desvio",
+        cascade="all, delete-orphan",
+        order_by="RdimComponenteMedicao.ordem",
+    )
+
+
+class RdimComponenteMedicao(db.Model):
+    """Uma linha = uma grandeza medida dentro de UM COMPONENTE específico do
+    PIG LBD/LUN/SUPERFLEX (RdimComponenteDesvio) — pedido do Bruno
+    (30/09/2026, RDIM Fase 6): "tenho produção de LBD onde dentro dele, tenho
+    os itens disco selo e disco guia, sendo que ambos podem apresentar
+    desvios... quero detalhar os apontamentos de cada componente com
+    desvio". Mesmo espírito/estrutura de RdimMedicao (grandezas flexíveis
+    por linha, não colunas fixas) — só que uma tabela de medições própria
+    POR COMPONENTE em vez de uma única por inspeção inteira, porque cada
+    componente (disco selo, disco guia, bumper...) tem suas próprias
+    dimensões/tolerâncias e o desvio pode estar só em 1 ou 2 componentes do
+    conjunto, não no lote inteiro. Só existe quando o componente-pai
+    (RdimComponenteDesvio) foi marcado "Sim, teve desvio" — mesma regra de
+    "só quem teve desvio gera registro" já usada no resto do RDIM."""
+
+    __tablename__ = "rdim_componente_medicoes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    componente_desvio_id = db.Column(db.Integer, db.ForeignKey("rdim_componentes_desvio.id"), nullable=False)
+
+    grandeza = db.Column(db.String(60), nullable=False)
+    especificado_min = db.Column(db.Float, nullable=True)
+    especificado_max = db.Column(db.Float, nullable=True)
+    medido_min = db.Column(db.Float, nullable=True)
+    medido_max = db.Column(db.Float, nullable=True)
+    ordem = db.Column(db.Integer, nullable=False, default=0)
+
+    @property
+    def dentro_da_tolerancia(self):
+        """Mesma lógica de RdimMedicao.dentro_da_tolerancia — nunca guardado
+        como coluna, sempre recalculado a partir de especificado_*/medido_*."""
+        if self.especificado_min is None and self.especificado_max is None:
+            return None
+        if self.medido_min is None and self.medido_max is None:
+            return None
+        if self.especificado_min is not None:
+            if self.medido_min is not None and self.medido_min < self.especificado_min:
+                return False
+            if self.medido_max is not None and self.medido_max < self.especificado_min:
+                return False
+        if self.especificado_max is not None:
+            if self.medido_max is not None and self.medido_max > self.especificado_max:
+                return False
+            if self.medido_min is not None and self.medido_min > self.especificado_max:
+                return False
+        return True
 
 
 class ProjetoPD(db.Model):

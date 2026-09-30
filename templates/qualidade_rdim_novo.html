@@ -262,6 +262,42 @@
               <input type="text" class="form-control form-control-sm"
                      name="componente_desvio_encontrado_{{ loop.index0 }}" placeholder="Desvio encontrado neste componente">
             </div>
+            <div class="col-12 mt-2">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="text-uppercase text-muted small fw-semibold">Medições deste componente</span>
+                <button type="button" class="btn btn-sm btn-outline-primary btn-adicionar-grandeza-componente" data-indice="{{ loop.index0 }}">
+                  <i class="bi bi-plus-circle"></i> Adicionar grandeza
+                </button>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0 tabela-medicoes-componente">
+                  <thead>
+                    <tr>
+                      <th style="min-width:180px;">Grandeza</th>
+                      <th>Espec. mín</th>
+                      <th>Espec. máx</th>
+                      <th>Medido mín</th>
+                      <th>Medido máx</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="componenteMedicoesBody{{ loop.index0 }}">
+                    {% for g in RDIM_GRANDEZAS_PADRAO %}
+                    <tr class="medicao-row">
+                      <td><input type="text" class="form-control form-control-sm" name="componente_grandeza_{{ loop.index0 }}[]" value="{{ g }}"></td>
+                      <td><input type="number" step="any" class="form-control form-control-sm med-input" name="componente_especificado_min_{{ loop.index0 }}[]"></td>
+                      <td><input type="number" step="any" class="form-control form-control-sm med-input" name="componente_especificado_max_{{ loop.index0 }}[]"></td>
+                      <td><input type="number" step="any" class="form-control form-control-sm med-input" name="componente_medido_min_{{ loop.index0 }}[]"></td>
+                      <td><input type="number" step="any" class="form-control form-control-sm med-input" name="componente_medido_max_{{ loop.index0 }}[]"></td>
+                      <td><span class="badge bg-secondary status-medicao">—</span></td>
+                      <td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-medicao"><i class="bi bi-trash"></i></button></td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
         {% endfor %}
@@ -383,14 +419,21 @@
   });
 
   function avaliarTolerancia(row) {
-    const num = function (sel) {
-      const v = row.querySelector(sel).value;
+    // Pega os 4 inputs .med-input pela ORDEM no DOM (espec.mín/máx,
+    // medido mín/máx), não pelo atributo name — assim a mesma função serve
+    // tanto pra tabela de Medições do modelo clássico ("especificado_min[]"
+    // etc.) quanto pras tabelas de medição por componente do modelo PIG
+    // LBD/LUN/SUPERFLEX ("componente_especificado_min_{i}[]" etc.), cujo
+    // name é diferente mas a ordem das colunas é a mesma.
+    const inputs = row.querySelectorAll(".med-input");
+    const num = function (el) {
+      const v = el.value;
       return v === "" ? null : parseFloat(v);
     };
-    const espMin = num('[name="especificado_min[]"]');
-    const espMax = num('[name="especificado_max[]"]');
-    const medMin = num('[name="medido_min[]"]');
-    const medMax = num('[name="medido_max[]"]');
+    const espMin = num(inputs[0]);
+    const espMax = num(inputs[1]);
+    const medMin = num(inputs[2]);
+    const medMax = num(inputs[3]);
     const badge = row.querySelector(".status-medicao");
     if ((espMin === null && espMax === null) || (medMin === null && medMax === null)) {
       badge.className = "badge bg-secondary status-medicao"; badge.textContent = "—"; return;
@@ -508,6 +551,42 @@
     if (!e.target.classList.contains("componente-desvio-radio")) return;
     const linha = e.target.closest(".componente-linha");
     linha.querySelector(".componente-detalhe").classList.toggle("d-none", e.target.value !== "SIM");
+  });
+
+  // ---- Medições por componente (PIG LBD/LUN/SUPERFLEX): mesmo padrão de
+  // adicionar/remover linha + sinalização de tolerância da tabela de
+  // Medições do modelo clássico (linhaMedicao/avaliarTolerancia acima), só
+  // que uma tabela própria por componente — pedido do Bruno (30/09/2026,
+  // RDIM Fase 6): "quero detalhar os apontamentos de cada componente com
+  // desvio". Eventos delegados em #componentesDesvioLista (não em cada
+  // tbody individualmente) pra cobrir as 11 tabelas de uma vez só. ----
+  function linhaMedicaoComponente(indice) {
+    const tr = document.createElement("tr");
+    tr.className = "medicao-row";
+    tr.innerHTML =
+      '<td><input type="text" class="form-control form-control-sm" name="componente_grandeza_' + indice + '[]" placeholder="Ex.: Comprimento (mm)"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="componente_especificado_min_' + indice + '[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="componente_especificado_max_' + indice + '[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="componente_medido_min_' + indice + '[]"></td>' +
+      '<td><input type="number" step="any" class="form-control form-control-sm med-input" name="componente_medido_max_' + indice + '[]"></td>' +
+      '<td><span class="badge bg-secondary status-medicao">—</span></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger btn-remover-medicao"><i class="bi bi-trash"></i></button></td>';
+    return tr;
+  }
+
+  componentesLista.addEventListener("click", function (e) {
+    const btnAddGrandeza = e.target.closest(".btn-adicionar-grandeza-componente");
+    if (btnAddGrandeza) {
+      const indice = btnAddGrandeza.dataset.indice;
+      document.getElementById("componenteMedicoesBody" + indice).appendChild(linhaMedicaoComponente(indice));
+      return;
+    }
+    const btnRemover = e.target.closest(".btn-remover-medicao");
+    if (btnRemover) btnRemover.closest(".medicao-row").remove();
+  });
+
+  componentesLista.addEventListener("input", function (e) {
+    if (e.target.classList.contains("med-input")) avaliarTolerancia(e.target.closest(".medicao-row"));
   });
 })();
 </script>
