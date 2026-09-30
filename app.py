@@ -10483,7 +10483,7 @@ def _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros, dados_peri
 # ----------------------------------------------------------------------
 _COLUNAS_EXPORT_LOGISTICA = [
     "Pedido", "Cliente", "Nº NF", "Emissão NF", "Prevista coleta/embarque", "Expedido em", "Transportadora",
-    "Prevista entrega", "Real entrega", "Lead time frete (d)", "Custo frete previsto", "Custo frete final",
+    "Prevista entrega", "Real entrega", "Lead time frete (d)",
 ]
 
 
@@ -10513,14 +10513,12 @@ def _gerar_excel_logistica(pedidos, painel, kanban_total, filtros):
         ("Aguardando expedição (site inteiro)", kanban_total),
         ("Lead time médio de frete (dias)", painel["lead_time_frete_medio"] if painel["lead_time_frete_medio"] is not None else ""),
         ("NFs emitidas no recorte", painel["nfs_emitidas"]),
-        ("Custo frete previsto", _formatar_moeda_br(painel["custo_frete_previsto"])),
-        ("Custo frete final", _formatar_moeda_br(painel["custo_frete_final"])),
         ("Expedidos sem confirmação de entrega (em trânsito)", painel["em_transito"]),
     ]
     for linha in linhas_resumo:
         ws_resumo.append(linha)
     ws_resumo["A1"].font = Font(bold=True, size=14)
-    for i in (2, 3, 5, 6, 7, 8, 9, 10, 11):
+    for i in (2, 3, 5, 6, 7, 8, 9):
         ws_resumo.cell(row=i, column=1).font = Font(bold=True)
     ws_resumo.column_dimensions["A"].width = 42
     ws_resumo.column_dimensions["B"].width = 40
@@ -10537,8 +10535,6 @@ def _gerar_excel_logistica(pedidos, painel, kanban_total, filtros):
             p.go_transportadora.nome if p.go_transportadora else "",
             _formatar_data_br(p.go_data_prevista_entrega), _formatar_data_br(p.go_data_real_entrega),
             p.go_lead_time_frete_dias if p.go_lead_time_frete_dias is not None else "",
-            p.go_custo_frete_previsto if p.go_custo_frete_previsto is not None else "",
-            p.go_custo_frete_final if p.go_custo_frete_final is not None else "",
         ])
     for coluna in ws_pedidos.columns:
         valores = [len(str(c.value)) for c in coluna if c.value is not None]
@@ -10598,8 +10594,6 @@ def _gerar_pdf_logistica(pedidos, painel, kanban_total, filtros):
         _kpi(kanban_total, "Aguardando expedição"),
         _kpi(f'{painel["lead_time_frete_medio"]}d' if painel["lead_time_frete_medio"] is not None else "—", "Lead time médio de frete"),
         _kpi(painel["nfs_emitidas"], "NFs emitidas no recorte"),
-        _kpi(_formatar_moeda_br(painel["custo_frete_previsto"]), "Custo frete previsto"),
-        _kpi(_formatar_moeda_br(painel["custo_frete_final"]), "Custo frete final"),
         _kpi(painel["em_transito"], "Em trânsito"),
     ]
     largura_kpi = (landscape(A4)[0] - 20 * mm) / len(kpis)

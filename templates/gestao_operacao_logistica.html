@@ -68,11 +68,7 @@
     </div>
 
     <div class="row g-3">
-      <div class="col-lg-6">
-        <h6 class="text-muted small mb-2">Custo de frete — previsto x final</h6>
-        <canvas id="graficoCustoFrete" height="140"></canvas>
-      </div>
-      <div class="col-lg-6">
+      <div class="col-lg-8 col-xl-6 mx-auto">
         <h6 class="text-muted small mb-2">Distribuição de Lead Time de frete</h6>
         <canvas id="graficoLeadTimeFrete" height="140"></canvas>
       </div>
@@ -151,22 +147,6 @@
 (function () {
   Chart.defaults.color = "#495057";
   Chart.defaults.font.size = 12;
-
-  new Chart(document.getElementById("graficoCustoFrete"), {
-    type: "bar",
-    data: {
-      labels: ["Previsto", "Final"],
-      datasets: [{
-        label: "Custo de frete (R$)",
-        data: [{{ painel_operacao_logistica.custo_frete_previsto }}, {{ painel_operacao_logistica.custo_frete_final }}],
-        backgroundColor: ["#6ea8fe", "#198754"],
-      }],
-    },
-    options: {
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, title: { display: true, text: "R$" } } },
-    },
-  });
 
   const leadTimeFreteFaixas = {{ painel_operacao_logistica.lead_time_frete_faixas | tojson }};
   new Chart(document.getElementById("graficoLeadTimeFrete"), {
