@@ -99,6 +99,7 @@ from models import (
     ProjetoPD,
     RdimComponenteDesvio,
     RdimComponenteMedicao,
+    RdimComponentePecaDesvio,
     RdimMedicao,
     RdimPecaDesvio,
     RncQualidade,
@@ -5279,6 +5280,7 @@ def _apontamentos_recentes_qualidade(desde=None, limite=15):
             selectinload(InspecaoFinal.item).selectinload(ItemPedido.pedido),
             selectinload(InspecaoFinal.medicoes),
             selectinload(InspecaoFinal.pecas_desvio),
+            selectinload(InspecaoFinal.componentes_desvio).selectinload(RdimComponenteDesvio.pecas_desvio),
         )
         .order_by(InspecaoFinal.criado_em.desc())
         .limit(limite)
@@ -5389,7 +5391,11 @@ def _relatorio_diario_dados(dia_brt=None):
 
     rdims = (
         InspecaoFinal.query
-        .options(selectinload(InspecaoFinal.pecas_desvio), selectinload(InspecaoFinal.medicoes))
+        .options(
+            selectinload(InspecaoFinal.pecas_desvio),
+            selectinload(InspecaoFinal.medicoes),
+            selectinload(InspecaoFinal.componentes_desvio).selectinload(RdimComponenteDesvio.pecas_desvio),
+        )
         .filter(InspecaoFinal.criado_em >= inicio_utc, InspecaoFinal.criado_em < fim_utc)
         .filter(InspecaoFinal.resultado != "APROVADO")
         .order_by(InspecaoFinal.criado_em)
@@ -9265,6 +9271,13 @@ def _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=Fal
     índice fixo por componente (lista fechada) + arrays paralelos dentro de
     cada um (grandezas livres, mesmo espírito de _salvar_medicoes_rdim).
 
+    Também (mesmo pedido, complementado em 30/09/2026): "incluir esse
+    detalhamento do apontamento dentro do item apontado... dentro do guia,
+    selo, copo ou qualquer item listado" — cada componente marcado carrega
+    ainda seu PRÓPRIO detalhamento peça a peça (RdimComponentePecaDesvio),
+    arrays paralelos `componente_peca_numero_{i}[]` etc., mesmo espírito de
+    _salvar_pecas_desvio_rdim só que por componente.
+
     Retorna None em sucesso, ou uma mensagem de erro (validação de
     quantidade_com_desvio por componente, mesma regra do campo do lote
     inteiro) — quando há erro, NADA é salvo (a rota deve mostrar o flash e
@@ -9300,6 +9313,38 @@ def _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=Fal
             )
             ordem_med += 1
 
+        # Detalhamento peça a peça DESTE COMPONENTE — pedido do Bruno
+        # (30/09/2026, RDIM Fase 6): "incluir esse detalhamento do
+        # apontamento dentro do item apontado... dentro do guia, selo, copo
+        # ou qualquer item listado". Mesmo padrão de arrays paralelos
+        # (zip_longest) de _salvar_pecas_desvio_rdim, só que indexado pelo
+        # MESMO i do componente (componente_peca_numero_{i}[] etc.), mesmo
+        # espírito de componente_grandeza_{i}[] acima.
+        pecas_numero = f.getlist(f"componente_peca_numero_{i}[]")
+        pecas_caracteristica = f.getlist(f"componente_peca_caracteristica_{i}[]")
+        pecas_valor = f.getlist(f"componente_peca_valor_medido_{i}[]")
+        pecas_espec_min = f.getlist(f"componente_peca_especificado_min_{i}[]")
+        pecas_espec_max = f.getlist(f"componente_peca_especificado_max_{i}[]")
+        pecas_componente = []
+        ordem_peca = 0
+        for peca_numero, caracteristica, valor_medido, espec_min, espec_max in zip_longest(
+            pecas_numero, pecas_caracteristica, pecas_valor, pecas_espec_min, pecas_espec_max, fillvalue=""
+        ):
+            caracteristica = (caracteristica or "").strip()
+            if not caracteristica:
+                continue
+            pecas_componente.append(
+                RdimComponentePecaDesvio(
+                    peca_numero=(peca_numero or "").strip() or None,
+                    caracteristica=caracteristica,
+                    valor_medido=_parse_float_form(valor_medido, default=None),
+                    especificado_min=_parse_float_form(espec_min, default=None),
+                    especificado_max=_parse_float_form(espec_max, default=None),
+                    ordem=ordem_peca,
+                )
+            )
+            ordem_peca += 1
+
         linhas.append({
             "componente": componente,
             "categoria_desvio": (f.get(f"componente_categoria_desvio_{i}", "") or "").strip() or None,
@@ -9307,6 +9352,7 @@ def _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=Fal
             "quantidade_com_desvio": qtd,
             "desvio_encontrado": (f.get(f"componente_desvio_encontrado_{i}", "") or "").strip() or None,
             "medicoes": medicoes_componente,
+            "pecas_desvio": pecas_componente,
         })
 
     if substituir:
@@ -14389,6 +14435,7 @@ def _construir_backup_pedidos_wb():
     _add_sheet("RDIM Pecas Desvio", RdimPecaDesvio, RdimPecaDesvio.query.order_by(RdimPecaDesvio.id).all())
     _add_sheet("RDIM Componentes Desvio", RdimComponenteDesvio, RdimComponenteDesvio.query.order_by(RdimComponenteDesvio.id).all())
     _add_sheet("RDIM Componente Medicoes", RdimComponenteMedicao, RdimComponenteMedicao.query.order_by(RdimComponenteMedicao.id).all())
+    _add_sheet("RDIM Componente Pecas Desvio", RdimComponentePecaDesvio, RdimComponentePecaDesvio.query.order_by(RdimComponentePecaDesvio.id).all())
 
     # ---- P&D (novo, 03/09/2026) ----
     _add_sheet("Projetos PD", ProjetoPD, ProjetoPD.query.order_by(ProjetoPD.id).all())
@@ -18193,11 +18240,15 @@ def register_routes(app):
         # Ordem importa: filhos antes dos pais, por causa das foreign keys —
         # bulk delete (.query.delete()) não aciona cascade de ORM, só as
         # normais do banco, então cada FK precisa ser removida "na mão" na
-        # ordem certa (RdimPecaDesvio/RdimMedicao/RdimComponenteDesvio ->
-        # InspecaoFinal -> ItemPedido; Programacao -> ItemPedido;
-        # HistoricoAlteracao -> Pedido; TesteProjetoPD/VisitaReuniaoPD ->
-        # ProjetoPD). RncQualidade e ProjetoPD/PedidoOperacao são tabelas
-        # independentes (sem FK com o resto), podem vir em qualquer ordem.
+        # ordem certa (RdimComponenteMedicao/RdimComponentePecaDesvio ->
+        # RdimComponenteDesvio; RdimPecaDesvio/RdimMedicao/
+        # RdimComponenteDesvio -> InspecaoFinal -> ItemPedido; Programacao ->
+        # ItemPedido; HistoricoAlteracao -> Pedido; TesteProjetoPD/
+        # VisitaReuniaoPD -> ProjetoPD). RncQualidade e ProjetoPD/
+        # PedidoOperacao são tabelas independentes (sem FK com o resto),
+        # podem vir em qualquer ordem.
+        RdimComponenteMedicao.query.delete(synchronize_session=False)
+        RdimComponentePecaDesvio.query.delete(synchronize_session=False)
         RdimPecaDesvio.query.delete(synchronize_session=False)
         RdimMedicao.query.delete(synchronize_session=False)
         RdimComponenteDesvio.query.delete(synchronize_session=False)

@@ -1395,16 +1395,37 @@ class InspecaoFinal(db.Model):
         )
 
     @property
+    def todas_pecas_desvio(self):
+        """Combina o detalhamento peça a peça do modelo clássico
+        (pecas_desvio, lote inteiro) com o de cada componente
+        (RdimComponenteDesvio.pecas_desvio) do modelo PIG LBD/LUN/SUPERFLEX
+        — pedido do Bruno (30/09/2026, RDIM Fase 6): "incluir esse
+        detalhamento do apontamento dentro do item apontado... dentro do
+        guia, selo, copo ou qualquer item listado". Uma inspeção usa só um
+        dos dois modelos por vez, nunca os dois ao mesmo tempo, mas os
+        resumos usados na listagem (resumo_pecas_desvio/contexto_pecas_
+        desvio/pior_apontamento_peca) continuam funcionando pros dois sem
+        precisar saber qual modelo está em uso."""
+        pecas = list(self.pecas_desvio)
+        for c in self.componentes_desvio:
+            pecas.extend(c.pecas_desvio)
+        return pecas
+
+    @property
     def resumo_pecas_desvio(self):
         """Texto curto tipo "1: Espessura; 2: Espessura; 3: Diâmetro
-        Externo" a partir de pecas_desvio — usado só como tooltip na
+        Externo" a partir de todas_pecas_desvio — usado só como tooltip na
         listagem RDIM, pra dar uma prévia do detalhamento peça a peça sem
-        precisar abrir a inspeção."""
+        precisar abrir a inspeção. Peça de um componente específico vem
+        prefixada com o nome do componente (ex.: "DISCO SELO 1: Espessura")
+        pra não confundir com a de outro componente."""
         partes = []
-        for p in self.pecas_desvio:
+        for p in self.todas_pecas_desvio:
             rotulo = p.peca_numero or "—"
             if p.caracteristica:
                 rotulo += ": " + p.caracteristica
+            if getattr(p, "componente_desvio_id", None):
+                rotulo = f"{p.componente_desvio.componente} {rotulo}"
             partes.append(rotulo)
         return "; ".join(partes)
 
@@ -1416,12 +1437,14 @@ class InspecaoFinal(db.Model):
         junto com a variação que teve da peça". Usado como tooltip completo
         na listagem RDIM (complementa o resumo compacto de
         pior_apontamento_peca, que mostra só a pior linha na própria
-        célula)."""
+        célula). Inclui também o detalhamento por componente (RDIM Fase 6)."""
         linhas = []
-        for p in self.pecas_desvio:
+        for p in self.todas_pecas_desvio:
             rotulo = p.peca_numero or "—"
             if p.caracteristica:
                 rotulo += ": " + p.caracteristica
+            if getattr(p, "componente_desvio_id", None):
+                rotulo = f"{p.componente_desvio.componente} {rotulo}"
             if p.especificado_min is not None or p.especificado_max is not None:
                 espec = f"{p.especificado_min if p.especificado_min is not None else '—'} a {p.especificado_max if p.especificado_max is not None else '—'}"
             else:
@@ -1440,18 +1463,19 @@ class InspecaoFinal(db.Model):
 
     @property
     def pior_apontamento_peca(self):
-        """A linha de pecas_desvio com a MAIOR variação em relação à
-        tolerância (RdimPecaDesvio.variacao) — pedido do Bruno (02/09/2026,
-        RDIM Fase 4): na listagem de inspeções, mostrar o "contexto do
-        desvio" (medida solicitada x medida inspecionada x variação),
-        exemplo dele: "tolerância era de 0,5mm, peça inspecionada com
-        0,7mm, peça ficou 0,2mm acima da tolerância". Com várias peças
-        apontadas numa mesma inspeção, mostra a pior (maior variacao) como
-        resumo rápido na linha da tabela; o detalhamento completo continua
-        disponível ao abrir a inspeção. None se não há nenhum apontamento
-        com variação calculável (falta espec. ou valor medido)."""
+        """A linha de todas_pecas_desvio com a MAIOR variação em relação à
+        tolerância — pedido do Bruno (02/09/2026, RDIM Fase 4): na listagem
+        de inspeções, mostrar o "contexto do desvio" (medida solicitada x
+        medida inspecionada x variação), exemplo dele: "tolerância era de
+        0,5mm, peça inspecionada com 0,7mm, peça ficou 0,2mm acima da
+        tolerância". Com várias peças apontadas numa mesma inspeção (lote
+        inteiro e/ou por componente, RDIM Fase 6), mostra a pior (maior
+        variacao) como resumo rápido na linha da tabela; o detalhamento
+        completo continua disponível ao abrir a inspeção. None se não há
+        nenhum apontamento com variação calculável (falta espec. ou valor
+        medido)."""
         pior = None
-        for p in self.pecas_desvio:
+        for p in self.todas_pecas_desvio:
             v = p.variacao
             if v is None:
                 continue
@@ -1620,6 +1644,20 @@ class RdimComponenteDesvio(db.Model):
         order_by="RdimComponenteMedicao.ordem",
     )
 
+    # Detalhamento peça a peça do desvio DESTE COMPONENTE — pedido do Bruno
+    # (30/09/2026, RDIM Fase 6): "incluir esse detalhamento do apontamento
+    # dentro do item apontado... dentro do guia, selo, copo ou qualquer item
+    # listado". Mesmo espírito de `medicoes` acima replicando RdimComponente
+    # Medicao a partir de RdimMedicao — aqui é RdimComponentePecaDesvio
+    # replicando RdimPecaDesvio, só que por componente em vez de pro lote
+    # inteiro.
+    pecas_desvio = db.relationship(
+        "RdimComponentePecaDesvio",
+        backref="componente_desvio",
+        cascade="all, delete-orphan",
+        order_by="RdimComponentePecaDesvio.ordem",
+    )
+
 
 class RdimComponenteMedicao(db.Model):
     """Uma linha = uma grandeza medida dentro de UM COMPONENTE específico do
@@ -1667,6 +1705,55 @@ class RdimComponenteMedicao(db.Model):
             if self.medido_min is not None and self.medido_min > self.especificado_max:
                 return False
         return True
+
+
+class RdimComponentePecaDesvio(db.Model):
+    """Uma linha = uma peça com desvio numa característica específica,
+    DENTRO DE UM COMPONENTE do PIG LBD/LUN/SUPERFLEX (RdimComponenteDesvio)
+    — pedido do Bruno (30/09/2026, RDIM Fase 6): "incluir esse detalhamento
+    do apontamento dentro do item apontado... dentro do guia, selo, copo ou
+    qualquer item listado". O detalhamento peça a peça que já existia só
+    pro modelo clássico do lote inteiro (RdimPecaDesvio) passa a existir
+    também por componente — mesmo espírito de RdimComponenteMedicao
+    replicando RdimMedicao. Estrutura e propriedades idênticas a
+    RdimPecaDesvio, só trocando a FK (componente em vez de inspeção)."""
+
+    __tablename__ = "rdim_componente_pecas_desvio"
+
+    id = db.Column(db.Integer, primary_key=True)
+    componente_desvio_id = db.Column(db.Integer, db.ForeignKey("rdim_componentes_desvio.id"), nullable=False)
+
+    peca_numero = db.Column(db.String(20), nullable=True)
+    caracteristica = db.Column(db.String(40), nullable=True)
+    valor_medido = db.Column(db.Float, nullable=True)
+    especificado_min = db.Column(db.Float, nullable=True)
+    especificado_max = db.Column(db.Float, nullable=True)
+
+    ordem = db.Column(db.Integer, nullable=False, default=0)
+
+    @property
+    def variacao(self):
+        """Mesma lógica de RdimPecaDesvio.variacao."""
+        if self.valor_medido is None:
+            return None
+        if self.especificado_min is None and self.especificado_max is None:
+            return None
+        if self.especificado_max is not None and self.valor_medido > self.especificado_max:
+            return round(self.valor_medido - self.especificado_max, 4)
+        if self.especificado_min is not None and self.valor_medido < self.especificado_min:
+            return round(self.especificado_min - self.valor_medido, 4)
+        return 0.0
+
+    @property
+    def acima_da_tolerancia(self):
+        """Mesma lógica de RdimPecaDesvio.acima_da_tolerancia."""
+        if self.valor_medido is None:
+            return None
+        if self.especificado_max is not None and self.valor_medido > self.especificado_max:
+            return True
+        if self.especificado_min is not None and self.valor_medido < self.especificado_min:
+            return False
+        return None
 
 
 class ProjetoPD(db.Model):
