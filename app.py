@@ -13040,11 +13040,18 @@ def _linhas_projetos_pd(args):
     return pagina, page, total_paginas, total_filtrado, filtros
 
 
-def _dashboard_pd():
+def _dashboard_pd(projetos=None):
     """Recalcula ao vivo os indicadores do Dashboard de P&D — nada fica
     pré-calculado/guardado, sempre em dia com o que estiver cadastrado
-    (mesmo espírito de _dashboard_rnc_qualidade)."""
-    projetos = ProjetoPD.query.all()
+    (mesmo espírito de _dashboard_rnc_qualidade).
+
+    Aceita uma lista `projetos` já filtrada (pedido do Bruno, 30/09/2026:
+    relatório PDF/Excel "Projetos de P&D" — o resumo executivo do relatório
+    precisa refletir o MESMO recorte filtrado na tela, não a base inteira).
+    Quando None (uso normal da tela Dashboard de P&D), comportamento
+    idêntico a antes: todos os projetos cadastrados."""
+    if projetos is None:
+        projetos = ProjetoPD.query.all()
     total = len(projetos)
     ativos = [p for p in projetos if not p.concluido]
     atrasados = [p for p in projetos if p.atrasado]
@@ -13206,6 +13213,688 @@ def _filtrar_testes_pd(args):
 
     filtros = dict(projeto_id=projeto_id, resultado=resultado, responsavel=responsavel, apenas_atrasados=apenas_atrasados)
     return query, filtros
+
+
+# ---------------------------------------------------------------------------
+# Relatório Gerencial (PDF + Excel) — Projetos de P&D (pedido do Bruno,
+# 30/09/2026, no MESMO espírito/formato do relatório de Operação 360: "quero
+# que voce atue agora como um gerente de P&D... incluir uma emissão de
+# relatório em PDF e Excel... totalmente completo com todas as informações
+# que consta do projeto responsável datas status etapas contexto... uma
+# única emissão de relatório de PD... consiga enxergar todos os projetos...
+# com toda evolução ordem extremamente completo intuitivo"). Reaproveita
+# 100% o mesmo recorte já filtrado na tela Projetos de P&D
+# (_filtrar_projetos_pd) — o relatório nunca diverge do que está sendo
+# mostrado com o filtro ativo (sem filtro nenhum = todos os projetos, que é
+# o caso de uso principal do Bruno: enxergar TUDO que o gerente de P&D tem
+# em andamento).
+# ---------------------------------------------------------------------------
+def _texto_filtros_pd(filtros):
+    """Descrição legível dos filtros aplicados na tela de Projetos de P&D —
+    mesmo espírito de _texto_filtros_operacao: deixa claro, no cabeçalho do
+    relatório, que ele reflete só o recorte filtrado, não a base inteira."""
+    partes = []
+    if filtros.get("busca"):
+        partes.append(f'Busca: "{filtros["busca"]}"')
+    if filtros.get("etapa"):
+        partes.append("Etapa: " + ", ".join(filtros["etapa"]))
+    if filtros.get("categoria"):
+        partes.append("Categoria: " + ", ".join(filtros["categoria"]))
+    if filtros.get("prioridade"):
+        partes.append("Prioridade: " + ", ".join(filtros["prioridade"]))
+    if filtros.get("responsavel"):
+        partes.append(f'Responsável: "{filtros["responsavel"]}"')
+    if filtros.get("cliente"):
+        partes.append(f'Cliente: "{filtros["cliente"]}"')
+    if filtros.get("produto"):
+        partes.append(f'Produto: "{filtros["produto"]}"')
+    if filtros.get("fornecedor"):
+        partes.append(f'Fornecedor: "{filtros["fornecedor"]}"')
+    if filtros.get("area_envolvida"):
+        partes.append(f'Área envolvida: "{filtros["area_envolvida"]}"')
+    if filtros.get("apenas_atrasados") == "1":
+        partes.append("Somente atrasados")
+    if filtros.get("apenas_criticos") == "1":
+        partes.append("Somente críticos")
+    return "; ".join(partes) if partes else "Nenhum filtro aplicado (todos os projetos)"
+
+
+def _status_prazo_pd(p):
+    """Semáforo de prazo de 1 projeto de P&D — mesma regra das properties já
+    existentes no model (concluido/atrasado/prazo_proximo), só reembalada em
+    (rótulo, cor hex, ícone) pra uso direto no relatório PDF e na exportação
+    Excel."""
+    if p.concluido:
+        return ("Concluído", "#198754", "check")
+    if p.atrasado:
+        return ("Atrasado", "#dc3545", "red_circle")
+    if p.prazo_proximo:
+        return ("Vencendo", "#b8860b", "yellow_circle")
+    if p.data_prevista_conclusao:
+        return ("No prazo", "#198754", "green_circle")
+    return ("Sem prazo definido", "#6c757d", "blue_circle")
+
+
+def _gerar_pdf_pd_projetos(projetos, resumo, filtros):
+    """Relatório Gerencial em PDF de Projetos de P&D — cobre TODA a Central
+    de Gestão de P&D num único arquivo: resumo executivo (mesmos indicadores
+    do Dashboard de P&D, recalculados só sobre o recorte filtrado), pipeline
+    por etapa, visão geral em tabela de todos os projetos do recorte (ordem:
+    prevista de conclusão mais próxima primeiro — mesma ordenação da tela) e,
+    por fim, um dossiê completo (uma página por projeto) com TODOS os campos
+    cadastrados — informações gerais, cronograma, financeiro, contexto
+    (descrição/objetivo/justificativa), resultado esperado/obtido, base de
+    conhecimento, observações, histórico de testes e de visitas/reuniões.
+
+    Mesmo mecanismo de logo + ícones coloridos + rodapé do relatório de
+    Operação 360 (_gerar_pdf_operacao_360) — reaproveitado ao pé da letra
+    pra manter a mesma identidade visual entre os relatórios do sistema."""
+    from xml.sax.saxutils import escape as _xml_escape
+
+    from reportlab.graphics.charts.barcharts import HorizontalBarChart
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        HRFlowable, Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+    )
+
+    LARGURA_PAGINA, ALTURA_PAGINA = landscape(A4)
+    COR_CABECALHO_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
+    COR_CABECALHO_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
+    COR_BORDA = colors.HexColor("#dee2e6")
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=14 * mm,
+        title="Relatório Gerencial — Projetos de P&D",
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celula_pd", parent=estilos["Normal"], fontSize=8, leading=9.5)
+    estilo_celula_bold = ParagraphStyle("celula_pd_bold", parent=estilo_celula, fontName="Helvetica-Bold")
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela_pd", parent=estilo_celula_bold, fontSize=8.5, leading=10, textColor=COR_CABECALHO_TEXTO,
+    )
+    est_titulo = ParagraphStyle("titulo_pd", parent=estilos["Title"], fontSize=20, leading=23, spaceAfter=0)
+    est_subtitulo = ParagraphStyle("subtitulo_pd", parent=estilos["Normal"], fontSize=9.5, leading=13, textColor=colors.HexColor("#555"))
+    est_secao = ParagraphStyle(
+        "secao_pd", parent=estilos["Normal"], fontSize=12.5, leading=15, fontName="Helvetica-Bold",
+        textColor=COR_CABECALHO_TEXTO, spaceBefore=8, spaceAfter=3,
+    )
+    est_subsecao = ParagraphStyle(
+        "subsecao_pd", parent=estilos["Normal"], fontSize=10.5, leading=13, fontName="Helvetica-Bold",
+        textColor=COR_CABECALHO_TEXTO, spaceBefore=6, spaceAfter=2,
+    )
+    est_legenda = ParagraphStyle("legenda_pd", parent=estilos["Normal"], fontSize=8, leading=11, textColor=colors.HexColor("#6c757d"))
+    est_campo = ParagraphStyle("campo_pd", parent=estilos["Normal"], fontSize=9, leading=12)
+    est_paragrafo = ParagraphStyle("paragrafo_pd", parent=estilos["Normal"], fontSize=9, leading=12.5, spaceAfter=3)
+    largura_util = LARGURA_PAGINA - doc.leftMargin - doc.rightMargin
+
+    def _esc(valor):
+        """reportlab lê o texto do Paragraph como XML — texto livre digitado
+        pelo Bruno/Gustavo (nome do projeto, "P&D" na área envolvida,
+        observações etc.) pode ter &, < ou > e quebrar o parser se não for
+        escapado antes de entrar num <Paragraph>. Valores já formatados por
+        nós (datas, moeda, %) nunca têm esses caracteres, mas passar por
+        aqui também não faz mal nenhum."""
+        return _xml_escape(str(valor)) if valor not in (None, "") else ""
+
+    def _kpi(valor, icone, rotulo, cor_valor=None):
+        estilo_valor = ParagraphStyle(
+            "kpi_valor_pd", parent=estilos["Normal"], fontSize=14, fontName="Helvetica-Bold",
+            alignment=1, textColor=cor_valor or colors.black,
+        )
+        return [
+            Paragraph(str(valor), estilo_valor),
+            Paragraph(f'{_icone_pdf(icone, 9)} {rotulo}', ParagraphStyle("kpi_rotulo_pd", parent=estilos["Normal"], fontSize=7.5, alignment=1, leading=9.2)),
+        ]
+
+    def _tabela_kpis(kpis, cores_fundo=None):
+        largura_kpi = largura_util / len(kpis)
+        t = Table([[k[0] for k in kpis], [k[1] for k in kpis]], colWidths=[largura_kpi] * len(kpis))
+        estilo = [
+            ("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, COR_BORDA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]
+        for i, cor in enumerate(cores_fundo or []):
+            if cor:
+                estilo.append(("BACKGROUND", (i, 0), (i, -1), cor))
+        t.setStyle(TableStyle(estilo))
+        return t
+
+    def campo(icone, rotulo, valor):
+        valor_seguro = _esc(valor) or "—"
+        texto = f'{_icone_pdf(icone, 10)} {rotulo}<br/><font size="9.5"><b>{valor_seguro}</b></font>'
+        return Paragraph(texto, est_campo)
+
+    def grade_campos(campos, colunas=4):
+        linhas = []
+        for i in range(0, len(campos), colunas):
+            linha = campos[i:i + colunas]
+            while len(linha) < colunas:
+                linha.append(Paragraph("", est_campo))
+            linhas.append(linha)
+        larguras = [largura_util / colunas] * colunas
+        t = Table(linhas, colWidths=larguras)
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        return t
+
+    # ---------------- Cabeçalho: logo + título + gerado em ----------------
+    if os.path.exists(_ESPELHO_LOGO_PATH):
+        logo = Image(_ESPELHO_LOGO_PATH, width=48 * mm, height=48 * mm * (63 / 261))
+    else:
+        logo = Paragraph("", est_subtitulo)
+    bloco_titulo = [
+        Paragraph(f'{_icone_pdf("lightbulb", 17)} RELATÓRIO GERENCIAL — PROJETOS DE P&amp;D', est_titulo),
+        Spacer(1, 1.5 * mm),
+        Paragraph(
+            f'{_icone_pdf("alarm_clock", 11)} Gerado em <b>{_agora_brt().strftime("%d/%m/%Y às %H:%M")}</b> · '
+            f'{resumo["total"]} projeto(s) no recorte',
+            est_subtitulo,
+        ),
+        Spacer(1, 0.8 * mm),
+        Paragraph(f'{_icone_pdf("clipboard", 10)} Filtros aplicados: {_esc(_texto_filtros_pd(filtros))}', est_subtitulo),
+    ]
+    tabela_cabecalho = Table([[logo, bloco_titulo]], colWidths=[52 * mm, largura_util - 52 * mm])
+    tabela_cabecalho.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    elementos = [
+        tabela_cabecalho,
+        Spacer(1, 2.5 * mm),
+        HRFlowable(width="100%", thickness=1.6, color=COR_CABECALHO_TEXTO),
+        Spacer(1, 4 * mm),
+    ]
+
+    if not projetos:
+        elementos.append(Paragraph("Nenhum projeto de P&amp;D encontrado para o filtro aplicado.", est_legenda))
+        doc.build(elementos)
+        buffer.seek(0)
+        return _resposta_pdf_buffer(buffer, f"pd_projetos_relatorio_{date.today().isoformat()}.pdf")
+
+    # ---------------- Resumo executivo ----------------
+    elementos.append(Paragraph(f'{_icone_pdf("bar_chart", 13)} RESUMO EXECUTIVO', est_secao))
+    cor_pct_prazo = colors.HexColor("#198754") if resumo["pct_no_prazo"] >= 70 else colors.HexColor("#dc3545")
+    kpis_linha1 = [
+        _kpi(resumo["total"], "clipboard", "Total de projetos"),
+        _kpi(resumo["ativos"], "gear", "Ativos (em andamento)"),
+        _kpi(resumo["concluidos"], "check", "Concluídos"),
+        _kpi(resumo["atrasados"], "warning", "Atrasados", colors.HexColor("#dc3545") if resumo["atrasados"] else None),
+        _kpi(resumo["criticos"], "red_circle", "Críticos", colors.HexColor("#dc3545") if resumo["criticos"] else None),
+        _kpi(f'{resumo["pct_no_prazo"]}%', "target", "No prazo (ativos)", cor_pct_prazo),
+        _kpi(f'{resumo["lead_time_medio"]}d' if resumo["lead_time_medio"] else "—", "stopwatch", "Lead time médio (concluídos)"),
+    ]
+    elementos.append(_tabela_kpis(kpis_linha1))
+    elementos.append(Spacer(1, 3 * mm))
+    kpis_linha2 = [
+        _kpi(f'{resumo["taxa_aprovacao_testes"]}%', "test_tube", "Taxa de aprovação de testes"),
+        _kpi(f'{resumo["taxa_homologacao"]}%', "flag_checkered", "Em homologação ou além"),
+        _kpi(_formatar_moeda_br(resumo["investimento_previsto"]), "moneybag", "Investimento previsto"),
+        _kpi(_formatar_moeda_br(resumo["investimento_realizado"]), "moneybag", "Investimento realizado"),
+        _kpi(_formatar_moeda_br(resumo["economia_prevista"]), "moneybag", "Economia prevista"),
+        _kpi(_formatar_moeda_br(resumo["economia_realizada"]), "moneybag", "Economia realizada"),
+        _kpi(
+            f'{resumo["roi_geral"]}%' if resumo["roi_geral"] is not None else "—", "trophy", "ROI geral",
+            (colors.HexColor("#198754") if resumo["roi_geral"] >= 0 else colors.HexColor("#dc3545")) if resumo["roi_geral"] is not None else None,
+        ),
+    ]
+    elementos.append(_tabela_kpis(kpis_linha2))
+    elementos.append(Spacer(1, 6 * mm))
+
+    # ---------------- Pipeline por etapa (funil, mesmo padrão de Operação 360) ----------------
+    # KeepTogether: mesma lição aprendida no relatório de Operação 360 — sem
+    # isso o reportlab pode deixar o título/legenda numa página e o gráfico
+    # (o conteúdo de verdade) sozinho, órfão, no topo da seguinte. Aqui
+    # embrulha o bloco inteiro (título + legenda + gráfico), que só quebra de
+    # página inteiro, nunca no meio.
+    por_etapa = [e for e in resumo["por_etapa"] if e["chave"] in PD_ETAPA_OPCOES]
+    if por_etapa:
+        etapas_invertidas = list(reversed(por_etapa))
+        altura_grafico = 20 * mm + len(etapas_invertidas) * 8.5 * mm
+        largura_grafico = largura_util - 4 * mm
+        dw = Drawing(largura_grafico, altura_grafico)
+        chart = HorizontalBarChart()
+        chart.x = 42 * mm
+        chart.y = 8 * mm
+        chart.width = largura_grafico - 55 * mm
+        chart.height = altura_grafico - 16 * mm
+        chart.data = [[e["total"] for e in etapas_invertidas]]
+        chart.categoryAxis.categoryNames = [e["chave"] for e in etapas_invertidas]
+        chart.categoryAxis.labels.fontSize = 8
+        chart.categoryAxis.labels.fontName = "Helvetica"
+        chart.valueAxis.valueMin = 0
+        # Contagem de projetos é sempre inteira — sem isso, quando o maior
+        # valor é pequeno (ex.: 1), o reportlab escolhe um passo decimal
+        # (0.2, 0.4...) pro eixo, o que não faz sentido pra "quantidade de
+        # projetos". Passo sempre inteiro, ~5 marcações no eixo.
+        maior_valor_etapa = max((e["total"] for e in etapas_invertidas), default=0)
+        chart.valueAxis.valueStep = max(1, math.ceil(maior_valor_etapa / 5))
+        chart.valueAxis.labels.fontSize = 7.5
+        chart.barLabels.fontSize = 8
+        chart.barLabels.fontName = "Helvetica-Bold"
+        chart.barLabelFormat = "%d"
+        chart.barLabels.nudge = 8
+        chart.barWidth = 4.5 * mm
+        chart.groupSpacing = 3 * mm
+        for i, etapa in enumerate(etapas_invertidas):
+            cor_bootstrap = PD_ETAPA_CORES.get(etapa["chave"], "secondary")
+            chart.bars[(0, i)].fillColor = colors.HexColor(_ESPELHO_BOOTSTRAP_COR_HEX.get(cor_bootstrap, "#6c757d"))
+        dw.add(chart)
+        elementos.append(KeepTogether([
+            Paragraph(f'{_icone_pdf("funnel", 13)} PIPELINE — PROJETOS POR ETAPA', est_secao),
+            Paragraph(
+                "Quantos projetos do recorte acima estão em cada etapa do ciclo de vida, da ideia até a conclusão.",
+                est_legenda,
+            ),
+            Spacer(1, 1.5 * mm),
+            dw,
+        ]))
+        elementos.append(Spacer(1, 4 * mm))
+
+    # ---------------- Por categoria / por responsável (tabelas compactas lado a lado) ----------------
+    def _tabela_quebra(titulo, quebra, icone):
+        linhas_tbl = [[Paragraph("Descrição", estilo_cabecalho_tabela), Paragraph("Qtd.", estilo_cabecalho_tabela)]]
+        for item in quebra:
+            if item["total"]:
+                linhas_tbl.append([Paragraph(_esc(item["chave"]), estilo_celula), Paragraph(str(item["total"]), estilo_celula)])
+        t = Table(linhas_tbl, colWidths=[(largura_util / 2 - 6 * mm) * 0.78, (largura_util / 2 - 6 * mm) * 0.22])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+            ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        return [Paragraph(f'{_icone_pdf(icone, 11)} {titulo}', est_subsecao), t]
+
+    bloco_categoria = _tabela_quebra("Por categoria", resumo["por_categoria"], "clipboard")
+    bloco_responsavel = _tabela_quebra("Por responsável", resumo["por_responsavel"], "person")
+    tabela_dupla = Table(
+        [[bloco_categoria, bloco_responsavel]],
+        colWidths=[largura_util / 2, largura_util / 2],
+    )
+    tabela_dupla.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6 * mm),
+    ]))
+    elementos.append(KeepTogether([tabela_dupla]))
+
+    # ---------------- Visão geral — tabela com todos os projetos do recorte ----------------
+    elementos.append(PageBreak())
+    elementos.append(Paragraph(f'{_icone_pdf("magnifier", 13)} VISÃO GERAL — TODOS OS PROJETOS DO RECORTE ({len(projetos)})', est_secao))
+    elementos.append(Paragraph(
+        "Mesma ordem da tela (previsão de conclusão mais próxima primeiro) — o detalhe completo de cada projeto "
+        "está no dossiê a partir da próxima página.",
+        est_legenda,
+    ))
+    elementos.append(Spacer(1, 1.5 * mm))
+    cab_visao = ["Código", "Nome", "Categoria", "Responsável", "Prioridade", "Etapa", "%", "Início", "Prevista concl.", "Situação"]
+    dados_visao = [[Paragraph(c, estilo_cabecalho_tabela) for c in cab_visao]]
+    for p in projetos:
+        label_situacao, cor_situacao, _ = _status_prazo_pd(p)
+        dados_visao.append([
+            Paragraph(_esc(p.codigo) or f"#{p.id}", estilo_celula),
+            Paragraph(_esc(p.nome), estilo_celula),
+            Paragraph(_esc(p.categoria) or "—", estilo_celula),
+            Paragraph(_esc(p.responsavel) or "—", estilo_celula),
+            Paragraph(p.prioridade or "—", estilo_celula),
+            Paragraph(p.etapa_atual, estilo_celula),
+            Paragraph(f"{p.percentual_conclusao or 0}%", estilo_celula),
+            Paragraph(_formatar_data_br(p.data_inicio) or "—", estilo_celula),
+            Paragraph(_formatar_data_br(p.data_prevista_conclusao) or "—", estilo_celula),
+            Paragraph(f'<font color="{cor_situacao}"><b>{label_situacao}</b></font>', estilo_celula),
+        ])
+    pesos_visao = [9, 22, 13, 12, 8, 10, 5, 8, 9, 10]
+    soma_visao = sum(pesos_visao)
+    larguras_visao = [pe / soma_visao * largura_util for pe in pesos_visao]
+    tabela_visao = Table(dados_visao, colWidths=larguras_visao, repeatRows=1)
+    tabela_visao.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+        ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    elementos.append(tabela_visao)
+
+    # ---------------- Dossiê completo — 1 seção (página) por projeto ----------------
+    for p in projetos:
+        elementos.append(PageBreak())
+        label_situacao, cor_situacao, icone_situacao = _status_prazo_pd(p)
+        cor_prioridade_hex = _ESPELHO_BOOTSTRAP_COR_HEX.get(PRIORIDADE_CORES.get(p.prioridade, "secondary"), "#6c757d")
+        cor_etapa_hex = _ESPELHO_BOOTSTRAP_COR_HEX.get(PD_ETAPA_CORES.get(p.etapa_atual, "secondary"), "#6c757d")
+        elementos.append(Paragraph(
+            f'{_icone_pdf("id", 15)} {_esc(p.codigo) or ("#" + str(p.id))} — {_esc(p.nome)}',
+            est_titulo.clone("titulo_projeto_pd", fontSize=15, leading=18),
+        ))
+        elementos.append(Paragraph(
+            f'{_icone_pdf(icone_situacao, 11)} <font color="{cor_situacao}"><b>{label_situacao}</b></font> · '
+            f'Etapa: <font color="{cor_etapa_hex}"><b>{p.etapa_atual}</b></font> · '
+            f'Prioridade: <font color="{cor_prioridade_hex}"><b>{p.prioridade or "—"}</b></font> · '
+            f'Conclusão: <b>{p.percentual_conclusao or 0}%</b>',
+            est_subtitulo,
+        ))
+        elementos.append(Spacer(1, 2 * mm))
+        elementos.append(HRFlowable(width="100%", thickness=1, color=COR_BORDA))
+        elementos.append(Spacer(1, 2.5 * mm))
+
+        elementos.append(Paragraph(f'{_icone_pdf("office", 12)} INFORMAÇÕES GERAIS', est_subsecao))
+        elementos.append(grade_campos([
+            campo("clipboard", "Categoria", p.categoria),
+            campo("person", "Responsável", p.responsavel),
+            campo("office", "Cliente", p.cliente),
+            campo("package", "Produto", p.produto),
+            campo("truck", "Fornecedor", p.fornecedor),
+            campo("globe", "Área envolvida", p.area_envolvida),
+            campo("person", "Participantes", p.participantes),
+        ], colunas=4))
+
+        elementos.append(Paragraph(f'{_icone_pdf("calendar", 12)} CRONOGRAMA', est_subsecao))
+        elementos.append(grade_campos([
+            campo("calendar", "Data início", _formatar_data_br(p.data_inicio)),
+            campo("calendar", "Prevista conclusão", _formatar_data_br(p.data_prevista_conclusao)),
+            campo("check", "Real conclusão", _formatar_data_br(p.data_real_conclusao)),
+            campo("hourglass", "Dias restantes/atraso", f"{p.dias_restantes}d" if p.dias_restantes is not None else "—"),
+            campo("flag_checkered", "Próxima entrega", p.proxima_entrega),
+            campo("calendar", "Data próxima entrega", _formatar_data_br(p.data_proxima_entrega)),
+            campo("person", "Responsável próxima entrega", p.responsavel_proxima_entrega),
+        ], colunas=4))
+
+        tem_financeiro = any([
+            p.custo_previsto, p.custo_realizado, p.investimento_previsto,
+            p.investimento_realizado, p.economia_prevista, p.economia_realizada,
+        ])
+        if tem_financeiro:
+            elementos.append(Paragraph(f'{_icone_pdf("moneybag", 12)} FINANCEIRO', est_subsecao))
+            elementos.append(grade_campos([
+                campo("moneybag", "Custo previsto", _formatar_moeda_br(p.custo_previsto) if p.custo_previsto is not None else None),
+                campo("moneybag", "Custo realizado", _formatar_moeda_br(p.custo_realizado) if p.custo_realizado is not None else None),
+                campo("moneybag", "Investimento previsto", _formatar_moeda_br(p.investimento_previsto) if p.investimento_previsto is not None else None),
+                campo("moneybag", "Investimento realizado", _formatar_moeda_br(p.investimento_realizado) if p.investimento_realizado is not None else None),
+                campo("moneybag", "Economia prevista", _formatar_moeda_br(p.economia_prevista) if p.economia_prevista is not None else None),
+                campo("moneybag", "Economia realizada", _formatar_moeda_br(p.economia_realizada) if p.economia_realizada is not None else None),
+                campo("trophy", "ROI", f'{p.roi_percentual}%' if p.roi_percentual is not None else None),
+            ], colunas=4))
+
+        if p.objetivo or p.justificativa or p.descricao:
+            elementos.append(Paragraph(f'{_icone_pdf("memo", 12)} CONTEXTO', est_subsecao))
+            if p.descricao:
+                elementos.append(Paragraph(f'<b>Descrição:</b> {_esc(p.descricao)}', est_paragrafo))
+            if p.objetivo:
+                elementos.append(Paragraph(f'<b>Objetivo:</b> {_esc(p.objetivo)}', est_paragrafo))
+            if p.justificativa:
+                elementos.append(Paragraph(f'<b>Justificativa:</b> {_esc(p.justificativa)}', est_paragrafo))
+
+        if p.resultado_esperado_lista or p.resultado_obtido:
+            elementos.append(Paragraph(f'{_icone_pdf("target", 12)} RESULTADO ESPERADO / OBTIDO', est_subsecao))
+            if p.resultado_esperado_lista:
+                elementos.append(Paragraph(f'<b>Esperado:</b> {_esc("; ".join(p.resultado_esperado_lista))}', est_paragrafo))
+            if p.resultado_obtido:
+                elementos.append(Paragraph(f'<b>Obtido:</b> {_esc(p.resultado_obtido)}', est_paragrafo))
+
+        if p.problema or p.solucao or p.licoes_aprendidas:
+            elementos.append(Paragraph(f'{_icone_pdf("trophy", 12)} BASE DE CONHECIMENTO', est_subsecao))
+            if p.problema:
+                elementos.append(Paragraph(f'<b>Problema:</b> {_esc(p.problema)}', est_paragrafo))
+            if p.solucao:
+                elementos.append(Paragraph(f'<b>Solução:</b> {_esc(p.solucao)}', est_paragrafo))
+            if p.licoes_aprendidas:
+                elementos.append(Paragraph(f'<b>Lições aprendidas:</b> {_esc(p.licoes_aprendidas)}', est_paragrafo))
+
+        if p.observacoes_gerais:
+            elementos.append(Paragraph(f'{_icone_pdf("warning", 12)} OBSERVAÇÕES GERAIS', est_subsecao))
+            elementos.append(Paragraph(_esc(p.observacoes_gerais), est_paragrafo))
+
+        if p.testes:
+            cab_testes = ["Nº", "Planejado", "Realizado", "Responsável", "Material/Lote", "Resultado", "Observações"]
+            dados_testes = [[Paragraph(c, estilo_cabecalho_tabela) for c in cab_testes]]
+            for t in p.testes:
+                info_resultado = PD_TESTE_RESULTADO_INFO.get(t.resultado, {})
+                cor_resultado = _ESPELHO_BOOTSTRAP_COR_HEX.get(info_resultado.get("cor", "secondary"), "#6c757d")
+                material_lote = _esc(" / ".join(x for x in (t.material_utilizado, t.lote) if x)) or "—"
+                dados_testes.append([
+                    Paragraph(_esc(t.numero) or "—", estilo_celula),
+                    Paragraph(_formatar_data_br(t.data_planejada) or "—", estilo_celula),
+                    Paragraph(_formatar_data_br(t.data_realizada) or "—", estilo_celula),
+                    Paragraph(_esc(t.responsavel) or "—", estilo_celula),
+                    Paragraph(material_lote, estilo_celula),
+                    Paragraph(f'<font color="{cor_resultado}"><b>{t.resultado or "—"}</b></font>', estilo_celula),
+                    Paragraph(_esc(t.observacoes) or "—", estilo_celula),
+                ])
+            pesos_testes = [6, 11, 11, 15, 17, 14, 26]
+            soma_testes = sum(pesos_testes)
+            larguras_testes = [pe / soma_testes * largura_util for pe in pesos_testes]
+            tabela_testes = Table(dados_testes, colWidths=larguras_testes, repeatRows=1)
+            tabela_testes.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            # KeepTogether só do título com a tabela — mesma lição do
+            # relatório de Operação 360: sem isso o reportlab pode deixar o
+            # título "TESTES & VALIDAÇÕES" sozinho no fim de uma página e a
+            # tabela inteira na seguinte. IMPORTANTE: não passar `maxHeight`
+            # aqui — reportlab só força os dois a ficarem juntos quando
+            # `maxHeight` é None (o próprio KeepTogether decide sozinho,
+            # olhando o espaço realmente disponível); um `maxHeight`
+            # explícito faz o efeito CONTRÁRIO bem no caso comum (pouco
+            # espaço restante na página), permitindo o título ficar sozinho
+            # de novo — foi exatamente o bug visto na 1ª rodada de QA deste
+            # relatório.
+            elementos.append(KeepTogether(
+                [Paragraph(f'{_icone_pdf("test_tube", 12)} TESTES &amp; VALIDAÇÕES ({len(p.testes)})', est_subsecao), tabela_testes],
+            ))
+            elementos.append(Spacer(1, 3 * mm))
+
+        if p.eventos:
+            cab_eventos = ["Data", "Tipo", "Participantes", "Local", "Objetivo/Resultado", "Próximas ações", "Responsável"]
+            dados_eventos = [[Paragraph(c, estilo_cabecalho_tabela) for c in cab_eventos]]
+            for e in p.eventos:
+                objetivo_resultado = _esc(" / ".join(x for x in (e.objetivo, e.resultado) if x)) or "—"
+                dados_eventos.append([
+                    Paragraph(_formatar_data_br(e.data) or "—", estilo_celula),
+                    Paragraph(_esc(e.tipo) or "—", estilo_celula),
+                    Paragraph(_esc(e.participantes) or "—", estilo_celula),
+                    Paragraph(_esc(e.local) or "—", estilo_celula),
+                    Paragraph(objetivo_resultado, estilo_celula),
+                    Paragraph(_esc(e.proximas_acoes) or "—", estilo_celula),
+                    Paragraph(_esc(e.responsavel) or "—", estilo_celula),
+                ])
+            pesos_eventos = [9, 11, 15, 13, 24, 16, 12]
+            soma_eventos = sum(pesos_eventos)
+            larguras_eventos = [pe / soma_eventos * largura_util for pe in pesos_eventos]
+            tabela_eventos = Table(dados_eventos, colWidths=larguras_eventos, repeatRows=1)
+            tabela_eventos.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            elementos.append(KeepTogether(
+                [Paragraph(f'{_icone_pdf("handshake", 12)} VISITAS &amp; REUNIÕES ({len(p.eventos)})', est_subsecao), tabela_eventos],
+            ))
+
+    def _rodape(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        canvas_obj.setFont("Helvetica", 7.5)
+        canvas_obj.setFillColor(colors.HexColor("#888"))
+        canvas_obj.drawString(doc.leftMargin, 7 * mm, "4PIPE Solutions · Central de Gestão de P&D")
+        canvas_obj.drawRightString(
+            LARGURA_PAGINA - doc.rightMargin, 7 * mm,
+            f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · Página {doc_obj.page}',
+        )
+        canvas_obj.restoreState()
+
+    doc.build(elementos, onFirstPage=_rodape, onLaterPages=_rodape)
+    buffer.seek(0)
+    return _resposta_pdf_buffer(buffer, f"pd_projetos_relatorio_gerencial_{date.today().isoformat()}.pdf")
+
+
+def _resposta_pdf_buffer(buffer, nome_arquivo):
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
+
+
+def _responder_xlsx_pd_projetos(projetos):
+    """Monta o relatório Excel "gerencial" de Projetos de P&D — 3 abas
+    (Projetos / Testes & Validações / Visitas e Reuniões), cada uma como
+    Tabela nativa do Excel (mesmo padrão de _preencher_aba_relatorio_gerencial
+    já usado no relatório de Listagem Geral) — cabeçalho fixo, autofiltro,
+    zebra, moeda/data formatadas. `projetos` já vem filtrado pela tela
+    (_filtrar_projetos_pd) — o relatório nunca diverge do que está sendo
+    mostrado com o filtro ativo."""
+    cabecalho_projetos = [
+        "Código", "Nome", "Categoria", "Prioridade", "Responsável", "Participantes",
+        "Cliente", "Produto", "Fornecedor", "Área envolvida",
+        "Etapa atual", "% Conclusão", "Situação (prazo)",
+        "Data início", "Prevista conclusão", "Real conclusão", "Dias restantes/atraso",
+        "Próxima entrega", "Data próxima entrega", "Responsável próxima entrega",
+        "Custo previsto (R$)", "Custo realizado (R$)",
+        "Investimento previsto (R$)", "Investimento realizado (R$)",
+        "Economia prevista (R$)", "Economia realizada (R$)", "ROI (%)",
+        "Resultado esperado", "Resultado obtido",
+        "Problema", "Solução", "Lições aprendidas",
+        "Descrição", "Objetivo", "Justificativa", "Observações gerais",
+        "Criado em", "Atualizado em",
+    ]
+    linhas_projetos = []
+    for p in projetos:
+        label_situacao, _, _ = _status_prazo_pd(p)
+        linhas_projetos.append([
+            p.codigo or f"#{p.id}",
+            p.nome,
+            p.categoria or "",
+            p.prioridade or "",
+            p.responsavel or "",
+            p.participantes or "",
+            p.cliente or "",
+            p.produto or "",
+            p.fornecedor or "",
+            p.area_envolvida or "",
+            p.etapa_atual,
+            p.percentual_conclusao or 0,
+            label_situacao,
+            p.data_inicio,
+            p.data_prevista_conclusao,
+            p.data_real_conclusao,
+            p.dias_restantes if p.dias_restantes is not None else "",
+            p.proxima_entrega or "",
+            p.data_proxima_entrega,
+            p.responsavel_proxima_entrega or "",
+            round(p.custo_previsto, 2) if p.custo_previsto is not None else None,
+            round(p.custo_realizado, 2) if p.custo_realizado is not None else None,
+            round(p.investimento_previsto, 2) if p.investimento_previsto is not None else None,
+            round(p.investimento_realizado, 2) if p.investimento_realizado is not None else None,
+            round(p.economia_prevista, 2) if p.economia_prevista is not None else None,
+            round(p.economia_realizada, 2) if p.economia_realizada is not None else None,
+            p.roi_percentual if p.roi_percentual is not None else "",
+            "; ".join(p.resultado_esperado_lista) if p.resultado_esperado_lista else "",
+            p.resultado_obtido or "",
+            p.problema or "",
+            p.solucao or "",
+            p.licoes_aprendidas or "",
+            p.descricao or "",
+            p.objetivo or "",
+            p.justificativa or "",
+            p.observacoes_gerais or "",
+            p.criado_em.strftime("%d/%m/%Y %H:%M") if p.criado_em else "",
+            p.atualizado_em.strftime("%d/%m/%Y %H:%M") if p.atualizado_em else "",
+        ])
+
+    cabecalho_testes = [
+        "Projeto", "Nº teste", "Data planejada", "Data realizada", "Responsável",
+        "Material utilizado", "Lote", "Fornecedor", "Condições", "Resultado", "Observações",
+    ]
+    linhas_testes = []
+    for p in projetos:
+        rotulo_projeto = f'{p.codigo or ("#" + str(p.id))} — {p.nome}'
+        for t in p.testes:
+            linhas_testes.append([
+                rotulo_projeto,
+                t.numero or "",
+                t.data_planejada,
+                t.data_realizada,
+                t.responsavel or "",
+                t.material_utilizado or "",
+                t.lote or "",
+                t.fornecedor or "",
+                t.condicoes or "",
+                t.resultado or "",
+                t.observacoes or "",
+            ])
+
+    cabecalho_eventos = [
+        "Projeto", "Data", "Tipo", "Participantes", "Local", "Objetivo",
+        "Resultado", "Próximas ações", "Responsável",
+    ]
+    linhas_eventos = []
+    for p in projetos:
+        rotulo_projeto = f'{p.codigo or ("#" + str(p.id))} — {p.nome}'
+        for e in p.eventos:
+            linhas_eventos.append([
+                rotulo_projeto,
+                e.data,
+                e.tipo or "",
+                e.participantes or "",
+                e.local or "",
+                e.objetivo or "",
+                e.resultado or "",
+                e.proximas_acoes or "",
+                e.responsavel or "",
+            ])
+
+    wb = Workbook()
+    ws_projetos = wb.active
+    ws_projetos.title = "Projetos"
+    _preencher_aba_relatorio_gerencial(
+        ws_projetos, "TabelaProjetosPD", cabecalho_projetos, linhas_projetos,
+        colunas_moeda={21, 22, 23, 24, 25, 26}, colunas_data={14, 15, 16, 19},
+    )
+
+    ws_testes = wb.create_sheet("Testes e Validações")
+    _preencher_aba_relatorio_gerencial(
+        ws_testes, "TabelaTestesPD", cabecalho_testes, linhas_testes, colunas_data={3, 4},
+    )
+
+    ws_eventos = wb.create_sheet("Visitas e Reuniões")
+    _preencher_aba_relatorio_gerencial(
+        ws_eventos, "TabelaEventosPD", cabecalho_eventos, linhas_eventos, colunas_data={2},
+    )
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    resposta = Response(
+        buffer.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    nome_arquivo = f"pd_projetos_relatorio_gerencial_{date.today().isoformat()}.xlsx"
+    resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
+    return resposta
 
 
 def _custos_pd():
@@ -17058,6 +17747,21 @@ def register_routes(app):
             projetos=projetos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros, opcoes_filtro=opcoes_filtro,
         )
+
+    @app.route("/pd/relatorio.pdf")
+    @login_required
+    def pd_relatorio_pdf():
+        query, filtros = _filtrar_projetos_pd(request.args)
+        projetos = query.all()
+        resumo = _dashboard_pd(projetos)
+        return _gerar_pdf_pd_projetos(projetos, resumo, filtros)
+
+    @app.route("/pd/relatorio.xlsx")
+    @login_required
+    def pd_relatorio_xlsx():
+        query, filtros = _filtrar_projetos_pd(request.args)
+        projetos = query.all()
+        return _responder_xlsx_pd_projetos(projetos)
 
     @app.route("/pd/novo", methods=["GET", "POST"])
     @login_required

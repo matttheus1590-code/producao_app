@@ -9,13 +9,21 @@
     <a href="{{ url_for('pd_kanban') }}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-kanban"></i> Ver Kanban
     </a>
+    <a href="{{ url_for('pd_relatorio_xlsx', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-file-earmark-excel"></i> Excel
+    </a>
+    <a href="{{ url_for('pd_relatorio_pdf', **filtros) }}" class="btn btn-primary btn-sm">
+      <i class="bi bi-file-earmark-pdf"></i> Gerar PDF completo
+    </a>
     <a href="{{ url_for('pd_novo') }}" class="btn btn-primary btn-sm">
       <i class="bi bi-plus-circle"></i> Novo Projeto
     </a>
   </div>
 </div>
 <p class="text-muted small mb-3">
-  Veja os indicadores consolidados no <a href="{{ url_for('pd_dashboard') }}">Dashboard de P&D</a>.
+  Veja os indicadores consolidados no <a href="{{ url_for('pd_dashboard') }}">Dashboard de P&D</a>. O relatório
+  gerencial em PDF/Excel acima traz um dossiê completo de cada projeto do recorte filtrado abaixo (sem filtro
+  nenhum = todos os projetos cadastrados).
 </p>
 
 <form class="row g-2 align-items-start mb-3" method="get">
