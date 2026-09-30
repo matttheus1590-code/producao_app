@@ -7976,6 +7976,14 @@ def _painel_operacao_logistica(pedidos_filtrados):
     # sem dado novo nenhum.
     faixas_lead_frete = [("0-2d", 0, 2), ("3-5d", 3, 5), ("6-10d", 6, 10), ("10d+", 11, None)]
     contagem_faixas = {rotulo: 0 for rotulo, _, _ in faixas_lead_frete}
+    # Lead time médio de frete por UF/região (pedido do Bruno, 30/09/2026:
+    # "monte uma distribuição de dias de frete por estado e/ou região... pra
+    # ter ideia no lead time de fretes nacionais pra cada região") — mesmo
+    # dado go_lead_time_frete_dias já usado no histograma acima, só que
+    # agrupado por Pedido.estado (guarda a UF) em vez de por faixa de dias.
+    # Região sempre derivada da UF via REGIAO_POR_UF (nunca digitada à mão).
+    soma_lead_por_uf = {}  # uf -> [soma_dias, contagem]
+    soma_lead_por_regiao = {}  # nome da região -> [soma_dias, contagem]
 
     for p in pedidos_filtrados:
         lt = p.go_lead_time_frete_dias
@@ -7986,6 +7994,15 @@ def _painel_operacao_logistica(pedidos_filtrados):
                 if lt >= minimo and (maximo is None or lt <= maximo):
                     contagem_faixas[rotulo] += 1
                     break
+            uf = (p.estado or "").strip().upper()
+            regiao = REGIAO_POR_UF.get(uf, "Não identificada")
+            soma_lead_por_regiao.setdefault(regiao, [0, 0])
+            soma_lead_por_regiao[regiao][0] += lt
+            soma_lead_por_regiao[regiao][1] += 1
+            if uf:
+                soma_lead_por_uf.setdefault(uf, [0, 0])
+                soma_lead_por_uf[uf][0] += lt
+                soma_lead_por_uf[uf][1] += 1
         if p.go_data_emissao_nf is not None:
             nfs_emitidas += 1
         if p.go_custo_frete_previsto is not None:
@@ -8009,6 +8026,28 @@ def _painel_operacao_logistica(pedidos_filtrados):
         "lead_time_frete_faixas": [
             {"faixa": rotulo, "total": contagem_faixas[rotulo]} for rotulo, _, _ in faixas_lead_frete
         ],
+        "lead_time_frete_por_regiao": [
+            {
+                "regiao": regiao,
+                "media": round(soma_lead_por_regiao[regiao][0] / soma_lead_por_regiao[regiao][1], 1),
+                "total": soma_lead_por_regiao[regiao][1],
+            }
+            for regiao in REGIOES_OPCOES + ["Não identificada"]
+            if regiao in soma_lead_por_regiao
+        ],
+        "lead_time_frete_por_uf": sorted(
+            (
+                {
+                    "uf": uf,
+                    "regiao": REGIAO_POR_UF.get(uf, "Não identificada"),
+                    "media": round(dados[0] / dados[1], 1),
+                    "total": dados[1],
+                }
+                for uf, dados in soma_lead_por_uf.items()
+            ),
+            key=lambda item: item["media"],
+            reverse=True,
+        ),
     }
 
 

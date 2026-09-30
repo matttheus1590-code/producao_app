@@ -68,11 +68,49 @@
     </div>
 
     <div class="row g-3">
-      <div class="col-lg-8 col-xl-6 mx-auto">
+      <div class="col-lg-6">
         <h6 class="text-muted small mb-2">Distribuição de Lead Time de frete</h6>
         <canvas id="graficoLeadTimeFrete" height="140"></canvas>
       </div>
+      <div class="col-lg-6">
+        <h6 class="text-muted small mb-2">Lead time médio de frete por região</h6>
+        {% if painel_operacao_logistica.lead_time_frete_por_regiao %}
+          <canvas id="graficoLeadTimeRegiao" height="140"></canvas>
+        {% else %}
+          <p class="text-muted small mb-0">Sem pedidos com lead time de frete e estado preenchido no recorte atual.</p>
+        {% endif %}
+      </div>
     </div>
+
+    {% if painel_operacao_logistica.lead_time_frete_por_uf %}
+    <div class="row g-3 mt-1">
+      <div class="col-12">
+        <h6 class="text-muted small mb-2">Lead time médio de frete por UF <span class="fw-normal">(do mais lento pro mais rápido, só UFs com dado no recorte)</span></h6>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle bg-white mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>UF</th>
+                <th>Região</th>
+                <th>Lead time médio</th>
+                <th>Pedido(s) com dado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for linha in painel_operacao_logistica.lead_time_frete_por_uf %}
+              <tr>
+                <td>{{ linha.uf }}</td>
+                <td>{{ linha.regiao }}</td>
+                <td>{{ linha.media }}d</td>
+                <td>{{ linha.total }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 
@@ -164,6 +202,37 @@
       scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
     },
   });
+
+  const leadTimeFretePorRegiao = {{ painel_operacao_logistica.lead_time_frete_por_regiao | tojson }};
+  const elGraficoRegiao = document.getElementById("graficoLeadTimeRegiao");
+  if (elGraficoRegiao && leadTimeFretePorRegiao.length) {
+    new Chart(elGraficoRegiao, {
+      type: "bar",
+      data: {
+        labels: leadTimeFretePorRegiao.map(function (r) { return r.regiao; }),
+        datasets: [{
+          label: "Lead time médio (dias)",
+          data: leadTimeFretePorRegiao.map(function (r) { return r.media; }),
+          backgroundColor: "#0d6efd",
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const r = leadTimeFretePorRegiao[ctx.dataIndex];
+                return r.media + "d de média (" + r.total + " pedido(s))";
+              },
+            },
+          },
+        },
+        scales: { x: { beginAtZero: true, title: { display: true, text: "dias" } } },
+      },
+    });
+  }
 })();
 </script>
 {% endblock %}
