@@ -122,19 +122,27 @@
   <i class="bi bi-calendar3"></i> Planejamento PCP do mês — clique num quadrante pra filtrar a listagem por aquele período.
 </p>
 <div class="row g-2 mb-3 row-quadrantes-pcp">
+  {# Pedido do Bruno (01/10/2026): card único do mês ANTERIOR (ex.: SETEMBRO)
+     em 1ª posição — cinza/neutro (bg-secondary-subtle) pra diferenciar do
+     verde (mês atual) e do azul (mês seguinte), já que é um período que já
+     passou. #}
   <div class="col-6 col-md-4 col-lg-2">
-    {# Verde (pedido do Bruno, 17/09/2026: "no quadrante SETEMBRO, inclua na
-       cor verde") — trocado de border-primary pra border-success +
-       bg-success-subtle, mesma técnica de fundo já usada no quadrante
-       OUTUBRO (bg-primary-subtle) logo abaixo, só que verde pro mês
-       ATUAL/corrente em vez de azul pro mês seguinte. #}
-    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="success", fundo="success-subtle") }}
+    {{ stat_card(quadrantes_pcp.mes_anterior.titulo, quadrantes_pcp.mes_anterior.total, sufixo=quadrantes_pcp.mes_anterior.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_anterior.filtros_link), ativo=quadrantes_pcp.mes_anterior.ativo, fundo="secondary-subtle") }}
   </div>
   {% for semana in quadrantes_pcp.semanas %}
   <div class="col-6 col-md-4 col-lg-2">
     {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, link=url_for('dashboard', **semana.filtros_link), ativo=semana.ativo, piscante=semana.atual) }}
   </div>
   {% endfor %}
+  <div class="col-6 col-md-4 col-lg-2">
+    {# Verde (pedido do Bruno, 17/09/2026: "no quadrante SETEMBRO, inclua na
+       cor verde") — trocado de border-primary pra border-success +
+       bg-success-subtle, mesma técnica de fundo já usada no quadrante do mês
+       seguinte (bg-primary-subtle) logo abaixo, só que verde pro mês
+       ATUAL/corrente. Reposicionado (01/10/2026) pra depois das semanas, já
+       que agora o card único do mês passado abre a linha. #}
+    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="success", fundo="success-subtle") }}
+  </div>
   <div class="col-6 col-md-4 col-lg-2">
     {{ stat_card(quadrantes_pcp.mes_seguinte.titulo, quadrantes_pcp.mes_seguinte.total, sufixo=quadrantes_pcp.mes_seguinte.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_seguinte.filtros_link), ativo=quadrantes_pcp.mes_seguinte.ativo, fundo="primary-subtle") }}
   </div>

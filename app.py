@@ -7013,10 +7013,20 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     quadrante assim: SEMANA 01: 30/08 A 05/09..." — mesmo espírito calendário
     já usado em Programação (_semanas_calendario_pcp), só que aqui é sempre
     exatamente 1 semana por rótulo de gerar_semanas_pcp (não a grade cheia do
-    mês), ancorada no domingo igual ou anterior ao dia 1 do mês. Cada card
-    de semana também carrega `atual` — True só pro card cuja semana de
-    calendário contém a data de hoje — pro pisca-pisca visual (pedido do
-    Bruno, 10/09/2026) que mostra em qual semana estamos agora.
+    mês). A âncora da semana 01 foi ajustada de novo (pedido do Bruno,
+    01/10/2026, com print do calendário de papel dele): antes era o domingo
+    IGUAL OU ANTERIOR ao dia 1 (fazia a "semana 01" de outubro começar em
+    27/09, maioria dos dias ainda em setembro); agora é o primeiro domingo
+    DENTRO do mês — "semana 01: 04/10 a 10/10... semana 04: 25/10 a 31/10"
+    — e o 1º rótulo de gerar_semanas_pcp (dias 1-7, que caía nessa semana
+    "fantasma") deixa de virar card de semana: só conta no quadrante
+    mes_atual (total do mês) e no mes_anterior (ver abaixo), igual sempre
+    contou, só não aparece mais como semana própria. Isso também reduz o
+    número de cards de semana em 1 (4 em vez de 5 pra um mês de 31 dias que
+    não comece num domingo) — ver `pula_semana_01`. Cada card de semana
+    também carrega `atual` — True só pro card cuja semana de calendário
+    contém a data de hoje — pro pisca-pisca visual (pedido do Bruno,
+    10/09/2026) que mostra em qual semana estamos agora.
 
     Cada quadrante já mostra quantos PEDIDOS distintos caem naquele período,
     considerando os OUTROS filtros já ativos na tela (cliente, vendedor,
@@ -7025,6 +7035,14 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     estiver selecionado, em vez do total real daquele período. Reaproveita
     _filtrar_pedidos (mesma regra de sempre) pra nunca divergir da lógica
     que a tabela abaixo usa.
+
+    Quadrante "mes_anterior" (pedido do Bruno, 01/10/2026: "card único
+    setembro, primeira posição") — mesmo padrão exato de "mes_seguinte"
+    abaixo (mesmo `contar()`/`filtros_link` via `planejamento_mensal`), só
+    que pro mês ANTERIOR em vez do seguinte, e em 1ª posição na linha (antes
+    de mes_atual/semanas) — dá uma visão rápida do mês que passou sem trocar
+    filtro, e também é pra onde "escorrem" os pedidos da semana 01 que
+    deixou de ter card próprio (ver acima).
 
     Quadrante "mes_seguinte" (pedido do Bruno, 17/09/2026: "ao lado do
     quadrante SEMANA 05, o quadrante OUTUBRO... completo todo o
@@ -7045,16 +7063,47 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     dias_no_mes = monthrange(ano, mes)[1]
     rotulos_semana = gerar_semanas_pcp(meses_atras=0, meses_frente=0, hoje=hoje)
 
-    # Domingo igual ou anterior ao dia 1 do mês — âncora da "semana 01" no
-    # calendário (weekday(): 0=segunda ... 6=domingo).
+    # Âncora da "semana 01" no calendário (weekday(): 0=segunda ... 6=domingo)
+    # — pedido do Bruno (01/10/2026, com print do calendário de papel dele):
+    # "semana 01: 04/10 a 10/10... semana 04: 25/10 a 31/10", ou seja, a
+    # semana 01 do mês é o primeiro domingo DENTRO (ou já) do mês — nunca
+    # mais um domingo de dias que na prática já são do mês anterior. Antes
+    # (10/09/2026) a âncora era o domingo IGUAL OU ANTERIOR ao dia 1, o que
+    # fazia a "semana 01" de outubro começar em 27/09 (maioria dos dias
+    # ainda em setembro) — confuso, por isso a troca.
     primeiro_dia_mes = date(ano, mes, 1)
-    domingo_semana_01 = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
+    domingo_antes_ou_igual = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
+    # Se o dia 1 já é domingo, a âncora não muda (offset 0); senão, pula pro
+    # próximo domingo (domingo_antes_ou_igual + 7) e descarta o 1º rótulo de
+    # gerar_semanas_pcp (dias 1-7) da lista de cards semanais — esses dias
+    # "escorrem" pro quadrante MES_ANTERIOR abaixo (ainda contabilizados
+    # normalmente no total do mês, só não ganham card de semana próprio).
+    pula_semana_01 = primeiro_dia_mes.weekday() != 6
+    domingo_semana_01 = domingo_antes_ou_igual + timedelta(days=7 if pula_semana_01 else 0)
+    rotulos_semana_cards = rotulos_semana[1:] if pula_semana_01 else rotulos_semana
 
     filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="", sem_planejamento_semanal="")
 
     def contar(**override):
         query, _ = _filtrar_pedidos(dict(filtros_outros, **override))
         return query.count()
+
+    # Quadrante MES_ANTERIOR (pedido do Bruno, 01/10/2026: "card único
+    # setembro, primeira posição") — mesmo padrão exato de mes_seguinte
+    # abaixo, só que pro mês ANTERIOR em vez do seguinte. Dá pra ver o total
+    # do mês que passou sem precisar trocar o filtro de mês, e absorve os
+    # pedidos planejados pra "semana 01" do mês atual que a âncora nova
+    # (acima) deixou de mostrar como card de semana próprio.
+    ano_ant, mes_ant = _somar_meses(ano, mes, -1)
+    dias_no_mes_ant = monthrange(ano_ant, mes_ant)[1]
+    valor_mes_anterior = f"{ano_ant}-{mes_ant:02d}"
+    mes_anterior = {
+        "titulo": MESES_PT_EXTENSO[mes_ant - 1].upper(),
+        "subtitulo": f"01/{mes_ant:02d} – {dias_no_mes_ant:02d}/{mes_ant:02d}",
+        "total": contar(planejamento_mensal=valor_mes_anterior),
+        "ativo": filtros.get("planejamento_mensal") == valor_mes_anterior,
+        "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes_anterior),
+    }
 
     valor_mes = f"{ano}-{mes:02d}"
     mes_atual = {
@@ -7066,7 +7115,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     }
 
     semanas = []
-    for n, rotulo in enumerate(rotulos_semana, start=1):
+    for n, rotulo in enumerate(rotulos_semana_cards, start=1):
         inicio_semana = domingo_semana_01 + timedelta(days=7 * (n - 1))
         fim_semana = inicio_semana + timedelta(days=6)
         semanas.append(
@@ -7106,7 +7155,13 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
         "filtros_link": dict(filtros_outros, sem_planejamento_semanal="1"),
     }
 
-    return {"mes_atual": mes_atual, "semanas": semanas, "mes_seguinte": mes_seguinte, "sem_planejamento": sem_planejamento}
+    return {
+        "mes_anterior": mes_anterior,
+        "mes_atual": mes_atual,
+        "semanas": semanas,
+        "mes_seguinte": mes_seguinte,
+        "sem_planejamento": sem_planejamento,
+    }
 
 
 class _LinhaListagemGeral:
