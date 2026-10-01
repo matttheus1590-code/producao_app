@@ -1819,6 +1819,17 @@ body.col-resizing-ativo {
 .painel-hero-card-backlog .painel-hero-icone {
   background-color: rgba(13, 110, 253, 0.12);
 }
+/* Fechamento do mês anterior (pedido do Bruno, 01/10/2026) — tratamento
+   neutro/cinza de propósito, pra não competir visualmente com os cards
+   "ativos" (verde = mês em andamento, azul = mês seguinte planejado);
+   mesmo espírito do quadrante "mes_anterior" cinza já usado na Listagem
+   Geral pro card único de mês fechado. */
+.painel-hero-card-fechamento {
+  border-left: 4px solid #6c757d;
+}
+.painel-hero-card-fechamento .painel-hero-icone {
+  background-color: rgba(108, 117, 125, 0.12);
+}
 .painel-hero-principal {
   flex: 1 1 12rem;
   min-width: 0;

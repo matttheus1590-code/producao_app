@@ -4456,6 +4456,18 @@ def _resumo_mes_seguinte_pcp(hoje=None):
     return _resumo_mes_pcp(ano_seg, mes_seg)
 
 
+def _resumo_mes_anterior_pcp(hoje=None):
+    """Wrapper de `_resumo_mes_pcp` pro mês ANTERIOR ao atual — "Fechamento
+    de [mês anterior]" no Painel (pedido do Bruno, 01/10/2026: "quero que
+    nessa area voce inclua o fechamento de setembro tambem (com base na
+    projeção da listagem geral)"). Mesma fonte de dado da própria Listagem
+    Geral (planejamento PCP via `gerar_semanas_pcp`/`_resumo_mes_pcp`), só
+    que resumida num card único pro mês que já fechou."""
+    hoje = hoje or date.today()
+    ano_ant, mes_ant = _somar_meses(hoje.year, hoje.month, -1)
+    return _resumo_mes_pcp(ano_ant, mes_ant)
+
+
 # ---------------------------------------------------------------------------
 # Calendário PCP da tela de Programação (pedido do Bruno, 31/08/2026) — semana
 # de verdade (domingo a sábado), só pra esta tela. NÃO usa nem mexe no padrão
@@ -15440,6 +15452,11 @@ def register_routes(app):
         resumo_mes_atual_pcp = _resumo_mes_pcp(hoje.year, hoje.month)
         previsto_mes = resumo_mes_atual_pcp["valor_total"]
         resumo_mes_seguinte_pcp = _resumo_mes_seguinte_pcp(hoje)
+        # Fechamento do mês anterior — pedido do Bruno (01/10/2026): "quero
+        # que nessa area voce inclua o fechamento de setembro tambem (com
+        # base na projeção da listagem geral)". Mesmo _resumo_mes_pcp dos
+        # outros dois cards hero, só que pro mês que já fechou.
+        resumo_mes_anterior_pcp = _resumo_mes_anterior_pcp(hoje)
 
         # Mini gestão de risco de prazos, FOB x CIF — pedido do Bruno
         # (16/09/2026), logo abaixo de "Últimos apontamentos de Qualidade".
@@ -15521,6 +15538,7 @@ def register_routes(app):
             previsto_mes=previsto_mes,
             resumo_mes_atual_pcp=resumo_mes_atual_pcp,
             resumo_mes_seguinte_pcp=resumo_mes_seguinte_pcp,
+            resumo_mes_anterior_pcp=resumo_mes_anterior_pcp,
             mini_risco_prazos=mini_risco_prazos,
             lead_time_detalhado=lead_time_detalhado,
             lead_time_medio=_lead_time_medio_dias(),
