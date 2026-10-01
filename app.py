@@ -12506,7 +12506,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     estilos = getSampleStyleSheet()
     # Fonte da tabela de detalhe reduzida de 8/8.5pt pra 7.3/7.6pt (retrato é
@@ -12566,15 +12566,30 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
     )
     largura_disponivel = A4[0] - doc.leftMargin - doc.rightMargin
 
+    # ---------------- Cabeçalho: logo 4PIPE + título (pedido do Bruno,
+    # 01/10/2026: "no relatorio de listagem geral, gestao produção, inclua
+    # o logo da 4pipe") — mesmo mecanismo/arquivo já usado nos outros PDFs
+    # do sistema (_ESPELHO_LOGO_PATH, Espelho Pedido de Venda e Operação
+    # 360), reaproveitado aqui em vez de duplicar a logo em outro arquivo. ----
     sufixo_titulo_modelo = " · Modelo compacto (1 linha por pedido)" if modelo == "compacto" else ""
-    elementos = [
+    if os.path.exists(_ESPELHO_LOGO_PATH):
+        logo = Image(_ESPELHO_LOGO_PATH, width=38 * mm, height=38 * mm * (63 / 261))
+    else:
+        logo = Paragraph("", estilos["Normal"])
+    bloco_titulo = [
         Paragraph("Planejamento Mensal PCP/Operação", estilos["Title"]),
         Paragraph(f"{titulo_periodo} · Gerado em {_agora_brt().strftime('%d/%m/%Y %H:%M')}{sufixo_titulo_modelo}", estilos["Normal"]),
     ]
     texto_filtros = _texto_filtros_listagem_geral_semanal(filtros)
     if texto_filtros:
-        elementos.append(Paragraph(f"Filtros ativos: {texto_filtros}", estilos["Normal"]))
-    elementos.append(Spacer(1, 5 * mm))
+        bloco_titulo.append(Paragraph(f"Filtros ativos: {texto_filtros}", estilos["Normal"]))
+    tabela_cabecalho = Table([[logo, bloco_titulo]], colWidths=[42 * mm, largura_disponivel - 42 * mm])
+    tabela_cabecalho.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    elementos = [tabela_cabecalho, Spacer(1, 5 * mm)]
 
     cores_bloco = (COR_ATUAL_BG, COR_BACKLOG_BG)
 
