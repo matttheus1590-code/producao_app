@@ -7029,16 +7029,40 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     01/10/2026, com print do calendário de papel dele): antes era o domingo
     IGUAL OU ANTERIOR ao dia 1 (fazia a "semana 01" de outubro começar em
     27/09, maioria dos dias ainda em setembro); agora é o primeiro domingo
-    DENTRO do mês — "semana 01: 04/10 a 10/10... semana 04: 25/10 a 31/10"
-    — e o 1º rótulo de gerar_semanas_pcp (dias 1-7, que caía nessa semana
-    "fantasma") deixa de virar card de semana: só conta no quadrante
-    mes_atual (total do mês) e no mes_anterior (ver abaixo), igual sempre
-    contou, só não aparece mais como semana própria. Isso também reduz o
-    número de cards de semana em 1 (4 em vez de 5 pra um mês de 31 dias que
-    não comece num domingo) — ver `pula_semana_01`. Cada card de semana
-    também carrega `atual` — True só pro card cuja semana de calendário
-    contém a data de hoje — pro pisca-pisca visual (pedido do Bruno,
-    10/09/2026) que mostra em qual semana estamos agora.
+    DENTRO do mês — "semana 01: 04/10 a 10/10... semana 04: 25/10 a 31/10".
+
+    SEMPRE exatamente 4 cards de semana por mês (pedido do Bruno, 01/10/2026:
+    "deixando claro que so quero quatro semanas no mes") — nunca 5, mesmo nos
+    meses em que gerar_semanas_pcp gera um 5º rótulo (dias 29-31): esse resto
+    de fim de mês só entra no total do quadrante mes_atual, sem card de
+    semana próprio, assim como os dias antes da âncora (1º domingo do mês)
+    também não ganham card — só entram no total de mes_atual.
+
+    O número de cada card (SEMANA 01, 02, 03, 04) é calculado a partir do dia
+    do mês em que a PRÓPRIA janela de calendário daquele card começa —
+    `ceil(dia_inicio_janela / 7)` — e não por posição na lista/contador
+    solto. Isso é essencial: é o que garante que o rótulo do card bate 100%
+    com o rótulo PCP de verdade armazenado em ItemPedido.planejamento_semanal
+    (o mesmo texto que aparece no dropdown "Planejamento Semanal PCP" da tela
+    e na coluna "Planej. semanal" da tabela). Prova matemática: como a âncora
+    (1º domingo do mês) sempre cai entre os dias 1 e 7, a janela do card N
+    (N=1..4) sempre começa no dia `âncora.dia + 7*(N-1)`, que cai exatamente
+    dentro do bloco de dias `[7N-6, 7N]` — ou seja, dentro do próprio rótulo
+    "SEMANA N" de gerar_semanas_pcp, pra QUALQUER mês/alinhamento de
+    calendário. Um contador solto (via enumerate numa lista cortada/
+    deslocada) quebra essa igualdade — foi exatamente o bug relatado pelo
+    Bruno em 01/10/2026 ("quando clico na semana 01, ele aparece a semana
+    02"): o card mostrava "SEMANA 01" mas filtrava pelo rótulo real "SEMANA
+    02", porque a lista de rótulos tinha sido cortada (dropando o 1º) e
+    renumerada a partir de 1 só pro título, sem recalcular o rótulo
+    correspondente à janela de calendário de cada posição. Corrigido
+    calculando o rótulo real a partir da data da janela, não da posição.
+
+    Cada card de semana também carrega `atual` — True só pro card cuja
+    semana de calendário contém a data de hoje — pro pisca-pisca visual
+    (pedido do Bruno, 10/09/2026) que mostra em qual semana estamos agora.
+    Se hoje cair nos dias antes da âncora (ex.: 01-03/10), nenhum card de
+    semana pisca — comportamento esperado, já sinalizado ao Bruno.
 
     Cada quadrante já mostra quantos PEDIDOS distintos caem naquele período,
     considerando os OUTROS filtros já ativos na tela (cliente, vendedor,
@@ -7082,17 +7106,16 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     # mais um domingo de dias que na prática já são do mês anterior. Antes
     # (10/09/2026) a âncora era o domingo IGUAL OU ANTERIOR ao dia 1, o que
     # fazia a "semana 01" de outubro começar em 27/09 (maioria dos dias
-    # ainda em setembro) — confuso, por isso a troca.
+    # ainda em setembro) — confuso, por isso a troca. O dia dessa âncora cai
+    # SEMPRE entre 1 e 7 (é o 1º domingo do mês), propriedade usada abaixo
+    # pra garantir que o número de cada card bate com o rótulo PCP real.
     primeiro_dia_mes = date(ano, mes, 1)
     domingo_antes_ou_igual = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
-    # Se o dia 1 já é domingo, a âncora não muda (offset 0); senão, pula pro
-    # próximo domingo (domingo_antes_ou_igual + 7) e descarta o 1º rótulo de
-    # gerar_semanas_pcp (dias 1-7) da lista de cards semanais — esses dias
-    # "escorrem" pro quadrante MES_ANTERIOR abaixo (ainda contabilizados
-    # normalmente no total do mês, só não ganham card de semana próprio).
-    pula_semana_01 = primeiro_dia_mes.weekday() != 6
-    domingo_semana_01 = domingo_antes_ou_igual + timedelta(days=7 if pula_semana_01 else 0)
-    rotulos_semana_cards = rotulos_semana[1:] if pula_semana_01 else rotulos_semana
+    domingo_semana_01 = (
+        domingo_antes_ou_igual + timedelta(days=7)
+        if primeiro_dia_mes.weekday() != 6
+        else domingo_antes_ou_igual
+    )
 
     filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="", sem_planejamento_semanal="")
 
@@ -7103,9 +7126,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     # Quadrante MES_ANTERIOR (pedido do Bruno, 01/10/2026: "card único
     # setembro, primeira posição") — mesmo padrão exato de mes_seguinte
     # abaixo, só que pro mês ANTERIOR em vez do seguinte. Dá pra ver o total
-    # do mês que passou sem precisar trocar o filtro de mês, e absorve os
-    # pedidos planejados pra "semana 01" do mês atual que a âncora nova
-    # (acima) deixou de mostrar como card de semana próprio.
+    # do mês que passou sem precisar trocar o filtro de mês/planejamento.
     ano_ant, mes_ant = _somar_meses(ano, mes, -1)
     dias_no_mes_ant = monthrange(ano_ant, mes_ant)[1]
     valor_mes_anterior = f"{ano_ant}-{mes_ant:02d}"
@@ -7127,9 +7148,16 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     }
 
     semanas = []
-    for n, rotulo in enumerate(rotulos_semana_cards, start=1):
+    for n in range(1, 5):
         inicio_semana = domingo_semana_01 + timedelta(days=7 * (n - 1))
         fim_semana = inicio_semana + timedelta(days=6)
+        # O rótulo PCP real é calculado a partir do dia do mês em que a
+        # janela começa (ceil(dia/7)), NUNCA por posição numa lista — ver
+        # docstring. `inicio_semana.day` sempre cai dentro do mês corrente
+        # pros 4 cards (a âncora está entre os dias 1-7, logo o início do
+        # card 4 vai no máximo até o dia 28), então o índice é seguro.
+        bucket_num = -(-inicio_semana.day // 7)  # ceil(dia / 7)
+        rotulo = rotulos_semana[bucket_num - 1]
         semanas.append(
             {
                 "titulo": f"SEMANA {n:02d}",
