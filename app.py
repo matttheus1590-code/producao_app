@@ -6406,16 +6406,21 @@ def _lt_producao_parametrizado_item(item, mapa=None):
     return None
 
 
-def _lt_producao_parametrizado_pedido(itens):
+def _lt_producao_parametrizado_pedido(itens, mapa=None):
     """LT de produção parametrizado pra um PEDIDO inteiro: aplica
     _lt_producao_parametrizado_item em cada item aberto e usa o PIOR caso
     (máximo) — mesmo critério de "quem manda é o item mais lento" já usado
     em _liberacao_pcp_por_pedido_venda pro prazo real. Retorna
     (lt_dias_ou_none, itens_sem_parametro) pra quem exibe poder avisar
-    quantos itens ficaram sem dado, sem esconder a lacuna."""
+    quantos itens ficaram sem dado, sem esconder a lacuna.
+
+    `mapa` (opcional) deixa quem chama pré-buscar _mapa_lead_time_producao()
+    1x só e reaproveitar em várias chamadas (ex.: _simulado_a_pedido rodando
+    pra cada pedido do relatório PDF da Listagem Geral) em vez de repetir a
+    mesma consulta a cada pedido."""
     if not itens:
         return None, []
-    mapa = _mapa_lead_time_producao()
+    mapa = mapa if mapa is not None else _mapa_lead_time_producao()
     valores = []
     sem_parametro = []
     for item in itens:
@@ -9610,6 +9615,64 @@ def _lead_time_transporte_dias(linha):
     return math.ceil(valor)
 
 
+def _simulado_a_pedido(pedido, mapa_transporte=None, mapa_producao=None):
+    """"Simulado A": prazo comercial x LT de produção PARAMETRIZADO + LT de
+    transporte parametrizado (pedido do Bruno, 11/09/2026) — projeção
+    simples, sem depender do PCP já ter planejado nada (diferente do
+    "Simulado B" da Gestão de Risco, que usa a previsão REAL do PCP). Só
+    considera itens ainda não finalizados; retorna None quando o pedido não
+    tem nenhum item em aberto (nada a projetar).
+
+    Extraída da tela Editar Pedido pra função própria (01/10/2026) pra poder
+    ser reaproveitada também no relatório PDF da Listagem Geral (checkbox
+    "Incluir Simulado A"), sem duplicar a lógica que antes só existia
+    inline na rota `editar_pedido`.
+
+    `mapa_transporte`/`mapa_producao` (opcionais) deixam quem chama repetidas
+    vezes — como o relatório PDF, que roda isso pra cada pedido do mês —
+    pré-buscar os 2 mapas (_mapa_lead_time_transportadora/
+    _mapa_lead_time_producao) 1x só e reaproveitar, em vez de repetir as
+    mesmas consultas a cada pedido."""
+    itens_abertos = [i for i in pedido.itens if i.status_producao != "FINALIZADO"]
+    if not itens_abertos:
+        return None
+
+    lt_producao, itens_sem_parametro = _lt_producao_parametrizado_pedido(itens_abertos, mapa=mapa_producao)
+
+    transporte_dias = None
+    transporte_aplicavel = pedido.frete == "CIF"
+    if transporte_aplicavel and pedido.estado:
+        uf = pedido.estado.strip().upper()
+        mapa_t = mapa_transporte if mapa_transporte is not None else _mapa_lead_time_transportadora()
+        linha_transporte = mapa_t.get((uf, "Rodoviário"))
+        transporte_dias = _lead_time_transporte_dias(linha_transporte)
+
+    data_prevista = None
+    if pedido.data_inclusao_pedido and lt_producao is not None and (transporte_dias is not None or not transporte_aplicavel):
+        data_prevista = pedido.data_inclusao_pedido + timedelta(days=lt_producao + (transporte_dias or 0))
+
+    folga = (pedido.data_cliente - data_prevista).days if (pedido.data_cliente and data_prevista) else None
+
+    if folga is None:
+        indicador = "sem_dado"
+    elif folga < 0 or folga <= RISCO_OTD_LIMITE_RISCO_DIAS:
+        indicador = "vermelho"
+    elif folga <= RISCO_OTD_LIMITE_ATENCAO_DIAS:
+        indicador = "amarelo"
+    else:
+        indicador = "verde"
+
+    return {
+        "lt_producao": lt_producao,
+        "transporte_dias": transporte_dias,
+        "transporte_aplicavel": transporte_aplicavel,
+        "data_prevista": data_prevista,
+        "folga": folga,
+        "indicador": indicador,
+        "itens_sem_parametro": itens_sem_parametro,
+    }
+
+
 def _calcular_risco_pedido(go, m, pedido_producao, rdim_resumo, gargalos_por_estacao, mapa_lead_time):
     """Projeta o risco de atraso de UM pedido (Gestão Operação, CIF) —
     cruza: prazo comercial prometido (m["solicitada"], mesma fonte "ao
@@ -12453,7 +12516,7 @@ def _texto_filtros_listagem_geral_semanal(filtros):
     return " · ".join(partes)
 
 
-def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
+def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", incluir_simulado_a=False):
     """PDF "Emitir relatório" — Planejamento Mensal PCP/Operação (pedido
     original do Bruno, 14/09/2026, então chamado de "Listagem Geral —
     Relatório Semanal"; aprimorado a pedido dele em 21/09/2026: "quero que
@@ -12500,7 +12563,21 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
         modelos: banners de mês/backlog, KPIs, gráfico de faturamento por
         semana, Top 10 clientes, principais regiões e principais clientes
         por região, e o rodapé de total — só a granularidade da tabela de
-        pedidos muda."""
+        pedidos muda.
+
+    `incluir_simulado_a` (checkbox do modal, pedido do Bruno, 01/10/2026:
+    "incluir no relatorio em pdf listagem geral, esse simulador, simulando o
+    lead time geral do pedido... incluir como possbilidade de incluir esse
+    simulador sim ou nao") — OPCIONAL, desmarcado por padrão: quando True,
+    acrescenta 1 coluna "Simulado A" à tabela de detalhe (completo e
+    compacto), com a mesma projeção prazo comercial x LT parametrizado já
+    mostrada na tela Editar Pedido (_simulado_a_pedido), resumida em texto
+    curto ("🟢 17/10 (+5d)"). É um valor por PEDIDO (não por item): no modelo
+    completo, só aparece na linha do pedido (item único) ou na linha de
+    subtotal (pedido com 2+ itens) — nas linhas de item individual de um
+    pedido com subtotal, a coluna fica em branco pra não repetir a mesma
+    informação várias vezes. Desmarcado, o relatório sai IDÊNTICO a antes
+    (nenhuma coluna a mais, zero mudança de layout)."""
     from reportlab.graphics.shapes import Drawing, Rect, String
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
@@ -12545,6 +12622,32 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
         glyph e ele aparecia como um quadradinho preto — corrigido antes de
         virar padrão, 22/09/2026.)"""
         return (texto or "").replace("-", "- ")
+
+    # Ícone PNG por indicador (NÃO emoji unicode — mesmo motivo documentado
+    # em _gerar_pdf_risco_otd/_gerar_pdf_operacao_360: as fontes padrão do
+    # reportlab não têm glyph colorido de emoji, vira quadrado preto
+    # "tofu"). Só existe PNG pronto pra verde/amarelo/vermelho
+    # (static/img/emoji_pdf/*_circle.png) — "sem_dado" fica só em texto.
+    _ICONE_SIMULADO_A = {"verde": "green_circle", "amarelo": "yellow_circle", "vermelho": "red_circle"}
+
+    def _texto_simulado_a(sim):
+        """Resume 1 resultado de _simulado_a_pedido numa string curta pra
+        caber na coluna "Simulado A" da tabela (mesmo indicador/cor da tela
+        Editar Pedido, via _icone_pdf em vez de emoji). `sim` é None quando
+        o pedido não tem nenhum item em aberto (nada a projetar) — nesse
+        caso não mostra nada (todos os itens já finalizados, Simulado A não
+        se aplica)."""
+        if sim is None:
+            return "—"
+        icone_nome = _ICONE_SIMULADO_A.get(sim["indicador"])
+        icone_txt = (_icone_pdf(icone_nome, 8) + " ") if icone_nome else ""
+        if not sim["data_prevista"]:
+            return f"{icone_txt}s/ dado"
+        data_txt = sim["data_prevista"].strftime("%d/%m")
+        if sim["folga"] is None:
+            return f"{icone_txt}{data_txt}"
+        folga_txt = f"+{sim['folga']}d" if sim["folga"] >= 0 else f"{sim['folga']}d"
+        return f"{icone_txt}{data_txt} ({folga_txt})"
 
     titulos_meses = [f"{MESES_PT_EXTENSO[b['mes_ano'][1] - 1].upper()} / {b['mes_ano'][0]}" for b in blocos]
     titulo_periodo = " + ".join(titulos_meses)
@@ -12660,8 +12763,22 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
             "Incluído", "Solicitado", "Liberação prevista", "Liberação real", "Status", "Venda item",
         ]
         pesos = [20, 58, 48, 20, 28, 34, 50, 46, 46, 46, 46, 56, 52]
+    # "Simulado A" (checkbox do modal, ver docstring) — inserida ANTES da
+    # última coluna (valor), que continua sendo sempre a última: é o que
+    # mantém a linha de subtotal (ver SPAN mais abaixo, `col_span_fim`)
+    # mostrando as 2 últimas colunas (Simulado A + valor) sem span, em vez
+    # de engolir a coluna nova dentro do rótulo "Total do pedido...".
+    if incluir_simulado_a:
+        cabecalho_tabela = cabecalho_tabela[:-1] + ["Simulado A"] + cabecalho_tabela[-1:]
+        pesos = pesos[:-1] + [46] + pesos[-1:]
     soma_pesos = sum(pesos)
     larguras_colunas = [p / soma_pesos * largura_disponivel for p in pesos]
+
+    # Mapas de lead time pré-buscados 1x só (fora de _construir_bloco, que
+    # roda 1x por mês/backlog) pra _simulado_a_pedido não repetir a mesma
+    # consulta a cada pedido do relatório — só quando a coluna está ligada.
+    mapa_transporte_simulado_a = _mapa_lead_time_transportadora() if incluir_simulado_a else None
+    mapa_producao_simulado_a = _mapa_lead_time_producao() if incluir_simulado_a else None
 
     def _construir_bloco(b, cor_banner):
         mes_ano_b = b["mes_ano"]
@@ -12669,6 +12786,20 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
         titulo_mes_b = f"{MESES_PT_EXTENSO[mes_b - 1].upper()} / {ano_b}"
         linhas_b = b["linhas"]
         elems = []
+
+        # Simulado A por pedido (ver docstring) — calculado 1x por pedido
+        # (não por item/semana) e reaproveitado em todas as linhas daquele
+        # pedido na tabela de detalhe mais abaixo.
+        mapa_simulado_a = {}
+        if incluir_simulado_a:
+            pedidos_vistos = {}
+            for l in linhas_b:
+                if l.pedido_id not in pedidos_vistos:
+                    pedidos_vistos[l.pedido_id] = l.pedido
+            for pid, pedido_obj in pedidos_vistos.items():
+                mapa_simulado_a[pid] = _simulado_a_pedido(
+                    pedido_obj, mapa_transporte=mapa_transporte_simulado_a, mapa_producao=mapa_producao_simulado_a
+                )
 
         if len(blocos) > 1:
             banner = Table(
@@ -12918,7 +13049,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
                 # campos que variam por item (produto, liberação, status)
                 # são resumidos/agregados pra continuar "totalmente
                 # completo" sem listar item a item.
-                for _, itens_pedido in grupos_pedido:
+                for pedido_id, itens_pedido in grupos_pedido:
                     primeiro = itens_pedido[0]
                     total_pedido = sum(l.venda_total or 0 for l in itens_pedido)
                     regiao_txt = REGIAO_POR_UF.get(primeiro.estado, "—")
@@ -12954,7 +13085,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
                     status_unicos = sorted({l.status_producao or "—" for l in itens_pedido})
                     status_txt = status_unicos[0] if len(status_unicos) == 1 else f"MISTO ({len(status_unicos)} status)"
 
-                    dados_tabela.append([
+                    linha_compacto = [
                         Paragraph(primeiro.pedido_venda or "—", estilo_celula),
                         Paragraph(_quebravel(primeiro.cliente) or "—", estilo_celula),
                         Paragraph(_quebravel(produtos_txt), estilo_celula),
@@ -12967,18 +13098,28 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
                         Paragraph(prevista_txt, estilo_celula),
                         Paragraph(real_txt, estilo_celula),
                         Paragraph(status_txt, estilo_celula),
-                        Paragraph(_fmt_moeda(total_pedido), estilo_celula),
-                    ])
+                    ]
+                    if incluir_simulado_a:
+                        linha_compacto.append(Paragraph(_texto_simulado_a(mapa_simulado_a.get(pedido_id)), estilo_celula))
+                    linha_compacto.append(Paragraph(_fmt_moeda(total_pedido), estilo_celula))
+                    dados_tabela.append(linha_compacto)
                     cores_linhas.append(COR_FINALIZADO_BG if qtd_com_real == len(itens_pedido) else colors.white)
             else:
                 estilo_subtotal_rotulo = ParagraphStyle("subtotal_rotulo", parent=estilo_celula, fontName="Helvetica-Bold", textColor=COR_CABECALHO_TEXTO)
                 estilo_subtotal_valor = ParagraphStyle("subtotal_valor", parent=estilo_celula, fontName="Helvetica-Bold", alignment=2)
-                for _, itens_pedido in grupos_pedido:
+                estilo_subtotal_simulado_a = ParagraphStyle("subtotal_simulado_a", parent=estilo_celula, fontName="Helvetica-Bold", textColor=COR_CABECALHO_TEXTO, alignment=1)
+                for pedido_id, itens_pedido in grupos_pedido:
+                    # Simulado A é por PEDIDO, não por item: com 1 item só, a
+                    # própria linha do item já é "a linha do pedido" e recebe
+                    # o valor; com 2+ itens, as linhas de item ficam em
+                    # branco nessa coluna e o valor vai só na de subtotal
+                    # logo abaixo (ver _texto_simulado_a na docstring).
+                    texto_simulado_a_pedido = _texto_simulado_a(mapa_simulado_a.get(pedido_id)) if incluir_simulado_a else None
                     for l in itens_pedido:
                         qtd = l.quantidade or 0
                         qtd_txt = int(qtd) if qtd == int(qtd) else qtd
                         regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
-                        dados_tabela.append([
+                        linha_item = [
                             Paragraph(l.pedido_venda or "—", estilo_celula),
                             Paragraph(_quebravel(l.cliente) or "—", estilo_celula),
                             Paragraph(_quebravel(l.descricao_produto) or "—", estilo_celula),
@@ -12991,8 +13132,12 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
                             Paragraph(_formatar_data_br(l.liberacao_prevista) or "—", estilo_celula),
                             Paragraph(_formatar_data_br(l.liberacao_real) or "—", estilo_celula),
                             Paragraph(l.status_producao or "—", estilo_celula),
-                            Paragraph(_fmt_moeda(l.venda_total), estilo_celula),
-                        ])
+                        ]
+                        if incluir_simulado_a:
+                            texto_nesta_linha = texto_simulado_a_pedido if len(itens_pedido) == 1 else ""
+                            linha_item.append(Paragraph(texto_nesta_linha, estilo_celula))
+                        linha_item.append(Paragraph(_fmt_moeda(l.venda_total), estilo_celula))
+                        dados_tabela.append(linha_item)
                         cores_linhas.append(COR_FINALIZADO_BG if l.liberacao_real else colors.white)
 
                     # Subtotal do pedido — só quando há mais de 1 item (com 1 só
@@ -13002,11 +13147,14 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
                         primeiro = itens_pedido[0]
                         total_pedido = sum(l.venda_total or 0 for l in itens_pedido)
                         idx_linha = len(dados_tabela)
-                        dados_tabela.append([
-                            Paragraph(f"Total do pedido {primeiro.pedido_venda or '—'} — {primeiro.cliente or '—'} ({len(itens_pedido)} itens)", estilo_subtotal_rotulo),
-                            "", "", "", "", "", "", "", "", "", "", "",
-                            Paragraph(_fmt_moeda(total_pedido), estilo_subtotal_valor),
-                        ])
+                        linha_subtotal = (
+                            [Paragraph(f"Total do pedido {primeiro.pedido_venda or '—'} — {primeiro.cliente or '—'} ({len(itens_pedido)} itens)", estilo_subtotal_rotulo)]
+                            + [""] * 11
+                        )
+                        if incluir_simulado_a:
+                            linha_subtotal.append(Paragraph(texto_simulado_a_pedido, estilo_subtotal_simulado_a))
+                        linha_subtotal.append(Paragraph(_fmt_moeda(total_pedido), estilo_subtotal_valor))
+                        dados_tabela.append(linha_subtotal)
                         cores_linhas.append(colors.HexColor("#e9edf5"))
                         linhas_subtotal.add(idx_linha)
 
@@ -13026,8 +13174,15 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo"):
                 if i == 0:
                     continue
                 estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor))
+            # Coluna final "spanada" junto do rótulo "Total do pedido...":
+            # normalmente até a penúltima coluna (-2), deixando só o Valor
+            # (-1) separado; com a coluna "Simulado A" ligada, ela entra
+            # ANTES do Valor (ver cabecalho_tabela/pesos acima) e também
+            # precisa ficar fora do span — senão o valor dela some dentro do
+            # rótulo genérico em vez de aparecer na própria célula.
+            col_span_fim = -3 if incluir_simulado_a else -2
             for idx_linha in linhas_subtotal:
-                estilo_tabela.append(("SPAN", (0, idx_linha), (-2, idx_linha)))
+                estilo_tabela.append(("SPAN", (0, idx_linha), (col_span_fim, idx_linha)))
                 estilo_tabela.append(("VALIGN", (0, idx_linha), (-1, idx_linha), "MIDDLE"))
                 estilo_tabela.append(("TOPPADDING", (0, idx_linha), (-1, idx_linha), 4))
                 estilo_tabela.append(("BOTTOMPADDING", (0, idx_linha), (-1, idx_linha), 4))
@@ -16822,7 +16977,15 @@ def register_routes(app):
         modelo_relatorio = args.get("modelo_relatorio", "completo").strip() or "completo"
         if modelo_relatorio not in ("completo", "compacto"):
             modelo_relatorio = "completo"
-        return _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo_relatorio)
+        # "Incluir Simulado A" (checkbox do modal, pedido do Bruno, 01/10/2026:
+        # "incluir no relatorio em pdf listagem geral, esse simulador...
+        # incluir como possbilidade de incluir esse simulador sim ou nao")
+        # — acrescenta 1 coluna com a projeção de prazo comercial x LT
+        # parametrizado de cada pedido, mesma lógica/dado da tela Editar
+        # Pedido (_simulado_a_pedido), só OPCIONAL: desmarcado, o relatório
+        # sai idêntico a antes.
+        incluir_simulado_a = args.get("incluir_simulado_a", "").strip() == "1"
+        return _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo_relatorio, incluir_simulado_a=incluir_simulado_a)
 
     @app.route("/relatorios/faturamento.csv")
     @login_required
@@ -17137,43 +17300,10 @@ def register_routes(app):
         # esta tela que o sistema já redireciona ao salvar um pedido novo,
         # então já mostra a projeção na hora, sem depender do PCP ainda ter
         # planejado nada (Simulado B, na Gestão de Risco, já é a versão com
-        # a previsão REAL do PCP). Só considera itens ainda não finalizados.
-        simulado_a = None
-        itens_abertos = [i for i in pedido.itens if i.status_producao != "FINALIZADO"]
-        if itens_abertos:
-            lt_producao, itens_sem_parametro = _lt_producao_parametrizado_pedido(itens_abertos)
-
-            transporte_dias = None
-            transporte_aplicavel = pedido.frete == "CIF"
-            if transporte_aplicavel and pedido.estado:
-                uf = pedido.estado.strip().upper()
-                linha_transporte = _mapa_lead_time_transportadora().get((uf, "Rodoviário"))
-                transporte_dias = _lead_time_transporte_dias(linha_transporte)
-
-            data_prevista = None
-            if pedido.data_inclusao_pedido and lt_producao is not None and (transporte_dias is not None or not transporte_aplicavel):
-                data_prevista = pedido.data_inclusao_pedido + timedelta(days=lt_producao + (transporte_dias or 0))
-
-            folga = (pedido.data_cliente - data_prevista).days if (pedido.data_cliente and data_prevista) else None
-
-            if folga is None:
-                indicador = "sem_dado"
-            elif folga < 0 or folga <= RISCO_OTD_LIMITE_RISCO_DIAS:
-                indicador = "vermelho"
-            elif folga <= RISCO_OTD_LIMITE_ATENCAO_DIAS:
-                indicador = "amarelo"
-            else:
-                indicador = "verde"
-
-            simulado_a = {
-                "lt_producao": lt_producao,
-                "transporte_dias": transporte_dias,
-                "transporte_aplicavel": transporte_aplicavel,
-                "data_prevista": data_prevista,
-                "folga": folga,
-                "indicador": indicador,
-                "itens_sem_parametro": itens_sem_parametro,
-            }
+        # a previsão REAL do PCP). Lógica agora em _simulado_a_pedido (extraída
+        # em 01/10/2026 pra reaproveitar também no relatório PDF da Listagem
+        # Geral — ver relatorio_listagem_geral_semanal_pdf).
+        simulado_a = _simulado_a_pedido(pedido)
 
         return render_template(
             "editar_pedido.html", pedido=pedido, transportadoras=transportadoras, simulado_a=simulado_a,

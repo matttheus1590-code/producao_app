@@ -546,6 +546,29 @@ body.col-resizing-ativo {
   z-index: 1020;
 }
 
+/* "Simulado A" fixado no topo da tela Editar Pedido (pedido do Bruno,
+   01/10/2026: "quero que esse simulador de lead time, esteja fixado dentro
+   de cada pedido... quando abrir o pedido, esse simulador esteja fixo") —
+   continua visível ao rolar a tela pra baixo pelos itens/dados do pedido,
+   em vez de sumir assim que o usuário começa a rolar. `top: 0.75rem` no
+   desktop (sem topbar acima, só uma folguinha do topo da viewport);
+   no mobile, `.app-topbar` (acima) já é sticky em top:0 com z-index 1020 —
+   o valor de `top` aqui empurra o card pra baixo dela, senão os dois
+   ficariam sobrepostos ao rolar. z-index abaixo do topbar/sidebar (1020/
+   1030) mas acima do conteúdo normal da página, senão o card sticky fica
+   por baixo da topbar ao "disputar" a mesma faixa no topo. */
+.simulado-a-fixo {
+  position: sticky;
+  top: 0.75rem;
+  z-index: 1010;
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.08);
+}
+@media (max-width: 991.98px) {
+  .simulado-a-fixo {
+    top: calc(0.6rem * 2 + 32px + 0.75rem);
+  }
+}
+
 .app-topbar-logo {
   height: 28px;
   width: auto;

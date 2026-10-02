@@ -207,6 +207,14 @@
               (projeção do que já está planejado por semana no mês seguinte, no mesmo PDF)
             </label>
           </div>
+
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" value="1" name="incluir_simulado_a" id="checkIncluirSimuladoA">
+            <label class="form-check-label small" for="checkIncluirSimuladoA">
+              <i class="bi bi-stopwatch"></i> Incluir <strong>Simulado A</strong> (prazo comercial × parametrizado)
+              — acrescenta 1 coluna com a previsão/folga de cada pedido, igual à tela do pedido
+            </label>
+          </div>
           {% if filtros.cliente or filtros.vendedor or filtros.status or filtros.estacao or filtros.busca or filtros.produto or filtros.regiao or filtros.data_inicio or filtros.data_fim or filtros.atrasados %}
           <p class="text-muted small mt-2 mb-0">
             <i class="bi bi-funnel"></i> Vai respeitar os outros filtros já aplicados na tela agora.
