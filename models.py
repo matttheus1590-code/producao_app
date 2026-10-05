@@ -1629,9 +1629,18 @@ class RdimComponenteDesvio(db.Model):
 
     categoria_desvio = db.Column(db.String(30), nullable=True)
     subcategoria_desvio = db.Column(db.String(40), nullable=True)
-    # Peças DESTE COMPONENTE, dentro do lote (item.quantidade), que
-    # apresentaram desvio — mesmo conceito e mesma referência (lote inteiro)
-    # de InspecaoFinal.quantidade_com_desvio, só que por componente.
+    # Quantidade SOLICITADA/DO LOTE deste componente (digitada à mão) — pedido
+    # do Bruno (05/10/2026): "tenho o pig LBD (2 unidades), mas dentro dele
+    # tenho disco selo, total do lote com 8 unidades, mas na inspeção foi
+    # verificado desvio em 3". A quantidade do topo da tela continua sendo a
+    # do pig (item.quantidade); aqui é a do COMPONENTE, que não dá pra deduzir
+    # da do pig. None nas inspeções antigas (anteriores a este campo) — nelas
+    # a validação cai pra quantidade do item, como era antes.
+    quantidade_lote = db.Column(db.Float, nullable=True)
+    # Peças DESTE COMPONENTE, dentro do lote DO COMPONENTE (quantidade_lote
+    # acima; nas inspeções antigas, item.quantidade), que apresentaram
+    # desvio — mesmo conceito de InspecaoFinal.quantidade_com_desvio, só que
+    # por componente.
     quantidade_com_desvio = db.Column(db.Float, nullable=True)
     desvio_encontrado = db.Column(db.Text, nullable=True)
 

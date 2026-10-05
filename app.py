@@ -1096,6 +1096,7 @@ def create_app():
         _migrar_rdim_inspecao_final(app)
         _migrar_rdim_pecas_desvio(app)
         _migrar_rdim_tipo_produto(app)
+        _migrar_rdim_componente_quantidade_lote(app)
         # Roda por último de todos: depende de tudo acima (Pedido/ItemPedido
         # com todas as colunas migradas, PedidoOperacao já existindo).
         _sincronizar_planilha_producao_03_09_2026(app)
@@ -2812,6 +2813,24 @@ def _migrar_rdim_pecas_desvio(app):
         if "especificado_max" not in colunas:
             conn.execute(text("ALTER TABLE rdim_pecas_desvio ADD COLUMN especificado_max FLOAT"))
     app.logger.info("Migração automática: campos especificado_min e especificado_max adicionados em rdim_pecas_desvio.")
+
+
+def _migrar_rdim_componente_quantidade_lote(app):
+    """Adiciona `quantidade_lote` (quantidade do COMPONENTE no lote,
+    digitada à mão) em `rdim_componentes_desvio` — pedido do Bruno
+    (05/10/2026): no PIG LBD/LUN/SUPERFLEX cada componente (disco selo,
+    copo, escova...) tem quantidade própria, diferente da do pig. Tabela já
+    existe em produção, então não é coberta só por `db.create_all()`. Campo
+    novo e opcional, sem backfill (nulo nas inspeções já registradas)."""
+    inspector = inspect(db.engine)
+    if "rdim_componentes_desvio" not in inspector.get_table_names():
+        return
+    colunas = {c["name"] for c in inspector.get_columns("rdim_componentes_desvio")}
+    if "quantidade_lote" in colunas:
+        return
+    with db.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE rdim_componentes_desvio ADD COLUMN quantidade_lote FLOAT"))
+    app.logger.info("Migração automática: campo quantidade_lote adicionado em rdim_componentes_desvio.")
 
 
 def _migrar_rdim_tipo_produto(app):
@@ -10320,7 +10339,15 @@ def _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=Fal
     for i, componente in enumerate(RDIM_COMPONENTE_LBD_OPCOES):
         if (f.get(f"componente_desvio_{i}", "") or "").strip().upper() != "SIM":
             continue
-        qtd, erro_qtd = _validar_quantidade_com_desvio(f.get(f"componente_quantidade_com_desvio_{i}"), quantidade_item)
+        # Quantidade do componente no lote (digitada à mão — pedido do Bruno,
+        # 05/10/2026): o desvio é validado contra ELA, não contra a do pig.
+        # Sem ela (inspeção antiga/campo em branco), cai na regra anterior
+        # (quantidade do item).
+        qtd_lote = _parse_float_form(f.get(f"componente_quantidade_lote_{i}"), default=None)
+        if qtd_lote is not None and qtd_lote < 0:
+            return f'Componente "{componente}": quantidade do lote não pode ser negativa.'
+        limite = qtd_lote if qtd_lote is not None else quantidade_item
+        qtd, erro_qtd = _validar_quantidade_com_desvio(f.get(f"componente_quantidade_com_desvio_{i}"), limite)
         if erro_qtd:
             return f'Componente "{componente}": {erro_qtd}'
 
@@ -10383,6 +10410,7 @@ def _salvar_componentes_desvio_rdim(inspecao, f, quantidade_item, substituir=Fal
             "componente": componente,
             "categoria_desvio": (f.get(f"componente_categoria_desvio_{i}", "") or "").strip() or None,
             "subcategoria_desvio": (f.get(f"componente_subcategoria_desvio_{i}", "") or "").strip() or None,
+            "quantidade_lote": qtd_lote,
             "quantidade_com_desvio": qtd,
             "desvio_encontrado": (f.get(f"componente_desvio_encontrado_{i}", "") or "").strip() or None,
             "medicoes": medicoes_componente,

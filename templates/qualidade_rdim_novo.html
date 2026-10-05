@@ -219,7 +219,8 @@
       <p class="text-muted small">
         Marque "Sim" só no(s) componente(s) que tiveram desvio — cada um marcado abre os mesmos campos de
         categoria/subcategoria/quantidade com desvio/descrição do modelo clássico, só que específicos daquele
-        componente.
+        componente. <strong>Informe a quantidade do lote DO COMPONENTE</strong> (ex.: o pig é 2 unidades, mas o disco selo
+        é 8) e quantas unidades dele tiveram desvio (ex.: 3) — a quantidade do topo continua sendo a do pig.
       </p>
       <div id="componentesDesvioLista">
         {% for comp in RDIM_COMPONENTE_LBD_OPCOES %}
@@ -238,27 +239,37 @@
             </div>
           </div>
           <div class="componente-detalhe row g-2 mt-1 d-none">
-            <div class="col-md-3">
+            <div class="col-md-2">
+              <label class="form-label small text-muted mb-0">Categoria do desvio</label>
               <select class="form-select form-select-sm" name="componente_categoria_desvio_{{ loop.index0 }}">
-                <option value="">Categoria do desvio</option>
+                <option value="">Selecione</option>
                 {% for op in RDIM_CATEGORIA_DESVIO_OPCOES %}
                   <option value="{{ op }}">{{ op }}</option>
                 {% endfor %}
               </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
+              <label class="form-label small text-muted mb-0">Subcategoria do desvio</label>
               <select class="form-select form-select-sm" name="componente_subcategoria_desvio_{{ loop.index0 }}">
-                <option value="">Subcategoria do desvio</option>
+                <option value="">Selecione</option>
                 {% for op in RDIM_SUBCATEGORIA_DESVIO_OPCOES %}
                   <option value="{{ op }}">{{ op }}</option>
                 {% endfor %}
               </select>
             </div>
             <div class="col-md-2">
-              <input type="number" step="any" min="0" class="form-control form-control-sm"
-                     name="componente_quantidade_com_desvio_{{ loop.index0 }}" placeholder="Qtd. c/ desvio">
+              <label class="form-label small text-muted mb-0" title="Quantidade deste componente no lote (digite à mão — não é a quantidade do pig)">Qtd. do lote</label>
+              <input type="number" step="any" min="0" class="form-control form-control-sm comp-qtd-lote"
+                     name="componente_quantidade_lote_{{ loop.index0 }}" placeholder="ex.: 8">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small text-muted mb-0" title="Quantas unidades deste componente apresentaram desvio">Qtd. c/ desvio</label>
+              <input type="number" step="any" min="0" class="form-control form-control-sm comp-qtd-desvio"
+                     name="componente_quantidade_com_desvio_{{ loop.index0 }}" placeholder="ex.: 3">
+              <div class="form-text comp-qtd-hint"></div>
             </div>
             <div class="col-md-4">
+              <label class="form-label small text-muted mb-0">Desvio encontrado</label>
               <input type="text" class="form-control form-control-sm"
                      name="componente_desvio_encontrado_{{ loop.index0 }}" placeholder="Desvio encontrado neste componente">
             </div>
@@ -582,6 +593,39 @@
     const linha = e.target.closest(".componente-linha");
     linha.querySelector(".componente-detalhe").classList.toggle("d-none", e.target.value !== "SIM");
   });
+
+  // ---- Qtd. do lote x Qtd. c/ desvio por componente (pedido do Bruno,
+  // 05/10/2026): o limite do desvio é a quantidade DO COMPONENTE digitada
+  // no lote (ex.: 8 discos selo num pig de 2 unidades), com um aviso ao
+  // vivo "3 de 8 (37,5%)". O servidor valida de novo ao salvar. ----
+  function atualizarQtdComponente(linha) {
+    const lote = linha.querySelector(".comp-qtd-lote");
+    const desvio = linha.querySelector(".comp-qtd-desvio");
+    const hint = linha.querySelector(".comp-qtd-hint");
+    if (!lote || !desvio || !hint) return;
+    const l = parseFloat(lote.value);
+    const d = parseFloat(desvio.value);
+    if (!isNaN(l)) { desvio.max = l; } else { desvio.removeAttribute("max"); }
+    hint.classList.remove("text-danger");
+    if (!isNaN(l) && !isNaN(d)) {
+      if (d > l) {
+        hint.textContent = "Maior que o lote (" + l + ")";
+        hint.classList.add("text-danger");
+      } else if (l > 0) {
+        hint.textContent = d + " de " + l + " (" + (Math.round(d / l * 1000) / 10).toString().replace(".", ",") + "%)";
+      } else { hint.textContent = ""; }
+    } else if (!isNaN(l)) {
+      hint.textContent = "de " + l + " no lote";
+    } else {
+      hint.textContent = "";
+    }
+  }
+  componentesLista.addEventListener("input", function (e) {
+    if (e.target.classList.contains("comp-qtd-lote") || e.target.classList.contains("comp-qtd-desvio")) {
+      atualizarQtdComponente(e.target.closest(".componente-linha"));
+    }
+  });
+  componentesLista.querySelectorAll(".componente-linha").forEach(atualizarQtdComponente);
 
   // ---- Medições por componente (PIG LBD/LUN/SUPERFLEX): mesmo padrão de
   // adicionar/remover linha + sinalização de tolerância da tabela de
