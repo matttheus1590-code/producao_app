@@ -1036,42 +1036,62 @@ def _gerar_pdf_painel_diario(ctx):
 
 
 def _gerar_pdf_inspecao_rdim(inspecao):
-    """PDF "Inspeção Final RDIM" — apontamento detalhado de UMA inspeção
-    (pedido do Bruno, 05/10/2026): "dentro da inspeção, tanto de discos,
-    flexpig ou pigs, um botão de impressão em PDF... em uma única folha na
-    vertical, totalmente distribuída na folha, com todos os dados do
-    contexto do produto (pedido, quantidade, produto, cliente etc — não
-    cite valores), data atualizada, horário, logo da empresa e emotions".
+    """PDF "Detalhamento de apontamento RDIM" — UMA inspeção, UMA folha A4
+    retrato (pedido do Bruno, 05/10/2026; revisado no mesmo dia: "exclua
+    cnpj, vendedor etc.", "não quero mais a tabela de grandeza/especificado/
+    medido/status", "componentes com desvio começa com disco selo, qtd,
+    categoria e subcategoria, com a quantidade de peça apontada", título
+    "Detalhamento de apontamento RDIM - Espessura").
 
-    UMA folha A4 retrato sempre: o conteúdo é montado por `construir(escala)`
-    e a MAIOR escala (fonte/espaçamento) em que tudo cabe numa página é a
-    usada — inspeção curta sai com letra grande e bem distribuída, inspeção
-    longa (PIG com vários componentes e peça a peça) encolhe até caber; só
-    se nem na menor escala couber é que as listas longas são truncadas com
-    aviso ("+N linhas, ver tela"). Funciona pros 3 tipos (Discos, FlexPig e
-    PIG LBD/LUN/SUPERFLEX, este com o bloco por componente). Sem nenhum valor
-    monetário. Ícones: PNGs (_icone_pdf) — a fonte padrão não tem emoji."""
+    Estrutura (igual pros 3 tipos — Discos, FlexPig e PIG LBD/LUN/SUPERFLEX):
+      1. Cabeçalho: logo, título (com a subcategoria do desvio), emissão
+         data/hora e resultado em destaque;
+      2. PRODUTO INSPECIONADO: só o essencial (pedido, cliente, produto,
+         quantidade, estação) — sem dado comercial/fiscal, sem valores;
+      3. DADOS DA INSPEÇÃO (data, responsável, RIF, procedimento, norma/IT);
+      4. DESVIO APONTADO: um cartão por componente (PIG) — nome, quantidade
+         com desvio de quantidade do lote, categoria, subcategoria e as
+         peças apontadas logo abaixo — ou um cartão único (Discos/FlexPig);
+      5. Observações e assinaturas.
+
+    Sempre 1 folha: usa a maior escala (fonte/espaçamento) em que cabe e
+    distribui o respiro entre as seções (bisseção em `folga`); PIG com
+    componentes demais cai pro formato compacto (1 linha por componente).
+    Ícones são PNGs (_icone_pdf) — a fonte padrão não tem emoji."""
     from xml.sax.saxutils import escape as esc
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import CondPageBreak, HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     item = inspecao.item
     pedido = item.pedido if item else None
     tipo = inspecao.tipo_produto_inspecionado or "DISCOS"
     eh_pig = tipo == "PIG_LBD_LUN_SUPERFLEX"
     agora = _agora_brt()
+    comps = list(inspecao.componentes_desvio) if eh_pig else []
 
     COR_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
     COR_CAB_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
     COR_BORDA = colors.HexColor("#dee2e6")
     COR_ZEBRA = colors.HexColor("#f8f9fa")
     VERDE, VERMELHO, AMARELO, CINZA = "#198754", "#dc3545", "#b8860b", "#6c757d"
-    cor_resultado = {"APROVADO": ("#d1e7dd", VERDE, "green_circle"), "REPROVADO": ("#f8d7da", VERMELHO, "red_circle"),
-                     "APROVADO_COM_DESVIO": ("#fff3cd", AMARELO, "yellow_circle")}.get(inspecao.resultado, ("#e9ecef", CINZA, "hourglass"))
+    fundo_res, cor_res, icone_res = {
+        "APROVADO": ("#d1e7dd", VERDE, "green_circle"), "REPROVADO": ("#f8d7da", VERMELHO, "red_circle"),
+        "APROVADO_COM_DESVIO": ("#fff3cd", AMARELO, "yellow_circle"),
+    }.get(inspecao.resultado, ("#e9ecef", CINZA, "hourglass"))
     resultado_txt = RDIM_RESULTADO_LABELS.get(inspecao.resultado, inspecao.resultado or "—")
+
+    # Título: "... RDIM - <subcategoria(s) do desvio>" (ex.: Espessura)
+    if eh_pig:
+        subs = []
+        for c in comps:
+            if c.subcategoria_desvio and c.subcategoria_desvio not in subs:
+                subs.append(c.subcategoria_desvio)
+    else:
+        subs = [inspecao.subcategoria_desvio] if inspecao.subcategoria_desvio else []
+    titulo_texto = "DETALHAMENTO DE APONTAMENTO RDIM" + (" - " + " / ".join(subs).upper() if subs else "")
 
     def num(v):
         return _fmt_num_rdim(v) if v is not None else "—"
@@ -1086,244 +1106,192 @@ def _gerar_pdf_inspecao_rdim(inspecao):
             return f"{num(mn)} a {num(mx)}"
         return f"mín. {num(mn)}" if mn is not None else f"máx. {num(mx)}"
 
+    def pct_txt(parte, total):
+        if parte is None or not total:
+            return ""
+        return f" ({str(round(parte / total * 100, 1)).replace('.', ',')}%)"
+
     def construir(s, nivel=0, folga=0.0):
-        """Monta os flowables na escala `s` (1.0 = tamanho base). `nivel` 0 =
-        detalhado (tabelas completas por componente), 1 = compacto (uma linha
-        por componente, só PIG com muitos componentes). `folga` (mm) é o
-        respiro extra entre as seções, usado pra distribuir o conteúdo na
-        folha inteira quando sobra espaço."""
-        limitar = False
-        lado_a_lado = s < 0.85
+        """`s` = escala (1.0 base); `nivel` 0 = cartão por componente,
+        1 = compacto (1 linha por componente); `folga` = respiro extra (mm)
+        entre seções pra distribuir o conteúdo na folha inteira."""
         larg = A4[0] - 24 * mm
         estilos = getSampleStyleSheet()
         f = lambda x: round(x * s, 2)
-        base = ParagraphStyle("b", parent=estilos["Normal"], fontSize=f(9), leading=f(11.4))
+        base = ParagraphStyle("b", parent=estilos["Normal"], fontSize=f(9.5), leading=f(12))
         base_b = ParagraphStyle("bb", parent=base, fontName="Helvetica-Bold")
-        pequeno = ParagraphStyle("p", parent=base, fontSize=f(7.8), leading=f(9.6), textColor=colors.HexColor("#555"))
+        pequeno = ParagraphStyle("p", parent=base, fontSize=f(8), leading=f(10), textColor=colors.HexColor("#555"))
         centro = ParagraphStyle("c", parent=base, alignment=1)
-        cab = ParagraphStyle("cab", parent=base_b, fontSize=f(8.4), textColor=COR_TEXTO)
+        cab = ParagraphStyle("cab", parent=base_b, fontSize=f(8.6), textColor=COR_TEXTO)
         cab_c = ParagraphStyle("cabc", parent=cab, alignment=1)
-        titulo = ParagraphStyle("t", parent=estilos["Title"], fontSize=round(15.5 * min(s, 1.1), 2), leading=round(18 * min(s, 1.1), 2), spaceAfter=0, alignment=0, textColor=COR_TEXTO)
-        sub = ParagraphStyle("s", parent=base, fontSize=f(9.5), leading=f(12.5), textColor=colors.HexColor("#555"))
-        secao = ParagraphStyle("sec", parent=base_b, fontSize=f(11), leading=f(13.5), textColor=COR_TEXTO)
+        tam_t = min(s, 1.1)
+        titulo = ParagraphStyle("t", parent=estilos["Title"], fontSize=round(14 * tam_t, 2), leading=round(17 * tam_t, 2), spaceAfter=0, alignment=0, textColor=COR_TEXTO)
+        sub = ParagraphStyle("s", parent=base, fontSize=f(9.2), leading=f(12), textColor=colors.HexColor("#555"))
+        secao = ParagraphStyle("sec", parent=base_b, fontSize=f(10.5), leading=f(13), textColor=colors.white)
         pad = f(3)
         el = []
 
-        def titulo_secao(icone, texto, cor_hex="#1b2a4a"):
-            t = Table([[Paragraph(f'{_icone_pdf(icone, f(11.5))} {esc(texto)}', ParagraphStyle("sb", parent=secao, textColor=colors.white))]], colWidths=[larg])
-            t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(cor_hex)), ("TOPPADDING", (0, 0), (-1, -1), pad), ("BOTTOMPADDING", (0, 0), (-1, -1), pad), ("LEFTPADDING", (0, 0), (-1, -1), 6)]))
-            el.append(Spacer(1, f(2.2) * mm + folga * mm))
+        def titulo_secao(icone, texto, cor_hex):
+            t = Table([[Paragraph(f'{_icone_pdf(icone, f(11.5))} {esc(texto)}', secao)]], colWidths=[larg])
+            t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(cor_hex)), ("TOPPADDING", (0, 0), (-1, -1), pad),
+                                   ("BOTTOMPADDING", (0, 0), (-1, -1), pad), ("LEFTPADDING", (0, 0), (-1, -1), 6)]))
+            el.append(Spacer(1, f(2.4) * mm + folga * mm))
             el.append(t)
-            el.append(Spacer(1, f(1.4) * mm))
+            el.append(Spacer(1, f(1.5) * mm))
 
-        def grade(campos, colunas=3):
+        def cartao(campos, colunas):
+            """Grade de campos (ícone + rótulo pequeno + valor em negrito)."""
             linhas = []
             for i in range(0, len(campos), colunas):
-                lin = [Paragraph(f'{_icone_pdf(ic, f(9))} <font size="{f(7.8)}" color="#6c757d">{esc(rot)}</font><br/><b>{valor if isinstance(valor, str) and valor.startswith("<") else T(valor)}</b>', base) for ic, rot, valor in campos[i:i + colunas]]
+                lin = [Paragraph(f'{_icone_pdf(ic, f(9))} <font size="{f(8)}" color="#6c757d">{esc(rot)}</font><br/><b>{T(valor)}</b>', base)
+                       for ic, rot, valor in campos[i:i + colunas]]
                 while len(lin) < colunas:
                     lin.append(Paragraph("", base))
                 linhas.append(lin)
             t = Table(linhas, colWidths=[larg / colunas] * colunas)
-            t.setStyle(TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.3, COR_BORDA),
-                ("TOPPADDING", (0, 0), (-1, -1), f(3.2)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(3.2)), ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ]))
+            t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA),
+                                   ("INNERGRID", (0, 0), (-1, -1), 0.3, COR_BORDA), ("TOPPADDING", (0, 0), (-1, -1), f(3.4)),
+                                   ("BOTTOMPADDING", (0, 0), (-1, -1), f(3.4)), ("LEFTPADDING", (0, 0), (-1, -1), 6)]))
             return t
 
-        def tabela(cabecalho, linhas, pesos, alin, largura_t=None):
+        def tabela(cabecalho, linhas, pesos, alin):
             est_c = {"L": cab, "C": cab_c}
             dados = [[Paragraph(c, est_c[alin[i]]) for i, c in enumerate(cabecalho)]] + linhas
-            t = Table(dados, colWidths=[p / float(sum(pesos)) * (largura_t or larg) for p in pesos], repeatRows=1)
+            t = Table(dados, colWidths=[p / float(sum(pesos)) * larg for p in pesos], repeatRows=1)
             est = [("BACKGROUND", (0, 0), (-1, 0), COR_CAB_BG), ("GRID", (0, 0), (-1, -1), 0.3, COR_BORDA), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                   ("TOPPADDING", (0, 0), (-1, -1), f(2.2)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(2.2)), ("LEFTPADDING", (0, 0), (-1, -1), 4)]
+                   ("TOPPADDING", (0, 0), (-1, -1), f(2.4)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(2.4)), ("LEFTPADDING", (0, 0), (-1, -1), 5)]
             for i in range(2, len(dados), 2):
                 est.append(("BACKGROUND", (0, i), (-1, i), COR_ZEBRA))
             t.setStyle(TableStyle(est))
             return t
 
-        def status_med(m):
-            r = m.dentro_da_tolerancia
-            if r is None:
-                return Paragraph("—", centro)
-            return Paragraph(f'<font color="{VERDE if r else VERMELHO}"><b>{"OK" if r else "FORA"}</b></font>', centro)
+        def linha_peca(p):
+            v = p.variacao
+            if v is None:
+                var = Paragraph("—", centro)
+            elif v == 0:
+                var = Paragraph(f'<font color="{VERDE}"><b>OK</b></font>', centro)
+            else:
+                var = Paragraph(f'<font color="{VERMELHO}"><b>{"+" if p.acima_da_tolerancia else "-"}{num(v)}</b></font>', centro)
+            return [Paragraph(T(p.peca_numero), centro), Paragraph(T(p.caracteristica), base),
+                    Paragraph(faixa(p.especificado_min, p.especificado_max), centro), Paragraph(num(p.valor_medido), centro), var]
 
-        def tab_medicoes(medicoes, largura_t=None):
-            if not medicoes:
-                return Paragraph("Nenhuma grandeza medida registrada.", pequeno)
-            lista = medicoes[:6] if limitar else medicoes
-            linhas = [[Paragraph(esc(m.grandeza), base_b), Paragraph(faixa(m.especificado_min, m.especificado_max), centro),
-                       Paragraph(faixa(m.medido_min, m.medido_max), centro), status_med(m)] for m in lista]
-            if len(medicoes) > len(lista):
-                linhas.append([Paragraph(f"+{len(medicoes) - len(lista)} linha(s) — ver na tela", pequeno), "", "", ""])
-            return tabela(["Grandeza", "Especificado", "Medido (lote)", "Status"], linhas, [34, 24, 24, 12], "LCCC", largura_t)
+        def tab_pecas(pecas):
+            return tabela(["Nº da peça", "Característica", "Especificado", "Valor medido", "Variação"],
+                          [linha_peca(p) for p in pecas], [12, 28, 22, 18, 14], "CLCCC")
 
-        def tab_pecas(pecas, largura_t=None):
-            lista = pecas[:8] if limitar else pecas
-            linhas = []
-            for p in lista:
-                v = p.variacao
-                if v is None:
-                    var = Paragraph("—", centro)
-                elif v == 0:
-                    var = Paragraph(f'<font color="{VERDE}"><b>OK</b></font>', centro)
-                else:
-                    sinal = "+" if p.acima_da_tolerancia else "-"
-                    var = Paragraph(f'<font color="{VERMELHO}"><b>{sinal}{num(v)}</b></font>', centro)
-                linhas.append([Paragraph(T(p.peca_numero), centro), Paragraph(T(p.caracteristica), base), Paragraph(faixa(p.especificado_min, p.especificado_max), centro),
-                               Paragraph(num(p.valor_medido), centro), var])
-            if len(pecas) > len(lista):
-                linhas.append([Paragraph(f"+{len(pecas) - len(lista)} peça(s) — ver na tela", pequeno), "", "", "", ""])
-            return tabela(["Nº peça", "Característica", "Especificado", "Valor medido", "Variação"], linhas, [10, 26, 22, 16, 16], "CLCCC", largura_t)
+        def faixa_titulo(icone, texto_html, cor_fundo, cor_borda):
+            t = Table([[Paragraph(f'{_icone_pdf(icone, f(10))} {texto_html}', base)]], colWidths=[larg])
+            t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(cor_fundo)), ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor(cor_borda)),
+                                   ("TOPPADDING", (0, 0), (-1, -1), f(3.6)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(3.6)), ("LEFTPADDING", (0, 0), (-1, -1), 6)]))
+            return t
 
-        # ---------- cabeçalho ----------
-        logo = Image(_ESPELHO_LOGO_PATH, width=40 * mm, height=40 * mm * (63 / 261)) if os.path.exists(_ESPELHO_LOGO_PATH) else Paragraph("", base)
-        caixa_resultado = Table([[Paragraph(f'{_icone_pdf(cor_resultado[2], f(12))} <b>{esc(resultado_txt.upper())}</b>', ParagraphStyle("rs", parent=base_b, fontSize=f(10.5), alignment=1, textColor=colors.HexColor(cor_resultado[1])))]],
-                                colWidths=[larg * 0.25])
-        caixa_resultado.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(cor_resultado[0])), ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor(cor_resultado[1])),
-                                             ("TOPPADDING", (0, 0), (-1, -1), f(5)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(5))]))
-        bloco_titulo = [Paragraph(f'{_icone_pdf("magnifier", f(15))} INSPEÇÃO FINAL RDIM #{inspecao.id}', titulo), Spacer(1, 1.2 * mm),
-                        Paragraph(f'{_icone_pdf("memo", f(10))} Apontamento detalhado · {_icone_pdf("alarm_clock", f(10))} Emitido em <b>{agora.strftime("%d/%m/%Y")}</b> às <b>{agora.strftime("%H:%M")}</b>', sub)]
-        topo = Table([[logo, bloco_titulo, caixa_resultado]], colWidths=[larg * 0.25, larg * 0.50, larg * 0.25])
-        topo.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
-        el += [topo, Spacer(1, 2 * mm), HRFlowable(width="100%", thickness=1.6, color=COR_TEXTO)]
+        def bloco_desvio(nome, qtd_desvio, qtd_lote, categoria, subcategoria, descricao, pecas, rotulo_lote="do lote"):
+            """Cartão de um desvio: faixa amarela com nome/qtd/categoria/sub,
+            descrição e as peças apontadas (quantidade + tabela)."""
+            qtd = "—"
+            if qtd_desvio is not None:
+                qtd = f"<b>{num(qtd_desvio)}</b>" + (f" de {num(qtd_lote)} {rotulo_lote}{pct_txt(qtd_desvio, qtd_lote)}" if qtd_lote else " com desvio")
+            topo = Table([[
+                Paragraph(f'{_icone_pdf("red_circle", f(10))} <b>{esc(nome)}</b>', ParagraphStyle("nm", parent=base_b, fontSize=f(10.5), leading=f(13))),
+                Paragraph(f'<font size="{f(7.8)}" color="#6c757d">QUANTIDADE COM DESVIO</font><br/>{qtd}', base),
+                Paragraph(f'<font size="{f(7.8)}" color="#6c757d">CATEGORIA</font><br/><b>{T(categoria)}</b>', base),
+                Paragraph(f'<font size="{f(7.8)}" color="#6c757d">SUBCATEGORIA</font><br/><b>{T(subcategoria)}</b>', base),
+            ]], colWidths=[larg * 0.25, larg * 0.31, larg * 0.22, larg * 0.22])
+            topo.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff3cd")), ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#e0c36a")),
+                                      ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), f(4)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(4)),
+                                      ("LEFTPADDING", (0, 0), (-1, -1), 6)]))
+            saida = [topo]
+            if descricao:
+                saida.append(Spacer(1, f(1.2) * mm))
+                saida.append(Paragraph(f'{_icone_pdf("memo", f(9))} <font color="#6c757d">Desvio encontrado:</font> <b>{esc(descricao)}</b>', base))
+            saida.append(Spacer(1, f(1.4) * mm))
+            n = len(pecas)
+            saida.append(Paragraph(f'{_icone_pdf("clipboard", f(9))} <b>Peças apontadas ({n})</b>', base))
+            saida.append(Spacer(1, f(0.8) * mm))
+            saida.append(tab_pecas(pecas) if pecas else Paragraph("Nenhuma peça apontada individualmente.", pequeno))
+            return saida
 
-        # ---------- contexto do produto (sem valores) ----------
-        titulo_secao("package", "CONTEXTO DO PRODUTO", "#1b2a4a")
+        # ---------- 1. cabeçalho ----------
+        logo = Image(_ESPELHO_LOGO_PATH, width=38 * mm, height=38 * mm * (63 / 261)) if os.path.exists(_ESPELHO_LOGO_PATH) else Paragraph("", base)
+        caixa = Table([[Paragraph(f'{_icone_pdf(icone_res, f(12))} <b>{esc(resultado_txt.upper())}</b>',
+                                  ParagraphStyle("rs", parent=base_b, fontSize=f(10.5), alignment=1, textColor=colors.HexColor(cor_res)))]], colWidths=[larg * 0.23])
+        caixa.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(fundo_res)), ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor(cor_res)),
+                                   ("TOPPADDING", (0, 0), (-1, -1), f(5)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(5))]))
+        bloco_titulo = [Paragraph(f'{_icone_pdf("magnifier", round(14 * tam_t, 2))} {esc(titulo_texto)}', titulo), Spacer(1, 1.2 * mm),
+                        Paragraph(f'{_icone_pdf("id", f(10))} Inspeção <b>#{inspecao.id}</b> · {_icone_pdf("alarm_clock", f(10))} Emitido em '
+                                  f'<b>{agora.strftime("%d/%m/%Y")}</b> às <b>{agora.strftime("%H:%M")}</b>', sub)]
+        topo_t = Table([[logo, bloco_titulo, caixa]], colWidths=[larg * 0.22, larg * 0.55, larg * 0.23])
+        topo_t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+        el += [topo_t, Spacer(1, 2 * mm), HRFlowable(width="100%", thickness=1.6, color=COR_TEXTO)]
+
+        # ---------- 2. produto inspecionado ----------
+        titulo_secao("package", "PRODUTO INSPECIONADO", "#1b2a4a")
         qtd_item = f"{item.quantidade:g}" if item and item.quantidade is not None else None
-        cidade_uf = " / ".join(x for x in ((pedido.cidade if pedido else None), (pedido.estado if pedido else None)) if x) or None
-        el.append(grade([
+        el.append(cartao([
             ("receipt", "Pedido de venda", pedido.pedido_venda if pedido else None),
             ("office", "Cliente", pedido.cliente if pedido else None),
-            ("id", "CNPJ", pedido.cnpj if pedido else None),
-            ("package", "Produto", item.descricao_produto if item else None),
-            ("clipboard", "Quantidade do lote (pig)", qtd_item),
             ("factory", "Estação", inspecao.estacao or (item.estacao if item else None)),
-            ("person", "Vendedor", pedido.vendedor if pedido else None),
-            ("pin", "Cidade / UF", cidade_uf),
-            ("truck", "Frete", pedido.frete if pedido else None),
-            ("calendar", "Data do cliente", _formatar_data_br(pedido.data_cliente) if pedido else None),
-            ("calendar", "Data de inclusão", _formatar_data_br(pedido.data_inclusao_pedido) if pedido else None),
-            ("target", "Prioridade", pedido.prioridade if pedido else None),
-        ]))
+        ], 3))
+        el.append(Table([[
+            Paragraph(f'{_icone_pdf("package", f(9))} <font size="{f(8)}" color="#6c757d">Produto</font><br/><b>{T(item.descricao_produto if item else None)}</b>', base),
+            Paragraph(f'{_icone_pdf("clipboard", f(9))} <font size="{f(8)}" color="#6c757d">Quantidade (lote)</font><br/><b>{T(qtd_item)}</b>', base),
+        ]], colWidths=[larg * 2 / 3, larg / 3], style=TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.3, COR_BORDA),
+            ("TOPPADDING", (0, 0), (-1, -1), f(3.4)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(3.4)), ("LEFTPADDING", (0, 0), (-1, -1), 6)])))
 
-        # ---------- dados da inspeção ----------
+        # ---------- 3. dados da inspeção ----------
         titulo_secao("clipboard", "DADOS DA INSPEÇÃO", "#0d6efd")
-        el.append(grade([
+        el.append(cartao([
             ("test_tube", "Tipo de produto", RDIM_TIPO_PRODUTO_LABELS.get(tipo, tipo)),
             ("calendar", "Data da inspeção", _formatar_data_br(inspecao.data_inspecao)),
             ("person", "Responsável", inspecao.responsavel.nome if inspecao.responsavel else None),
             ("id", "Nº da RIF", inspecao.numero_rif),
             ("memo", "Procedimento", inspecao.procedimento),
             ("flag_checkered", "Norma / IT", " · ".join(x for x in (inspecao.norma, inspecao.instrucao_trabalho) if x) or None),
-        ]))
+        ], 3))
 
-        # ---------- desvio ----------
-        if not eh_pig:
-            titulo_secao("warning", "RESULTADO E DESVIO ENCONTRADO", "#b8860b")
-            qtd_lote = item.quantidade if item else None
-            if inspecao.quantidade_com_desvio is not None:
-                pct = f" ({inspecao.quantidade_com_desvio / qtd_lote * 100:.1f}%)".replace(".", ",") if qtd_lote else ""
-                qtd_desvio_txt = f"{num(inspecao.quantidade_com_desvio)} de {num(qtd_lote)} peça(s){pct}"
-            else:
-                qtd_desvio_txt = None
-            visual = inspecao.inspecao_visual
-            visual_html = (f'<font color="{VERDE if visual == "OK" else VERMELHO}">{esc(visual)}</font>' if visual else None)
-            el.append(grade([
-                ("magnifier", "Inspeção visual", visual_html),
-                ("warning", "Categoria do desvio", inspecao.categoria_desvio),
-                ("warning", "Subcategoria", inspecao.subcategoria_desvio),
-            ]))
-            el.append(Spacer(1, f(1.2) * mm))
-            el.append(grade([
-                ("red_circle", "Quantidade com desvio", qtd_desvio_txt),
-                ("memo", "Desvio encontrado", inspecao.desvio_encontrado),
-            ], colunas=2))
-            titulo_secao("gear", "MEDIÇÕES (ESPECIFICADO x MEDIDO)", "#198754")
-            el.append(tab_medicoes(list(inspecao.medicoes)))
-            if inspecao.pecas_desvio:
-                titulo_secao("red_circle", "APONTAMENTOS POR PEÇA COM DESVIO", "#dc3545")
-                el.append(tab_pecas(list(inspecao.pecas_desvio)))
-        else:
-            comps = list(inspecao.componentes_desvio)
+        # ---------- 4. desvio apontado ----------
+        if eh_pig:
             titulo_secao("warning", f"COMPONENTES COM DESVIO ({len(comps)})", "#b8860b")
             if not comps:
                 el.append(Paragraph("Nenhum componente apontado com desvio nesta inspeção.", base))
-            if nivel == 1 and comps:
-                # Compacto: 1 linha por componente (usado quando o detalhado
-                # de todos os componentes não cabe numa folha).
+            elif nivel == 1:
                 linhas_c = []
                 for c in comps:
-                    if c.quantidade_com_desvio is not None and c.quantidade_lote:
-                        qtd_c = f"<b>{num(c.quantidade_com_desvio)}</b> de {num(c.quantidade_lote)}"
-                    elif c.quantidade_com_desvio is not None:
-                        qtd_c = f"<b>{num(c.quantidade_com_desvio)}</b>"
-                    else:
-                        qtd_c = "—"
-                    fora = [m for m in c.medicoes if m.dentro_da_tolerancia is False]
-                    med_txt = "; ".join(f'{esc(m.grandeza)}: {faixa(m.medido_min, m.medido_max)} <font color="{VERMELHO}"><b>FORA</b></font>' for m in fora)
-                    if c.medicoes:
-                        med_txt = (med_txt + "; " if med_txt else "") + f'{len(c.medicoes) - len(fora)} de {len(c.medicoes)} OK'
+                    qtd_c = "—"
+                    if c.quantidade_com_desvio is not None:
+                        qtd_c = f"<b>{num(c.quantidade_com_desvio)}</b>" + (f" de {num(c.quantidade_lote)}" if c.quantidade_lote else "")
                     pecas_txt = "; ".join(
                         f'nº {T(p.peca_numero)} {esc(p.caracteristica or "")}: {num(p.valor_medido)}'
                         + (f' <font color="{VERMELHO}"><b>({"+" if p.acima_da_tolerancia else "-"}{num(p.variacao)})</b></font>' if p.variacao else "")
-                        for p in c.pecas_desvio
-                    ) or "—"
-                    linhas_c.append([
-                        Paragraph(f'{_icone_pdf("red_circle", f(8))} <b>{esc(c.componente)}</b>', base),
-                        Paragraph(qtd_c, centro),
-                        Paragraph(f'{T(c.categoria_desvio)} / {T(c.subcategoria_desvio)}', base),
-                        Paragraph(med_txt or "—", pequeno),
-                        Paragraph(pecas_txt, pequeno),
-                    ])
-                el.append(tabela(["Componente", "Qtd. desvio / lote", "Categoria / Sub.", "Medições", "Peças com desvio"], linhas_c, [17, 10, 17, 30, 26], "LCLLL"))
-                comps_loop = []
+                        for p in c.pecas_desvio) or "—"
+                    linhas_c.append([Paragraph(f'{_icone_pdf("red_circle", f(8))} <b>{esc(c.componente)}</b>', base), Paragraph(qtd_c, centro),
+                                     Paragraph(f'{T(c.categoria_desvio)} / {T(c.subcategoria_desvio)}', base),
+                                     Paragraph(f'<b>{len(c.pecas_desvio)}</b>', centro), Paragraph(pecas_txt, pequeno)])
+                el.append(tabela(["Componente", "Qtd. desvio / lote", "Categoria / Sub.", "Peças", "Peças apontadas"], linhas_c, [19, 11, 18, 8, 44], "LCLCL"))
             else:
-                comps_loop = comps
-            for c in comps_loop:
-                if c.quantidade_com_desvio is not None and c.quantidade_lote:
-                    pct_c = str(round(c.quantidade_com_desvio / c.quantidade_lote * 100, 1)).replace(".", ",")
-                    qtd = f"{num(c.quantidade_com_desvio)} de {num(c.quantidade_lote)} un. ({pct_c}%)"
-                elif c.quantidade_com_desvio is not None:
-                    qtd = f"{num(c.quantidade_com_desvio)} un. com desvio"
-                else:
-                    qtd = "—"
-                cab_comp = Table([[Paragraph(f'{_icone_pdf("red_circle", f(9))} <b>{esc(c.componente)}</b>', ParagraphStyle("cc", parent=base_b, fontSize=f(9.5))),
-                                   Paragraph(f'<font color="#6c757d">Qtd.:</font> <b>{qtd}</b>', base),
-                                   Paragraph(f'<font color="#6c757d">Categoria:</font> <b>{T(c.categoria_desvio)}</b> · <font color="#6c757d">Sub.:</font> <b>{T(c.subcategoria_desvio)}</b>', base)]],
-                                 colWidths=[larg * 0.26, larg * 0.31, larg * 0.43])
-                cab_comp.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff3cd")), ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e0c36a")),
-                                              ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), f(2.6)), ("BOTTOMPADDING", (0, 0), (-1, -1), f(2.6)), ("LEFTPADDING", (0, 0), (-1, -1), 5)]))
-                el.append(cab_comp)
-                if c.desvio_encontrado:
-                    el.append(Paragraph(f'<font color="#6c757d">Desvio encontrado:</font> {esc(c.desvio_encontrado)}', base))
-                partes = []
-                dividir = lado_a_lado and c.medicoes and c.pecas_desvio
-                if c.medicoes:
-                    partes.append(tab_medicoes(list(c.medicoes), larg * (0.5 if dividir else 1) - (3 if dividir else 0)))
-                if c.pecas_desvio:
-                    partes.append(tab_pecas(list(c.pecas_desvio), larg * (0.5 if dividir else 1) - (3 if dividir else 0)))
-                if len(partes) == 2 and dividir:
-                    lado = Table([partes], colWidths=[larg * 0.5, larg * 0.5])
-                    lado.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
-                    el.append(Spacer(1, f(1) * mm))
-                    el.append(lado)
-                elif partes:
-                    for parte in partes:
-                        el.append(Spacer(1, f(1) * mm))
-                        el.append(parte)
-                el.append(Spacer(1, f(2) * mm))
+                for c in comps:
+                    el += bloco_desvio(c.componente, c.quantidade_com_desvio, c.quantidade_lote, c.categoria_desvio, c.subcategoria_desvio,
+                                       c.desvio_encontrado, list(c.pecas_desvio), "un. do lote")
+                    el.append(Spacer(1, f(2.2) * mm))
+        else:
+            titulo_secao("warning", "DESVIO APONTADO", "#b8860b")
+            visual = inspecao.inspecao_visual
+            nome_bloco = "Lote inspecionado"
+            el += bloco_desvio(nome_bloco, inspecao.quantidade_com_desvio, item.quantidade if item else None, inspecao.categoria_desvio,
+                               inspecao.subcategoria_desvio, inspecao.desvio_encontrado, list(inspecao.pecas_desvio), "peça(s) do lote")
+            if visual:
+                el.append(Spacer(1, f(1.2) * mm))
+                el.append(Paragraph(f'{_icone_pdf("magnifier", f(9))} <font color="#6c757d">Inspeção visual:</font> '
+                                    f'<font color="{VERDE if visual == "OK" else VERMELHO}"><b>{esc(visual)}</b></font>', base))
 
-        # ---------- observação ----------
+        # ---------- 5. observações e assinaturas ----------
         if inspecao.observacao:
             titulo_secao("memo", "OBSERVAÇÕES", "#6c757d")
-            texto = esc(inspecao.observacao)
-            if limitar and len(texto) > 400:
-                texto = texto[:400] + "…"
-            el.append(Paragraph(texto.replace("\n", "<br/>"), base))
-
-        # ---------- assinaturas (rodapé do conteúdo) ----------
-        el.append(Spacer(1, f(7) * mm + folga * mm * 1.5))
-        rot = ParagraphStyle("ass", parent=base, alignment=1, fontSize=f(7.8), textColor=colors.HexColor("#6c757d"))
+            el.append(Paragraph(esc(inspecao.observacao).replace("\n", "<br/>"), base))
+        el.append(Spacer(1, f(8) * mm + folga * mm * 1.5))
+        rot = ParagraphStyle("ass", parent=base, alignment=1, fontSize=f(8), textColor=colors.HexColor("#6c757d"))
         gap = larg * 0.04
         col = (larg - 2 * gap) / 3
         ass = Table([[Paragraph("Responsável pela inspeção", rot), "", Paragraph("Qualidade / Aprovação", rot), "", Paragraph("Data", rot)]],
@@ -1331,29 +1299,25 @@ def _gerar_pdf_inspecao_rdim(inspecao):
         ass.setStyle(TableStyle([("LINEABOVE", (0, 0), (0, 0), 0.6, colors.HexColor("#6c757d")), ("LINEABOVE", (2, 0), (2, 0), 0.6, colors.HexColor("#6c757d")),
                                  ("LINEABOVE", (4, 0), (4, 0), 0.6, colors.HexColor("#6c757d")), ("TOPPADDING", (0, 0), (-1, -1), 2),
                                  ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
-        ass_wrap = ass
-        el.append(ass_wrap)
+        el.append(ass)
         return el
 
     def rodape(c, d):
         c.saveState()
         c.setFont("Helvetica", 7.2)
         c.setFillColor(colors.HexColor("#888"))
-        c.drawString(12 * mm, 6.5 * mm, "4PIPE Solutions · Gestão da Produção e Operação · Inspeção Final RDIM — sem valores monetários")
+        c.drawString(12 * mm, 6.5 * mm, "4PIPE Solutions · Gestão da Produção e Operação · Detalhamento de apontamento RDIM")
         c.drawRightString(A4[0] - 12 * mm, 6.5 * mm, f'Emitido em {agora.strftime("%d/%m/%Y %H:%M")}')
         c.restoreState()
 
     def montar(s, nivel, folga):
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12 * mm, rightMargin=12 * mm, topMargin=10 * mm, bottomMargin=12 * mm,
-                                title=f"Inspeção Final RDIM #{inspecao.id}")
+                                title=f"Detalhamento de apontamento RDIM #{inspecao.id}")
         doc.build(construir(s, nivel, folga), onFirstPage=rodape, onLaterPages=rodape)
         return doc.page, buf
 
     ESCALAS = (1.3, 1.2, 1.1, 1.0, 0.92, 0.85, 0.78, 0.72, 0.66, 0.6)
-    # 1) detalhado, na maior escala em que cabe numa folha (só desce até 0.78
-    #    pra manter a letra legível); 2) se não couber, compacto (1 linha por
-    #    componente) na maior escala possível.
     escolha = None
     for nivel, escalas in ((0, [x for x in ESCALAS if x >= 0.78]), (1, ESCALAS), (1, (0.55, 0.5, 0.45))):
         for s in escalas:
@@ -1364,10 +1328,8 @@ def _gerar_pdf_inspecao_rdim(inspecao):
         if escolha:
             break
     if escolha is None:
-        escolha = (0.45, 1, buf)  # último recurso: devolve a última tentativa
+        escolha = (0.45, 1, buf)
     s_ok, nivel_ok, buf_ok = escolha
-    # 3) sobrou espaço na folha? distribui como respiro entre as seções —
-    #    maior `folga` (mm) que ainda mantém tudo numa página (bisseção).
     lo, hi = 0.0, 18.0
     for _ in range(6):
         meio = (lo + hi) / 2
@@ -1377,7 +1339,7 @@ def _gerar_pdf_inspecao_rdim(inspecao):
         else:
             hi = meio
     resposta = Response(buf_ok.getvalue(), mimetype="application/pdf")
-    resposta.headers["Content-Disposition"] = f"inline; filename=inspecao_rdim_{inspecao.id}.pdf"
+    resposta.headers["Content-Disposition"] = f"inline; filename=detalhamento_rdim_{inspecao.id}.pdf"
     return resposta
 
 
