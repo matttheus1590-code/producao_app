@@ -1188,8 +1188,14 @@ def create_app():
 
     @app.context_processor
     def inject_globals():
+        # Versão dos estáticos próprios (style.css/app.js) pro navegador não
+        # servir CSS/JS velho do cache depois de um deploy — caso real
+        # (05/10/2026): o Simulado A "fixado" estava no ar, mas o Edge do
+        # Bruno seguia com o style.css antigo. O `?v=` muda sozinho a cada
+        # mudança no arquivo (mtime).
         estacoes_ativas = [e.nome for e in Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all()]
         return dict(
+            ASSET_V=_versao_estaticos(app),
             ESTACOES=estacoes_ativas or ESTACOES,
             STATUS_OPCOES=STATUS_OPCOES,
             PRIORIDADE_OPCOES=PRIORIDADE_OPCOES,
@@ -2813,6 +2819,17 @@ def _migrar_rdim_pecas_desvio(app):
         if "especificado_max" not in colunas:
             conn.execute(text("ALTER TABLE rdim_pecas_desvio ADD COLUMN especificado_max FLOAT"))
     app.logger.info("Migração automática: campos especificado_min e especificado_max adicionados em rdim_pecas_desvio.")
+
+
+def _versao_estaticos(app):
+    """Carimbo (mtime mais recente de css/style.css e js/app.js) usado como
+    `?v=` nos <link>/<script> do base.html — ver inject_globals."""
+    try:
+        base = os.path.join(app.static_folder, "")
+        mtimes = [os.path.getmtime(os.path.join(base, p)) for p in ("css/style.css", "js/app.js") if os.path.exists(os.path.join(base, p))]
+        return str(int(max(mtimes))) if mtimes else "0"
+    except OSError:
+        return "0"
 
 
 def _migrar_rdim_componente_quantidade_lote(app):
@@ -7751,6 +7768,48 @@ def _gerar_pdf_espelho_pedido(pedido):
     if pedido.obs:
         elementos.append(Paragraph(f'{_icone_pdf("memo", 12)} <b>Observações:</b> {pedido.obs}', est_obs))
         elementos.append(Spacer(1, 2 * mm))
+
+    # ---------------- Simulado A (pedido do Bruno, 05/10/2026: "e também
+    # apareça no espelho pdf") — mesma projeção da tela Editar/Detalhe
+    # (_simulado_a_pedido): prazo comercial x LT de produção parametrizado +
+    # transporte. Só datas/dias, nenhum valor monetário (regra do Espelho). ----
+    sim_a = _simulado_a_pedido(pedido)
+    if sim_a is None:
+        sim_icone, sim_cor_fundo, sim_linhas = "hourglass", "#e9ecef", ["Não se aplica — todos os itens já estão finalizados (nada mais a projetar)."]
+    else:
+        sim_icone = {"verde": "green_circle", "amarelo": "yellow_circle", "vermelho": "red_circle"}.get(sim_a["indicador"], "hourglass")
+        sim_cor_fundo = {"verde": "#d1e7dd", "amarelo": "#fff3cd", "vermelho": "#f8d7da"}.get(sim_a["indicador"], "#e9ecef")
+        if sim_a["data_prevista"]:
+            transp_txt = f' + transporte {sim_a["transporte_dias"]}d' if sim_a["transporte_aplicavel"] else ""
+            linha1 = (f'Previsão (LT produção {sim_a["lt_producao"]}d{transp_txt}): '
+                      f'<b>{sim_a["data_prevista"].strftime("%d/%m/%Y")}</b>')
+            if sim_a["folga"] is not None and pedido.data_cliente:
+                prazo_txt = pedido.data_cliente.strftime("%d/%m/%Y")
+                if sim_a["folga"] < 0:
+                    linha1 += f' — <b>{-sim_a["folga"]}d de atraso</b> em relação ao prazo comercial ({prazo_txt})'
+                else:
+                    linha1 += f' — <b>{sim_a["folga"]}d de folga</b> em relação ao prazo comercial ({prazo_txt})'
+            sim_linhas = [linha1]
+        else:
+            sim_linhas = ["Ainda não dá pra projetar — falta LT de produção parametrizado, LT de transporte da UF ou a data de inclusão do pedido."]
+        if not sim_a["transporte_aplicavel"]:
+            sim_linhas.append("Frete não é CIF — LT de transporte não é parametrizado aqui.")
+        if sim_a["itens_sem_parametro"]:
+            sim_linhas.append(f'{len(sim_a["itens_sem_parametro"])} item(ns) sem LT de produção cadastrado.')
+    elementos.append(Paragraph(f'{_icone_pdf("target", 14)} SIMULADO A — PRAZO COMERCIAL × PARAMETRIZADO', est_secao))
+    caixa_sim = Table(
+        [[Paragraph(f'{_icone_pdf(sim_icone, 12)}', est_campo), [Paragraph(l, est_obs) for l in sim_linhas]]],
+        colWidths=[10 * mm, largura_util - 10 * mm],
+    )
+    caixa_sim.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(sim_cor_fundo)),
+        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#adb5bd")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elementos.append(caixa_sim)
+    elementos.append(Spacer(1, 2 * mm))
 
     # ---------------- PCP / Logística (Gestão Operação, se existir) ----------------
     if go:
@@ -18180,6 +18239,7 @@ def register_routes(app):
         return render_template(
             "detalhe_pedido.html", pedido=pedido, historico=historico, timeline=timeline,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
+            simulado_a=_simulado_a_pedido(pedido),
         )
 
     @app.route("/pedidos/<int:pedido_id>/espelho.pdf")

@@ -6,7 +6,7 @@
   <title>{% block title %}Gestão da Produção e Operação{% endblock %}</title>
   <link href="{{ url_for('static', filename='vendor/bootstrap/css/bootstrap.min.css') }}" rel="stylesheet">
   <link href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.css') }}" rel="stylesheet">
-  <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/style.css') }}?v={{ ASSET_V }}" rel="stylesheet">
 </head>
 <body>
   {% if current_user.is_authenticated %}
@@ -230,7 +230,7 @@
   {% endif %}
 
   <script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v={{ ASSET_V }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

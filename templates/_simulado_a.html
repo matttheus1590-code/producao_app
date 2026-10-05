@@ -1,0 +1,52 @@
+{# Simulado A — caixa reutilizada na tela de edição, no detalhe do pedido e
+   (em texto) no Espelho PDF. Pedido do Bruno (05/10/2026): "ambas as telas
+   (visualização e editar)... quero que apareça e fixado". Espera as
+   variáveis `pedido` e `simulado_a` (resultado de _simulado_a_pedido, ou
+   None quando todos os itens já estão finalizados — nesse caso mostra um
+   aviso neutro em vez de sumir, que era o que parecia "não aparece"). #}
+{% if simulado_a %}
+{% set cores_simulado_a = {"verde": "success", "amarelo": "warning", "vermelho": "danger", "sem_dado": "secondary"} %}
+{% set emojis_simulado_a = {"verde": "🟢", "amarelo": "🟡", "vermelho": "🔴", "sem_dado": "⚪"} %}
+<div class="alert alert-{{ cores_simulado_a[simulado_a.indicador] }} simulado-a-fixo d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+  <div>
+    <div class="fw-semibold">
+      {{ emojis_simulado_a[simulado_a.indicador] }} Simulado A: prazo comercial × parametrizado
+    </div>
+    {% if simulado_a.data_prevista %}
+      <div class="small">
+        Previsão (LT produção {{ simulado_a.lt_producao }}d
+        {% if simulado_a.transporte_aplicavel %}+ transporte {{ simulado_a.transporte_dias }}d{% endif %}):
+        <strong>{{ simulado_a.data_prevista.strftime("%d/%m/%Y") }}</strong>
+        {% if pedido.data_cliente %}
+          {% if simulado_a.folga < 0 %}
+            — <strong>{{ -simulado_a.folga }}d de atraso</strong> em relação ao prazo comercial ({{ pedido.data_cliente.strftime("%d/%m/%Y") }})
+          {% else %}
+            — <strong>{{ simulado_a.folga }}d de folga</strong> em relação ao prazo comercial ({{ pedido.data_cliente.strftime("%d/%m/%Y") }})
+          {% endif %}
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="small">
+        Ainda não dá pra projetar — falta
+        {% if not simulado_a.lt_producao %}LT de produção parametrizado{% endif %}
+        {% if simulado_a.transporte_aplicavel and simulado_a.transporte_dias is none %}{% if not simulado_a.lt_producao %} e{% endif %} LT de transporte cadastrado pra UF{% endif %}
+        {% if not pedido.data_inclusao_pedido %} ou a data de inclusão do pedido{% endif %}.
+      </div>
+    {% endif %}
+    {% if not simulado_a.transporte_aplicavel %}
+      <div class="text-muted small">Frete não é CIF — LT de transporte não é parametrizado aqui.</div>
+    {% endif %}
+    {% if simulado_a.itens_sem_parametro %}
+      <div class="text-muted small">
+        ⚠️ {{ simulado_a.itens_sem_parametro | length }} item(ns) sem LT de produção cadastrado —
+        <a href="{{ url_for('cadastros_lead_time_producao_novo') }}">cadastrar em Lead time Produção</a>.
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="alert alert-secondary simulado-a-fixo mb-4">
+  <div class="fw-semibold">⚪ Simulado A: prazo comercial × parametrizado</div>
+  <div class="small">Não se aplica — todos os itens deste pedido já estão finalizados (nada mais a projetar).</div>
+</div>
+{% endif %}
