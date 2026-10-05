@@ -3,7 +3,17 @@
 {% block title %}Painel · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
-<h4 class="mb-3"><i class="bi bi-speedometer2"></i> Painel</h4>
+<!-- "Emitir relatório" (pedido do Bruno, 05/10/2026): PDF "PAINEL DIÁRIO
+     OPERAÇÃO" com TODO o Painel organizado por área (logo, data/hora de
+     emissão). Repassa os mesmos filtros da tela (pcp_de/pcp_ate/
+     ano_graficos) pra o PDF nunca divergir do que está sendo visto. -->
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h4 class="mb-0"><i class="bi bi-speedometer2"></i> Painel</h4>
+  <a href="{{ url_for('painel_relatorio_pdf', pcp_de=pcp_de_str, pcp_ate=pcp_ate_str, ano_graficos=ano_graficos) }}"
+     class="btn btn-danger btn-sm" title="Gera o PDF 'Painel Diário Operação' com todas as áreas deste painel">
+    <i class="bi bi-file-earmark-pdf"></i> 📄 Emitir relatório (PDF)
+  </a>
+</div>
 
 <div class="alert alert-light border small text-muted mb-4 d-flex align-items-center gap-2">
   <i class="bi bi-search"></i>
@@ -587,6 +597,33 @@
 </div>
 {% endif %}
 
+
+{# Pipeline operacional do mês atual projetado pelo PCP — pedido do Bruno
+   (05/10/2026): mesmo gráfico da Operação 360, só com os pedidos cujo
+   Término Semanal PCP cai no mês atual. #}
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">🧭 <i class="bi bi-funnel"></i> Pipeline operacional — {{ pipeline_mes_pcp.mes_label }} (projetado pelo PCP) — onde os pedidos estão travados</h6>
+      <a href="{{ url_for('gestao_operacao_listagem_geral') }}" class="small">Ver Operação 360 <i class="bi bi-arrow-right"></i></a>
+    </div>
+    <p class="text-muted small mb-3">
+      <strong>{{ pipeline_mes_pcp.total_pedidos }}</strong> pedido(s) com Término Semanal PCP em {{ pipeline_mes_pcp.mes_label }},
+      distribuídos pela etapa em que estão agora — da inclusão até a entrega ao cliente. É a visão do todo da operação no mês.
+    </p>
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      {% for e in pipeline_mes_pcp.etapas %}
+      <span class="badge rounded-pill fs-6 fw-normal px-3 py-2" style="background-color: {{ e.cor }};">{{ e.emoji }} {{ e.label }}: <strong>{{ e.total }}</strong></span>
+      {% endfor %}
+    </div>
+    {% if pipeline_mes_pcp.total_pedidos %}
+    <canvas id="graficoPipelineMesPcp" height="90"></canvas>
+    {% else %}
+    <p class="text-muted mb-0">Nenhum pedido com Término Semanal PCP em {{ pipeline_mes_pcp.mes_label }} ainda.</p>
+    {% endif %}
+  </div>
+</div>
+
 {# Pedidos entregues mês a mês PCP — pedido do Bruno (05/10/2026): troca do
    antigo "Projeção PCP por mês". Só valores de PEDIDO (nada de faturado ou
    não — isso é com o Financeiro), total de pedidos e OTD do mês. #}
@@ -840,6 +877,47 @@
       scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + "%"; } } } },
     },
   });
+
+  // Pipeline operacional do mês atual projetado pelo PCP (pedido do Bruno,
+  // 05/10/2026) — mesmo gráfico de barras horizontais da Operação 360, com a
+  // cor de cada barra igual à cor da etapa.
+  const pipelineMes = {{ pipeline_mes_pcp.etapas | tojson }};
+  const elPipelineMes = document.getElementById("graficoPipelineMesPcp");
+  if (elPipelineMes) {
+    new Chart(elPipelineMes, {
+      type: "bar",
+      data: {
+        labels: pipelineMes.map(function (p) { return p.emoji + " " + p.label; }),
+        datasets: [{
+          label: "Pedidos",
+          data: pipelineMes.map(function (p) { return p.total; }),
+          backgroundColor: pipelineMes.map(function (p) { return p.cor; }),
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true, ticks: { precision: 0 }, grace: "12%" } },
+      },
+      // Rótulo com a quantidade na ponta de cada barra (inclusive 0), sem
+      // depender de plugin externo.
+      plugins: [{
+        id: "valorNaBarra",
+        afterDatasetsDraw: function (chart) {
+          const ctx = chart.ctx;
+          const meta = chart.getDatasetMeta(0);
+          ctx.save();
+          ctx.font = "bold 13px sans-serif";
+          ctx.fillStyle = "#212529";
+          ctx.textBaseline = "middle";
+          meta.data.forEach(function (barra, i) {
+            ctx.fillText(String(pipelineMes[i].total), barra.x + 6, barra.y);
+          });
+          ctx.restore();
+        },
+      }],
+    });
+  }
 
   const projecaoPcp = {{ projecao_pcp | tojson }};
   const elProjecaoPcp = document.getElementById("graficoProjecaoPcp");

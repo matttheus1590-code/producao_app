@@ -270,6 +270,771 @@ def _resolve_database_uri():
     return "sqlite:///" + os.path.join(BASE_DIR, "instance", "pedidos.db")
 
 
+def _pipeline_mes_atual_pcp(hoje):
+    """Pipeline operacional (funil por etapa) do MÊS ATUAL projetado pelo PCP
+    — pedido do Bruno (05/10/2026): o mesmo gráfico "Pipeline operacional —
+    onde os pedidos estão travados" da Operação 360, agora no Painel e só com
+    os pedidos cujo Término Semanal PCP cai no mês atual ("uma forma de
+    enxergar como está a operação em um todo"). Reaproveita 100% a
+    classificação de 5 etapas de _metricas_operacao_360 via
+    _painel_operacao_360 (mesmas cores/emojis/rótulos da Operação 360)."""
+    pedidos = _pedidos_operacao_do_periodo("mes", hoje.year, hoje.month).all()
+    metricas = {}
+    if pedidos:
+        pedidos_venda = [p.pedido_venda for p in pedidos]
+        metricas = _metricas_operacao_360(
+            pedidos,
+            _liberacao_pcp_por_pedido_venda(pedidos_venda),
+            _data_cliente_por_pedido_venda(pedidos_venda),
+            _pedidos_producao_por_pedido_venda(pedidos_venda),
+        )
+    etapas = _painel_operacao_360({}, pedidos, metricas)["pipeline"]
+    return {
+        "mes_label": f"{MESES_PT_EXTENSO[hoje.month - 1]}/{hoje.year}",
+        "total_pedidos": len(pedidos),
+        "etapas": etapas,
+    }
+
+
+def _contexto_painel(args, ultima_visita=None):
+    """Tudo que o Painel mostra (e que o PDF "Painel diário operação" também
+    reaproveita — pedido do Bruno, 05/10/2026), num dict só. Extraído da
+    rota /painel pra que a tela e o relatório PDF nunca divirjam: mesmas
+    funções, mesmos números. `args` = request.args (filtros pcp_de/pcp_ate/
+    ano_graficos); `ultima_visita` = datetime da visita anterior (só a tela
+    usa, pro selo "novo desde sua última visita"; o PDF passa None)."""
+    resumo = _calcular_resumo()
+    atrasados = Pedido.query.filter(_predicado_atrasado()).count()
+    vencendo = Pedido.query.filter(_predicado_vencendo()).count()
+    backlog = resumo["total"] - resumo["finalizado"]
+
+    hoje = date.today()
+    # Faturamento previsto (mês atual) + Backlog mês seguinte — pedido do
+    # Bruno (16/09/2026): sempre a partir do planejamento PCP da
+    # Listagem Geral (ItemPedido.planejamento_semanal), não mais da
+    # liberação prevista (_faturamento_mes, que continua existindo pros
+    # outros usos que já tinha: gráfico anual, tendência etc.). Os dois
+    # cards usam o mesmo _resumo_mes_pcp — inclui contagem de pedidos e
+    # Top 5 por valor (pedido do Bruno, 16/09/2026).
+    resumo_mes_atual_pcp = _resumo_mes_pcp(hoje.year, hoje.month)
+    previsto_mes = resumo_mes_atual_pcp["valor_total"]
+    resumo_mes_seguinte_pcp = _resumo_mes_seguinte_pcp(hoje)
+    # Fechamento do mês anterior — pedido do Bruno (01/10/2026): "quero
+    # que nessa area voce inclua o fechamento de setembro tambem (com
+    # base na projeção da listagem geral)". Mesmo _resumo_mes_pcp dos
+    # outros dois cards hero, só que pro mês que já fechou.
+    resumo_mes_anterior_pcp = _resumo_mes_anterior_pcp(hoje)
+
+    # Mini gestão de risco de prazos, FOB x CIF — pedido do Bruno
+    # (16/09/2026), logo abaixo de "Últimos apontamentos de Qualidade".
+    mini_risco_prazos = _mini_risco_prazos_painel()
+
+    # Detalhamento de Lead Time (chão de fábrica, total, fila de espera,
+    # prazo comercial) — pedido do Bruno (16/09/2026), quadrante próprio.
+    lead_time_agrupado = _lead_time_painel_agrupado(hoje)
+
+    pedidos_atrasados = (
+        Pedido.query.options(selectinload(Pedido.itens))
+        .filter(_predicado_atrasado())
+        .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+        .limit(10)
+        .all()
+    )
+
+    # Quadro mensal de projeção PCP (soma das semanas dentro de cada mês) —
+    # filtro de período em <input type=month>, com um intervalo padrão de
+    # 3 meses atrás até 6 meses à frente (dá pra ver "quanto foi entregue"
+    # nos meses passados e "quanto já está projetado" nos meses seguintes).
+    pcp_de_padrao = _somar_meses(hoje.year, hoje.month, -3)
+    pcp_ate_padrao = _somar_meses(hoje.year, hoje.month, 6)
+    pcp_de = _parse_mes_ano_form(args.get("pcp_de"), pcp_de_padrao)
+    pcp_ate = _parse_mes_ano_form(args.get("pcp_ate"), pcp_ate_padrao)
+    if pcp_de > pcp_ate:
+        pcp_de, pcp_ate = pcp_ate, pcp_de
+
+    # OTD/Lead Time da Operação, recorte "mês atual" — pedido do Bruno
+    # (03/09/2026): "os principais KPIs da operação já sejam visuais logo
+    # no painel", trazendo pro Painel os mesmos indicadores da tela
+    # Resultados/OTD (mesmas funções, mesmo critério/meta).
+    query_operacao_mes = _pedidos_operacao_do_periodo("mes", hoje.year, hoje.month)
+    otd_operacao_mes = _resumo_otd(query_operacao_mes)
+    lead_times_operacao_mes = _resumo_lead_times(query_operacao_mes)
+    mes_atual_label = f"{MESES_PT[hoje.month - 1]}/{hoje.year}"
+
+    # Gráficos anuais de faturamento realizado e OTD (pedido do Bruno,
+    # 03/09/2026, no lugar do antigo "previsto × realizado (6 meses)") —
+    # 1 filtro de ano simples, compartilhado pelos dois gráficos.
+    anos_disponiveis_graficos = list(range(hoje.year - 2, hoje.year + 1))
+    ano_graficos = args.get("ano_graficos", hoje.year, type=int)
+    if ano_graficos not in anos_disponiveis_graficos:
+        ano_graficos = hoje.year
+
+    # Apontamentos recentes de Qualidade (RDIM + RNC) — pedido do Bruno
+    # (03/09/2026): "notificação breve" de todo apontamento novo, pra ele
+    # ter ciência sem precisar entrar na área de Qualidade. "Novo desde a
+    # última visita" é guardado na sessão do navegador (sem tabela nova),
+    # e é sempre atualizado DEPOIS de calcular a lista, pra este mesmo
+    # carregamento ainda mostrar o que entrou desde a visita anterior.
+    apontamentos_qualidade = _apontamentos_recentes_qualidade(desde=ultima_visita)
+    novos_apontamentos = sum(1 for a in apontamentos_qualidade if a["novo"])
+
+    # Últimos pedidos incluídos em Gestão Produção + últimas atualizações
+    # de P&D — pedido do Bruno (03/09/2026), mesmo formato/mesma "última
+    # visita" do feed de Qualidade acima.
+    pedidos_recentes_producao = _pedidos_recentes_producao(desde=ultima_visita)
+    novos_pedidos_producao = sum(1 for e in pedidos_recentes_producao if e["novo"])
+    atualizacoes_pd = _atualizacoes_recentes_pd(desde=ultima_visita)
+    novas_atualizacoes_pd = sum(1 for e in atualizacoes_pd if e["novo"])
+
+    # Prévia horizontal do Planejamento Semanal PCP — pedido do Bruno
+    # (09/09/2026), logo abaixo de "Últimos pedidos incluídos". Desde
+    # 16/09/2026 mostra sempre TODAS as semanas do mês atual (não mais
+    # uma janela rolante) — ver docstring de _preview_semanal_pcp_painel.
+    preview_pcp_semanal = _preview_semanal_pcp_painel(hoje)
+
+    return dict(
+        pipeline_mes_pcp=_pipeline_mes_atual_pcp(hoje),
+        resumo=resumo,
+        atrasados=atrasados,
+        vencendo=vencendo,
+        backlog=backlog,
+        previsto_mes=previsto_mes,
+        resumo_mes_atual_pcp=resumo_mes_atual_pcp,
+        resumo_mes_seguinte_pcp=resumo_mes_seguinte_pcp,
+        resumo_mes_anterior_pcp=resumo_mes_anterior_pcp,
+        mini_risco_prazos=mini_risco_prazos,
+        lead_time_agrupado=lead_time_agrupado,
+        lead_time_medio=_lead_time_medio_dias(),
+        otd=_otd_percentual(),
+        backlog_estacao=_backlog_por_estacao(),
+        pedidos_atrasados=pedidos_atrasados,
+        projecao_pcp=_projecao_pcp(),
+        projecao_pcp_mensal=_projecao_pcp_mensal(pcp_de, pcp_ate),
+        pcp_de_str=f"{pcp_de[0]:04d}-{pcp_de[1]:02d}",
+        pcp_ate_str=f"{pcp_ate[0]:04d}-{pcp_ate[1]:02d}",
+        otd_operacao_mes=otd_operacao_mes,
+        lead_times_operacao_mes=lead_times_operacao_mes,
+        mes_atual_label=mes_atual_label,
+        faturamento_mensal_ano=_faturamento_mensal_ano(ano_graficos),
+        otd_mensal_ano=_otd_mensal_ano(ano_graficos),
+        ano_graficos=ano_graficos,
+        anos_disponiveis_graficos=anos_disponiveis_graficos,
+        apontamentos_qualidade=apontamentos_qualidade,
+        novos_apontamentos=novos_apontamentos,
+        pedidos_recentes_producao=pedidos_recentes_producao,
+        novos_pedidos_producao=novos_pedidos_producao,
+        atualizacoes_pd=atualizacoes_pd,
+        novas_atualizacoes_pd=novas_atualizacoes_pd,
+        preview_pcp_semanal=preview_pcp_semanal,
+    )
+
+
+def _gerar_pdf_painel_diario(ctx):
+    """PDF "PAINEL DIÁRIO OPERAÇÃO" (pedido do Bruno, 05/10/2026): relatório
+    de TODO o Painel, organizado em áreas (visão geral, faturamento
+    projetado, planejamento semanal PCP, pipeline, gestão de lead time, OTD,
+    pedidos entregues mês a mês, inclusões de pedidos, risco de prazos,
+    atrasados, backlog, qualidade, P&D), com logo, data/hora de emissão e
+    ícones coloridos.
+
+    `ctx` é o MESMO dict que alimenta a tela (_contexto_painel) — nenhum
+    cálculo novo aqui, só apresentação, então o PDF nunca diverge do Painel.
+
+    Ícones: PNGs pré-renderados (_icone_pdf) — a fonte padrão do reportlab
+    não tem glyph de emoji (viraria quadrado preto). Pelo mesmo motivo, nada
+    de "▲▼→" no texto: variações usam sinal (+/-) e cor."""
+    from xml.sax.saxutils import escape as esc
+    from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
+    from reportlab.graphics.shapes import Drawing, String
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import CondPageBreak, HRFlowable, Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    LARGURA_PAGINA, ALTURA_PAGINA = landscape(A4)
+    COR_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
+    COR_CAB_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
+    COR_BORDA = colors.HexColor("#dee2e6")
+    COR_ZEBRA = colors.HexColor("#f8f9fa")
+    VERDE, VERMELHO, AZUL, AMARELO = "#198754", "#dc3545", "#0d6efd", "#b8860b"
+    CINZA = colors.HexColor("#6c757d")
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=10 * mm, bottomMargin=14 * mm,
+        title="Painel Diário Operação",
+    )
+    largura = LARGURA_PAGINA - doc.leftMargin - doc.rightMargin
+    estilos = getSampleStyleSheet()
+    base = ParagraphStyle("pd_base", parent=estilos["Normal"], fontSize=8, leading=9.8)
+    base_b = ParagraphStyle("pd_base_b", parent=base, fontName="Helvetica-Bold")
+    cab_tab = ParagraphStyle("pd_cab", parent=base_b, fontSize=8, textColor=COR_TEXTO)
+    centro = ParagraphStyle("pd_centro", parent=base, alignment=1)
+    centro_b = ParagraphStyle("pd_centro_b", parent=base_b, alignment=1)
+    direita = ParagraphStyle("pd_dir", parent=base, alignment=2)
+    nota = ParagraphStyle("pd_nota", parent=base, fontSize=7.6, leading=10, textColor=CINZA)
+    titulo_st = ParagraphStyle("pd_titulo", parent=estilos["Title"], fontSize=24, leading=27, spaceAfter=0, alignment=0, textColor=COR_TEXTO)
+    sub_st = ParagraphStyle("pd_sub", parent=base, fontSize=9.5, leading=13, textColor=colors.HexColor("#555"))
+
+    def P(txt, estilo=None):
+        return Paragraph(txt if txt is not None else "—", estilo or base)
+
+    def T(txt, estilo=None):
+        """Texto dinâmico (escapa & < >)."""
+        return Paragraph(esc(str(txt)) if txt not in (None, "") else "—", estilo or base)
+
+    def cor_txt(txt, hex_cor, bold=True):
+        return f'<font color="{hex_cor}">{"<b>" if bold else ""}{txt}{"</b>" if bold else ""}</font>'
+
+    def dias(v):
+        return f"{v}d" if v is not None else "—"
+
+    def delta_txt(delta):
+        """Variação mês anterior x média: subir lead time = ruim (vermelho)."""
+        if delta is None:
+            return "—"
+        if delta > 0:
+            return cor_txt(f"+{delta}d", VERMELHO)
+        if delta < 0:
+            return cor_txt(f"{delta}d", VERDE)
+        return "0d"
+
+    def semaforo_icone(s):
+        nome = {"🟢": "green_circle", "🟡": "yellow_circle", "🔴": "red_circle"}.get(s)
+        return _icone_pdf(nome, 8) if nome else "-"
+
+    elementos = []
+
+    # ---------------- helpers de layout ----------------
+    def banner(icone, titulo, cor_hex, sub=None, espaco_mm=55):
+        est = ParagraphStyle("pd_banner", parent=base_b, fontSize=12, leading=15, textColor=colors.white)
+        celulas = [[P(f'{_icone_pdf(icone, 13)} {esc(titulo)}', est)]]
+        t = Table(celulas, colWidths=[largura])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(cor_hex)),
+            ("TOPPADDING", (0, 0), (-1, -1), 4.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        # CondPageBreak: título de seção nunca fica sozinho no pé da página
+        saida = [CondPageBreak(espaco_mm * mm), t]
+        if sub:
+            saida += [Spacer(1, 1 * mm), P(sub, nota)]
+        saida.append(Spacer(1, 2 * mm))
+        return saida
+
+    def kpi_linha(kpis, cores_fundo=None, largura_total=None):
+        """kpis = [(valor_txt, icone, rotulo, cor_valor_hex|None)]."""
+        larg = (largura_total or largura) / len(kpis)
+        topo, base_l = [], []
+        for valor, icone, rotulo, cor_valor in kpis:
+            st = ParagraphStyle("pd_kpi_v", parent=base_b, fontSize=14, leading=16, alignment=1,
+                                textColor=colors.HexColor(cor_valor) if cor_valor else colors.black)
+            topo.append(P(valor, st))
+            base_l.append(P(f'{_icone_pdf(icone, 9)} {esc(rotulo)}', ParagraphStyle("pd_kpi_r", parent=base, fontSize=7.4, leading=9, alignment=1)))
+        t = Table([topo, base_l], colWidths=[larg] * len(kpis))
+        est = [
+            ("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.5, COR_BORDA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]
+        for i, c in enumerate(cores_fundo or []):
+            if c:
+                est.append(("BACKGROUND", (i, 0), (i, -1), colors.HexColor(c)))
+        t.setStyle(TableStyle(est))
+        return t
+
+    def tabela(cabecalho, linhas, pesos, estilo_extra=None, zebra=True, alin=None, largura_total=None):
+        """Tabela padrão: cabeçalho azul-claro, zebra, bordas finas.
+        `alin` = string tipo "LCCR" (L/C/R por coluna) pra alinhar o
+        cabeçalho com os valores da coluna."""
+        cab_est = {"L": cab_tab, "C": ParagraphStyle("pd_cab_c", parent=cab_tab, alignment=1), "R": ParagraphStyle("pd_cab_r", parent=cab_tab, alignment=2)}
+        dados = [[P(c, cab_est[(alin or "L" * len(cabecalho))[i]]) for i, c in enumerate(cabecalho)] for _ in [0]] + linhas
+        soma = float(sum(pesos))
+        t = Table(dados, colWidths=[p / soma * (largura_total or largura) for p in pesos], repeatRows=1)
+        est = [
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CAB_BG),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.3, COR_BORDA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.6), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5), ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+        ]
+        if zebra:
+            for i in range(2, len(dados), 2):
+                est.append(("BACKGROUND", (0, i), (-1, i), COR_ZEBRA))
+        est += (estilo_extra or [])
+        t.setStyle(TableStyle(est))
+        return t
+
+    def vazio(msg):
+        return P(esc(msg), nota)
+
+    def grafico_h(rotulos, valores, cores_barras, altura_mm_por_barra=7.5, largura_mm=None, rotulo_largura_mm=44):
+        n = len(rotulos)
+        larg = (largura_mm * mm) if largura_mm else largura
+        alt = 14 * mm + n * altura_mm_por_barra * mm
+        dw = Drawing(larg, alt)
+        ch = HorizontalBarChart()
+        ch.x = rotulo_largura_mm * mm
+        ch.y = 6 * mm
+        ch.width = larg - (rotulo_largura_mm + 14) * mm
+        ch.height = alt - 10 * mm
+        ch.data = [list(reversed(valores))]
+        ch.categoryAxis.categoryNames = list(reversed(rotulos))
+        ch.categoryAxis.labels.fontSize = 8
+        ch.categoryAxis.labels.fontName = "Helvetica"
+        ch.valueAxis.valueMin = 0
+        ch.valueAxis.labels.fontSize = 7.5
+        ch.valueAxis.labels.fontName = "Helvetica"
+        if valores and max(valores) <= 8:
+            ch.valueAxis.valueStep = 1  # contagens pequenas: eixo só em inteiros
+        ch.barLabels.fontSize = 8
+        ch.barLabels.fontName = "Helvetica-Bold"
+        ch.barLabelFormat = "%d"
+        ch.barLabels.nudge = 8
+        ch.barWidth = (altura_mm_por_barra - 2.4) * mm
+        ch.groupSpacing = 2.4 * mm
+        for i, c in enumerate(reversed(cores_barras)):
+            ch.bars[(0, i)].fillColor = colors.HexColor(c)
+        dw.add(ch)
+        return dw
+
+    def grafico_v(categorias, series, largura_mm, altura_mm=52, formato="%d", fonte_cat=7, mostrar_valores=True):
+        """series = [(valores, cor_hex)] — barras agrupadas."""
+        larg = largura_mm * mm
+        dw = Drawing(larg, altura_mm * mm)
+        ch = VerticalBarChart()
+        ch.x = 12 * mm
+        ch.y = 11 * mm
+        ch.width = larg - 16 * mm
+        ch.height = altura_mm * mm - 16 * mm
+        ch.data = [list(s[0]) for s in series]
+        ch.categoryAxis.categoryNames = categorias
+        ch.categoryAxis.labels.fontSize = fonte_cat
+        ch.categoryAxis.labels.fontName = "Helvetica"
+        ch.categoryAxis.labels.angle = 0
+        ch.categoryAxis.labels.dy = -2
+        ch.valueAxis.valueMin = 0
+        ch.valueAxis.labels.fontSize = 7
+        ch.valueAxis.labels.fontName = "Helvetica"
+        ch.groupSpacing = 3
+        ch.barSpacing = 0.5
+        if mostrar_valores:
+            ch.barLabelFormat = formato
+            ch.barLabels.fontName = "Helvetica"
+            ch.barLabels.fontSize = 6.2
+            ch.barLabels.nudge = 5
+        for i, (_, cor) in enumerate(series):
+            ch.bars[i].fillColor = colors.HexColor(cor)
+        dw.add(ch)
+        return dw
+
+    # ================= CABEÇALHO =================
+    agora = _agora_brt()
+    if os.path.exists(_ESPELHO_LOGO_PATH):
+        logo = Image(_ESPELHO_LOGO_PATH, width=56 * mm, height=56 * mm * (63 / 261))
+    else:
+        logo = P("")
+    bloco_titulo = [
+        P(f'{_icone_pdf("bar_chart", 20)} PAINEL DIÁRIO OPERAÇÃO', titulo_st),
+        Spacer(1, 1.5 * mm),
+        P(f'{_icone_pdf("alarm_clock", 11)} Emitido em <b>{agora.strftime("%d/%m/%Y")}</b> às <b>{agora.strftime("%H:%M")}</b> (horário de Brasília) · '
+          f'{_icone_pdf("calendar", 11)} Mês de referência: <b>{esc(ctx["mes_atual_label"])}</b>', sub_st),
+    ]
+    cab = Table([[logo, bloco_titulo]], colWidths=[62 * mm, largura - 62 * mm])
+    cab.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    elementos += [cab, Spacer(1, 2 * mm), HRFlowable(width="100%", thickness=1.8, color=COR_TEXTO), Spacer(1, 3 * mm)]
+
+    # índice rápido das áreas
+    areas = ["Visão geral", "Faturamento projetado", "Planejamento semanal PCP", "Pipeline operacional", "Gestão de lead time",
+             "OTD e lead time da operação", "Pedidos entregues mês a mês", "Faturamento e OTD do ano", "Inclusões de pedidos",
+             "Risco de prazos", "Pedidos atrasados", "Backlog por estação", "Qualidade", "P&D"]
+    elementos.append(P(f'{_icone_pdf("pin", 9)} <b>Áreas deste relatório:</b> ' + " · ".join(f"{i}. {esc(a)}" for i, a in enumerate(areas, 1)), nota))
+    elementos.append(Spacer(1, 3 * mm))
+
+    # ================= 1. VISÃO GERAL =================
+    r = ctx["resumo"]
+    otd_geral = ctx["otd"]
+    cor_otd_geral = (VERDE if (otd_geral is not None and otd_geral >= GO_OTD_META_PERCENTUAL) else VERMELHO) if otd_geral is not None else None
+    elementos += banner("bar_chart", "1. VISÃO GERAL DA PRODUÇÃO", "#1b2a4a",
+                        "Retrato de todos os pedidos de Gestão Produção neste momento.")
+    kpis1 = [
+        (str(r["total"]), "receipt", "Total de pedidos", None),
+        (str(r["finalizado"]), "check", "Finalizados", VERDE),
+        (str(r["andamento"]), "gear", "Em andamento", AZUL),
+        (str(r["pendente"]), "hourglass", "Pendentes", None),
+        (str(r["em_tratativa"]), "warning", "Em tratativa", AMARELO),
+        (str(ctx["backlog"]), "package", "Backlog (não finalizados)", None),
+    ]
+    kpis1b = [
+        (str(ctx["atrasados"]), "red_circle", "Pedidos atrasados", VERMELHO if ctx["atrasados"] else None),
+        (str(ctx["vencendo"]), "yellow_circle", "Vencendo nos próximos dias", AMARELO if ctx["vencendo"] else None),
+        (f'{otd_geral}%' if otd_geral is not None else "—", "target", f'OTD itens (meta {GO_OTD_META_PERCENTUAL}%)', cor_otd_geral),
+        (dias(ctx["lead_time_medio"]), "stopwatch", "Lead time médio", None),
+        (_formatar_moeda_br(r["valor_total"]), "moneybag", "Valor total em pedidos", None),
+    ]
+    elementos += [kpi_linha(kpis1), Spacer(1, 1.5 * mm), kpi_linha(kpis1b), Spacer(1, 4 * mm)]
+
+    # ================= 2. FATURAMENTO PROJETADO =================
+    elementos += banner("moneybag", "2. FATURAMENTO PROJETADO (PLANEJAMENTO PCP)", "#198754",
+                        "Base: Planejamento PCP da Listagem Geral — fechamento do mês anterior, previsto do mês atual e backlog do mês seguinte.")
+    blocos = [
+        (ctx["resumo_mes_anterior_pcp"], f'Fechamento do mês anterior ({ctx["resumo_mes_anterior_pcp"]["mes_label"]})', "bar_chart", "#e9ecef", "#6c757d"),
+        (ctx["resumo_mes_atual_pcp"], "Faturamento previsto (mês atual)", "moneybag", "#d1e7dd", VERDE),
+        (ctx["resumo_mes_seguinte_pcp"], f'Backlog mês seguinte ({ctx["resumo_mes_seguinte_pcp"]["mes_label"]})', "package", "#cfe2ff", AZUL),
+    ]
+    celulas = []
+    larg_col = largura / 3
+    for res, rotulo, icone, _, cor in blocos:
+        est_v = ParagraphStyle("pd_hero_v", parent=base_b, fontSize=17, leading=20, textColor=colors.HexColor(cor))
+        itens = [
+            P(f'{_icone_pdf(icone, 11)} <b>{esc(rotulo)}</b>', base),
+            P(_formatar_moeda_br(res["valor_total"]), est_v),
+            P(f'{res["pedidos_total"]} pedido(s) · finalizados {res["pedidos_finalizados"]} ({_formatar_moeda_br(res["valor_finalizado"])}) · em aberto {res["pedidos_em_aberto"]}', nota),
+            Spacer(1, 1.5 * mm),
+            P(f'{_icone_pdf("trophy", 9)} <b>Top 5 · maior faturamento</b>', base),
+        ]
+        if res["top5"]:
+            for p in res["top5"]:
+                itens.append(P(f'{esc(p["cliente"])} <font color="#6c757d">· PV {esc(str(p["pedido_venda"] or "—"))} · {_formatar_moeda_br(p["valor"])}</font>', ParagraphStyle("pd_top", parent=base, fontSize=7.4, leading=9)))
+        else:
+            itens.append(P("Sem pedidos no período.", nota))
+        celulas.append(itens)
+    hero = Table([celulas], colWidths=[larg_col] * 3)
+    est_hero = [("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, COR_BORDA), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]
+    for i, b in enumerate(blocos):
+        est_hero.append(("BACKGROUND", (i, 0), (i, 0), colors.HexColor(b[3])))
+    hero.setStyle(TableStyle(est_hero))
+    elementos += [hero, Spacer(1, 4 * mm)]
+
+    # ================= 3. PLANEJAMENTO SEMANAL PCP =================
+    elementos += banner("calendar", f'3. PLANEJAMENTO SEMANAL PCP — {ctx["resumo_mes_atual_pcp"]["mes_label"].upper()}', "#0d6efd",
+                        "Semanas do mês atual (Planejamento PCP) e os pedidos de cada uma. Linha verde = pedido já finalizado.")
+    semanas = ctx["preview_pcp_semanal"]["semanas"]
+    if semanas:
+        resumo_sem = []
+        for s in semanas:
+            fin = sum(1 for p in s["pedidos"] if p.get("finalizado"))
+            resumo_sem.append([
+                P((cor_txt("ATUAL ", AZUL) if s.get("atual") else "") + esc(s["rotulo"]), base_b),
+                P(str(len(s["pedidos"])), centro),
+                P(_formatar_moeda_br(s["total"]), direita),
+                P(cor_txt(str(fin), VERDE), centro),
+                P(str(len(s["pedidos"]) - fin), centro),
+            ])
+        elementos.append(tabela(["Semana PCP", "Pedidos", "Valor", "Finalizados", "Em aberto"], resumo_sem, [34, 12, 22, 12, 12], alin="LCRCC"))
+        elementos.append(Spacer(1, 2.5 * mm))
+        linhas_ped, estilo_ped = [], []
+        idx = 1
+        for s in semanas:
+            if not s["pedidos"]:
+                continue
+            linhas_ped.append([P(f'{_icone_pdf("calendar", 9)} <b>{esc(s["rotulo"])}</b> — {len(s["pedidos"])} pedido(s) · {_formatar_moeda_br(s["total"])}', base_b)] + [""] * 7)
+            estilo_ped += [("SPAN", (0, idx), (-1, idx)), ("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#e7f1ff"))]
+            idx += 1
+            for p in s["pedidos"]:
+                linhas_ped.append([
+                    T(p["pedido_venda"] or "—"), T(p["cliente"]), P(_formatar_moeda_br(p["valor"]), direita),
+                    T(p["data_solicitada_cliente"].strftime("%d/%m/%Y") if p.get("data_solicitada_cliente") else "—", centro),
+                    T(p["data_prevista_pcp"].strftime("%d/%m/%Y") if p.get("data_prevista_pcp") else "—", centro),
+                    T(p["data_efetiva_liberacao"].strftime("%d/%m/%Y") if p.get("data_efetiva_liberacao") else "—", centro),
+                    T(f'{p.get("frete") or "—"} / {p.get("estado") or "—"}', centro),
+                    P(cor_txt("FINALIZADO", VERDE) if p.get("finalizado") else "em aberto", centro),
+                ])
+                if p.get("finalizado"):
+                    estilo_ped.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#eaf6ee")))
+                idx += 1
+        if linhas_ped:
+            elementos.append(tabela(["PV", "Cliente", "Valor", "Data cliente", "Prev. PCP", "Liberação real", "Frete / UF", "Situação"],
+                                    linhas_ped, [8, 30, 14, 12, 12, 12, 11, 12], estilo_extra=estilo_ped, zebra=False))
+    else:
+        elementos.append(vazio("Sem semanas de planejamento PCP neste mês."))
+    elementos.append(Spacer(1, 3 * mm))
+
+    projecao = ctx["projecao_pcp"]
+    if projecao:
+        elementos.append(KeepTogether([
+            P(f'{_icone_pdf("bar_chart", 10)} <b>Projeção PCP por semana (Gestão Operação)</b> — pedidos comerciais finalizados x em aberto', base),
+            Spacer(1, 1 * mm),
+            grafico_v([p["semana_curta"] for p in projecao],
+                      [([(p["finalizado"] or None) for p in projecao], VERDE), ([(p["em_aberto"] or None) for p in projecao], "#6ea8fe")],
+                      largura_mm=(largura / mm), altura_mm=52, fonte_cat=6),
+            P(f'{cor_txt("■", VERDE)} Finalizado &nbsp; {cor_txt("■", "#6ea8fe")} Em aberto', nota),
+        ]))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 4. PIPELINE OPERACIONAL =================
+    pip = ctx["pipeline_mes_pcp"]
+    elementos += banner("funnel", f'4. PIPELINE OPERACIONAL — {pip["mes_label"].upper()} (PROJETADO PELO PCP)', "#6f42c1",
+                        f'{pip["total_pedidos"]} pedido(s) com Término Semanal PCP no mês, pela etapa em que estão agora — onde a operação está travada.', espaco_mm=75)
+    if pip["total_pedidos"]:
+        itens_pip = [[T(e["label"], base_b), P(cor_txt(str(e["total"]), e["cor"]), centro_b)] for e in pip["etapas"]]
+        tp = tabela(["Etapa", "Pedidos"], itens_pip, [30, 10], alin="LC", largura_total=largura * 0.36)
+        gp = grafico_h([e["label"] for e in pip["etapas"]], [e["total"] for e in pip["etapas"]], [e["cor"] for e in pip["etapas"]],
+                       altura_mm_por_barra=8, largura_mm=(largura / mm) * 0.62, rotulo_largura_mm=36)
+        lado = Table([[gp, tp]], colWidths=[largura * 0.62, largura * 0.38])
+        lado.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+        elementos.append(KeepTogether([lado]))
+    else:
+        elementos.append(vazio(f'Nenhum pedido com Término Semanal PCP em {pip["mes_label"]} ainda.'))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 5. GESTÃO DE LEAD TIME =================
+    lt = ctx["lead_time_agrupado"]
+    lp, lo = lt["producao"], lt["operacao"]
+    mes_c = lt["mes_curto"]
+    elementos += banner("stopwatch", "5. GESTÃO DE LEAD TIME", "#fd7e14",
+                        f'Média geral + {lt["mes_label"]} (mês anterior). Dias corridos. Variação: vermelho = mês pior que a média, verde = melhor.')
+
+    def linha_metrica(icone, nome, desc, m, neutro=False):
+        if m["delta"] is None:
+            d = "—"
+        elif neutro:
+            d = f'{m["delta"]:+}d'
+        else:
+            d = delta_txt(m["delta"])
+        return [
+            P(f'{_icone_pdf(icone, 10)} <b>{esc(nome)}</b><br/><font size="7" color="#6c757d">{esc(desc)}</font>', base),
+            P(f'<b>{dias(m["media"])}</b> <font size="7" color="#6c757d">({m["n"]})</font>', centro),
+            P(f'<b>{dias(m["mes_media"])}</b> <font size="7" color="#6c757d">({m["mes_n"]})</font>', centro),
+            P(d, centro),
+        ]
+
+    elementos.append(P(cor_txt("QUADRANTE 01 · GESTÃO PRODUÇÃO", VERDE) + ' — fila de espera, chão de fábrica e o total de produção', base))
+    elementos.append(Spacer(1, 1 * mm))
+    elementos.append(tabela(["Indicador", "Média geral (n)", f"{mes_c} (n)", "Variação"], [
+        linha_metrica("hourglass", "Fila de espera", "Inclusão do pedido até o início da produção", lp["fila"]),
+        linha_metrica("gear", "Chão de fábrica", "Início da produção até a liberação efetiva", lp["chao"]),
+        linha_metrica("trophy", "LEAD TIME TOTAL PRODUÇÃO", "Fila de espera + chão de fábrica", lp["total"]),
+    ], [46, 18, 18, 12], alin="LCCC", estilo_extra=[("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#fff3cd"))]))
+    elementos.append(Spacer(1, 2 * mm))
+
+    # por estação (3 métricas lado a lado numa tabela só)
+    estacoes = {}
+    for chave, rotulo in (("fila", "fila"), ("chao", "chao"), ("total", "total")):
+        for l in lp[chave]["por_estacao"]:
+            estacoes.setdefault(l["chave"], {"nome": l["nome"], "emoji": l["emoji"]})[rotulo] = l
+    if estacoes:
+        def celula_est(l):
+            if not l:
+                return P("—", centro)
+            mes_txt = dias(l["mes_media"])
+            return P(f'{semaforo_icone(l["semaforo"])} <b>{l["media"]}d</b> <font size="7" color="#6c757d">· {mes_c.split("/")[0]} {mes_txt}</font>', centro)
+        ordem = sorted(estacoes.values(), key=lambda e: -((e.get("total") or {}).get("media") or 0))
+        nomes_icone = {"✂️": "gear", "🔩": "gear", "⚙️": "gear", "🫧": "factory", "🧴": "test_tube", "🧪": "test_tube", "🛞": "gear",
+                       "🔧": "gear", "⭐": "target", "🏷️": "receipt", "♻️": "check", "📦": "package"}
+        linhas_est = []
+        for e in ordem:
+            linhas_est.append([
+                P(f'{_icone_pdf(nomes_icone.get(e["emoji"], "factory"), 9)} {esc(e["nome"])}', base),
+                celula_est(e.get("fila")), celula_est(e.get("chao")), celula_est(e.get("total")),
+            ])
+        elementos.append(P(f'{_icone_pdf("factory", 10)} <b>Por estação</b> — média geral (semáforo: verde até a média da coluna, amarelo acima, vermelho mais de 25% acima) e o mês anterior ao lado', nota))
+        elementos.append(Spacer(1, 1 * mm))
+        elementos.append(tabela(["Estação", "Fila de espera", "Chão de fábrica", "Total produção"], linhas_est, [26, 22, 22, 22], alin="LCCC"))
+    elementos.append(Spacer(1, 4 * mm))
+
+    elementos.append(P(cor_txt("QUADRANTE 02 · GESTÃO OPERAÇÃO", AZUL) + ' — total operação (inclusão até a entrega no cliente), CIF x FOB, prazo comercial', base))
+    elementos.append(Spacer(1, 1 * mm))
+    elementos.append(tabela(["Indicador", "Média geral (n)", f"{mes_c} (n)", "Variação"], [
+        linha_metrica("truck", "Total operação CIF", "Inclusão até entrega no cliente · frete CIF", lo["cif"]),
+        linha_metrica("package", "Total operação FOB", "Inclusão até entrega no cliente · frete FOB", lo["fob"]),
+        linha_metrica("globe", "Total operação (geral)", "CIF + FOB + sem frete informado", lo["total"]),
+        linha_metrica("handshake", "Prazo comercial", "Inclusão até a data solicitada pelo cliente (o prometido)", lo["prazo"], neutro=True),
+    ], [46, 18, 18, 12], alin="LCCC"))
+    elementos.append(Spacer(1, 2 * mm))
+    if lo["regioes_cif"]:
+        linhas_reg = [[
+            P(f'{_icone_pdf("globe", 9)} {esc(l["nome"])}', base),
+            P(f'{semaforo_icone(l["semaforo"])} <b>{l["media"]}d</b> <font size="7" color="#6c757d">({l["n"]})</font>', centro),
+            P(f'<b>{dias(l["mes_media"])}</b> <font size="7" color="#6c757d">({l["mes_n"]})</font>', centro),
+        ] for l in lo["regioes_cif"]]
+        elementos.append(P(f'{_icone_pdf("globe", 10)} <b>Lead time CIF por região do Brasil</b> (região da UF do pedido)', nota))
+        elementos.append(Spacer(1, 1 * mm))
+        elementos.append(tabela(["Região", "Média geral CIF (n)", f"{mes_c} (n)"], linhas_reg, [26, 22, 22], alin="LCC"))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 6. OTD E LEAD TIME DA OPERAÇÃO (MÊS) =================
+    otd_m, lt_m = ctx["otd_operacao_mes"], ctx["lead_times_operacao_mes"]
+    cor_otd_m = (VERDE if otd_m["atinge_meta"] else VERMELHO) if otd_m["total"] else None
+    elementos += banner("target", f'6. OTD E LEAD TIME DA OPERAÇÃO — {ctx["mes_atual_label"].upper()}', "#dc3545",
+                        "Base: Término Semanal PCP do mês atual — mesmos indicadores da tela Gestão Operação > Resultados/OTD.")
+    elementos.append(kpi_linha([
+        (f'{otd_m["percentual"]}%' if otd_m["percentual"] is not None else "—", "target", f'OTD do mês (meta {GO_OTD_META_PERCENTUAL}%)', cor_otd_m),
+        (f'{otd_m["no_prazo"]}/{otd_m["total"]}', "check", "Entregues no prazo / avaliados", None),
+        (dias(lt_m["lt_operacao"]["media"]), "stopwatch", "Lead time operação", None),
+        (dias(lt_m["lt_operacao_cif"]["media"]), "truck", "Operação CIF", None),
+        (dias(lt_m["lt_operacao_fob"]["media"]), "package", "Operação FOB", None),
+        (dias(lt_m["lt_frete"]["media"]), "globe", "Lead time frete", None),
+        (dias(lt_m["lt_producao"]["media"]), "factory", "Chão de fábrica", None),
+    ], cores_fundo=[("#d1e7dd" if otd_m["atinge_meta"] else "#f8d7da") if otd_m["total"] else None]))
+    if otd_m["por_vendedor"] or otd_m["por_cliente"]:
+        elementos.append(Spacer(1, 2 * mm))
+
+        def tab_otd(titulo, dados):
+            linhas = [[T(d["chave"]), P(str(d["total"]), centro),
+                       P(cor_txt(f'{d["percentual"]}%', VERDE if (d["percentual"] or 0) >= GO_OTD_META_PERCENTUAL else VERMELHO), centro)] for d in dados[:8]]
+            return [P(f'<b>{esc(titulo)}</b>', base), Spacer(1, 1 * mm), tabela(["Nome", "Pedidos", "OTD"], linhas or [[vazio("Sem dados"), "", ""]], [30, 8, 8], alin="LCC")]
+        lado = Table([[tab_otd("OTD por vendedor (top 8)", otd_m["por_vendedor"]), tab_otd("OTD por cliente (top 8)", otd_m["por_cliente"])]],
+                     colWidths=[largura / 2, largura / 2])
+        lado.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, 0), 6)]))
+        elementos.append(lado)
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 7. PEDIDOS ENTREGUES MÊS A MÊS =================
+    elementos += banner("truck", "7. PEDIDOS ENTREGUES MÊS A MÊS PCP (CONSULTAR FINANCEIRO SOBRE FATURAMENTO)", "#198754",
+                        f'Cada pedido entra no mês do seu Término Semanal PCP. O valor é o valor do PEDIDO (não é faturamento). Meta de OTD: {GO_OTD_META_PERCENTUAL}%.')
+    pm = ctx["projecao_pcp_mensal"]
+    if pm:
+        linhas_pm = []
+        for l in pm:
+            otd_txt = "—"
+            if l["otd_percentual"] is not None:
+                otd_txt = cor_txt(f'{l["otd_percentual"]}%', VERDE if l["otd_atinge_meta"] else VERMELHO) + f' <font size="7" color="#6c757d">({l["otd_no_prazo"]}/{l["otd_total"]})</font>'
+            linhas_pm.append([P(f'<b>{esc(l["label"])}</b>', base), P(cor_txt(str(l["pedidos_finalizados"]), VERDE), centro),
+                              P(_formatar_moeda_br(l["valor_finalizado"]), direita), P(str(l["pedidos_total"]), centro), P(otd_txt, centro)])
+        tot_ent = sum(l["pedidos_finalizados"] for l in pm)
+        tot_ped = sum(l["pedidos_total"] for l in pm)
+        tot_val = sum(l["valor_finalizado"] for l in pm)
+        av = sum(l["otd_total"] for l in pm)
+        ok = sum(l["otd_no_prazo"] for l in pm)
+        otd_per = round(100 * ok / av, 1) if av else None
+        otd_per_txt = (cor_txt(f"{otd_per}%", VERDE if otd_per >= GO_OTD_META_PERCENTUAL else VERMELHO) + f' <font size="7" color="#6c757d">({ok}/{av})</font>') if otd_per is not None else "—"
+        linhas_pm.append([P("<b>Total do período</b>", base), P(f"<b>{tot_ent}</b>", centro), P(f"<b>{_formatar_moeda_br(tot_val)}</b>", direita),
+                          P(f"<b>{tot_ped}</b>", centro), P(otd_per_txt, centro)])
+        elementos.append(tabela(["Mês", "Pedidos entregues", "Valor dos pedidos entregues", "Total de pedidos", "OTD"], linhas_pm, [18, 16, 26, 16, 18], alin="LCRCC",
+                                estilo_extra=[("BACKGROUND", (0, len(linhas_pm)), (-1, len(linhas_pm)), COR_CAB_BG)]))
+    else:
+        elementos.append(vazio("Nenhum pedido com semana PCP definida nesse período."))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 8. FATURAMENTO E OTD DO ANO =================
+    elementos += banner("bar_chart", f'8. FATURAMENTO E OTD MENSAIS — {ctx["ano_graficos"]}', "#0a6e8c",
+                        "Faturamento realizado por mês e OTD por mês (verde = atingiu a meta, vermelho = abaixo).")
+    fat = ctx["faturamento_mensal_ano"]
+    otd_a = ctx["otd_mensal_ano"]
+    meio = (largura / mm) / 2 - 2
+    g_fat = grafico_v([f["mes"] for f in fat], [([(round(f["realizado"] / 1000) if f["realizado"] else None) for f in fat], "#0d6efd")], largura_mm=meio, altura_mm=50,
+                      formato="%d", fonte_cat=7)
+    g_otd = grafico_v([o["mes"] for o in otd_a], [([o["percentual"] for o in otd_a], "#198754")], largura_mm=meio, altura_mm=50,
+                      formato="%.0f", fonte_cat=7)
+    # barras que não atingiram a meta ficam vermelhas
+    for idx_o, o in enumerate(otd_a):
+        if o["percentual"] is not None and not o["atinge_meta"]:
+            g_otd.contents[0].bars[(0, idx_o)].fillColor = colors.HexColor(VERMELHO)
+    dois = Table([[
+        [P(f'{_icone_pdf("moneybag", 9)} <b>Faturamento realizado por mês</b> (R$ mil)', base), g_fat],
+        [P(f'{_icone_pdf("target", 9)} <b>OTD por mês</b> (%) — meta mínima {GO_OTD_META_PERCENTUAL}%', base), g_otd],
+    ]], colWidths=[largura / 2, largura / 2])
+    dois.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    elementos += [KeepTogether([dois]), Spacer(1, 4 * mm)]
+
+    # ================= 9. INCLUSÕES DE PEDIDOS =================
+    elementos += banner("receipt", "9. INCLUSÕES DE PEDIDOS — ÚLTIMOS PEDIDOS INCLUÍDOS (GESTÃO PRODUÇÃO)", "#198754")
+    rec = ctx["pedidos_recentes_producao"]
+    if rec:
+        linhas_rec = []
+        for e in rec:
+            detalhe = " · ".join((e.get("tooltip") or "").split("\n")[:3])
+            linhas_rec.append([
+                T(e["titulo"], base_b), T(e["data_inclusao"].strftime("%d/%m/%Y") if e.get("data_inclusao") else "—", centro),
+                T(e["data_cliente"].strftime("%d/%m/%Y") if e.get("data_cliente") else "—", centro),
+                P(_formatar_moeda_br(e.get("valor")), direita), T(e.get("ha_quanto_tempo") or "—", centro), T(detalhe[:150]),
+            ])
+        elementos.append(tabela(["Pedido", "Incluído em", "Data cliente", "Valor", "Há", "Detalhes"], linhas_rec, [22, 11, 11, 14, 10, 46], alin="LCCRCL"))
+    else:
+        elementos.append(vazio("Nenhum pedido incluído recentemente."))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 10. RISCO DE PRAZOS =================
+    elementos += banner("warning", "10. MINI GESTÃO DE RISCO — PRAZOS DE ENTREGA (FOB x CIF)", "#b8860b",
+                        "Pedidos atrasados e vencendo, por modalidade de frete, com a sugestão de ação.")
+    risco = ctx["mini_risco_prazos"]
+    for frete, cor in (("FOB", AMARELO), ("CIF", AZUL)):
+        rf = risco[frete]
+        elementos.append(P(
+            f'{cor_txt(frete, cor)} — {_icone_pdf("red_circle", 8)} <b>{rf["atrasados_total"]}</b> atrasado(s) · {_icone_pdf("yellow_circle", 8)} <b>{rf["vencendo_total"]}</b> vencendo', base))
+        elementos.append(Spacer(1, 1 * mm))
+        linhas_r = []
+        for situacao, lista, icone in (("Atrasado", rf["atrasados"], "red_circle"), ("Vencendo", rf["vencendo"], "yellow_circle")):
+            for p in lista:
+                linhas_r.append([
+                    P(f'{_icone_pdf(icone, 8)} {situacao}', base), T(p["pedido_venda"] or "—"), T(p["cliente"]), T(p.get("estado") or "—", centro),
+                    T(p["data_solicitada_cliente"].strftime("%d/%m/%Y") if p.get("data_solicitada_cliente") else "—", centro),
+                    T(p["data_prevista_pcp"].strftime("%d/%m/%Y") if p.get("data_prevista_pcp") else "—", centro),
+                    T((p.get("sugestao") or "")[:140]),
+                ])
+        if linhas_r:
+            elementos.append(tabela(["Situação", "PV", "Cliente", "UF", "Solicitado", "Prev. PCP", "Sugestão"], linhas_r, [11, 7, 24, 5, 10, 10, 50]))
+            mostrados = len(linhas_r)
+            if mostrados < rf["atrasados_total"] + rf["vencendo_total"]:
+                elementos.append(P(f'Mostrando os {mostrados} mais críticos de {rf["atrasados_total"] + rf["vencendo_total"]}.', nota))
+        else:
+            elementos.append(vazio(f"Nenhum pedido {frete} atrasado ou vencendo."))
+        elementos.append(Spacer(1, 2.5 * mm))
+    elementos.append(Spacer(1, 1.5 * mm))
+
+    # ================= 11. PEDIDOS ATRASADOS =================
+    elementos += banner("red_circle", "11. PEDIDOS ATRASADOS (MAIS RECENTES PRIMEIRO)", "#dc3545")
+    atrasados = ctx["pedidos_atrasados"]
+    if atrasados:
+        linhas_at = [[T(p.pedido_venda or "—"), T(p.cliente), T((p.descricao_resumo or "")[:110]),
+                      P(_formatar_moeda_br(p.valor_total), direita), T(p.status_producao, centro)] for p in atrasados]
+        elementos.append(tabela(["PV", "Cliente", "Itens", "Valor", "Status"], linhas_at, [8, 26, 44, 14, 10], alin="LLLRC"))
+    else:
+        elementos.append(vazio("Nenhum pedido atrasado no momento."))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 12. BACKLOG POR ESTAÇÃO =================
+    elementos += banner("factory", "12. BACKLOG POR ESTAÇÃO (ITENS NÃO FINALIZADOS)", "#6f42c1",
+                        "Quantidade de itens ainda em aberto em cada estação (sem OUTROS / PROJETO ESPECIAL).")
+    bk = ctx["backlog_estacao"]
+    if bk:
+        paleta = ["#0d6efd", "#6f42c1", "#d63384", "#fd7e14", "#198754", "#0dcaf0", "#6c757d", "#ffc107"]
+        elementos.append(KeepTogether([grafico_h([b["estacao"] for b in bk], [b["quantidade"] for b in bk],
+                                                 [paleta[i % len(paleta)] for i in range(len(bk))], altura_mm_por_barra=7, rotulo_largura_mm=56)]))
+    else:
+        elementos.append(vazio("Nenhum item em aberto por estação."))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 13. QUALIDADE =================
+    elementos += banner("magnifier", "13. ÚLTIMOS APONTAMENTOS DE QUALIDADE (RDIM + RNC)", "#0d6efd")
+    aq = ctx["apontamentos_qualidade"]
+    if aq:
+        linhas_q = [[T(a["tipo"], centro_b), T(a["titulo"], base_b), T(a["detalhe"]), T((a.get("contexto") or "")[:150]), T(a["ha_quanto_tempo"], centro)] for a in aq]
+        elementos.append(tabela(["Tipo", "Título", "Resultado", "Contexto", "Quando"], linhas_q, [6, 22, 16, 46, 10], alin="CLLLC"))
+    else:
+        elementos.append(vazio("Nenhum apontamento de Qualidade registrado."))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 14. P&D =================
+    elementos += banner("test_tube", "14. ÚLTIMAS ATUALIZAÇÕES DE P&D", "#198754")
+    pd_ = ctx["atualizacoes_pd"]
+    if pd_:
+        linhas_pd = [[T(a["titulo"], base_b), T(a.get("etapa") or "—", centro), T(a["detalhe"]), T(a["ha_quanto_tempo"], centro)] for a in pd_]
+        elementos.append(tabela(["Projeto", "Etapa", "Atualização", "Quando"], linhas_pd, [38, 12, 34, 10], alin="LCLC"))
+    else:
+        elementos.append(vazio("Nenhuma atualização de P&D registrada."))
+
+    def _rodape(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        canvas_obj.setFont("Helvetica", 7.5)
+        canvas_obj.setFillColor(colors.HexColor("#888"))
+        canvas_obj.drawString(doc_obj.leftMargin, 7 * mm, "4PIPE Solutions · Gestão da Produção e Operação · Painel diário operação")
+        canvas_obj.drawRightString(LARGURA_PAGINA - doc_obj.rightMargin, 7 * mm,
+                                   f'Emitido em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · Página {doc_obj.page}')
+        canvas_obj.restoreState()
+
+    doc.build(elementos, onFirstPage=_rodape, onLaterPages=_rodape)
+    buffer.seek(0)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    resposta.headers["Content-Disposition"] = f"attachment; filename=painel_diario_operacao_{_agora_brt().strftime('%Y-%m-%d_%H%M')}.pdf"
+    return resposta
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "troque-esta-chave-em-producao")
@@ -15803,134 +16568,25 @@ def register_routes(app):
     @app.route("/painel")
     @login_required
     def painel():
-        resumo = _calcular_resumo()
-        atrasados = Pedido.query.filter(_predicado_atrasado()).count()
-        vencendo = Pedido.query.filter(_predicado_vencendo()).count()
-        backlog = resumo["total"] - resumo["finalizado"]
-
-        hoje = date.today()
-        # Faturamento previsto (mês atual) + Backlog mês seguinte — pedido do
-        # Bruno (16/09/2026): sempre a partir do planejamento PCP da
-        # Listagem Geral (ItemPedido.planejamento_semanal), não mais da
-        # liberação prevista (_faturamento_mes, que continua existindo pros
-        # outros usos que já tinha: gráfico anual, tendência etc.). Os dois
-        # cards usam o mesmo _resumo_mes_pcp — inclui contagem de pedidos e
-        # Top 5 por valor (pedido do Bruno, 16/09/2026).
-        resumo_mes_atual_pcp = _resumo_mes_pcp(hoje.year, hoje.month)
-        previsto_mes = resumo_mes_atual_pcp["valor_total"]
-        resumo_mes_seguinte_pcp = _resumo_mes_seguinte_pcp(hoje)
-        # Fechamento do mês anterior — pedido do Bruno (01/10/2026): "quero
-        # que nessa area voce inclua o fechamento de setembro tambem (com
-        # base na projeção da listagem geral)". Mesmo _resumo_mes_pcp dos
-        # outros dois cards hero, só que pro mês que já fechou.
-        resumo_mes_anterior_pcp = _resumo_mes_anterior_pcp(hoje)
-
-        # Mini gestão de risco de prazos, FOB x CIF — pedido do Bruno
-        # (16/09/2026), logo abaixo de "Últimos apontamentos de Qualidade".
-        mini_risco_prazos = _mini_risco_prazos_painel()
-
-        # Detalhamento de Lead Time (chão de fábrica, total, fila de espera,
-        # prazo comercial) — pedido do Bruno (16/09/2026), quadrante próprio.
-        lead_time_agrupado = _lead_time_painel_agrupado(hoje)
-
-        pedidos_atrasados = (
-            Pedido.query.options(selectinload(Pedido.itens))
-            .filter(_predicado_atrasado())
-            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
-            .limit(10)
-            .all()
-        )
-
-        # Quadro mensal de projeção PCP (soma das semanas dentro de cada mês) —
-        # filtro de período em <input type=month>, com um intervalo padrão de
-        # 3 meses atrás até 6 meses à frente (dá pra ver "quanto foi entregue"
-        # nos meses passados e "quanto já está projetado" nos meses seguintes).
-        pcp_de_padrao = _somar_meses(hoje.year, hoje.month, -3)
-        pcp_ate_padrao = _somar_meses(hoje.year, hoje.month, 6)
-        pcp_de = _parse_mes_ano_form(request.args.get("pcp_de"), pcp_de_padrao)
-        pcp_ate = _parse_mes_ano_form(request.args.get("pcp_ate"), pcp_ate_padrao)
-        if pcp_de > pcp_ate:
-            pcp_de, pcp_ate = pcp_ate, pcp_de
-
-        # OTD/Lead Time da Operação, recorte "mês atual" — pedido do Bruno
-        # (03/09/2026): "os principais KPIs da operação já sejam visuais logo
-        # no painel", trazendo pro Painel os mesmos indicadores da tela
-        # Resultados/OTD (mesmas funções, mesmo critério/meta).
-        query_operacao_mes = _pedidos_operacao_do_periodo("mes", hoje.year, hoje.month)
-        otd_operacao_mes = _resumo_otd(query_operacao_mes)
-        lead_times_operacao_mes = _resumo_lead_times(query_operacao_mes)
-        mes_atual_label = f"{MESES_PT[hoje.month - 1]}/{hoje.year}"
-
-        # Gráficos anuais de faturamento realizado e OTD (pedido do Bruno,
-        # 03/09/2026, no lugar do antigo "previsto × realizado (6 meses)") —
-        # 1 filtro de ano simples, compartilhado pelos dois gráficos.
-        anos_disponiveis_graficos = list(range(hoje.year - 2, hoje.year + 1))
-        ano_graficos = request.args.get("ano_graficos", hoje.year, type=int)
-        if ano_graficos not in anos_disponiveis_graficos:
-            ano_graficos = hoje.year
-
-        # Apontamentos recentes de Qualidade (RDIM + RNC) — pedido do Bruno
-        # (03/09/2026): "notificação breve" de todo apontamento novo, pra ele
-        # ter ciência sem precisar entrar na área de Qualidade. "Novo desde a
-        # última visita" é guardado na sessão do navegador (sem tabela nova),
-        # e é sempre atualizado DEPOIS de calcular a lista, pra este mesmo
-        # carregamento ainda mostrar o que entrou desde a visita anterior.
         ultima_visita_str = session.get("ultima_visita_painel")
         ultima_visita = datetime.fromisoformat(ultima_visita_str) if ultima_visita_str else None
-        apontamentos_qualidade = _apontamentos_recentes_qualidade(desde=ultima_visita)
-        novos_apontamentos = sum(1 for a in apontamentos_qualidade if a["novo"])
-
-        # Últimos pedidos incluídos em Gestão Produção + últimas atualizações
-        # de P&D — pedido do Bruno (03/09/2026), mesmo formato/mesma "última
-        # visita" do feed de Qualidade acima.
-        pedidos_recentes_producao = _pedidos_recentes_producao(desde=ultima_visita)
-        novos_pedidos_producao = sum(1 for e in pedidos_recentes_producao if e["novo"])
-        atualizacoes_pd = _atualizacoes_recentes_pd(desde=ultima_visita)
-        novas_atualizacoes_pd = sum(1 for e in atualizacoes_pd if e["novo"])
-
-        # Prévia horizontal do Planejamento Semanal PCP — pedido do Bruno
-        # (09/09/2026), logo abaixo de "Últimos pedidos incluídos". Desde
-        # 16/09/2026 mostra sempre TODAS as semanas do mês atual (não mais
-        # uma janela rolante) — ver docstring de _preview_semanal_pcp_painel.
-        preview_pcp_semanal = _preview_semanal_pcp_painel(hoje)
-
+        contexto = _contexto_painel(request.args, ultima_visita)
+        # Só atualiza "última visita" DEPOIS de calcular tudo, pra este mesmo
+        # carregamento ainda mostrar o que entrou desde a visita anterior.
         session["ultima_visita_painel"] = datetime.utcnow().isoformat()
+        return render_template("painel.html", **contexto)
 
-        return render_template(
-            "painel.html",
-            resumo=resumo,
-            atrasados=atrasados,
-            vencendo=vencendo,
-            backlog=backlog,
-            previsto_mes=previsto_mes,
-            resumo_mes_atual_pcp=resumo_mes_atual_pcp,
-            resumo_mes_seguinte_pcp=resumo_mes_seguinte_pcp,
-            resumo_mes_anterior_pcp=resumo_mes_anterior_pcp,
-            mini_risco_prazos=mini_risco_prazos,
-            lead_time_agrupado=lead_time_agrupado,
-            lead_time_medio=_lead_time_medio_dias(),
-            otd=_otd_percentual(),
-            backlog_estacao=_backlog_por_estacao(),
-            pedidos_atrasados=pedidos_atrasados,
-            projecao_pcp=_projecao_pcp(),
-            projecao_pcp_mensal=_projecao_pcp_mensal(pcp_de, pcp_ate),
-            pcp_de_str=f"{pcp_de[0]:04d}-{pcp_de[1]:02d}",
-            pcp_ate_str=f"{pcp_ate[0]:04d}-{pcp_ate[1]:02d}",
-            otd_operacao_mes=otd_operacao_mes,
-            lead_times_operacao_mes=lead_times_operacao_mes,
-            mes_atual_label=mes_atual_label,
-            faturamento_mensal_ano=_faturamento_mensal_ano(ano_graficos),
-            otd_mensal_ano=_otd_mensal_ano(ano_graficos),
-            ano_graficos=ano_graficos,
-            anos_disponiveis_graficos=anos_disponiveis_graficos,
-            apontamentos_qualidade=apontamentos_qualidade,
-            novos_apontamentos=novos_apontamentos,
-            pedidos_recentes_producao=pedidos_recentes_producao,
-            novos_pedidos_producao=novos_pedidos_producao,
-            atualizacoes_pd=atualizacoes_pd,
-            novas_atualizacoes_pd=novas_atualizacoes_pd,
-            preview_pcp_semanal=preview_pcp_semanal,
-        )
+    @app.route("/painel/relatorio.pdf")
+    @login_required
+    def painel_relatorio_pdf():
+        """Relatório PDF "PAINEL DIÁRIO OPERAÇÃO" (pedido do Bruno,
+        05/10/2026) — TODO o Painel, organizado por área. Usa o MESMO
+        _contexto_painel da tela (aceita os mesmos filtros pcp_de/pcp_ate/
+        ano_graficos, que o botão "Emitir relatório" repassa), então o PDF
+        nunca diverge do que o Painel mostra. Não mexe na "última visita"
+        (só a tela usa)."""
+        contexto = _contexto_painel(request.args, None)
+        return _gerar_pdf_painel_diario(contexto)
 
     @app.route("/kpis")
     @login_required
