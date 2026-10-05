@@ -4534,7 +4534,14 @@ def _projecao_pcp_mensal(mes_de, mes_ate):
     dentro do mês), separando o que já foi finalizado do que ainda está em
     aberto — em quantidade de PEDIDOS COMERCIAIS e em valor (R$, a partir de
     go_valor_pedido_operacao — já é o total do pedido, não soma nenhum item).
-    `mes_de`/`mes_ate` são tuplas (ano, mês), intervalo fechado."""
+    `mes_de`/`mes_ate` são tuplas (ano, mês), intervalo fechado.
+
+    05/10/2026 (pedido do Bruno): o quadro do Painel virou "Pedidos entregues
+    mês a mês PCP" — cada linha também traz o OTD do mês (mesmo recorte por
+    Término Semanal PCP, via _pedidos_operacao_do_periodo/_resumo_otd — o
+    mesmo OTD da tela Resultados/OTD): `otd_percentual` (None se nenhum pedido
+    do mês já pôde ser avaliado), `otd_total` (avaliados), `otd_no_prazo` e
+    `otd_atinge_meta` (vs GO_OTD_META_PERCENTUAL)."""
     pedidos = PedidoOperacao.query.filter(PedidoOperacao.go_termino_semanal_pcp.isnot(None)).all()
 
     baldes = {}
@@ -4555,6 +4562,7 @@ def _projecao_pcp_mensal(mes_de, mes_ate):
     ano, mes = mes_de
     while (ano, mes) <= mes_ate:
         b = baldes.get((ano, mes), {"pedidos_fin": 0, "valor_fin": 0.0, "pedidos_aberto": 0, "valor_aberto": 0.0})
+        otd = _resumo_otd(_pedidos_operacao_do_periodo("mes", ano, mes))
         linhas.append(
             {
                 "ano": ano,
@@ -4566,6 +4574,10 @@ def _projecao_pcp_mensal(mes_de, mes_ate):
                 "valor_em_aberto": round(b["valor_aberto"], 2),
                 "pedidos_total": b["pedidos_fin"] + b["pedidos_aberto"],
                 "valor_total_mes": round(b["valor_fin"] + b["valor_aberto"], 2),
+                "otd_percentual": otd["percentual"],
+                "otd_total": otd["total"],
+                "otd_no_prazo": otd["no_prazo"],
+                "otd_atinge_meta": otd["atinge_meta"],
             }
         )
         ano, mes = _somar_meses(ano, mes, 1)

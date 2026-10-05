@@ -587,14 +587,26 @@
 </div>
 {% endif %}
 
+{# Pedidos entregues mês a mês PCP — pedido do Bruno (05/10/2026): troca do
+   antigo "Projeção PCP por mês". Só valores de PEDIDO (nada de faturado ou
+   não — isso é com o Financeiro), total de pedidos e OTD do mês. #}
+{% macro brl(v) %}R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endmacro %}
+{% macro otd_badge(pct, atinge) %}
+{%- if pct is none -%}<span class="text-muted">—</span>
+{%- else -%}<span class="badge fs-6 bg-{{ 'success' if atinge else 'danger' }}">{{ "%.1f"|format(pct) }}%</span>{%- endif -%}
+{% endmacro %}
+
 <div class="card mb-4">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-      <h6 class="text-uppercase text-muted small mb-0">🗂️ Projeção PCP por mês (soma das semanas do mês)</h6>
+      <h6 class="text-uppercase text-muted small mb-0">📦 Pedidos entregues mês a mês PCP (consultar financeiro sobre faturamento)</h6>
+      <span class="badge text-bg-light border">🎯 Meta OTD: {{ GO_OTD_META_PERCENTUAL }}%</span>
     </div>
     <p class="text-muted small mb-3">
-      "Finalizado" = já entregue/concluído; "Em aberto" = ainda projetado pra aquele mês.
-      Use o filtro pra ver meses anteriores (quanto foi entregue) ou meses à frente (quanto já está projetado).
+      Cada pedido entra no mês do seu Término Semanal PCP. "Pedidos entregues" = já concluídos;
+      o valor é o <strong>valor do pedido</strong> (não é faturamento — consultar o Financeiro);
+      "Total de pedidos" = todos os pedidos com semana PCP naquele mês (entregues + ainda em aberto);
+      OTD = % dos pedidos já avaliados que foram entregues no prazo.
     </p>
 
     <form class="row g-2 align-items-end mb-3" method="get">
@@ -611,17 +623,29 @@
       </div>
     </form>
 
+    {% set tot_ent = projecao_pcp_mensal | sum(attribute="pedidos_finalizados") %}
+    {% set tot_ped = projecao_pcp_mensal | sum(attribute="pedidos_total") %}
+    {% set tot_val = projecao_pcp_mensal | sum(attribute="valor_finalizado") %}
+    {% set tot_otd_av = projecao_pcp_mensal | sum(attribute="otd_total") %}
+    {% set tot_otd_ok = projecao_pcp_mensal | sum(attribute="otd_no_prazo") %}
+    {% set otd_geral = (100 * tot_otd_ok / tot_otd_av) if tot_otd_av else none %}
+
+    <div class="row g-3 mb-3 text-center">
+      <div class="col-6 col-md-3"><div class="border rounded-3 p-2 h-100"><div class="small text-muted">📦 Pedidos entregues</div><div class="fs-4 fw-bold text-success">{{ tot_ent }}</div></div></div>
+      <div class="col-6 col-md-3"><div class="border rounded-3 p-2 h-100"><div class="small text-muted">🧾 Total de pedidos</div><div class="fs-4 fw-bold">{{ tot_ped }}</div></div></div>
+      <div class="col-6 col-md-3"><div class="border rounded-3 p-2 h-100"><div class="small text-muted">💰 Valor dos pedidos entregues</div><div class="fs-5 fw-bold">{{ brl(tot_val) }}</div></div></div>
+      <div class="col-6 col-md-3"><div class="border rounded-3 p-2 h-100"><div class="small text-muted">🎯 OTD do período</div><div class="fs-4 fw-bold">{{ otd_badge(otd_geral, otd_geral is not none and otd_geral >= GO_OTD_META_PERCENTUAL) }}</div></div></div>
+    </div>
+
     <div class="table-responsive">
       <table class="table table-sm table-hover align-middle mb-0">
         <thead class="table-light">
           <tr>
             <th>Mês</th>
-            <th class="text-center">Pedidos finalizados</th>
-            <th class="text-end">Valor finalizado</th>
-            <th class="text-center">Pedidos em aberto</th>
-            <th class="text-end">Valor em aberto</th>
-            <th class="text-center">Total pedidos</th>
-            <th class="text-end">Total valor</th>
+            <th class="text-center">📦 Pedidos entregues</th>
+            <th class="text-end">💰 Valor dos pedidos entregues</th>
+            <th class="text-center">🧾 Total de pedidos</th>
+            <th class="text-center">🎯 OTD</th>
           </tr>
         </thead>
         <tbody>
@@ -629,26 +653,25 @@
           <tr>
             <td class="fw-semibold">{{ l.label }}</td>
             <td class="text-center"><span class="badge bg-success">{{ l.pedidos_finalizados }}</span></td>
-            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_finalizado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-            <td class="text-center"><span class="badge bg-primary">{{ l.pedidos_em_aberto }}</span></td>
-            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_em_aberto).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td class="text-end">{{ brl(l.valor_finalizado) }}</td>
             <td class="text-center fw-semibold">{{ l.pedidos_total }}</td>
-            <td class="text-end fw-semibold">R$ {{ "{:,.2f}".format(l.valor_total_mes).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td class="text-center" title="{{ l.otd_no_prazo }} de {{ l.otd_total }} pedido(s) avaliado(s) entregue(s) no prazo">
+              {{ otd_badge(l.otd_percentual, l.otd_atinge_meta) }}
+              {% if l.otd_total %}<span class="text-muted small ms-1">({{ l.otd_no_prazo }}/{{ l.otd_total }})</span>{% endif %}
+            </td>
           </tr>
           {% else %}
-          <tr><td colspan="7" class="text-center text-muted py-4">Nenhum pedido com semana PCP definida nesse período.</td></tr>
+          <tr><td colspan="5" class="text-center text-muted py-4">Nenhum pedido com semana PCP definida nesse período.</td></tr>
           {% endfor %}
         </tbody>
         {% if projecao_pcp_mensal %}
         <tfoot class="table-light">
           <tr class="fw-bold">
             <td>Total do período</td>
-            <td class="text-center">{{ projecao_pcp_mensal | sum(attribute="pedidos_finalizados") }}</td>
-            <td class="text-end">R$ {{ "{:,.2f}".format(projecao_pcp_mensal | sum(attribute="valor_finalizado")).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-            <td class="text-center">{{ projecao_pcp_mensal | sum(attribute="pedidos_em_aberto") }}</td>
-            <td class="text-end">R$ {{ "{:,.2f}".format(projecao_pcp_mensal | sum(attribute="valor_em_aberto")).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-            <td class="text-center">{{ projecao_pcp_mensal | sum(attribute="pedidos_total") }}</td>
-            <td class="text-end">R$ {{ "{:,.2f}".format(projecao_pcp_mensal | sum(attribute="valor_total_mes")).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
+            <td class="text-center">{{ tot_ent }}</td>
+            <td class="text-end">{{ brl(tot_val) }}</td>
+            <td class="text-center">{{ tot_ped }}</td>
+            <td class="text-center">{{ otd_badge(otd_geral, otd_geral is not none and otd_geral >= GO_OTD_META_PERCENTUAL) }}{% if tot_otd_av %}<span class="text-muted small ms-1">({{ tot_otd_ok }}/{{ tot_otd_av }})</span>{% endif %}</td>
           </tr>
         </tfoot>
         {% endif %}
