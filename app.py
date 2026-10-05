@@ -19213,6 +19213,19 @@ def register_routes(app):
             item_selecionado = db.session.get(ItemPedido, int(item_id_inicial))
         return render_template("qualidade_rdim_novo.html", valores={}, item_selecionado=item_selecionado)
 
+    @app.route("/qualidade/rdim/<int:inspecao_id>")
+    @login_required
+    def rdim_visualizar(inspecao_id):
+        """Visualização SOMENTE LEITURA da inspeção RDIM (pedido do Bruno,
+        05/10/2026: "opção somente de visualizar, um emotion com olho,
+        pois através da visualização, caminho para impressão"). O botão
+        Imprimir PDF fica aqui; a edição continua em rdim_editar."""
+        inspecao = db.session.get(InspecaoFinal, inspecao_id)
+        if inspecao is None:
+            flash("Inspeção não encontrada.", "danger")
+            return redirect(url_for("rdim_lista"))
+        return render_template("qualidade_rdim_visualizar.html", inspecao=inspecao)
+
     @app.route("/qualidade/rdim/<int:inspecao_id>/editar", methods=["GET", "POST"])
     @login_required
     def rdim_editar(inspecao_id):

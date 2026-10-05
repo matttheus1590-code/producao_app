@@ -168,8 +168,11 @@
         </td>
         <td>{{ i.responsavel.nome if i.responsavel else "—" }}</td>
         <td><span class="badge bg-{{ RDIM_RESULTADO_CORES.get(i.resultado, 'secondary') }}">{{ RDIM_RESULTADO_LABELS.get(i.resultado, i.resultado or "—") }}</span></td>
-        <td class="text-end">
-          <a href="{{ url_for('rdim_editar', inspecao_id=i.id) }}" class="btn btn-sm btn-outline-primary" title="Ver / editar inspeção">
+        <td class="text-end text-nowrap">
+          <a href="{{ url_for('rdim_visualizar', inspecao_id=i.id) }}" class="btn btn-sm btn-outline-secondary" title="Somente visualizar (e imprimir o PDF)">
+            👁️
+          </a>
+          <a href="{{ url_for('rdim_editar', inspecao_id=i.id) }}" class="btn btn-sm btn-outline-primary" title="Editar inspeção">
             <i class="bi bi-pencil-square"></i>
           </a>
         </td>

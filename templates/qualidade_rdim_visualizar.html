@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Qualidade · Visualizar inspeção RDIM #{{ inspecao.id }} · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+{# Visualização SOMENTE LEITURA da inspeção RDIM (pedido do Bruno, 05/10/2026:
+   "inclua a opção somente de visualizar, tipo um emotion com olho, pois
+   através da visualização, caminho para impressão"). Nada aqui é editável —
+   o caminho de edição é o botão Editar. Mostra o mesmo conteúdo do PDF
+   "Detalhamento de apontamento RDIM" (contexto, dados da inspeção, desvio por
+   componente/lote com as peças apontadas) + as medições, e o botão de
+   impressão em PDF no topo. #}
+
+{% macro faixa(mn, mx) -%}
+  {%- if mn is none and mx is none -%}—
+  {%- elif mn is not none and mx is not none -%}{{ '%g'|format(mn) }} a {{ '%g'|format(mx) }}
+  {%- elif mn is not none -%}mín. {{ '%g'|format(mn) }}
+  {%- else -%}máx. {{ '%g'|format(mx) }}{%- endif -%}
+{%- endmacro %}
+
+{% macro tabela_pecas(pecas) %}
+  {% if pecas %}
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-primary">
+        <tr><th class="text-center">Nº da peça</th><th>Característica</th><th class="text-center">Especificado</th><th class="text-center">Valor medido</th><th class="text-center">Variação</th></tr>
+      </thead>
+      <tbody>
+        {% for p in pecas %}
+        <tr>
+          <td class="text-center">{{ p.peca_numero or "—" }}</td>
+          <td>{{ p.caracteristica or "—" }}</td>
+          <td class="text-center">{{ faixa(p.especificado_min, p.especificado_max) }}</td>
+          <td class="text-center">{{ '%g'|format(p.valor_medido) if p.valor_medido is not none else "—" }}</td>
+          <td class="text-center">
+            {% if p.variacao is none %}—
+            {% elif p.variacao == 0 %}<span class="text-success fw-semibold">OK</span>
+            {% else %}<span class="text-danger fw-semibold">{{ "+" if p.acima_da_tolerancia else "-" }}{{ '%g'|format(p.variacao) }}</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-muted small">Nenhuma peça apontada individualmente.</div>
+  {% endif %}
+{% endmacro %}
+
+{% macro campo(rotulo, valor) %}
+  <div class="col-6 col-md-4">
+    <div class="text-muted small">{{ rotulo }}</div>
+    <div class="fw-semibold">{{ valor if valor not in (none, "") else "—" }}</div>
+  </div>
+{% endmacro %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <h4 class="mb-0">
+    👁️ Inspeção RDIM #{{ inspecao.id }}
+    {% if inspecao.cliente %}<span class="text-muted fw-normal">— {{ inspecao.cliente }}</span>{% endif %}
+  </h4>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <span class="badge bg-{{ RDIM_RESULTADO_CORES.get(inspecao.resultado, 'secondary') }} fs-6">{{ RDIM_RESULTADO_LABELS.get(inspecao.resultado, inspecao.resultado or "—") }}</span>
+    <a href="{{ url_for('rdim_relatorio_pdf', inspecao_id=inspecao.id) }}" class="btn btn-danger btn-sm" target="_blank"
+       title="PDF de uma folha com o detalhamento desta inspeção">
+      🖨️ Imprimir PDF
+    </a>
+    <a href="{{ url_for('rdim_editar', inspecao_id=inspecao.id) }}" class="btn btn-outline-primary btn-sm"><i class="bi bi-pencil-square"></i> Editar</a>
+    <a href="{{ url_for('rdim_lista') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul"></i> Voltar</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-3">📦 Produto inspecionado</h6>
+    <div class="row g-3">
+      {{ campo("Pedido de venda", inspecao.pedido_venda) }}
+      {{ campo("Cliente", inspecao.cliente) }}
+      {{ campo("Estação", inspecao.estacao) }}
+      {{ campo("Produto", inspecao.produto) }}
+      {{ campo("Quantidade (lote)", ('%g'|format(inspecao.item.quantidade)) if inspecao.item and inspecao.item.quantidade is not none else none) }}
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-3">📋 Dados da inspeção</h6>
+    <div class="row g-3">
+      {{ campo("Tipo de produto", RDIM_TIPO_PRODUTO_LABELS.get(inspecao.tipo_produto_inspecionado or "DISCOS", inspecao.tipo_produto_inspecionado)) }}
+      {{ campo("Data da inspeção", inspecao.data_inspecao.strftime("%d/%m/%Y") if inspecao.data_inspecao else none) }}
+      {{ campo("Responsável", inspecao.responsavel.nome if inspecao.responsavel else none) }}
+      {{ campo("Nº da RIF", inspecao.numero_rif) }}
+      {{ campo("Procedimento", inspecao.procedimento) }}
+      {{ campo("Norma / IT", ((inspecao.norma or "") ~ (" · " if inspecao.norma and inspecao.instrucao_trabalho else "") ~ (inspecao.instrucao_trabalho or "")) or none) }}
+    </div>
+  </div>
+</div>
+
+{% if inspecao.tipo_produto_inspecionado == "PIG_LBD_LUN_SUPERFLEX" %}
+<h6 class="text-uppercase text-muted small mb-2">⚠️ Componentes com desvio ({{ inspecao.componentes_desvio | length }})</h6>
+{% for c in inspecao.componentes_desvio %}
+<div class="card shadow-sm mb-3 border-warning">
+  <div class="card-header bg-warning-subtle">
+    <div class="row g-2 align-items-center">
+      <div class="col-12 col-md-3 fw-semibold">🔴 {{ c.componente }}</div>
+      <div class="col-6 col-md-4">
+        <div class="text-muted small">Quantidade com desvio</div>
+        {% if c.quantidade_com_desvio is not none %}
+          <strong>{{ '%g'|format(c.quantidade_com_desvio) }}</strong>
+          {% if c.quantidade_lote %} de {{ '%g'|format(c.quantidade_lote) }} un. do lote ({{ '%.1f'|format(c.quantidade_com_desvio / c.quantidade_lote * 100)|replace('.', ',') }}%){% else %} com desvio{% endif %}
+        {% else %}—{% endif %}
+      </div>
+      <div class="col-6 col-md-2"><div class="text-muted small">Categoria</div><strong>{{ c.categoria_desvio or "—" }}</strong></div>
+      <div class="col-6 col-md-3"><div class="text-muted small">Subcategoria</div><strong>{{ c.subcategoria_desvio or "—" }}</strong></div>
+    </div>
+  </div>
+  <div class="card-body">
+    {% if c.desvio_encontrado %}<div class="mb-2"><span class="text-muted">Desvio encontrado:</span> <strong>{{ c.desvio_encontrado }}</strong></div>{% endif %}
+    <div class="fw-semibold small mb-1">📋 Peças apontadas ({{ c.pecas_desvio | length }})</div>
+    {{ tabela_pecas(c.pecas_desvio) }}
+    {% if c.medicoes %}
+    <details class="mt-3">
+      <summary class="small text-muted">Medições deste componente ({{ c.medicoes | length }})</summary>
+      <div class="table-responsive mt-2">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Grandeza</th><th class="text-center">Especificado</th><th class="text-center">Medido (lote)</th><th class="text-center">Status</th></tr></thead>
+          <tbody>
+            {% for m in c.medicoes %}
+            <tr><td>{{ m.grandeza }}</td><td class="text-center">{{ faixa(m.especificado_min, m.especificado_max) }}</td><td class="text-center">{{ faixa(m.medido_min, m.medido_max) }}</td>
+              <td class="text-center">{% if m.dentro_da_tolerancia is none %}—{% elif m.dentro_da_tolerancia %}<span class="text-success fw-semibold">OK</span>{% else %}<span class="text-danger fw-semibold">FORA</span>{% endif %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="alert alert-light border">Nenhum componente apontado com desvio nesta inspeção.</div>
+{% endfor %}
+{% else %}
+<h6 class="text-uppercase text-muted small mb-2">⚠️ Desvio apontado</h6>
+<div class="card shadow-sm mb-3 border-warning">
+  <div class="card-header bg-warning-subtle">
+    <div class="row g-2 align-items-center">
+      <div class="col-12 col-md-3 fw-semibold">🔴 Lote inspecionado</div>
+      <div class="col-6 col-md-4">
+        <div class="text-muted small">Quantidade com desvio</div>
+        {% if inspecao.quantidade_com_desvio is not none %}
+          <strong>{{ '%g'|format(inspecao.quantidade_com_desvio) }}</strong>
+          {% if inspecao.item and inspecao.item.quantidade %} de {{ '%g'|format(inspecao.item.quantidade) }} peça(s) do lote ({{ '%.1f'|format(inspecao.quantidade_com_desvio / inspecao.item.quantidade * 100)|replace('.', ',') }}%){% endif %}
+        {% else %}—{% endif %}
+      </div>
+      <div class="col-6 col-md-2"><div class="text-muted small">Categoria</div><strong>{{ inspecao.categoria_desvio or "—" }}</strong></div>
+      <div class="col-6 col-md-3"><div class="text-muted small">Subcategoria</div><strong>{{ inspecao.subcategoria_desvio or "—" }}</strong></div>
+    </div>
+  </div>
+  <div class="card-body">
+    {% if inspecao.desvio_encontrado %}<div class="mb-2"><span class="text-muted">Desvio encontrado:</span> <strong>{{ inspecao.desvio_encontrado }}</strong></div>{% endif %}
+    {% if inspecao.inspecao_visual %}<div class="mb-2"><span class="text-muted">Inspeção visual:</span> <strong class="{{ 'text-success' if inspecao.inspecao_visual == 'OK' else 'text-danger' }}">{{ inspecao.inspecao_visual }}</strong></div>{% endif %}
+    <div class="fw-semibold small mb-1">📋 Peças apontadas ({{ inspecao.pecas_desvio | length }})</div>
+    {{ tabela_pecas(inspecao.pecas_desvio) }}
+    {% if inspecao.medicoes %}
+    <details class="mt-3">
+      <summary class="small text-muted">Medições ({{ inspecao.medicoes | length }})</summary>
+      <div class="table-responsive mt-2">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Grandeza</th><th class="text-center">Especificado</th><th class="text-center">Medido (lote)</th><th class="text-center">Status</th></tr></thead>
+          <tbody>
+            {% for m in inspecao.medicoes %}
+            <tr><td>{{ m.grandeza }}</td><td class="text-center">{{ faixa(m.especificado_min, m.especificado_max) }}</td><td class="text-center">{{ faixa(m.medido_min, m.medido_max) }}</td>
+              <td class="text-center">{% if m.dentro_da_tolerancia is none %}—{% elif m.dentro_da_tolerancia %}<span class="text-success fw-semibold">OK</span>{% else %}<span class="text-danger fw-semibold">FORA</span>{% endif %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if inspecao.observacao %}
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <h6 class="text-uppercase text-muted small mb-2">📝 Observações</h6>
+    <div style="white-space: pre-line;">{{ inspecao.observacao }}</div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
