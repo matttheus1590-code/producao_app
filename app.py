@@ -5049,7 +5049,11 @@ def _lead_time_detalhado_painel():
     com o "n" (quantidade que entrou na conta) igual ao resto do sistema
     (_media_dias):
 
-      - chao_fabrica: Inclusão do pedido -> Liberação efetiva, por item.
+      - chao_fabrica: Início de produção -> Liberação efetiva, por item
+        (corrigido em 05/10/2026, pedido do Bruno: "o lead time chão de
+        fábrica está errado, quero INÍCIO PRODUÇÃO ATÉ LIBERAÇÃO EFETIVA" —
+        antes contava desde a inclusão do pedido, o que misturava a fila de
+        espera, que já tem card próprio).
       - fila_espera: Inclusão do pedido -> Início de produção, mesmo campo
         já existente ItemPedido.tempo_espera_dias.
       - prazo_comercial: Inclusão do pedido -> Data solicitada pelo
@@ -5057,15 +5061,19 @@ def _lead_time_detalhado_painel():
         média (não é o realizado, é o prometido).
       - total: Inclusão do pedido -> Entrega no cliente. Gestão Produção
         não tem esse campo próprio — cruza com Gestão Operação por
-        pedido_venda (_entrega_cliente_por_pedido_venda), só leitura."""
+        pedido_venda (_entrega_cliente_por_pedido_venda), só leitura.
+        Também devolvido separado por modalidade de frete (total_cif /
+        total_fob, pedido do Bruno, 05/10/2026: "quero um total operação
+        CIF e FOB") — mesma população do "total" geral, só repartida por
+        Pedido.frete."""
     pedidos = Pedido.query.filter(Pedido.data_inclusao_pedido.isnot(None)).all()
 
     chao_fabrica_valores = []
     fila_espera_valores = []
     for pedido in pedidos:
         for item in pedido.itens:
-            if item.liberacao_real:
-                chao_fabrica_valores.append((item.liberacao_real - pedido.data_inclusao_pedido).days)
+            if item.liberacao_real and item.inicio_producao:
+                chao_fabrica_valores.append((item.liberacao_real - item.inicio_producao).days)
             if item.tempo_espera_dias is not None:
                 fila_espera_valores.append(item.tempo_espera_dias)
 
@@ -5076,21 +5084,32 @@ def _lead_time_detalhado_painel():
     pedidos_venda = [p.pedido_venda for p in pedidos if p.pedido_venda]
     entrega_por_pedido = _entrega_cliente_por_pedido_venda(pedidos_venda)
     total_valores = []
+    total_cif_valores = []
+    total_fob_valores = []
     for p in pedidos:
         data_entrega = entrega_por_pedido.get(_normalizar_pedido_venda(p.pedido_venda))
         if data_entrega:
-            total_valores.append((data_entrega - p.data_inclusao_pedido).days)
+            dias_total = (data_entrega - p.data_inclusao_pedido).days
+            total_valores.append(dias_total)
+            if p.frete == "CIF":
+                total_cif_valores.append(dias_total)
+            elif p.frete == "FOB":
+                total_fob_valores.append(dias_total)
 
     chao_fabrica_media, chao_fabrica_n = _media_dias(chao_fabrica_valores)
     fila_espera_media, fila_espera_n = _media_dias(fila_espera_valores)
     prazo_comercial_media, prazo_comercial_n = _media_dias(prazo_comercial_valores)
     total_media, total_n = _media_dias(total_valores)
+    total_cif_media, total_cif_n = _media_dias(total_cif_valores)
+    total_fob_media, total_fob_n = _media_dias(total_fob_valores)
 
     return {
         "chao_fabrica": {"media": chao_fabrica_media, "n": chao_fabrica_n},
         "fila_espera": {"media": fila_espera_media, "n": fila_espera_n},
         "prazo_comercial": {"media": prazo_comercial_media, "n": prazo_comercial_n},
         "total": {"media": total_media, "n": total_n},
+        "total_cif": {"media": total_cif_media, "n": total_cif_n},
+        "total_fob": {"media": total_fob_media, "n": total_fob_n},
     }
 
 

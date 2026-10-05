@@ -103,14 +103,18 @@
       <div class="col-6 col-lg-3">
         <div class="fs-2 mb-1">🛠️</div>
         <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.chao_fabrica.media|string + "d") if lead_time_detalhado.chao_fabrica.media is not none else "—" }}</div>
-        <div class="text-muted small">Chão de fábrica<br>(Inclusão → Liberação efetiva)</div>
+        <div class="text-muted small">Chão de fábrica<br>(Início produção → Liberação efetiva)</div>
         <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.chao_fabrica.n }} item(ns)</div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="fs-2 mb-1">🚚</div>
         <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.total.media|string + "d") if lead_time_detalhado.total.media is not none else "—" }}</div>
-        <div class="text-muted small">Total<br>(Inclusão → Entrega no cliente)</div>
+        <div class="text-muted small">Total operação<br>(Inclusão → Entrega no cliente)</div>
         <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.total.n }} pedido(s)</div>
+        <div class="d-flex justify-content-center gap-2 mt-1 flex-wrap">
+          <span class="badge text-bg-primary" title="Total operação CIF: {{ lead_time_detalhado.total_cif.n }} pedido(s)">CIF {{ (lead_time_detalhado.total_cif.media|string + "d") if lead_time_detalhado.total_cif.media is not none else "—" }}</span>
+          <span class="badge text-bg-warning" title="Total operação FOB: {{ lead_time_detalhado.total_fob.n }} pedido(s)">FOB {{ (lead_time_detalhado.total_fob.media|string + "d") if lead_time_detalhado.total_fob.media is not none else "—" }}</span>
+        </div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="fs-2 mb-1">⏳</div>
