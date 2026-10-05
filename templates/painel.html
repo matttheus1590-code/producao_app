@@ -94,44 +94,94 @@
   </div>
 </div>
 
+{# Bloco de Lead time (Painel) — usado 2x: histórico inteiro e mês anterior
+   (pedido do Bruno, 05/10/2026). Cada card (Chão de fábrica / Fila de espera)
+   ganha ao lado um mini-quadrante "por estação" com emoji, barrinha e
+   semáforo 🟢🟡🔴 (comparado com a média do próprio card). #}
+{% macro lt_media(v, sufixo="d") -%}
+{{ (v|string + sufixo) if v is not none else "—" }}
+{%- endmacro %}
+
+{% macro lt_por_estacao(lista, titulo, cor_barra) %}
+<div class="lt-estacoes border rounded-3 p-2 h-100 text-start bg-body-tertiary">
+  <div class="small fw-semibold mb-2">{{ titulo }}</div>
+  {% if lista %}
+    {% for l in lista %}
+    <div class="d-flex align-items-center gap-1 mb-1" title="{{ l.estacao }}: média de {{ l.media }} dia(s) corridos em {{ l.n }} item(ns)">
+      <span style="width:1.3rem;">{{ l.emoji }}</span>
+      <span class="small text-truncate" style="width:9rem;">{{ l.nome_curto }}</span>
+      <div class="progress flex-grow-1" style="height:0.55rem;">
+        <div class="progress-bar bg-{{ cor_barra }}" style="width: {{ l.barra_pct }}%"></div>
+      </div>
+      <span class="small fw-semibold text-end" style="width:3.1rem;">{{ l.media }}d</span>
+      <span style="width:1.1rem;" class="small">{{ l.semaforo }}</span>
+    </div>
+    {% endfor %}
+    <div class="text-muted" style="font-size:0.68rem;">dias corridos · 🟢 até a média · 🟡 acima · 🔴 &gt;25% acima</div>
+  {% else %}
+    <div class="text-muted small">Sem dados por estação neste período.</div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro bloco_lead_time(titulo, lt, nota) %}
 <div class="card mb-4 painel-hero-card-lt">
   <div class="card-body">
-    <h6 class="text-uppercase text-muted small mb-3">
-      ⏱️ <i class="bi bi-stopwatch"></i> Lead time detalhado (médias, Gestão Produção)
-    </h6>
-    <div class="row g-3 text-center">
-      <div class="col-6 col-lg-3">
-        <div class="fs-2 mb-1">🛠️</div>
-        <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.chao_fabrica.media|string + "d") if lead_time_detalhado.chao_fabrica.media is not none else "—" }}</div>
-        <div class="text-muted small">Chão de fábrica<br>(Início produção → Liberação efetiva)</div>
-        <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.chao_fabrica.n }} item(ns)</div>
-      </div>
-      <div class="col-6 col-lg-3">
-        <div class="fs-2 mb-1">🚚</div>
-        <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.total.media|string + "d") if lead_time_detalhado.total.media is not none else "—" }}</div>
-        <div class="text-muted small">Total operação<br>(Inclusão → Entrega no cliente)</div>
-        <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.total.n }} pedido(s)</div>
-        <div class="d-flex justify-content-center gap-2 mt-1 flex-wrap">
-          <span class="badge text-bg-primary" title="Total operação CIF: {{ lead_time_detalhado.total_cif.n }} pedido(s)">CIF {{ (lead_time_detalhado.total_cif.media|string + "d") if lead_time_detalhado.total_cif.media is not none else "—" }}</span>
-          <span class="badge text-bg-warning" title="Total operação FOB: {{ lead_time_detalhado.total_fob.n }} pedido(s)">FOB {{ (lead_time_detalhado.total_fob.media|string + "d") if lead_time_detalhado.total_fob.media is not none else "—" }}</span>
+    <h6 class="text-uppercase text-muted small mb-3">{{ titulo }}</h6>
+    <div class="row g-3">
+      <div class="col-12 col-xl-6">
+        <div class="row g-2 align-items-stretch">
+          <div class="col-12 col-md-5 text-center">
+            <div class="fs-2 mb-1">🛠️</div>
+            <div class="fs-4 fw-semibold">{{ lt_media(lt.chao_fabrica.media) }}</div>
+            <div class="text-muted small">Chão de fábrica<br>(Início produção → Liberação efetiva)</div>
+            <div class="text-muted" style="font-size:0.7rem;">{{ lt.chao_fabrica.n }} item(ns)</div>
+          </div>
+          <div class="col-12 col-md-7">{{ lt_por_estacao(lt.chao_fabrica.por_estacao, "🏭 Chão de fábrica por estação", "success") }}</div>
         </div>
       </div>
-      <div class="col-6 col-lg-3">
-        <div class="fs-2 mb-1">⏳</div>
-        <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.fila_espera.media|string + "d") if lead_time_detalhado.fila_espera.media is not none else "—" }}</div>
-        <div class="text-muted small">Fila de espera<br>(Inclusão → Início produção)</div>
-        <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.fila_espera.n }} item(ns)</div>
+      <div class="col-12 col-xl-6">
+        <div class="row g-2 align-items-stretch">
+          <div class="col-12 col-md-5 text-center">
+            <div class="fs-2 mb-1">⏳</div>
+            <div class="fs-4 fw-semibold">{{ lt_media(lt.fila_espera.media) }}</div>
+            <div class="text-muted small">Fila de espera<br>(Inclusão → Início produção)</div>
+            <div class="text-muted" style="font-size:0.7rem;">{{ lt.fila_espera.n }} item(ns)</div>
+          </div>
+          <div class="col-12 col-md-7">{{ lt_por_estacao(lt.fila_espera.por_estacao, "⏳ Fila de espera por estação", "warning") }}</div>
+        </div>
       </div>
-      <div class="col-6 col-lg-3">
+      <div class="col-12 col-md-6 text-center">
+        <div class="fs-2 mb-1">🚚</div>
+        <div class="fs-4 fw-semibold">{{ lt_media(lt.total.media) }}</div>
+        <div class="text-muted small">Total operação<br>(Inclusão → Entrega no cliente)</div>
+        <div class="text-muted" style="font-size:0.7rem;">{{ lt.total.n }} pedido(s)</div>
+        <div class="d-flex justify-content-center gap-2 mt-1 flex-wrap">
+          <span class="badge text-bg-primary" title="Total operação CIF: {{ lt.total_cif.n }} pedido(s)">CIF {{ lt_media(lt.total_cif.media) }}</span>
+          <span class="badge text-bg-warning" title="Total operação FOB: {{ lt.total_fob.n }} pedido(s)">FOB {{ lt_media(lt.total_fob.media) }}</span>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 text-center">
         <div class="fs-2 mb-1">🤝</div>
-        <div class="fs-4 fw-semibold">{{ (lead_time_detalhado.prazo_comercial.media|string + "d") if lead_time_detalhado.prazo_comercial.media is not none else "—" }}</div>
+        <div class="fs-4 fw-semibold">{{ lt_media(lt.prazo_comercial.media) }}</div>
         <div class="text-muted small">Prazo comercial<br>(Inclusão → Solicitado cliente)</div>
-        <div class="text-muted" style="font-size:0.7rem;">{{ lead_time_detalhado.prazo_comercial.n }} pedido(s)</div>
+        <div class="text-muted" style="font-size:0.7rem;">{{ lt.prazo_comercial.n }} pedido(s)</div>
       </div>
     </div>
-    <p class="text-muted small mb-0 mt-2">"Total" cruza com Gestão Operação (data de entrega no cliente) pelo Pedido de venda — os demais vêm só de Gestão Produção/Listagem Geral.</p>
+    <p class="text-muted small mb-0 mt-2">{{ nota }}</p>
   </div>
 </div>
+{% endmacro %}
+
+{{ bloco_lead_time(
+     "⏱️ Lead time detalhado (médias, Gestão Produção)",
+     lead_time_detalhado,
+     '"Total" cruza com Gestão Operação (data de entrega no cliente) pelo Pedido de venda — os demais vêm só de Gestão Produção/Listagem Geral. Por estação = estação atual do item.') }}
+
+{{ bloco_lead_time(
+     "📅 Lead time " ~ lead_time_mes_anterior_label ~ " (mês anterior, mesmos quadrantes)",
+     lead_time_mes_anterior,
+     "Cada média entra no mês em que o período fecha: chão de fábrica = liberação efetiva no mês · fila de espera = início de produção no mês · total = entrega no cliente no mês · prazo comercial = pedidos incluídos no mês.") }}
 
 <div class="card mb-4 border-info-subtle">
   <div class="card-body">

@@ -5043,7 +5043,71 @@ def _entrega_cliente_por_pedido_venda(pedidos_venda):
     return mapa
 
 
-def _lead_time_detalhado_painel():
+# Emoji de cada estação nos mini-quadrantes de Lead Time do Painel (pedido do
+# Bruno, 05/10/2026: "quadrante pequeno detalhando os dias corridos de lead
+# time de cada estação ... inclua emotions"). Casamento por palavra-chave no
+# nome (maiúsculo), na ordem — "SOBRESSALENTE METAL MECANICA" precisa ser
+# testado antes de qualquer palavra mais genérica. Estação nova/desconhecida
+# cai no 🏭 genérico, nunca quebra.
+_EMOJI_ESTACAO_PAINEL = [
+    ("METAL", "⚙️"),
+    ("BORRACHA", "🛞"),
+    ("CORTE", "✂️"),
+    ("MANDRIL", "🔩"),
+    ("ESPUMAGEM", "🫧"),
+    ("SILICONE", "🧴"),
+    ("PU", "🧪"),
+    ("MANUTEN", "🔧"),
+    ("PROJETO", "⭐"),
+    ("REVENDA", "🏷️"),
+    ("REFORMA", "♻️"),
+    ("OUTROS", "📦"),
+]
+
+
+def _emoji_estacao_painel(nome):
+    nome_maiusc = (nome or "").upper()
+    if nome_maiusc.strip() == "PU":
+        return "🧪"
+    for chave, emoji in _EMOJI_ESTACAO_PAINEL:
+        if chave != "PU" and chave in nome_maiusc:
+            return emoji
+    return "🏭"
+
+
+def _lead_time_por_estacao(valores_por_estacao, media_geral):
+    """Monta as linhas do mini-quadrante "por estação" (média em dias corridos,
+    quantidade de itens, largura da barrinha e semáforo 🟢🟡🔴 comparando com
+    a média geral do mesmo card — estação >25% acima da média = 🔴, acima da
+    média = 🟡, igual/abaixo = 🟢). Ordem: maior lead time primeiro, pra o
+    gargalo aparecer no topo."""
+    linhas = []
+    for estacao, valores in valores_por_estacao.items():
+        media, n = _media_dias(valores)
+        if media is None:
+            continue
+        nome_curto = estacao.title() if len(estacao) > 3 else estacao.upper()
+        nome_curto = nome_curto.replace("Sobressalente", "Sobress.").replace("Metal Mecanica", "Metal Mec.")
+        linhas.append({
+            "estacao": estacao, "nome_curto": nome_curto,
+            "emoji": _emoji_estacao_painel(estacao), "media": media, "n": n,
+        })
+    linhas.sort(key=lambda l: (-l["media"], l["estacao"]))
+    maior = max((l["media"] for l in linhas), default=0)
+    for l in linhas:
+        l["barra_pct"] = round(100 * l["media"] / maior) if maior and l["media"] > 0 else 0
+        if media_geral is None or media_geral <= 0:
+            l["semaforo"] = "⚪"
+        elif l["media"] > media_geral * 1.25:
+            l["semaforo"] = "🔴"
+        elif l["media"] > media_geral:
+            l["semaforo"] = "🟡"
+        else:
+            l["semaforo"] = "🟢"
+    return linhas
+
+
+def _lead_time_detalhado_painel(inicio=None, fim=None):
     """Detalhamento de Lead Time do Painel (pedido do Bruno, 16/09/2026),
     baseado em Gestão Produção/Listagem Geral — todas as médias, cada uma
     com o "n" (quantidade que entrou na conta) igual ao resto do sistema
@@ -5065,20 +5129,51 @@ def _lead_time_detalhado_painel():
         Também devolvido separado por modalidade de frete (total_cif /
         total_fob, pedido do Bruno, 05/10/2026: "quero um total operação
         CIF e FOB") — mesma população do "total" geral, só repartida por
-        Pedido.frete."""
+        Pedido.frete.
+
+    chao_fabrica e fila_espera trazem também "por_estacao" (mini-quadrante
+    do Painel, pedido do Bruno 05/10/2026): a mesma média, quebrada pela
+    estação do item (ItemPedido.estacao).
+
+    `inicio`/`fim` (opcionais, datas inclusivas) recortam por MÊS — usado no
+    bloco "Lead time do mês anterior" (pedido do Bruno, 05/10/2026: "lead
+    time setembro, com os mesmos quadrantes"). Cada média entra no mês em
+    que o seu período FECHA (o que "aconteceu" naquele mês): chão de fábrica
+    = liberação efetiva no mês; fila de espera = início de produção no mês;
+    total = entrega no cliente no mês; prazo comercial = pedido incluído no
+    mês (a promessa nasce na inclusão). Sem `inicio`/`fim` = histórico
+    inteiro, como sempre foi."""
+    def _no_periodo(d):
+        if d is None:
+            return False
+        if inicio is not None and d < inicio:
+            return False
+        if fim is not None and d > fim:
+            return False
+        return True
+
     pedidos = Pedido.query.filter(Pedido.data_inclusao_pedido.isnot(None)).all()
 
     chao_fabrica_valores = []
     fila_espera_valores = []
+    chao_por_estacao = {}
+    fila_por_estacao = {}
     for pedido in pedidos:
         for item in pedido.itens:
-            if item.liberacao_real and item.inicio_producao:
-                chao_fabrica_valores.append((item.liberacao_real - item.inicio_producao).days)
-            if item.tempo_espera_dias is not None:
+            if item.liberacao_real and item.inicio_producao and _no_periodo(item.liberacao_real):
+                dias = (item.liberacao_real - item.inicio_producao).days
+                chao_fabrica_valores.append(dias)
+                if item.estacao:
+                    chao_por_estacao.setdefault(item.estacao, []).append(dias)
+            if item.tempo_espera_dias is not None and _no_periodo(item.inicio_producao):
                 fila_espera_valores.append(item.tempo_espera_dias)
+                if item.estacao:
+                    fila_por_estacao.setdefault(item.estacao, []).append(item.tempo_espera_dias)
 
     prazo_comercial_valores = [
-        (p.data_cliente - p.data_inclusao_pedido).days for p in pedidos if p.data_cliente
+        (p.data_cliente - p.data_inclusao_pedido).days
+        for p in pedidos
+        if p.data_cliente and _no_periodo(p.data_inclusao_pedido)
     ]
 
     pedidos_venda = [p.pedido_venda for p in pedidos if p.pedido_venda]
@@ -5088,7 +5183,7 @@ def _lead_time_detalhado_painel():
     total_fob_valores = []
     for p in pedidos:
         data_entrega = entrega_por_pedido.get(_normalizar_pedido_venda(p.pedido_venda))
-        if data_entrega:
+        if data_entrega and _no_periodo(data_entrega):
             dias_total = (data_entrega - p.data_inclusao_pedido).days
             total_valores.append(dias_total)
             if p.frete == "CIF":
@@ -5104,8 +5199,14 @@ def _lead_time_detalhado_painel():
     total_fob_media, total_fob_n = _media_dias(total_fob_valores)
 
     return {
-        "chao_fabrica": {"media": chao_fabrica_media, "n": chao_fabrica_n},
-        "fila_espera": {"media": fila_espera_media, "n": fila_espera_n},
+        "chao_fabrica": {
+            "media": chao_fabrica_media, "n": chao_fabrica_n,
+            "por_estacao": _lead_time_por_estacao(chao_por_estacao, chao_fabrica_media),
+        },
+        "fila_espera": {
+            "media": fila_espera_media, "n": fila_espera_n,
+            "por_estacao": _lead_time_por_estacao(fila_por_estacao, fila_espera_media),
+        },
         "prazo_comercial": {"media": prazo_comercial_media, "n": prazo_comercial_n},
         "total": {"media": total_media, "n": total_n},
         "total_cif": {"media": total_cif_media, "n": total_cif_n},
@@ -15682,6 +15783,15 @@ def register_routes(app):
         # Detalhamento de Lead Time (chão de fábrica, total, fila de espera,
         # prazo comercial) — pedido do Bruno (16/09/2026), quadrante próprio.
         lead_time_detalhado = _lead_time_detalhado_painel()
+        # Mesmo detalhamento, só do MÊS ANTERIOR (pedido do Bruno,
+        # 05/10/2026: "lead time setembro, com os mesmos quadrantes") —
+        # dinâmico: em novembro vira outubro, etc.
+        _ano_ant, _mes_ant = _somar_meses(hoje.year, hoje.month, -1)
+        lead_time_mes_anterior = _lead_time_detalhado_painel(
+            inicio=date(_ano_ant, _mes_ant, 1),
+            fim=date(_ano_ant, _mes_ant, monthrange(_ano_ant, _mes_ant)[1]),
+        )
+        lead_time_mes_anterior_label = f"{MESES_PT_EXTENSO[_mes_ant - 1].upper()}/{_ano_ant}"
 
         pedidos_atrasados = (
             Pedido.query.options(selectinload(Pedido.itens))
@@ -15758,6 +15868,8 @@ def register_routes(app):
             resumo_mes_anterior_pcp=resumo_mes_anterior_pcp,
             mini_risco_prazos=mini_risco_prazos,
             lead_time_detalhado=lead_time_detalhado,
+            lead_time_mes_anterior=lead_time_mes_anterior,
+            lead_time_mes_anterior_label=lead_time_mes_anterior_label,
             lead_time_medio=_lead_time_medio_dias(),
             otd=_otd_percentual(),
             backlog_estacao=_backlog_por_estacao(),
