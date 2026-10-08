@@ -8434,13 +8434,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     # ainda em setembro) — confuso, por isso a troca. O dia dessa âncora cai
     # SEMPRE entre 1 e 7 (é o 1º domingo do mês), propriedade usada abaixo
     # pra garantir que o número de cada card bate com o rótulo PCP real.
-    primeiro_dia_mes = date(ano, mes, 1)
-    domingo_antes_ou_igual = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
-    domingo_semana_01 = (
-        domingo_antes_ou_igual + timedelta(days=7)
-        if primeiro_dia_mes.weekday() != 6
-        else domingo_antes_ou_igual
-    )
+    domingo_semana_01 = _domingo_semana_01(ano, mes)
 
     filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="", sem_planejamento_semanal="")
 
@@ -13802,22 +13796,66 @@ def _agrupar_linhas_por_semana_pcp(linhas):
     return [(rotulo, grupos[rotulo]) for rotulo in rotulos_ordenados]
 
 
+def _domingo_semana_01(ano, mes):
+    """Âncora da "SEMANA 01" do mês: o primeiro domingo DENTRO do mês (ou o
+    próprio dia 1, se for domingo) — a MESMA regra dos quadrantes da Listagem
+    Geral (_quadrantes_planejamento_semanal; pedido do Bruno, 01/10/2026:
+    "semana 01: 04/10 a 10/10... semana 04: 25/10 a 31/10"). Fica sempre
+    entre os dias 1 e 7."""
+    primeiro_dia_mes = date(ano, mes, 1)
+    domingo_antes_ou_igual = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
+    return (
+        domingo_antes_ou_igual + timedelta(days=7)
+        if primeiro_dia_mes.weekday() != 6
+        else domingo_antes_ou_igual
+    )
+
+
 def _intervalo_calendario_semana_pcp(mes_ano, rotulo_semana):
     """Data de início/fim (domingo a sábado) da semana de calendário que um
-    rótulo "SEMANA NN / MÊS / ANO" representa, só pra exibição no relatório —
-    mesma âncora (domingo igual ou anterior ao dia 1 do mês) já usada em
-    _quadrantes_planejamento_semanal, pra nunca mostrar um período diferente
-    do que os quadrantes da tela mostrariam pra mesma semana."""
+    rótulo "SEMANA NN / MÊS / ANO" representa no relatório — EXATAMENTE o
+    mesmo período que o quadrante daquela semana mostra na tela (pedido do
+    Bruno, 08/10/2026: "quero que se baseie exatamente no planejamento
+    realizado de outubro e novembro, principalmente no período semanal (dias
+    X até dias Y)"). Antes usava a âncora antiga (domingo igual ou anterior
+    ao dia 1), que mostrava a semana 01 de outubro como 27/09 a 03/10 em vez
+    de 04/10 a 10/10. Só existem 4 semanas por mês; o rótulo "SEMANA 05"
+    (dias 29-31 do planejamento) cai dentro do calendário da semana 04 e é
+    exibido junto dela (ver _agrupar_linhas_por_quadrantes_pcp)."""
     ano, mes = mes_ano
     m = re.search(r"SEMANA\s*(\d+)", (rotulo_semana or "").upper())
     if not m:
         return (None, None)
-    n = int(m.group(1))
-    primeiro_dia_mes = date(ano, mes, 1)
-    domingo_semana_01 = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
-    inicio = domingo_semana_01 + timedelta(days=7 * (n - 1))
+    n = min(max(int(m.group(1)), 1), 4)
+    inicio = _domingo_semana_01(ano, mes) + timedelta(days=7 * (n - 1))
     fim = inicio + timedelta(days=6)
     return (inicio, fim)
+
+
+def _agrupar_linhas_por_quadrantes_pcp(linhas, mes_ano):
+    """Agrupa as linhas de um mês nos MESMOS 4 quadrantes de semana da
+    Listagem Geral (SEMANA 01 a 04, sempre os 4, mesmo vazios — pedido do
+    Bruno, 08/10/2026), cada um com o período de calendário idêntico ao do
+    card da tela. O rótulo "SEMANA 05" (planejamento dos dias 29-31) é
+    somado à SEMANA 04 — nenhum item some do total do mês. Itens sem semana
+    definida ficam num grupo final à parte.
+
+    Devolve [(titulo, periodo_txt, linhas)] já na ordem de exibição."""
+    por_semana = {1: [], 2: [], 3: [], 4: []}
+    sem_semana = []
+    for l in linhas:
+        m = re.search(r"SEMANA\s*(\d+)", (l.planejamento_semanal or "").upper())
+        if not m:
+            sem_semana.append(l)
+            continue
+        por_semana[min(max(int(m.group(1)), 1), 4)].append(l)
+    grupos = []
+    for n in range(1, 5):
+        inicio, fim = _intervalo_calendario_semana_pcp(mes_ano, f"SEMANA {n:02d}")
+        grupos.append((f"SEMANA {n:02d}", f" ({inicio.strftime('%d/%m')} a {fim.strftime('%d/%m')})", por_semana[n]))
+    if sem_semana:
+        grupos.append(("Sem semana definida", "", sem_semana))
+    return grupos
 
 
 def _texto_filtros_listagem_geral_semanal(filtros):
@@ -13914,7 +13952,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import CondPageBreak, Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     estilos = getSampleStyleSheet()
     # Fonte da tabela de detalhe reduzida de 8/8.5pt pra 7.3/7.6pt (retrato é
@@ -14143,10 +14181,26 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
                 ("LEFTPADDING", (0, 0), (-1, -1), 8),
             ]))
+            # Banner nunca fica sozinho no pé da página (o bloco seguinte
+            # — KPIs — precisa caber junto).
+            elems.append(CondPageBreak(70 * mm))
             elems.append(banner)
             elems.append(Spacer(1, 3 * mm))
 
-        grupos_semana = _agrupar_linhas_por_semana_pcp(linhas_b)
+        # Mês do relatório: SEMPRE os 4 quadrantes SEMANA 01-04 com o mesmo
+        # período da tela (pedido do Bruno, 08/10/2026). Backlog (mês
+        # seguinte, `consolidado`): UMA seção só com tudo que já está
+        # planejado naquele mês, sem quebrar por semana ("SEMANA 01, 02, 03 e
+        # 04 de outubro + Backlog novembro").
+        consolidado_b = bool(b.get("consolidado"))
+        if consolidado_b:
+            ultimo_dia_b = monthrange(ano_b, mes_b)[1]
+            grupos_semana = (
+                [(f"BACKLOG {MESES_PT_EXTENSO[mes_b - 1].upper()}", f" (01/{mes_b:02d} a {ultimo_dia_b:02d}/{mes_b:02d}) · tudo que já está planejado", linhas_b)]
+                if linhas_b else []
+            )
+        else:
+            grupos_semana = _agrupar_linhas_por_quadrantes_pcp(linhas_b, mes_ano_b) if linhas_b else []
         pedidos_mes = {l.pedido_id for l in linhas_b}
         faturamento_mes = sum(l.venda_total or 0 for l in linhas_b)
 
@@ -14159,7 +14213,11 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
         kpis_mes = [
             _kpi(len(pedidos_mes), "Pedidos distintos no mês"),
             _kpi(len(linhas_b), "Itens (produtos) no mês"),
-            _kpi(len(grupos_semana), "Semanas com pedido"),
+            (
+                _kpi(len({l.cliente for l in linhas_b if l.cliente}), "Clientes distintos no backlog")
+                if consolidado_b
+                else _kpi(sum(1 for _, _, ls in grupos_semana if ls), "Semanas com pedido")
+            ),
             _kpi(_fmt_moeda(faturamento_mes), "Faturamento total do mês"),
         ]
         largura_kpi = largura_disponivel / len(kpis_mes)
@@ -14176,10 +14234,10 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
         elems.append(Spacer(1, 6 * mm))
 
         # ---- barrinha comparando faturamento por semana ("visual e dinâmico") ----
-        if len(grupos_semana) > 1:
+        if not consolidado_b and linhas_b:
             resumo_semanas_graf = [
                 (rotulo, sum(l.venda_total or 0 for l in linhas_semana))
-                for rotulo, linhas_semana in grupos_semana
+                for rotulo, _, linhas_semana in grupos_semana
             ]
             maior_valor = max((v for _, v in resumo_semanas_graf), default=0) or 1
             # Rótulos maiores e mais chamativos (pedido do Bruno, 21/09/2026)
@@ -14329,9 +14387,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                 elems.append(Spacer(1, 6 * mm))
 
         # ---- 1 seção por semana PCP ----
-        for rotulo, linhas_semana in grupos_semana:
-            inicio, fim = _intervalo_calendario_semana_pcp(mes_ano_b, rotulo)
-            periodo_txt = f" ({inicio.strftime('%d/%m')} a {fim.strftime('%d/%m')})" if inicio and fim else ""
+        for rotulo, periodo_txt, linhas_semana in grupos_semana:
             pedidos_semana = {l.pedido_id for l in linhas_semana}
             faturamento_semana = sum(l.venda_total or 0 for l in linhas_semana)
 
@@ -14350,6 +14406,19 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                 ("LEFTPADDING", (0, 0), (0, 0), 6),
             ]))
+
+            # Cabeçalho da semana nunca sozinho no pé da página: precisa caber
+            # pelo menos o cabeçalho + as primeiras linhas da tabela.
+            elems.append(CondPageBreak(45 * mm))
+            if not linhas_semana:
+                # Quadrante sem pedido: continua aparecendo (os 4 sempre, como
+                # na tela), só com uma linha curta no lugar da tabela.
+                elems.append(KeepTogether([
+                    cabecalho_semana,
+                    Paragraph("Nenhum pedido planejado nesta semana.", ParagraphStyle("semana_vazia", parent=estilos["Normal"], fontSize=8.5, leading=10, textColor=colors.HexColor("#6c757d"), leftIndent=6, spaceBefore=3)),
+                ]))
+                elems.append(Spacer(1, 6 * mm))
+                continue
 
             dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho_tabela]]
             cores_linhas = [COR_CABECALHO_BG]
@@ -14523,10 +14592,6 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
 
             elems.append(cabecalho_semana)
             elems.append(tabela_semana)
-            elems.append(Spacer(1, 6 * mm))
-
-        if not grupos_semana:
-            elems.append(Paragraph("Nenhum pedido com Planejamento semanal (PCP) preenchido nesse mês.", estilos["Normal"]))
             elems.append(Spacer(1, 6 * mm))
 
         # ---- total do mês (rodapé em destaque, pedido explícito do Bruno:
@@ -18192,7 +18257,7 @@ def register_routes(app):
             args_backlog["planejamento_mensal"] = f"{ano_bl:04d}-{mes_bl:02d}"
             query_bl, _ = _filtrar_pedidos(args_backlog)
             linhas_bl = _linhas_listagem_geral(query_bl.all(), args_backlog)
-            blocos.append({"mes_ano": (ano_bl, mes_bl), "linhas": linhas_bl, "rotulo": "BACKLOG — MÊS SEGUINTE (PROJEÇÃO PCP)"})
+            blocos.append({"mes_ano": (ano_bl, mes_bl), "linhas": linhas_bl, "rotulo": "BACKLOG — MÊS SEGUINTE (PROJEÇÃO PCP)", "consolidado": True})
         else:
             blocos = [{"mes_ano": mes_ano, "linhas": linhas, "rotulo": "MÊS DO RELATÓRIO"}]
 

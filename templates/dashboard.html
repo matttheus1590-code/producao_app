@@ -187,12 +187,14 @@
         </div>
         <div class="modal-body">
           <p class="text-muted small">
-            Gera um PDF com todos os pedidos do mês escolhido, agrupados por semana (Planejamento PCP),
-            com o faturamento e o nº de pedidos de cada semana e o total do mês inteiro no fim.
+            Gera um PDF com os pedidos do mês escolhido nas <strong>4 semanas do Planejamento PCP</strong>
+            (mesmos períodos dos quadrantes da tela, ex.: Semana 01 = 04/10 a 10/10), com o faturamento e o nº
+            de pedidos de cada semana e o total do mês no fim. Marcando o backlog, o mês seguinte entra numa
+            seção única (ex.: <em>Backlog novembro</em>).
           </p>
           <label class="form-label small text-muted mb-1">Mês do relatório</label>
           <input type="month" class="form-control" name="planejamento_mensal"
-                 value="{{ filtros.planejamento_mensal or mes_atual_input }}" required>
+                 value="{{ mes_atual_input }}" required>
 
           <label class="form-label small text-muted mb-1 mt-3">Modelo do relatório</label>
           <select class="form-select" name="modelo_relatorio">
@@ -201,10 +203,10 @@
           </select>
 
           <div class="form-check mt-3">
-            <input class="form-check-input" type="checkbox" value="1" name="incluir_backlog" id="checkIncluirBacklogPCP">
+            <input class="form-check-input" type="checkbox" value="1" name="incluir_backlog" id="checkIncluirBacklogPCP" checked>
             <label class="form-check-label small" for="checkIncluirBacklogPCP">
               <i class="bi bi-layers"></i> Incluir também o <strong>mês seguinte como Backlog PCP</strong>
-              (projeção do que já está planejado por semana no mês seguinte, no mesmo PDF)
+              (tudo que já está planejado no mês seguinte, numa seção única no mesmo PDF)
             </label>
           </div>
 
