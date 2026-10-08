@@ -12771,7 +12771,7 @@ def _dividir_grupos_pedido(grupos, maximo=3):
     return divididos
 
 
-def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
+def _pdf_estacao_bytes(estacao, itens, status_filtro, incluir_mp, escala, maximo_por_grupo, materiais_por_item):
     """Relatório PDF de UMA estação (pedido do Bruno, 11/09/2026, revisado
     17/09/2026 — "deixe mais intuitivo e visual... AGRUPE SEPARADAMENTE o que
     está em produção e o que está pendente, de forma totalmente visual e
@@ -12858,20 +12858,22 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
     # seções de matéria-prima de cada bloco mais abaixo. Só calculado
     # quando `incluir_mp` (senão fica vazio — economiza o trabalho quando a
     # pessoa pediu explicitamente "só o status").
-    materiais_por_item = {item.id: _materiais_item_pedido(item) for item in itens} if incluir_mp else {}
+    # (`materiais_por_item` chega pronto de _gerar_pdf_estacao, calculado 1x só)
+    S = escala  # fator de escala da letra/espaçamento (ajuste p/ caber numa folha)
+    S_peq = 0.6 + 0.4 * S  # textos pequenos (datas, situação) encolhem bem menos
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=landscape(A4),
-        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=max(7, 12 * S) * mm, bottomMargin=max(7, 12 * S) * mm,
         title=f"{rotulo} — Relatório de Produção",
     )
     estilos = getSampleStyleSheet()
-    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8.5, leading=10.5)
+    estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=8.5 * S_peq, leading=10.5 * S_peq)
     COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
     COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
     estilo_cabecalho_tabela = ParagraphStyle(
-        "cabecalho_tabela", parent=estilo_celula, fontName="Helvetica-Bold", fontSize=9, leading=11,
+        "cabecalho_tabela", parent=estilo_celula, fontName="Helvetica-Bold", fontSize=9 * S_peq, leading=11 * S_peq,
         textColor=COR_CABECALHO_TEXTO,
     )
     estilo_mp_aviso = ParagraphStyle("mp_aviso", parent=estilo_celula, textColor=colors.HexColor("#856404"), fontName="Helvetica-Oblique")
@@ -12882,13 +12884,13 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
     # fábrica". Sem a coluna de matéria-prima sobra mais largura, então a
     # letra pode ser maior; com ela, um pouco menor (a tabela fica mais
     # cheia), mas ainda bem acima dos 8.5pt de antes.
-    fonte_destaque = 11.5 if incluir_mp else 14
+    fonte_destaque = (11.5 if incluir_mp else 14) * S
     estilo_destaque = ParagraphStyle(
         "destaque", parent=estilos["Normal"], fontName="Helvetica-Bold",
         fontSize=fonte_destaque, leading=fonte_destaque * 1.18,
     )
     estilo_destaque_cabecalho = ParagraphStyle(
-        "destaque_cab", parent=estilo_cabecalho_tabela, fontSize=11, leading=13,
+        "destaque_cab", parent=estilo_cabecalho_tabela, fontSize=11 * S, leading=13 * S,
     )
 
     largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
@@ -12899,16 +12901,16 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
     # ausente não pode quebrar a geração do relatório).
     detalhe_txt = "com matéria-prima principal" if incluir_mp else "somente status (sem matéria-prima)"
     bloco_titulo = [
-        Paragraph(f"{rotulo} — Relatório de Produção", estilos["Title"]),
+        Paragraph(f"{rotulo} — Relatório de Produção", ParagraphStyle("titulo_rel", parent=estilos["Title"], fontSize=18 * S, leading=22 * S, spaceAfter=6 * S)),
         Paragraph(
             f'Filtro: {info_filtro["titulo"]} · Detalhe: {detalhe_txt} · '
             f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")}',
-            estilos["Normal"],
+            ParagraphStyle("sub_rel", parent=estilos["Normal"], fontSize=10 * S_peq, leading=12 * S_peq),
         ),
     ]
     if os.path.exists(_ESPELHO_LOGO_PATH):
-        logo = Image(_ESPELHO_LOGO_PATH, width=36 * mm, height=36 * mm * (63 / 261))
-        cabecalho = Table([[logo, bloco_titulo]], colWidths=[40 * mm, largura_disponivel - 40 * mm])
+        logo = Image(_ESPELHO_LOGO_PATH, width=36 * mm * S, height=36 * mm * S * (63 / 261))
+        cabecalho = Table([[logo, bloco_titulo]], colWidths=[40 * mm * S, largura_disponivel - 40 * mm * S])
         cabecalho.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -12916,14 +12918,14 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
-        elementos = [cabecalho, Spacer(1, 6 * mm)]
+        elementos = [cabecalho, Spacer(1, 6 * mm * S)]
     else:
-        elementos = bloco_titulo + [Spacer(1, 6 * mm)]
+        elementos = bloco_titulo + [Spacer(1, 6 * mm * S)]
 
     def _kpi(valor, rotulo_kpi):
         return [
-            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=26, leading=30, fontName="Helvetica-Bold", alignment=1)),
-            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=11, leading=13, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=26 * S, leading=30 * S, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=11 * S_peq, leading=13 * S_peq, fontName="Helvetica-Bold", alignment=1)),
         ]
 
     hoje = date.today()
@@ -12958,18 +12960,18 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
         ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4 * S),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * S),
         ("BACKGROUND", (4, 0), (4, -1), colors.HexColor("#f8d7da") if criticos else colors.white),
     ]
     for i, cor_topo in enumerate(cores_topo_kpi):
         estilo_kpis.append(("LINEABOVE", (i, 0), (i, 0), 2.5, cor_topo))
     tabela_kpis.setStyle(TableStyle(estilo_kpis))
     elementos.append(tabela_kpis)
-    elementos.append(Spacer(1, 7 * mm))
+    elementos.append(Spacer(1, 7 * mm * S))
 
     def _pingo(cor_nome):
-        diam = 3.2 * mm
+        diam = 3.2 * mm * S
         d = Drawing(diam, diam)
         d.add(Circle(diam / 2, diam / 2, diam / 2 - 0.2, fillColor=COR_SEMAFORO_PINGO.get(cor_nome, colors.grey), strokeColor=None))
         return d
@@ -12983,11 +12985,11 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         maximo compacto") — usada nas faixas de MATÉRIA-PRIMA/TOTAL GERAL,
         fonte e padding menores que a faixa de bloco (Pendente/Em produção)
         acima, que continua do tamanho original."""
-        tamanho_fonte = 9 if compacta else 22  # blocos EM PRODUÇÃO / PENDENTE — FILA bem grandes (08/10/2026)
-        padding = 3 if compacta else 8
+        tamanho_fonte = (9 if compacta else 22) * S  # blocos EM PRODUÇÃO / PENDENTE — FILA bem grandes (08/10/2026)
+        padding = (3 if compacta else 8) * S
         estilo_faixa = ParagraphStyle(
             "faixa_grupo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=tamanho_fonte,
-            textColor=colors.white, leading=tamanho_fonte + 2,
+            textColor=colors.white, leading=tamanho_fonte + 2 * S,
         )
         t = Table([[Paragraph(texto, estilo_faixa)]], colWidths=[largura_disponivel])
         t.setStyle(TableStyle([
@@ -13014,7 +13016,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
                 indice_por_pedido[chave] = len(grupos)
                 grupos.append([])
             grupos[indice_por_pedido[chave]].append(item)
-        return _dividir_grupos_pedido(grupos)
+        return _dividir_grupos_pedido(grupos, maximo_por_grupo)
 
     def _celula_materia_item(item):
         """Pesagem de matéria-prima PRINCIPAL do item, associada direto na
@@ -13143,8 +13145,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (0, 0), (0, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5 * S),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5 * S),
             ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
         ]
@@ -13270,13 +13272,13 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         if not linhas_totais and not nao_identificados:
             return []
 
-        flow = [CondPageBreak(40 * mm), _faixa_grupo(f"TOTAL DE MATÉRIA-PRIMA PRINCIPAL — {titulo_bloco}", COR_MATERIA_PRIMA, compacta=True)]
+        flow = [CondPageBreak(40 * mm if maximo_por_grupo < 999 else 0), _faixa_grupo(f"TOTAL DE MATÉRIA-PRIMA PRINCIPAL — {titulo_bloco}", COR_MATERIA_PRIMA, compacta=True)]
         if linhas_totais:
             flow.append(_tabela_total_materiais(linhas_totais))
         else:
             flow.append(Paragraph("Nenhuma matéria-prima principal identificada neste bloco.", estilos["Normal"]))
         if nao_identificados:
-            flow.append(Spacer(1, 1 * mm))
+            flow.append(Spacer(1, 1 * mm * S))
             flow.append(Paragraph(
                 f'<font color="#856404">{nao_identificados} item(ns) deste bloco não identificado(s) automaticamente '
                 'no catálogo de Gestão de Custos — não entram nesse total.</font>',
@@ -13297,17 +13299,17 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
             ("pendente", "PENDENTE — FILA", COR_GRUPO_PENDENTE, [i for i in itens if i.status_producao == "PENDENTE"]),
         ]
         for _chave, titulo, cor_fundo, itens_grupo in grupos:
-            elementos.append(CondPageBreak(62 * mm if itens_grupo else 30 * mm))  # faixa nunca sozinha no pé da página (1º grupo da tabela não quebra)
+            elementos.append(CondPageBreak((62 * mm if itens_grupo else 30 * mm) if maximo_por_grupo < 999 else 0))  # faixa nunca sozinha no pé da página (1º grupo da tabela não quebra)
             elementos.append(_faixa_grupo(f"{titulo} — {len(itens_grupo)} ITEM(NS)", cor_fundo))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
                 if incluir_mp:
-                    elementos.append(Spacer(1, 2 * mm))
+                    elementos.append(Spacer(1, 2 * mm * S))
                     elementos.extend(_secao_materia_prima_bloco(itens_grupo, titulo))
             else:
-                elementos.append(Spacer(1, 2 * mm))
+                elementos.append(Spacer(1, 2 * mm * S))
                 elementos.append(Paragraph("Nenhum item nesta situação no momento.", estilos["Normal"]))
-            elementos.append(Spacer(1, 7 * mm))
+            elementos.append(Spacer(1, 7 * mm * S))
 
         # Total combinado (Pendente + Em produção) — pedido do Bruno
         # (24/09/2026) pediu o total "dentro do pendente e andamento", o que
@@ -13329,7 +13331,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
                 else:
                     elementos.append(Paragraph("Nenhuma matéria-prima principal identificada.", estilos["Normal"]))
                 if nao_identificados_geral:
-                    elementos.append(Spacer(1, 1 * mm))
+                    elementos.append(Spacer(1, 1 * mm * S))
                     elementos.append(Paragraph(
                         f'<font color="#856404">{nao_identificados_geral} item(ns) não identificado(s) automaticamente '
                         'no catálogo de Gestão de Custos — não entram nesses totais.</font>',
@@ -13341,20 +13343,66 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         # bloco em vez de 2, pra nunca destoar do relatório "ambos".
         titulo_unico = "PENDENTE — FILA" if status_filtro == "pendente" else "EM PRODUÇÃO"
         cor_unica = COR_GRUPO_PENDENTE if status_filtro == "pendente" else COR_GRUPO_EM_PRODUCAO
-        elementos.append(CondPageBreak(62 * mm if itens else 30 * mm))
+        elementos.append(CondPageBreak((62 * mm if itens else 30 * mm) if maximo_por_grupo < 999 else 0))
         elementos.append(_faixa_grupo(f"{titulo_unico} — {len(itens)} ITEM(NS)", cor_unica))
         if itens:
             elementos.append(_tabela_itens(itens))
             if incluir_mp:
-                elementos.append(Spacer(1, 2 * mm))
+                elementos.append(Spacer(1, 2 * mm * S))
                 elementos.extend(_secao_materia_prima_bloco(itens, titulo_unico))
         else:
-            elementos.append(Spacer(1, 2 * mm))
+            elementos.append(Spacer(1, 2 * mm * S))
             elementos.append(Paragraph("Nenhum item encontrado com o filtro aplicado.", estilos["Normal"]))
 
     doc.build(elementos)
     buffer.seek(0)
-    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    return buffer.getvalue(), doc.page
+
+
+def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
+    """Relatório PDF de UMA estação, SEMPRE tentando caber em UMA folha só
+    (pedido do Bruno, 08/10/2026: "quero que todo o relatório fique em uma
+    única folha, nem que reduza o espaçamento das linhas e um pouco o
+    tamanho das letras" — o relatório fica num painel no chão de fábrica).
+
+    Monta o PDF (`_pdf_estacao_bytes`) com a letra/espaçamento no tamanho
+    cheio e vai reduzindo por degraus (100% -> 50%) até caber em 1 página;
+    pára no primeiro tamanho que cabe, ou seja, usa a MAIOR letra possível.
+    Sem divisão de pedidos em blocos nesse modo (cabendo numa folha, o
+    pedido aparece 1 vez só, com as células mescladas). Se nem na menor
+    escala couber (muitos itens), cai no formato de antes: letra grande,
+    várias folhas, pedidos grandes quebrados em blocos de 3 linhas."""
+    materiais_por_item = {item.id: _materiais_item_pedido(item) for item in itens} if incluir_mp else {}
+    def _tenta(escala):
+        try:
+            dados, paginas = _pdf_estacao_bytes(
+                estacao, itens, status_filtro, incluir_mp, escala, 999, materiais_por_item,
+            )
+        except Exception:  # ex.: bloco alto demais pra folha nessa escala
+            return None
+        return dados if paginas <= 1 else None
+
+    # Busca binária da MAIOR escala que cabe em 1 folha, entre 100% (cheio) e
+    # 42% (limite de legibilidade: ~6pt na coluna principal).
+    escolhido = _tenta(1.0)
+    if escolhido is None:
+        menor = 0.42
+        melhor = _tenta(menor)
+        if melhor is not None:
+            baixo, alto = menor, 1.0
+            for _ in range(7):
+                meio = (baixo + alto) / 2
+                r = _tenta(meio)
+                if r is not None:
+                    melhor, baixo = r, meio
+                else:
+                    alto = meio
+            escolhido = melhor
+    if escolhido is None:
+        # Nem na menor escala cabe numa folha (itens demais): formato de
+        # antes — letra grande, várias folhas, pedidos grandes em blocos.
+        escolhido, _ = _pdf_estacao_bytes(estacao, itens, status_filtro, incluir_mp, 1.0, 3, materiais_por_item)
+    resposta = Response(escolhido, mimetype="application/pdf")
     sufixo_mp = "com_mp" if incluir_mp else "somente_status"
     nome_arquivo = f"estacao_{estacao.nome}_{status_filtro}_{sufixo_mp}_{date.today().isoformat()}.pdf"
     resposta.headers["Content-Disposition"] = f"attachment; filename={nome_arquivo}"
