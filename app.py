@@ -12793,7 +12793,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import CondPageBreak, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     COR_SEMAFORO_BG = {
         "vermelho": colors.HexColor("#f8d7da"),
@@ -12848,6 +12848,21 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         textColor=COR_CABECALHO_TEXTO,
     )
     estilo_mp_aviso = ParagraphStyle("mp_aviso", parent=estilo_celula, textColor=colors.HexColor("#856404"), fontName="Helvetica-Oblique")
+    # Letra GRANDE nas 4 colunas principais (Pedido / Cliente / Produto /
+    # Qtd) — pedido do Bruno (08/10/2026): "quero que essa área do relatório
+    # de produção, de todas as estações, fique em uma letra maior e mais
+    # visível. Esse relatório fica em um painel exposto no chão de
+    # fábrica". Sem a coluna de matéria-prima sobra mais largura, então a
+    # letra pode ser maior; com ela, um pouco menor (a tabela fica mais
+    # cheia), mas ainda bem acima dos 8.5pt de antes.
+    fonte_destaque = 11.5 if incluir_mp else 14
+    estilo_destaque = ParagraphStyle(
+        "destaque", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=fonte_destaque, leading=fonte_destaque * 1.18,
+    )
+    estilo_destaque_cabecalho = ParagraphStyle(
+        "destaque_cab", parent=estilo_cabecalho_tabela, fontSize=11, leading=13,
+    )
 
     largura_disponivel = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
 
@@ -12880,8 +12895,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
 
     def _kpi(valor, rotulo_kpi):
         return [
-            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=17, fontName="Helvetica-Bold", alignment=1)),
-            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8.5, alignment=1)),
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=26, leading=30, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=11, leading=13, fontName="Helvetica-Bold", alignment=1)),
         ]
 
     hoje = date.today()
@@ -12941,8 +12956,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         maximo compacto") — usada nas faixas de MATÉRIA-PRIMA/TOTAL GERAL,
         fonte e padding menores que a faixa de bloco (Pendente/Em produção)
         acima, que continua do tamanho original."""
-        tamanho_fonte = 9 if compacta else 11
-        padding = 3 if compacta else 5
+        tamanho_fonte = 9 if compacta else 22  # blocos EM PRODUÇÃO / PENDENTE — FILA bem grandes (08/10/2026)
+        padding = 3 if compacta else 8
         estilo_faixa = ParagraphStyle(
             "faixa_grupo", parent=estilos["Normal"], fontName="Helvetica-Bold", fontSize=tamanho_fonte,
             textColor=colors.white, leading=tamanho_fonte + 2,
@@ -12972,7 +12987,16 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
                 indice_por_pedido[chave] = len(grupos)
                 grupos.append([])
             grupos[indice_por_pedido[chave]].append(item)
-        return grupos
+        # Com a letra grande, um pedido com MUITOS itens poderia ficar mais
+        # alto que a página (a célula mesclada de Pedido/Cliente não quebra
+        # entre páginas e o PDF falharia) — pedaços de no máximo 8 itens; o
+        # número do pedido/cliente reaparece no início de cada pedaço.
+        maximo_por_grupo = 8
+        divididos = []
+        for g in grupos:
+            for i in range(0, len(g), maximo_por_grupo):
+                divididos.append(g[i:i + maximo_por_grupo])
+        return divididos
 
     def _celula_materia_item(item):
         """Pesagem de matéria-prima PRINCIPAL do item, associada direto na
@@ -13028,7 +13052,10 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         if incluir_mp:
             cabecalho.append('Matéria-prima<br/><font size="6.2">(unitário/lote)</font>')
         cabecalho += ["Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo"]
-        dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) if c else "" for c in cabecalho]]
+        dados_tabela = [[
+            (Paragraph(c, estilo_destaque_cabecalho if c in ("Pedido", "Cliente", "Produto", "Qtd") else estilo_cabecalho_tabela) if c else "")
+            for c in cabecalho
+        ]]
         cores_linhas = [COR_CABECALHO_BG]
         spans_pedido = []  # (linha_inicio, linha_fim) 1-based (linha 0 = cabeçalho)
         divisores_grupo = []  # linha da ÚLTIMA linha de cada grupo (exceto a última da tabela)
@@ -13052,8 +13079,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
                 # Pedido/Cliente só na 1ª linha do grupo — as demais ficam em
                 # branco e a célula mesclada (SPAN) cobre o grupo inteiro.
                 if indice_no_grupo == 0:
-                    cel_pedido = Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_celula)
-                    cel_cliente = Paragraph((pedido.cliente if pedido else None) or "—", estilo_celula)
+                    cel_pedido = Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_destaque)
+                    cel_cliente = Paragraph((pedido.cliente if pedido else None) or "—", estilo_destaque)
                 else:
                     cel_pedido = ""
                     cel_cliente = ""
@@ -13062,8 +13089,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
                     _pingo(cor),
                     cel_pedido,
                     cel_cliente,
-                    Paragraph(item.descricao_produto or "—", estilo_celula),
-                    Paragraph(str(qtd_txt), estilo_celula),
+                    Paragraph(item.descricao_produto or "—", estilo_destaque),
+                    Paragraph(str(qtd_txt), estilo_destaque),
                 ]
                 if incluir_mp:
                     linha_tabela.append(_celula_materia_item(item))
@@ -13082,9 +13109,14 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
                 spans_pedido.append((linha_inicio_grupo, linha_atual - 1))
             divisores_grupo.append(linha_atual - 1)
 
-        pesos = [4, 9, 13, 17, 5, 15, 8, 8, 8, 8, 9] if incluir_mp else [4, 11, 16, 22, 6, 10, 10, 10, 10, 11]
-        soma_pesos = sum(pesos)
-        larguras_mm = [p / soma_pesos * largura_disponivel for p in pesos]
+        # Larguras em mm (soma = 277mm do A4 paisagem com margens de 10mm):
+        # datas/situação com largura mínima garantida (letra pequena), o
+        # resto vai pras 4 colunas grandes (Pedido/Cliente/Produto/Qtd).
+        if incluir_mp:
+            ws = [6, 22, 38, 46, 16, 38, 21, 21, 21, 21, 27]
+        else:
+            ws = [6, 24, 55, 64, 17, 21, 21, 21, 21, 27]
+        larguras_mm = [w / sum(ws) * largura_disponivel for w in ws]
 
         tabela = Table(dados_tabela, colWidths=larguras_mm, repeatRows=1)
         estilo_tabela = [
@@ -13093,8 +13125,8 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (0, 0), (0, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
         ]
@@ -13220,7 +13252,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         if not linhas_totais and not nao_identificados:
             return []
 
-        flow = [_faixa_grupo(f"TOTAL DE MATÉRIA-PRIMA PRINCIPAL — {titulo_bloco}", COR_MATERIA_PRIMA, compacta=True)]
+        flow = [CondPageBreak(40 * mm), _faixa_grupo(f"TOTAL DE MATÉRIA-PRIMA PRINCIPAL — {titulo_bloco}", COR_MATERIA_PRIMA, compacta=True)]
         if linhas_totais:
             flow.append(_tabela_total_materiais(linhas_totais))
         else:
@@ -13247,6 +13279,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
             ("pendente", "PENDENTE — FILA", COR_GRUPO_PENDENTE, [i for i in itens if i.status_producao == "PENDENTE"]),
         ]
         for _chave, titulo, cor_fundo, itens_grupo in grupos:
+            elementos.append(CondPageBreak(75 * mm if itens_grupo else 30 * mm))  # faixa nunca sozinha no pé da página (1º grupo da tabela não quebra)
             elementos.append(_faixa_grupo(f"{titulo} — {len(itens_grupo)} ITEM(NS)", cor_fundo))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
@@ -13290,6 +13323,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         # bloco em vez de 2, pra nunca destoar do relatório "ambos".
         titulo_unico = "PENDENTE — FILA" if status_filtro == "pendente" else "EM PRODUÇÃO"
         cor_unica = COR_GRUPO_PENDENTE if status_filtro == "pendente" else COR_GRUPO_EM_PRODUCAO
+        elementos.append(CondPageBreak(75 * mm if itens else 30 * mm))
         elementos.append(_faixa_grupo(f"{titulo_unico} — {len(itens)} ITEM(NS)", cor_unica))
         if itens:
             elementos.append(_tabela_itens(itens))
@@ -13358,7 +13392,7 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import CondPageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     COR_SEMAFORO_BG = {
         "vermelho": colors.HexColor("#f8d7da"),
@@ -13404,6 +13438,17 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
         textColor=COR_CABECALHO_TEXTO,
     )
     estilo_mp_aviso = ParagraphStyle("mp_aviso", parent=estilo_celula, textColor=colors.HexColor("#856404"), fontName="Helvetica-Oblique")
+    # Letra grande nas 4 colunas principais (pedido do Bruno, 08/10/2026,
+    # painel do chão de fábrica) — ver nota em _gerar_pdf_estacao. Retrato é
+    # mais estreito, então um pouco menor que no relatório de uma estação.
+    fonte_destaque = 8.8 if incluir_mp else 11
+    estilo_destaque = ParagraphStyle(
+        "destaque_multi", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=fonte_destaque, leading=fonte_destaque * 1.18,
+    )
+    estilo_destaque_cabecalho = ParagraphStyle(
+        "destaque_cab_multi", parent=estilo_cabecalho_tabela, fontSize=9, leading=10.5,
+    )
 
     largura_disponivel = A4[0] - doc.leftMargin - doc.rightMargin
 
@@ -13422,8 +13467,8 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
 
     def _kpi(valor, rotulo_kpi):
         return [
-            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=16, fontName="Helvetica-Bold", alignment=1)),
-            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=8, alignment=1)),
+            Paragraph(str(valor), ParagraphStyle("kpi_valor", parent=estilos["Normal"], fontSize=22, leading=26, fontName="Helvetica-Bold", alignment=1)),
+            Paragraph(rotulo_kpi, ParagraphStyle("kpi_rotulo", parent=estilos["Normal"], fontSize=9, leading=11, fontName="Helvetica-Bold", alignment=1)),
         ]
 
     hoje = date.today()
@@ -13490,8 +13535,8 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
         t = Table([[Paragraph(texto, estilo_faixa)]], colWidths=[largura_disponivel])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), cor_fundo),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 7 if fonte >= 14 else 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7 if fonte >= 14 else 5),
             ("LEFTPADDING", (0, 0), (-1, -1), 7),
         ]))
         return t
@@ -13505,7 +13550,14 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
                 indice_por_pedido[chave] = len(grupos)
                 grupos.append([])
             grupos[indice_por_pedido[chave]].append(item)
-        return grupos
+        # Letra grande: limita a altura de cada grupo mesclado (ver nota em
+        # _gerar_pdf_estacao) — pedaços de no máximo 10 itens.
+        maximo_por_grupo = 10
+        divididos = []
+        for g in grupos:
+            for i in range(0, len(g), maximo_por_grupo):
+                divididos.append(g[i:i + maximo_por_grupo])
+        return divididos
 
     # ------------------------------------------------------------------
     # Matéria-prima principal por item (pedido do Bruno, 24/09/2026, 4ª
@@ -13593,7 +13645,7 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
         linhas_totais, nao_identificados = _agregar_materiais(itens_grupo)
         if not linhas_totais and not nao_identificados:
             return []
-        flow = [_faixa(f"TOTAL DE MATÉRIA-PRIMA PRINCIPAL — {titulo_bloco}", COR_MATERIA_PRIMA, fonte=9)]
+        flow = [CondPageBreak(40 * mm), _faixa(f"TOTAL DE MATÉRIA-PRIMA PRINCIPAL — {titulo_bloco}", COR_MATERIA_PRIMA, fonte=9)]
         if linhas_totais:
             flow.append(_tabela_total_materiais(linhas_totais))
         else:
@@ -13618,7 +13670,7 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
     # MESMA largura absoluta (soma de pesos igual, 550) nos dois casos.
     pesos = (
         [18, 40, 67, 77, 30, 80, 46, 46, 46, 46, 54] if incluir_mp
-        else [18, 40, 104, 120, 30, 46, 46, 46, 46, 54]
+        else [14, 40, 90, 105, 32, 48, 48, 48, 48, 54]  # 08/10/2026: mais largura pras 4 colunas grandes
     )
     soma_pesos = sum(pesos)
     larguras_colunas = [p / soma_pesos * largura_disponivel for p in pesos]
@@ -13628,7 +13680,10 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
         if incluir_mp:
             cabecalho.append('Matéria-prima<br/><font size="6.2">(unitário/lote)</font>')
         cabecalho += ["Incluído", "Solicitado", "Previsto", "Início OP", "Situação prazo"]
-        dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) if c else "" for c in cabecalho]]
+        dados_tabela = [[
+            (Paragraph(c, estilo_destaque_cabecalho if c in ("Pedido", "Cliente", "Produto", "Qtd") else estilo_cabecalho_tabela) if c else "")
+            for c in cabecalho
+        ]]
         cores_linhas = [COR_CABECALHO_BG]
         spans_pedido = []
         divisores_grupo = []
@@ -13650,8 +13705,8 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
                 qtd_txt = int(qtd) if qtd == int(qtd) else qtd
 
                 if indice_no_grupo == 0:
-                    cel_pedido = Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_celula)
-                    cel_cliente = Paragraph((pedido.cliente if pedido else None) or "—", estilo_celula)
+                    cel_pedido = Paragraph((pedido.pedido_venda if pedido else None) or "—", estilo_destaque)
+                    cel_cliente = Paragraph((pedido.cliente if pedido else None) or "—", estilo_destaque)
                 else:
                     cel_pedido = ""
                     cel_cliente = ""
@@ -13660,8 +13715,8 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
                     _pingo(cor),
                     cel_pedido,
                     cel_cliente,
-                    Paragraph(item.descricao_produto or "—", estilo_celula),
-                    Paragraph(str(qtd_txt), estilo_celula),
+                    Paragraph(item.descricao_produto or "—", estilo_destaque),
+                    Paragraph(str(qtd_txt), estilo_destaque),
                 ]
                 if incluir_mp:
                     linha_tabela.append(_celula_materia_item(item))
@@ -13711,7 +13766,8 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
 
     for estacao, itens in estacoes_com_itens:
         rotulo = rotulo_estacao(estacao.nome)
-        elementos.append(_faixa(f"{rotulo} — {len(itens)} ITEM(NS)", COR_ESTACAO_BANNER, fonte=13))
+        elementos.append(CondPageBreak(110 * mm))  # banner da estação + 1º bloco nunca soltos no pé
+        elementos.append(_faixa(f"{rotulo} — {len(itens)} ITEM(NS)", COR_ESTACAO_BANNER, fonte=20))
         elementos.append(Spacer(1, 2 * mm))
 
         if status_filtro == "ambos":
@@ -13725,7 +13781,8 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
             subgrupos = [(titulo_unico, cor_unica, itens)]
 
         for titulo, cor_fundo, itens_grupo in subgrupos:
-            elementos.append(_faixa(f"{titulo} — {len(itens_grupo)} item(ns)", cor_fundo, fonte=10))
+            elementos.append(CondPageBreak(95 * mm if itens_grupo else 30 * mm))
+            elementos.append(_faixa(f"{titulo} — {len(itens_grupo)} item(ns)", cor_fundo, fonte=17))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
                 if incluir_mp:
