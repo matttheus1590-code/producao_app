@@ -12744,6 +12744,33 @@ def _itens_relatorio_estacao(nome, status_filtro):
     return itens
 
 
+def _dividir_grupos_pedido(grupos, maximo=3):
+    """Divide cada grupo de itens do mesmo pedido em pedaços de NO MÁXIMO
+    `maximo` itens, com tamanhos equilibrados (7 itens -> 3+2+2, não 3+3+1).
+
+    Motivo (pedido do Bruno, 08/10/2026: "preciso que aproveite ao máximo o
+    espaço das folhas" — print com 1/3 da folha em branco no PU): as células
+    mescladas de Pedido/Cliente NÃO quebram entre páginas, então um pedido
+    com muitos itens, com a letra grande, pulava inteiro pra próxima folha e
+    deixava um buraco enorme. Com pedaços de até 3 linhas, o desperdício no
+    fim de cada folha fica de no máximo ~2 linhas; o número do pedido/cliente
+    reaparece no início de cada pedaço."""
+    divididos = []
+    for g in grupos:
+        n = len(g)
+        if n <= maximo:
+            divididos.append(g)
+            continue
+        qtd_pedacos = -(-n // maximo)
+        base, resto = divmod(n, qtd_pedacos)
+        inicio = 0
+        for k in range(qtd_pedacos):
+            tamanho = base + (1 if k < resto else 0)
+            divididos.append(g[inicio:inicio + tamanho])
+            inicio += tamanho
+    return divididos
+
+
 def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
     """Relatório PDF de UMA estação (pedido do Bruno, 11/09/2026, revisado
     17/09/2026 — "deixe mais intuitivo e visual... AGRUPE SEPARADAMENTE o que
@@ -12987,16 +13014,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
                 indice_por_pedido[chave] = len(grupos)
                 grupos.append([])
             grupos[indice_por_pedido[chave]].append(item)
-        # Com a letra grande, um pedido com MUITOS itens poderia ficar mais
-        # alto que a página (a célula mesclada de Pedido/Cliente não quebra
-        # entre páginas e o PDF falharia) — pedaços de no máximo 8 itens; o
-        # número do pedido/cliente reaparece no início de cada pedaço.
-        maximo_por_grupo = 8
-        divididos = []
-        for g in grupos:
-            for i in range(0, len(g), maximo_por_grupo):
-                divididos.append(g[i:i + maximo_por_grupo])
-        return divididos
+        return _dividir_grupos_pedido(grupos)
 
     def _celula_materia_item(item):
         """Pesagem de matéria-prima PRINCIPAL do item, associada direto na
@@ -13279,7 +13297,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
             ("pendente", "PENDENTE — FILA", COR_GRUPO_PENDENTE, [i for i in itens if i.status_producao == "PENDENTE"]),
         ]
         for _chave, titulo, cor_fundo, itens_grupo in grupos:
-            elementos.append(CondPageBreak(75 * mm if itens_grupo else 30 * mm))  # faixa nunca sozinha no pé da página (1º grupo da tabela não quebra)
+            elementos.append(CondPageBreak(62 * mm if itens_grupo else 30 * mm))  # faixa nunca sozinha no pé da página (1º grupo da tabela não quebra)
             elementos.append(_faixa_grupo(f"{titulo} — {len(itens_grupo)} ITEM(NS)", cor_fundo))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
@@ -13323,7 +13341,7 @@ def _gerar_pdf_estacao(estacao, itens, status_filtro, incluir_mp=True):
         # bloco em vez de 2, pra nunca destoar do relatório "ambos".
         titulo_unico = "PENDENTE — FILA" if status_filtro == "pendente" else "EM PRODUÇÃO"
         cor_unica = COR_GRUPO_PENDENTE if status_filtro == "pendente" else COR_GRUPO_EM_PRODUCAO
-        elementos.append(CondPageBreak(75 * mm if itens else 30 * mm))
+        elementos.append(CondPageBreak(62 * mm if itens else 30 * mm))
         elementos.append(_faixa_grupo(f"{titulo_unico} — {len(itens)} ITEM(NS)", cor_unica))
         if itens:
             elementos.append(_tabela_itens(itens))
@@ -13550,14 +13568,7 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
                 indice_por_pedido[chave] = len(grupos)
                 grupos.append([])
             grupos[indice_por_pedido[chave]].append(item)
-        # Letra grande: limita a altura de cada grupo mesclado (ver nota em
-        # _gerar_pdf_estacao) — pedaços de no máximo 10 itens.
-        maximo_por_grupo = 10
-        divididos = []
-        for g in grupos:
-            for i in range(0, len(g), maximo_por_grupo):
-                divididos.append(g[i:i + maximo_por_grupo])
-        return divididos
+        return _dividir_grupos_pedido(grupos)
 
     # ------------------------------------------------------------------
     # Matéria-prima principal por item (pedido do Bruno, 24/09/2026, 4ª
@@ -13766,7 +13777,7 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
 
     for estacao, itens in estacoes_com_itens:
         rotulo = rotulo_estacao(estacao.nome)
-        elementos.append(CondPageBreak(110 * mm))  # banner da estação + 1º bloco nunca soltos no pé
+        elementos.append(CondPageBreak(90 * mm))  # banner da estação + 1º bloco nunca soltos no pé
         elementos.append(_faixa(f"{rotulo} — {len(itens)} ITEM(NS)", COR_ESTACAO_BANNER, fonte=20))
         elementos.append(Spacer(1, 2 * mm))
 
@@ -13781,7 +13792,7 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
             subgrupos = [(titulo_unico, cor_unica, itens)]
 
         for titulo, cor_fundo, itens_grupo in subgrupos:
-            elementos.append(CondPageBreak(95 * mm if itens_grupo else 30 * mm))
+            elementos.append(CondPageBreak(70 * mm if itens_grupo else 30 * mm))
             elementos.append(_faixa(f"{titulo} — {len(itens_grupo)} item(ns)", cor_fundo, fonte=17))
             if itens_grupo:
                 elementos.append(_tabela_itens(itens_grupo))
