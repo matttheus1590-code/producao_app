@@ -19170,51 +19170,6 @@ def register_routes(app):
         )
 
     # ------------------------------------------------------------------
-    # Gestão de Risco / Torre de Controle de OTD (pedido do Bruno,
-    # 11/09/2026) — ver cabeçalho de _pedidos_risco_otd (app.py) pro
-    # desenho completo. Só pedidos CIF, sempre calculado ao vivo.
-    # ------------------------------------------------------------------
-    @app.route("/gestao-risco")
-    @login_required
-    def gestao_risco():
-        linhas, resumo = _pedidos_risco_otd(request.args)
-        filtros = {
-            "busca": (request.args.get("busca", "") or "").strip(),
-            "status": [v for v in _getlist_seguro(request.args, "status") if v in RISCO_OTD_STATUS_INFO],
-        }
-        # Aba Simulação (pedido do Bruno, 11/09/2026): Simulado A (parâmetro)
-        # x Simulado B (realidade, = a própria linha acima) — mesmo conjunto
-        # já filtrado, sem duplicar a consulta de pedidos.
-        simulacoes, resumo_simulacao = _simulacao_otd(linhas)
-        return render_template(
-            "gestao_risco.html",
-            linhas=linhas, resumo=resumo, filtros=filtros,
-            RISCO_OTD_STATUS_INFO=RISCO_OTD_STATUS_INFO,
-            simulacoes=simulacoes, resumo_simulacao=resumo_simulacao,
-            SIMULACAO_BALANCO_INFO=SIMULACAO_BALANCO_INFO,
-        )
-
-    @app.route("/gestao-risco/relatorio.xlsx")
-    @login_required
-    def gestao_risco_xlsx():
-        linhas, resumo = _pedidos_risco_otd(request.args)
-        filtros = {
-            "busca": (request.args.get("busca", "") or "").strip(),
-            "status": [v for v in _getlist_seguro(request.args, "status") if v in RISCO_OTD_STATUS_INFO],
-        }
-        return _gerar_excel_risco_otd(linhas, resumo, filtros)
-
-    @app.route("/gestao-risco/relatorio.pdf")
-    @login_required
-    def gestao_risco_pdf():
-        linhas, resumo = _pedidos_risco_otd(request.args)
-        filtros = {
-            "busca": (request.args.get("busca", "") or "").strip(),
-            "status": [v for v in _getlist_seguro(request.args, "status") if v in RISCO_OTD_STATUS_INFO],
-        }
-        return _gerar_pdf_risco_otd(linhas, resumo, filtros)
-
-    # ------------------------------------------------------------------
     # Qualidade — RNC (Relatório de Não Conformidade). Área nova (31/08/2026),
     # independente de Gestão Produção/Operação. Pedido do Bruno: controle
     # totalmente manual e intuitivo, aberto a todos os usuários autenticados
