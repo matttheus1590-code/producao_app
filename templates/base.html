@@ -18,14 +18,20 @@
       </div>
 
       <nav class="app-sidebar-nav">
-        {% if current_user.role != 'PD' %}
+        {% if current_user.role not in ('PD', 'COMERCIAL') %}
         <a class="app-nav-link {% if request.endpoint == 'painel' %}active{% endif %}" href="{{ url_for('painel') }}">
           <span>🎛️ Painel</span>
         </a>
-        <a class="app-nav-link {% if request.endpoint == 'consulta_pedido' %}active{% endif %}" href="{{ url_for('consulta_pedido') }}">
-          <span>🔍 Consulta Pedido</span>
+        {% endif %}
+        {# Pedido do Bruno (09/10/2026): Consulta Pedido virou também "Planejamento PCP" (aba nova com a
+           programação por semana) e é a ÚNICA tela do perfil Comercial. #}
+        {% if current_user.role != 'PD' %}
+        <a class="app-nav-link {% if request.endpoint in ('consulta_pedido', 'consulta_planejamento_pcp') %}active{% endif %}" href="{{ url_for('consulta_pedido') }}">
+          <span>🔍 Consulta Pedido/Planejamento PCP</span>
         </a>
+        {% endif %}
 
+        {% if current_user.role not in ('PD', 'COMERCIAL') %}
         <div class="app-nav-section">📦 Gestão Operação</div>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_listagem_geral' %}active{% endif %}" href="{{ url_for('gestao_operacao_listagem_geral') }}">
           <span>📃 Operação 360</span>
@@ -39,6 +45,7 @@
 
         {% endif %}
 
+        {% if current_user.role != 'COMERCIAL' %}
         <div class="app-nav-section">🏭 Gestão Produção</div>
         {% if current_user.role != 'PD' %}
         <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
@@ -166,6 +173,7 @@
           <span>🧹 Zerar dados de teste</span>
         </a>
         {% endif %}
+        {% endif %}{# fim: tudo abaixo de Consulta Pedido some pro perfil COMERCIAL #}
       </nav>
 
       <div class="app-sidebar-footer">

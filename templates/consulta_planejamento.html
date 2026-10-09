@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Consulta Pedido/Planejamento PCP · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+
+{# Pedido do Bruno (09/10/2026): aba "Planejamento PCP" dentro de Consulta
+   Pedido — a programação do PCP por semana (mesmos quadrantes SEMANA 01-04
+   da Listagem Geral + Backlog do mês seguinte), só leitura, pensada pro
+   comercial. Tudo calculado no servidor (ver _dados_planejamento_consulta). #}
+<style>
+  .cp-semana-card { border: 1px solid var(--bs-border-color); border-radius: .75rem; background: #fff; height: 100%;
+                    text-decoration: none; color: inherit; display: block; transition: box-shadow .15s, transform .15s; position: relative; }
+  .cp-semana-card:hover { box-shadow: 0 .4rem 1rem rgba(0,0,0,.12); transform: translateY(-2px); color: inherit; }
+  .cp-semana-card.cp-atual { border-color: #198754; box-shadow: 0 0 0 2px rgba(25,135,84,.25); }
+  .cp-semana-card.cp-backlog { background: var(--bs-primary-bg-subtle); }
+  .cp-semana-card.cp-vazia { opacity: .6; }
+  .cp-barra { height: 8px; border-radius: 4px; overflow: hidden; display: flex; background: #e9ecef; }
+  .cp-barra > div { height: 100%; }
+  .cp-kpi { border-radius: .75rem; }
+  .cp-secao-head { cursor: pointer; }
+  .cp-pedido-cel { white-space: nowrap; }
+  .cp-tabela td, .cp-tabela th { font-size: .875rem; }
+  .cp-tabela tbody tr.cp-sep > td { border-top: 2px solid #adb5bd; }
+</style>
+
+<h4 class="mb-3">🔍 Consulta Pedido/Planejamento PCP</h4>
+
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item"><a class="nav-link" href="{{ url_for('consulta_pedido') }}"><i class="bi bi-search"></i> Consultar pedido</a></li>
+  <li class="nav-item"><a class="nav-link active" href="{{ url_for('consulta_planejamento_pcp') }}"><i class="bi bi-calendar3-week"></i> Planejamento PCP</a></li>
+</ul>
+
+{% set resumo_mes = dados.resumo_mes %}
+
+{# ---------- Barra de controle: mês, busca, status, PDF ---------- #}
+<form method="get" class="card shadow-sm mb-3" id="formPlanejamento">
+  <div class="card-body py-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-lg-auto">
+        <label class="form-label small text-muted mb-1">Mês do planejamento</label>
+        <div class="input-group">
+          <a class="btn btn-outline-secondary" title="Mês anterior"
+             href="{{ url_for('consulta_planejamento_pcp', mes=mes_anterior_valor, busca=busca, status=status) }}"><i class="bi bi-chevron-left"></i></a>
+          <input type="month" class="form-control" name="mes" value="{{ mes_valor }}" onchange="this.form.submit()" style="min-width: 10.5rem;">
+          <a class="btn btn-outline-secondary" title="Próximo mês"
+             href="{{ url_for('consulta_planejamento_pcp', mes=mes_seguinte_valor, busca=busca, status=status) }}"><i class="bi bi-chevron-right"></i></a>
+          {% if mes_valor != mes_atual_valor %}
+          <a class="btn btn-outline-primary" href="{{ url_for('consulta_planejamento_pcp', busca=busca, status=status) }}">Mês atual</a>
+          {% endif %}
+        </div>
+      </div>
+      <div class="col-12 col-md-5 col-lg">
+        <label class="form-label small text-muted mb-1">Buscar (pedido, cliente ou produto)</label>
+        <div class="input-group">
+          <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+          <input type="text" class="form-control" name="busca" value="{{ busca }}" placeholder="Ex.: 954, CATTALINI, PIG…">
+        </div>
+      </div>
+      <div class="col-6 col-md-3 col-lg-2">
+        <label class="form-label small text-muted mb-1">Status</label>
+        <select class="form-select" name="status" onchange="this.form.submit()">
+          <option value="">Todos</option>
+          {% for s in STATUS_OPCOES %}<option value="{{ s }}" {{ 'selected' if status == s }}>{{ s.title() }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> Filtrar</button>
+        {% if busca or status %}
+        <a class="btn btn-outline-secondary" href="{{ url_for('consulta_planejamento_pcp', mes=mes_valor) }}" title="Limpar filtros"><i class="bi bi-eraser"></i></a>
+        {% endif %}
+      </div>
+      <div class="col-auto ms-lg-auto">
+        <a class="btn btn-outline-danger" target="_blank"
+           href="{{ url_for('relatorio_listagem_geral_semanal_pdf', planejamento_mensal=mes_valor, incluir_backlog=1, busca=busca) }}">
+          <i class="bi bi-file-earmark-pdf"></i> Baixar PDF
+        </a>
+      </div>
+    </div>
+  </div>
+</form>
+
+{# ---------- Resumo do mês ---------- #}
+<h5 class="mb-2">{{ mes_titulo }} <span class="text-muted fs-6">— programação do PCP</span></h5>
+<div class="row g-2 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="card cp-kpi h-100 shadow-sm"><div class="card-body py-3">
+      <div class="text-muted small">Pedidos no mês</div>
+      <div class="fs-2 fw-semibold lh-1">{{ resumo_mes.pedidos }}</div>
+      <div class="text-muted small mt-1">{{ resumo_mes.itens }} item(ns) planejado(s)</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card cp-kpi h-100 shadow-sm"><div class="card-body py-3">
+      <div class="text-muted small">Valor planejado</div>
+      <div class="fs-3 fw-semibold lh-1">{{ resumo_mes.valor | moeda_brl }}</div>
+      <div class="text-muted small mt-1">soma dos itens do mês</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card cp-kpi h-100 shadow-sm"><div class="card-body py-3">
+      <div class="text-muted small">Concluído</div>
+      <div class="fs-2 fw-semibold lh-1 text-success">{{ resumo_mes.pct_finalizado }}%</div>
+      <div class="cp-barra mt-2" title="Distribuição dos itens por status">
+        {% for s in STATUS_OPCOES %}<div class="bg-{{ STATUS_CORES.get(s, 'secondary') }}" style="width: {{ resumo_mes.pct_barra[s] }}%"></div>{% endfor %}
+      </div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card cp-kpi h-100 shadow-sm {{ 'border-warning bg-warning-subtle' if resumo_mes.alertas else '' }}"><div class="card-body py-3">
+      <div class="text-muted small">Atenção ao prazo do cliente</div>
+      <div class="fs-2 fw-semibold lh-1 {{ 'text-warning-emphasis' if resumo_mes.alertas else 'text-success' }}">{{ resumo_mes.alertas }}</div>
+      <div class="text-muted small mt-1">{% if resumo_mes.alertas %}item(ns) com liberação prevista após o prazo{% else %}nenhum item fora do prazo{% endif %}</div>
+    </div></div>
+  </div>
+</div>
+
+{# ---------- Quadros por semana (clicáveis: descem até a seção) ---------- #}
+<p class="text-muted small mb-2"><i class="bi bi-calendar3"></i> Clique num quadro pra ir direto aos pedidos daquele período.</p>
+<div class="row g-2 mb-4">
+  {% for sem in dados.semanas if sem.titulo.startswith('SEMANA') %}
+  <div class="col-6 col-md-4 col-xl">
+    <a href="#{{ sem.ancora }}" class="cp-semana-card p-3 {{ 'cp-atual' if sem.atual }} {{ 'cp-vazia' if not sem.resumo.pedidos }}">
+      {% if sem.atual %}<span class="stat-card-selo-atual" title="Semana atual"><span class="stat-card-dot"></span>Atual</span>{% endif %}
+      <div class="fw-semibold">{{ sem.titulo }}</div>
+      <div class="text-muted small mb-2">{{ sem.periodo }}</div>
+      <div class="fs-3 fw-semibold lh-1">{{ sem.resumo.pedidos }} <span class="fs-6 text-muted fw-normal">pedido(s)</span></div>
+      <div class="small text-muted mt-1">{{ sem.resumo.valor | moeda_brl }}</div>
+      <div class="cp-barra mt-2">
+        {% for s in STATUS_OPCOES %}<div class="bg-{{ STATUS_CORES.get(s, 'secondary') }}" style="width: {{ sem.resumo.pct_barra[s] }}%"></div>{% endfor %}
+      </div>
+      {% if sem.resumo.alertas %}<div class="small mt-2 text-warning-emphasis"><i class="bi bi-exclamation-triangle-fill"></i> {{ sem.resumo.alertas }} fora do prazo</div>{% endif %}
+    </a>
+  </div>
+  {% endfor %}
+  <div class="col-6 col-md-4 col-xl">
+    <a href="#backlog" class="cp-semana-card cp-backlog p-3 {{ 'cp-vazia' if not dados.backlog.resumo.pedidos }}">
+      <div class="fw-semibold"><i class="bi bi-layers"></i> {{ dados.backlog.titulo | capitalize }}</div>
+      <div class="text-muted small mb-2">{{ dados.backlog.periodo }}</div>
+      <div class="fs-3 fw-semibold lh-1">{{ dados.backlog.resumo.pedidos }} <span class="fs-6 text-muted fw-normal">pedido(s)</span></div>
+      <div class="small text-muted mt-1">{{ dados.backlog.resumo.valor | moeda_brl }}</div>
+      <div class="cp-barra mt-2">
+        {% for s in STATUS_OPCOES %}<div class="bg-{{ STATUS_CORES.get(s, 'secondary') }}" style="width: {{ dados.backlog.resumo.pct_barra[s] }}%"></div>{% endfor %}
+      </div>
+    </a>
+  </div>
+</div>
+
+<div class="d-flex flex-wrap gap-3 small text-muted mb-3">
+  <span>Legenda de status:</span>
+  {% for s in STATUS_OPCOES %}<span><span class="badge bg-{{ STATUS_CORES.get(s, 'secondary') }}">&nbsp;</span> {{ s.title() }}</span>{% endfor %}
+</div>
+
+{# ---------- Seções (macro reaproveitada: semanas + backlog + sem semana) ---------- #}
+{% macro secao(sec, cor_head, aberta, status_cores) %}
+<div class="card shadow-sm mb-3" id="{{ sec.ancora }}" style="scroll-margin-top: 1rem;">
+  <div class="card-header cp-secao-head d-flex flex-wrap justify-content-between align-items-center gap-2 {{ cor_head }}"
+       data-bs-toggle="collapse" data-bs-target="#corpo-{{ sec.ancora }}" aria-expanded="{{ 'true' if aberta else 'false' }}">
+    <div>
+      <span class="fw-semibold">{{ sec.titulo | upper if sec.titulo.startswith('SEMANA') else sec.titulo | capitalize }}</span>
+      {% if sec.periodo %}<span class="ms-2 opacity-75">({{ sec.periodo }})</span>{% endif %}
+      {% if sec.atual %}<span class="badge text-bg-success ms-2">Semana atual</span>{% endif %}
+    </div>
+    <div class="small">
+      <strong>{{ sec.resumo.pedidos }}</strong> pedido(s) · {{ sec.resumo.itens }} item(ns) · <strong>{{ sec.resumo.valor | moeda_brl }}</strong>
+      · {{ sec.resumo.pct_finalizado }}% concluído <i class="bi bi-chevron-expand ms-1"></i>
+    </div>
+  </div>
+  <div class="collapse {{ 'show' if aberta }}" id="corpo-{{ sec.ancora }}">
+    {% if sec.pedidos %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0 cp-tabela">
+        <thead class="table-light">
+          <tr>
+            <th>Pedido</th><th>Cliente</th><th>Produto</th><th class="text-end">Qtd</th><th>Estação</th><th>Status</th>
+            <th>Liberação prevista</th><th>Prazo do cliente</th><th>Situação</th><th class="text-end">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ped in sec.pedidos %}
+            {% for item, prazo in ped.linhas %}
+            <tr class="{{ 'cp-sep' if loop.first }}">
+              {% if loop.first %}
+              <td class="cp-pedido-cel fw-semibold" rowspan="{{ ped.linhas | length }}">
+                <a href="{{ url_for('consulta_pedido', pedido_venda=ped.pedido_venda) }}" title="Ver o acompanhamento completo do pedido">{{ ped.pedido_venda }}</a>
+                {% if ped.prioridade == 'ALTA' %}<span class="badge bg-danger ms-1">Alta</span>{% endif %}
+                <div class="text-muted fw-normal" style="font-size:.75rem;">Total {{ ped.valor | moeda_brl }}</div>
+              </td>
+              <td rowspan="{{ ped.linhas | length }}">{{ ped.cliente }}</td>
+              {% endif %}
+              <td>{{ item.descricao_produto }}</td>
+              <td class="text-end">{{ '%g' % item.quantidade if item.quantidade is not none else '—' }}</td>
+              <td>{{ item.estacao or '—' }}</td>
+              <td><span class="badge bg-{{ status_cores.get(item.status_producao, 'secondary') }}">{{ item.status_producao.title() }}</span></td>
+              <td class="text-nowrap">{{ item.liberacao_prevista.strftime('%d/%m/%Y') if item.liberacao_prevista else '—' }}</td>
+              <td class="text-nowrap">{{ item.data_cliente.strftime('%d/%m/%Y') if item.data_cliente else '—' }}</td>
+              <td class="text-nowrap">
+                {% if prazo[0] == 'ok' %}<span class="text-success"><i class="bi bi-check-circle-fill"></i> {{ prazo[1] }}</span>
+                {% elif prazo[0] == 'alerta' %}<span class="text-warning-emphasis fw-semibold"><i class="bi bi-exclamation-triangle-fill"></i> {{ prazo[1] }}</span>
+                {% elif prazo[0] == 'concluido' %}<span class="text-success"><i class="bi bi-check2-all"></i> {{ prazo[1] }}</span>
+                {% else %}<span class="text-muted">—</span>{% endif %}
+              </td>
+              <td class="text-end text-nowrap">{{ item.venda_total | moeda_brl }}</td>
+            </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-4"><i class="bi bi-calendar-x"></i> Nenhum pedido planejado neste período.</div>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{% for sec in dados.semanas %}
+  {{ secao(sec, 'bg-success-subtle' if sec.atual else ('bg-warning-subtle' if sec.ancora == 'sem-definida' else 'bg-body-secondary'), sec.pedidos | length > 0, STATUS_CORES) }}
+{% endfor %}
+{{ secao(dados.backlog, 'bg-primary-subtle', dados.backlog.pedidos | length > 0, STATUS_CORES) }}
+
+<p class="text-muted small mt-3">
+  <i class="bi bi-info-circle"></i> Esta tela é só de consulta. A programação é a mesma que o PCP atualiza na Listagem Geral;
+  a coluna <em>Situação</em> compara a liberação prevista de cada item com o prazo pedido pelo cliente.
+</p>
+
+{% endblock %}

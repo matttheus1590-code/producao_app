@@ -3,6 +3,8 @@
    cruzados por pedido_venda) — devolvido via fetch() e injetado na aba
    Consulta Pedido ao clicar numa sugestão/atalho do canal de busca. #}
 {% from "_macros.html" import rdim_status_item %}
+{# Perfil COMERCIAL (09/10/2026): sem Qualidade/RDIM — essas telas são internas. #}
+{% set ver_qualidade = current_user.role != 'COMERCIAL' %}
 {% if nao_encontrado %}
 <div class="alert alert-warning">
   <i class="bi bi-exclamation-triangle"></i>
@@ -140,7 +142,7 @@
         <thead class="table-light">
           <tr>
             <th>Produto</th><th>Qtd</th><th>Estação</th><th>Status</th>
-            <th>Início produção</th><th>Conclusão produção</th><th>Lead time</th><th>Qualidade</th>
+            <th>Início produção</th><th>Conclusão produção</th><th>Lead time</th>{% if ver_qualidade %}<th>Qualidade</th>{% endif %}
           </tr>
         </thead>
         <tbody>
@@ -153,15 +155,16 @@
             <td>{{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</td>
             <td>{{ item.termino_inspecao.strftime("%d/%m/%Y") if item.termino_inspecao else "—" }}</td>
             <td>{{ (item.lt_producao_dias|string + "d") if item.lt_producao_dias is not none else "—" }}</td>
-            <td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>
+            {% if ver_qualidade %}<td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>{% endif %}
           </tr>
           {% else %}
-          <tr><td colspan="8" class="text-center text-muted py-3">Nenhum item cadastrado.</td></tr>
+          <tr><td colspan="{{ 8 if ver_qualidade else 7 }}" class="text-center text-muted py-3">Nenhum item cadastrado.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
 
+    {% if ver_qualidade %}
     <h6 class="text-uppercase small text-muted mt-4 mb-2"><i class="bi bi-rulers"></i> Qualidade (Inspeção Final / RDIM)</h6>
     {% if resumo_rdim %}
     <div class="row g-3 mb-2">
@@ -193,6 +196,7 @@
     <div class="alert alert-light border small text-muted">
       <i class="bi bi-info-circle"></i> Nenhuma inspeção RDIM registrada ainda para os itens deste pedido.
     </div>
+    {% endif %}
     {% endif %}
     {% else %}
     <div class="alert alert-light border small text-muted">

@@ -4934,7 +4934,126 @@ def _pagina_inicial(usuario):
     bateria num 403 ali, então vai direto pro Dashboard de P&D."""
     if usuario.role == "PD":
         return url_for("pd_dashboard")
+    if usuario.role == "COMERCIAL":
+        # Perfil Comercial (pedido do Bruno, 09/10/2026): só enxerga Consulta
+        # Pedido/Planejamento PCP — a Listagem Geral bateria num 403.
+        return url_for("consulta_planejamento_pcp")
     return url_for("dashboard")
+
+
+
+# ----------------------------------------------------------------------
+# Consulta Pedido / Planejamento PCP (pedido do Bruno, 09/10/2026): aba nova
+# dentro de "Consulta Pedido", pensada pro COMERCIAL acompanhar a programação
+# do PCP (a MESMA da Listagem Geral — mesmos quadrantes SEMANA 01-04 com os
+# períodos de calendário + Backlog do mês seguinte) numa visão só de leitura,
+# no padrão gerencial/planejamento/comercial. Reaproveita 100% o pipeline da
+# Listagem Geral (_filtrar_pedidos + _linhas_listagem_geral +
+# _agrupar_linhas_por_quadrantes_pcp) pra nunca divergir do que o PCP vê.
+# ----------------------------------------------------------------------
+def _prazo_cliente_linha(l):
+    """Previsão de liberação do item x prazo solicitado pelo cliente — pro
+    comercial saber de relance se há risco de não cumprir o combinado.
+    Devolve (codigo, texto): ok / alerta / concluido / sem."""
+    if l.status_producao == "FINALIZADO":
+        return ("concluido", "Concluído")
+    prev, cli = l.liberacao_prevista, l.data_cliente
+    if not prev or not cli:
+        return ("sem", "—")
+    if prev <= cli:
+        return ("ok", "No prazo")
+    return ("alerta", f"+{(prev - cli).days}d após o prazo")
+
+
+def _resumo_linhas_consulta(linhas):
+    """Totais de um conjunto de linhas (itens) da aba Planejamento PCP."""
+    por_status = {s: 0 for s in STATUS_OPCOES}
+    valor = 0.0
+    alertas = 0
+    for l in linhas:
+        if l.status_producao in por_status:
+            por_status[l.status_producao] += 1
+        valor += float(l.venda_total or 0)
+        if _prazo_cliente_linha(l)[0] == "alerta":
+            alertas += 1
+    total = len(linhas)
+    pct = round(100 * por_status["FINALIZADO"] / total) if total else 0
+    return {
+        "pedidos": len({l.pedido.id for l in linhas}),
+        "itens": total,
+        "valor": valor,
+        "por_status": por_status,
+        "pct_finalizado": pct,
+        "alertas": alertas,
+        "pct_barra": {
+            s: (round(100 * n / total, 1) if total else 0) for s, n in por_status.items()
+        },
+    }
+
+
+def _pedidos_do_grupo_consulta(linhas):
+    """Agrupa as linhas (itens) de um quadrante por PEDIDO, ordenado pelo
+    prazo do cliente (mais urgente primeiro) e depois pelo nº do pedido."""
+    grupos = {}
+    for l in linhas:
+        grupos.setdefault(l.pedido.id, []).append(l)
+    saida = []
+    for itens in grupos.values():
+        itens.sort(key=lambda x: ((x.descricao_produto or "").upper(), x.item_id))
+        ref = itens[0]
+        saida.append(
+            {
+                "pedido_venda": ref.pedido_venda,
+                "cliente": ref.cliente,
+                "vendedor": ref.vendedor,
+                "data_cliente": ref.data_cliente,
+                "prioridade": ref.prioridade,
+                "valor": sum(float(i.venda_total or 0) for i in itens),
+                "linhas": [(i, _prazo_cliente_linha(i)) for i in itens],
+            }
+        )
+    saida.sort(key=lambda g: (g["data_cliente"] or date.max, (g["pedido_venda"] or "").upper()))
+    return saida
+
+
+def _dados_planejamento_consulta(mes_ano, busca="", status="", hoje=None):
+    """Monta tudo da aba Planejamento PCP: 4 semanas do mês + backlog (mês
+    seguinte, seção única) + resumo do mês."""
+    hoje = hoje or date.today()
+
+    def _linhas_do_mes(ma):
+        args = {"busca": busca, "planejamento_mensal": f"{ma[0]}-{ma[1]:02d}"}
+        query, _filtros = _filtrar_pedidos(args)
+        linhas = _linhas_listagem_geral(query.all(), args)
+        if status:
+            linhas = [l for l in linhas if l.status_producao == status]
+        return linhas
+
+    linhas_mes = _linhas_do_mes(mes_ano)
+    semanas = []
+    for n, (titulo, periodo_txt, linhas) in enumerate(_agrupar_linhas_por_quadrantes_pcp(linhas_mes, mes_ano), start=1):
+        if titulo.startswith("SEMANA"):
+            inicio, fim = _intervalo_calendario_semana_pcp(mes_ano, titulo)
+            atual = bool(inicio and fim and inicio <= hoje <= fim)
+            ancora = f"sem-{n}"
+        else:
+            atual, ancora = False, "sem-definida"
+        semanas.append(
+            {
+                "titulo": titulo, "periodo": periodo_txt.strip(" ()"), "ancora": ancora, "atual": atual,
+                "resumo": _resumo_linhas_consulta(linhas), "pedidos": _pedidos_do_grupo_consulta(linhas),
+            }
+        )
+
+    ano_seg, mes_seg = _somar_meses(*mes_ano, 1)
+    linhas_backlog = _linhas_do_mes((ano_seg, mes_seg))
+    backlog = {
+        "titulo": f"Backlog {MESES_PT_EXTENSO[mes_seg - 1].lower()}",
+        "periodo": f"01/{mes_seg:02d} a {monthrange(ano_seg, mes_seg)[1]:02d}/{mes_seg:02d}",
+        "ancora": "backlog", "atual": False,
+        "resumo": _resumo_linhas_consulta(linhas_backlog), "pedidos": _pedidos_do_grupo_consulta(linhas_backlog),
+    }
+    return {"semanas": semanas, "backlog": backlog, "resumo_mes": _resumo_linhas_consulta(linhas_mes)}
 
 
 def _parse_data_form(valor):
@@ -17130,6 +17249,30 @@ def register_routes(app):
             etapas=etapas, nao_encontrado=False,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
             prazos=prazos,
+        )
+
+    @app.route("/consulta-pedido/planejamento")
+    @login_required
+    def consulta_planejamento_pcp():
+        """Aba "Planejamento PCP" de Consulta Pedido (pedido do Bruno,
+        09/10/2026) — a programação do PCP por semana, só leitura, pro
+        comercial. Ver _dados_planejamento_consulta."""
+        hoje = date.today()
+        mes_ano = _parse_mes_ano_form((request.args.get("mes", "") or "").strip(), (hoje.year, hoje.month))
+        busca = (request.args.get("busca", "") or "").strip()
+        status = (request.args.get("status", "") or "").strip()
+        if status not in STATUS_OPCOES:
+            status = ""
+        dados = _dados_planejamento_consulta(mes_ano, busca=busca, status=status, hoje=hoje)
+        ano, mes = mes_ano
+        ant = _somar_meses(ano, mes, -1)
+        seg = _somar_meses(ano, mes, 1)
+        return render_template(
+            "consulta_planejamento.html",
+            dados=dados, busca=busca, status=status, STATUS_OPCOES=STATUS_OPCOES,
+            mes_valor=f"{ano}-{mes:02d}", mes_titulo=f"{MESES_PT_EXTENSO[mes - 1]} de {ano}",
+            mes_anterior_valor=f"{ant[0]}-{ant[1]:02d}", mes_seguinte_valor=f"{seg[0]}-{seg[1]:02d}",
+            mes_atual_valor=hoje.strftime("%Y-%m"),
         )
 
     @app.route("/consulta-pedido")

@@ -15,6 +15,11 @@ Papéis existentes:
            allowlist ENDPOINTS_PERMITIDOS_PD abaixo devolve 403 (ver
            `pode_acessar_endpoint`, chamada no `before_request` de app.py).
 
+  COMERCIAL - equipe comercial (pedido do Bruno, 09/10/2026): SÓ leitura e só
+           a tela "Consulta Pedido/Planejamento PCP" (consulta de pedido +
+           programação do PCP por semana). Mesmo mecanismo do PD: qualquer
+           rota fora do allowlist ENDPOINTS_PERMITIDOS_COMERCIAL devolve 403.
+
 Uso:
   @requer_role("ADMIN", "PCP")
   def minha_rota(): ...
@@ -28,7 +33,7 @@ from functools import wraps
 from flask import abort
 from flask_login import current_user, login_required
 
-ROLES = ("ADMIN", "PCP", "LIDER", "GESTAO", "PD")
+ROLES = ("ADMIN", "PCP", "LIDER", "GESTAO", "PD", "COMERCIAL")
 
 ROLES_LABELS = {
     "ADMIN": "Administrador",
@@ -36,6 +41,7 @@ ROLES_LABELS = {
     "LIDER": "Líder de setor",
     "GESTAO": "Gestão",
     "PD": "Líder de P&D",
+    "COMERCIAL": "Comercial",
 }
 
 # Endpoints (nomes de rota Flask, não caminhos de URL) que o papel PD pode
@@ -51,6 +57,14 @@ ENDPOINTS_PERMITIDOS_PD = {
     "estacoes_lista", "estacao_kanban",
 }
 
+# Endpoints que o papel COMERCIAL pode acessar — só Consulta Pedido/Planejamento
+# PCP (as 2 abas, o autocomplete/detalhe do pedido e o PDF do planejamento
+# mensal que sai da aba de Planejamento).
+ENDPOINTS_PERMITIDOS_COMERCIAL = {
+    "consulta_pedido", "consulta_pedido_busca_sugestoes", "consulta_pedido_busca_detalhe",
+    "consulta_planejamento_pcp", "relatorio_listagem_geral_semanal_pdf",
+}
+
 # Rotas sempre liberadas, mesmo pra um papel restrito por área — sem isso o
 # PD nem conseguiria fazer login/logout, e os arquivos estáticos (CSS/JS)
 # parariam de carregar.
@@ -64,10 +78,12 @@ def pode_acessar_endpoint(usuario, endpoint):
     já era restrito por papel, via `requer_role`/`pode_editar_estacao`)."""
     if not usuario or not usuario.is_authenticated:
         return True  # quem não está logado nem chega aqui — @login_required cuida disso antes
-    if usuario.role != "PD":
+    if usuario.role not in ("PD", "COMERCIAL"):
         return True
     if endpoint in ENDPOINTS_SEMPRE_LIVRES:
         return True
+    if usuario.role == "COMERCIAL":
+        return endpoint in ENDPOINTS_PERMITIDOS_COMERCIAL
     return endpoint in ENDPOINTS_PERMITIDOS_PD
 
 
