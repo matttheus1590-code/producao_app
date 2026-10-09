@@ -57,13 +57,17 @@
         </li>
       </ul>
     </div>
+    <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#kanbanBoardEstacao" data-tela-cheia-extra="#kanbanBuscaWrap"
+            data-tela-cheia-titulo="{{ rotulo }}" title="Abre o quadro em tela cheia (Esc para sair)">
+      <i class="bi bi-arrows-fullscreen"></i> Tela cheia
+    </button>
     <a href="{{ url_for('estacoes_lista') }}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-arrow-left"></i> Voltar
     </a>
   </div>
 </div>
 
-<div class="mb-3">
+<div class="mb-3" id="kanbanBuscaWrap">
   <div class="input-group input-group-sm kanban-busca-input" style="max-width: 440px;">
     <span class="input-group-text"><i class="bi bi-search"></i></span>
     <input type="text" id="buscaEstacao" class="form-control" placeholder="Buscar por produto ou nº do pedido...">
@@ -74,7 +78,7 @@
   <div class="form-text small" id="buscaEstacaoResultado"></div>
 </div>
 
-<div class="kanban-board">
+<div class="kanban-board" id="kanbanBoardEstacao">
   {% for etapa in STATUS_CHAO_OPCOES %}
   <div class="kanban-coluna">
     <div class="kanban-coluna-titulo bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }} bg-opacity-25">

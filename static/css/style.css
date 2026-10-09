@@ -1929,3 +1929,70 @@ body.col-resizing-ativo {
 .painel-hero-card-lt {
   border-left: 4px solid #fd7e14;
 }
+
+/* ---------------------------------------------------------------------
+   Tela cheia (pedido do Bruno, 09/10/2026) — ver "Tela cheia" em app.js.
+   z-index 1040: acima do menu lateral (1030) e abaixo dos modais/backdrop do
+   Bootstrap (1050/1055), que seguem funcionando por cima.
+--------------------------------------------------------------------- */
+body.tela-cheia-body {
+  overflow: hidden;
+}
+
+.tela-cheia-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1040;
+  background: #f4f6f9;
+  display: flex;
+  flex-direction: column;
+}
+
+.tela-cheia-barra {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0.9rem;
+  background: #1e2530;
+  color: #fff;
+}
+
+.tela-cheia-titulo {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tela-cheia-extra {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tela-cheia-extra > .mb-3 {
+  margin-bottom: 0 !important;
+}
+
+.tela-cheia-extra .form-text {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.tela-cheia-corpo {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0.5rem;
+}
+
+.tela-cheia-corpo > .tabela-listagem-geral-wrap.tela-cheia-ativa {
+  height: 100%;
+  max-height: none;
+}
+
+.tela-cheia-corpo > .kanban-board.tela-cheia-ativa {
+  height: 100%;
+  padding-bottom: 0;
+}
+
+.tela-cheia-corpo > .kanban-board.tela-cheia-ativa .kanban-coluna {
+  max-height: none;
+  height: 100%;
+}
