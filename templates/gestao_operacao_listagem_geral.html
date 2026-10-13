@@ -126,7 +126,7 @@
       <col style="width:110px">
       <col style="width:56px">
       <col style="width:52px">
-      <col style="width:96px">
+      {% if ve_pd_qualidade_custos %}<col style="width:96px">{% endif %}
       <col style="width:115px">
       <col style="width:54px">
     </colgroup>
@@ -152,7 +152,7 @@
         <th>Custo produção real</th>
         <th>Frete</th>
         <th>Estado</th>
-        <th>Qualidade</th>
+        {% if ve_pd_qualidade_custos %}<th>Qualidade</th>{% endif %}
         <th>Semanal PCP</th>
         <th></th>
       </tr>
@@ -238,6 +238,7 @@
         </td>
         <td>{{ p.frete or "—" }}</td>
         <td title="{{ p.cidade or '' }}{% if p.cidade and p.pais %} · {% endif %}{{ p.pais or '' }}">{{ p.estado or "—" }}</td>
+        {% if ve_pd_qualidade_custos %}
         <td>
           {% if rdim and rdim.reprovadas + rdim.com_desvio > 0 %}
             <a href="{{ url_for('rdim_lista', busca=p.pedido_venda, resultado=['REPROVADO', 'APROVADO_COM_DESVIO']) }}"
@@ -249,6 +250,7 @@
             <span class="text-muted">—</span>
           {% endif %}
         </td>
+        {% endif %}
         <td class="text-truncate" title="{{ 'Automático — direto do Planejamento semanal em Gestão Produção' if m.termino_semanal_automatico else (m.termino_semanal or '') }}">{{ m.termino_semanal or "—" }}</td>
         <td class="text-end">
           <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary" title="Editar">
@@ -257,7 +259,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="23" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="{{ 23 if ve_pd_qualidade_custos else 22 }}" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

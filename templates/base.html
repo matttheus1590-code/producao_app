@@ -48,9 +48,11 @@
         {% if current_user.role != 'COMERCIAL' %}
         <div class="app-nav-section">🏭 Gestão Produção</div>
         {% if current_user.role != 'PD' %}
+        {% if current_user.role != 'COMERCIAL_GERAL' %}
         <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
           <span>➕ Novo pedido</span>
         </a>
+        {% endif %}
         <a class="app-nav-link {% if request.endpoint in ('dashboard', 'detalhe_pedido', 'editar_pedido') %}active{% endif %}" href="{{ url_for('dashboard') }}">
           <span>📋 Listagem Geral</span>
         </a>
@@ -79,6 +81,7 @@
           <span>📥 Relatórios</span>
         </a>
 
+        {% if ve_pd_qualidade_custos %}
         <div class="app-nav-section">🛡️ Qualidade</div>
         <a class="app-nav-link {% if request.endpoint == 'qualidade_novo' %}active{% endif %}" href="{{ url_for('qualidade_novo') }}">
           <span>📝 Criar RNC</span>
@@ -99,7 +102,9 @@
           <span>📊 Dashboard RDIM</span>
         </a>
         {% endif %}
+        {% endif %}
 
+        {% if ve_pd_qualidade_custos %}
         <div class="app-nav-section">🧪 P&D</div>
         <a class="app-nav-link {% if request.endpoint == 'pd_dashboard' %}active{% endif %}" href="{{ url_for('pd_dashboard') }}">
           <span>📊 Dashboard</span>
@@ -119,6 +124,7 @@
         <a class="app-nav-link {% if request.endpoint == 'pd_conhecimento' %}active{% endif %}" href="{{ url_for('pd_conhecimento') }}">
           <span>📚 Base de Conhecimento</span>
         </a>
+        {% endif %}
 
         {% if current_user.role in ('ADMIN', 'PCP') %}
         <div class="app-nav-section">🗄️ Cadastros</div>

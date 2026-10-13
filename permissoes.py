@@ -20,6 +20,12 @@ Papéis existentes:
            programação do PCP por semana). Mesmo mecanismo do PD: qualquer
            rota fora do allowlist ENDPOINTS_PERMITIDOS_COMERCIAL devolve 403.
 
+  COMERCIAL_GERAL - comercial com visão ampla (pedido do Bruno, 13/10/2026,
+           caso da Andrieli): vê o sistema todo como o papel GESTAO (só
+           leitura), EXCETO P&D, Qualidade (RNC/RDIM) e Gestão de Custos —
+           bloqueados por prefixo de rota (PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL
+           abaixo), tanto no menu quanto direto pela URL (403).
+
 Uso:
   @requer_role("ADMIN", "PCP")
   def minha_rota(): ...
@@ -33,7 +39,7 @@ from functools import wraps
 from flask import abort
 from flask_login import current_user, login_required
 
-ROLES = ("ADMIN", "PCP", "LIDER", "GESTAO", "PD", "COMERCIAL")
+ROLES = ("ADMIN", "PCP", "LIDER", "GESTAO", "PD", "COMERCIAL", "COMERCIAL_GERAL")
 
 ROLES_LABELS = {
     "ADMIN": "Administrador",
@@ -42,6 +48,7 @@ ROLES_LABELS = {
     "GESTAO": "Gestão",
     "PD": "Líder de P&D",
     "COMERCIAL": "Comercial",
+    "COMERCIAL_GERAL": "Comercial (acesso geral)",
 }
 
 # Endpoints (nomes de rota Flask, não caminhos de URL) que o papel PD pode
@@ -65,6 +72,11 @@ ENDPOINTS_PERMITIDOS_COMERCIAL = {
     "consulta_planejamento_pcp", "relatorio_listagem_geral_semanal_pdf",
 }
 
+# Áreas bloqueadas pro COMERCIAL_GERAL: o nome do endpoint (rota Flask) começa
+# com um destes prefixos — P&D (pd_), Qualidade/RNC (qualidade_), Inspeções/
+# RDIM (rdim_) e Gestão de Custos (custos_).
+PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL = ("pd_", "qualidade_", "rdim_", "custos_")
+
 # Rotas sempre liberadas, mesmo pra um papel restrito por área — sem isso o
 # PD nem conseguiria fazer login/logout, e os arquivos estáticos (CSS/JS)
 # parariam de carregar.
@@ -78,13 +90,22 @@ def pode_acessar_endpoint(usuario, endpoint):
     já era restrito por papel, via `requer_role`/`pode_editar_estacao`)."""
     if not usuario or not usuario.is_authenticated:
         return True  # quem não está logado nem chega aqui — @login_required cuida disso antes
-    if usuario.role not in ("PD", "COMERCIAL"):
+    if usuario.role not in ("PD", "COMERCIAL", "COMERCIAL_GERAL"):
         return True
     if endpoint in ENDPOINTS_SEMPRE_LIVRES:
         return True
+    if usuario.role == "COMERCIAL_GERAL":
+        return not endpoint.startswith(PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL)
     if usuario.role == "COMERCIAL":
         return endpoint in ENDPOINTS_PERMITIDOS_COMERCIAL
     return endpoint in ENDPOINTS_PERMITIDOS_PD
+
+
+def ve_pd_qualidade_custos(usuario):
+    """False pros papéis que NÃO enxergam P&D, Qualidade e Gestão de Custos
+    (COMERCIAL e COMERCIAL_GERAL) — usado nos templates pra esconder menus,
+    colunas e links dessas áreas (senão virariam links que dão 403)."""
+    return not (usuario and usuario.is_authenticated and usuario.role in ("COMERCIAL", "COMERCIAL_GERAL"))
 
 
 def requer_role(*roles_permitidos):

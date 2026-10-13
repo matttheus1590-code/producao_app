@@ -273,7 +273,7 @@
       <col style="width:115px">
       <col style="width:115px">
       <col style="width:125px">
-      <col style="width:110px">
+      {% if ve_pd_qualidade_custos %}<col style="width:110px">{% endif %}
     </colgroup>
     <thead class="table-light">
       <tr>
@@ -298,7 +298,7 @@
         {{ sort_th("Venda unidade item", "venda_unidade", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Venda total item", "venda_total", "dashboard", sort, dir_ordenacao, filtros) }}
         {{ sort_th("Venda total pedido", "venda_total_pedido", "dashboard", sort, dir_ordenacao, filtros) }}
-        <th>Qualidade</th>
+        {% if ve_pd_qualidade_custos %}<th>Qualidade</th>{% endif %}
       </tr>
     </thead>
     <tbody>
@@ -337,10 +337,10 @@
         <td>R$ {{ "{:,.2f}".format(l.venda_unidade).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td>R$ {{ "{:,.2f}".format(l.venda_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
         <td>R$ {{ "{:,.2f}".format(l.venda_total_pedido).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-        <td>{{ rdim_status_item(l.item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>
+        {% if ve_pd_qualidade_custos %}<td>{{ rdim_status_item(l.item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>{% endif %}
       </tr>
       {% else %}
-      <tr><td colspan="22" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+      <tr><td colspan="{{ 22 if ve_pd_qualidade_custos else 21 }}" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -3,8 +3,8 @@
    cruzados por pedido_venda) — devolvido via fetch() e injetado na aba
    Consulta Pedido ao clicar numa sugestão/atalho do canal de busca. #}
 {% from "_macros.html" import rdim_status_item %}
-{# Perfil COMERCIAL (09/10/2026): sem Qualidade/RDIM — essas telas são internas. #}
-{% set ver_qualidade = current_user.role != 'COMERCIAL' %}
+{# Perfis COMERCIAL/COMERCIAL_GERAL: sem Qualidade/RDIM — essas telas são internas. #}
+{% set ver_qualidade = ve_pd_qualidade_custos %}
 {% if nao_encontrado %}
 <div class="alert alert-warning">
   <i class="bi bi-exclamation-triangle"></i>

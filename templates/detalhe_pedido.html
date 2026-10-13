@@ -119,7 +119,7 @@
                     <th>Estação</th>
                     <th>Status</th>
                     <th>Faturamento</th>
-                    <th>Qualidade</th>
+                    {% if ve_pd_qualidade_custos %}<th>Qualidade</th>{% endif %}
                   </tr>
                 </thead>
                 <tbody>
@@ -131,10 +131,10 @@
                     <td>{{ item.estacao or "—" }}</td>
                     <td><span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span></td>
                     <td>{{ item.liberacao_faturamento or "—" }}</td>
-                    <td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>
+                    {% if ve_pd_qualidade_custos %}<td>{{ rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) }}</td>{% endif %}
                   </tr>
                   {% else %}
-                  <tr><td colspan="7" class="text-center text-muted py-3">Nenhum item.</td></tr>
+                  <tr><td colspan="{{ 7 if ve_pd_qualidade_custos else 6 }}" class="text-center text-muted py-3">Nenhum item.</td></tr>
                   {% endfor %}
                 </tbody>
               </table>
@@ -142,6 +142,7 @@
           </div>
         </div>
 
+        {% if ve_pd_qualidade_custos %}
         <div class="card mb-4">
           <div class="card-body">
             <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-rulers"></i> Qualidade (Inspeção Final / RDIM)</h6>
@@ -178,6 +179,7 @@
             {% endif %}
           </div>
         </div>
+        {% endif %}
 
         <div class="card">
           <div class="card-body">

@@ -110,7 +110,7 @@ from models import (
     gerar_semanas_pcp,
     rotulo_estacao,
 )
-from permissoes import ROLES, ROLES_LABELS, pode_acessar_endpoint, pode_editar_estacao, requer_role
+from permissoes import ROLES, ROLES_LABELS, pode_acessar_endpoint, pode_editar_estacao, requer_role, ve_pd_qualidade_custos
 
 MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 MESES_PT_EXTENSO = [
@@ -1504,6 +1504,7 @@ def create_app():
         estacoes_ativas = [e.nome for e in Estacao.query.filter_by(ativo=True).order_by(Estacao.ordem_exibicao).all()]
         return dict(
             ASSET_V=_versao_estaticos(app),
+            ve_pd_qualidade_custos=ve_pd_qualidade_custos(current_user),
             ESTACOES=estacoes_ativas or ESTACOES,
             STATUS_OPCOES=STATUS_OPCOES,
             PRIORIDADE_OPCOES=PRIORIDADE_OPCOES,
