@@ -22,7 +22,7 @@ Papéis existentes:
 
   COMERCIAL_GERAL - comercial com visão ampla (pedido do Bruno, 13/10/2026,
            caso da Andrieli): vê o sistema todo como o papel GESTAO (só
-           leitura), EXCETO P&D, Qualidade (RNC/RDIM) e Gestão de Custos —
+           leitura), EXCETO Painel, P&D, Qualidade (RNC/RDIM) e Gestão de Custos —
            bloqueados por prefixo de rota (PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL
            abaixo), tanto no menu quanto direto pela URL (403).
 
@@ -77,6 +77,10 @@ ENDPOINTS_PERMITIDOS_COMERCIAL = {
 # RDIM (rdim_) e Gestão de Custos (custos_).
 PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL = ("pd_", "qualidade_", "rdim_", "custos_")
 
+# Painel (tela inicial de gestão + PDF) também bloqueado pro COMERCIAL_GERAL
+# (pedido do Bruno, 13/10/2026: "bloqueia o painel por completo").
+ENDPOINTS_BLOQUEADOS_COMERCIAL_GERAL = {"painel", "painel_relatorio_pdf"}
+
 # Rotas sempre liberadas, mesmo pra um papel restrito por área — sem isso o
 # PD nem conseguiria fazer login/logout, e os arquivos estáticos (CSS/JS)
 # parariam de carregar.
@@ -95,7 +99,7 @@ def pode_acessar_endpoint(usuario, endpoint):
     if endpoint in ENDPOINTS_SEMPRE_LIVRES:
         return True
     if usuario.role == "COMERCIAL_GERAL":
-        return not endpoint.startswith(PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL)
+        return endpoint not in ENDPOINTS_BLOQUEADOS_COMERCIAL_GERAL and not endpoint.startswith(PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL)
     if usuario.role == "COMERCIAL":
         return endpoint in ENDPOINTS_PERMITIDOS_COMERCIAL
     return endpoint in ENDPOINTS_PERMITIDOS_PD

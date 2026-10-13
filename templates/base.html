@@ -18,7 +18,7 @@
       </div>
 
       <nav class="app-sidebar-nav">
-        {% if current_user.role not in ('PD', 'COMERCIAL') %}
+        {% if current_user.role not in ('PD', 'COMERCIAL', 'COMERCIAL_GERAL') %}
         <a class="app-nav-link {% if request.endpoint == 'painel' %}active{% endif %}" href="{{ url_for('painel') }}">
           <span>🎛️ Painel</span>
         </a>
