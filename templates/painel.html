@@ -111,63 +111,75 @@
    prazo comercial (média + mês anterior) + CIF por região do Brasil. #}
 {% macro dias(v) -%}{{ (v|string + "d") if v is not none else "—" }}{%- endmacro %}
 
-{# chip do mês anterior: "📅 SET/2026 23.5d ▲ +12.8d" — para lead time, subir = ruim
-   (vermelho) e descer = bom (verde); `neutro` (prazo comercial = promessa, não
-   desempenho) usa azul/cinza em vez de bom/ruim. #}
-{% macro chip_mes(m, mes_curto, neutro=False) %}
+{# chips do mês anterior e do mês atual (pedido do Bruno, 19/10/2026): "📅 SET/2026 23.5d ▲ +12.8d"
+   — o delta é contra a MÉDIA DO ANO. Para lead time, subir = ruim (vermelho) e
+   descer = bom (verde); `neutro` (prazo comercial = promessa, não desempenho)
+   usa azul/cinza em vez de bom/ruim. O mês atual é parcial (em andamento). #}
+{% macro chip(rotulo, media, n, delta, neutro=False, parcial=False) %}
 <div class="lt-chip-mes d-inline-flex align-items-center gap-1 flex-wrap justify-content-center rounded-pill border px-2 py-1 small bg-body">
-  <span>📅 {{ mes_curto }}</span>
-  {% if m.mes_media is not none %}
-    <strong>{{ dias(m.mes_media) }}</strong>
-    {% if m.delta is not none %}
-      {% if neutro %}{% set cor = "text-primary" if m.delta != 0 else "text-muted" %}
-      {% else %}{% set cor = "text-danger" if m.delta > 0 else ("text-success" if m.delta < 0 else "text-muted") %}{% endif %}
-      <span class="{{ cor }} fw-semibold" title="Diferença do mês anterior contra a média geral">{{ "▲" if m.delta > 0 else ("▼" if m.delta < 0 else "＝") }} {{ "%+.1f"|format(m.delta) }}d</span>
+  <span>📅 {{ rotulo }}{% if parcial %} <span class="text-muted" style="font-size:0.66rem;">(parcial)</span>{% endif %}</span>
+  {% if media is not none %}
+    <strong>{{ dias(media) }}</strong>
+    {% if delta is not none %}
+      {% if neutro %}{% set cor = "text-primary" if delta != 0 else "text-muted" %}
+      {% else %}{% set cor = "text-danger" if delta > 0 else ("text-success" if delta < 0 else "text-muted") %}{% endif %}
+      <span class="{{ cor }} fw-semibold" title="Diferença contra a média do ano">{{ "▲" if delta > 0 else ("▼" if delta < 0 else "＝") }} {{ "%+.1f"|format(delta) }}d</span>
     {% endif %}
-    <span class="text-muted" style="font-size:0.68rem;">({{ m.mes_n }})</span>
+    <span class="text-muted" style="font-size:0.68rem;">({{ n }})</span>
   {% else %}
     <span class="text-muted">sem dados</span>
   {% endif %}
 </div>
 {% endmacro %}
 
-{% macro lt_tile(emoji, titulo, sub, m, mes_curto, borda="secondary", destaque=False, neutro=False, unidade="item(ns)", altura_total=True) %}
+{% macro chips_mes(m, lt, neutro=False) %}
+<div class="d-flex flex-column align-items-center gap-1">
+  {{ chip(lt.mes_curto, m.mes_media, m.mes_n, m.delta, neutro) }}
+  {{ chip(lt.atual_curto, m.atual_media, m.atual_n, m.delta_atual, neutro, parcial=True) }}
+</div>
+{% endmacro %}
+
+{% macro lt_tile(emoji, titulo, sub, m, lt, borda="secondary", destaque=False, neutro=False, unidade="item(ns)", altura_total=True) %}
 <div class="lt-tile{{ ' h-100' if altura_total else '' }} text-center rounded-3 p-3 border border-{{ borda }}{{ ' border-2 shadow-sm' if destaque else '' }} bg-body">
   <div class="fs-2 mb-1">{{ emoji }}</div>
   <div class="small fw-semibold text-uppercase text-{{ borda }}">{{ titulo }}</div>
   <div class="{{ 'display-6' if destaque else 'fs-2' }} fw-bold lh-1 my-1">{{ dias(m.media) }}</div>
   <div class="text-muted" style="font-size:0.72rem;">{{ sub }}</div>
-  <div class="text-muted mb-2" style="font-size:0.7rem;">média geral · {{ m.n }} {{ unidade }}</div>
-  {{ chip_mes(m, mes_curto, neutro) }}
+  <div class="text-muted mb-2" style="font-size:0.7rem;">média do ano {{ lt.ano }} · {{ m.n }} {{ unidade }}</div>
+  {{ chips_mes(m, lt, neutro) }}
 </div>
 {% endmacro %}
 
 {# mini-quadrante comparativo (por estação / por região): barra grossa = média
-   geral (semáforo na cor), barra fina azul = mês anterior, na mesma escala. #}
-{% macro lt_linhas(linhas, titulo, mes_curto, cor_barra="success") %}
+   do ano (semáforo na cor), barra fina azul = mês anterior, barra fina laranja =
+   mês atual, na mesma escala. #}
+{% macro lt_linhas(linhas, titulo, lt, cor_barra="success") %}
 <div class="lt-linhas border rounded-3 p-2 h-100 text-start bg-body-tertiary">
   <div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
     <span class="small fw-semibold">{{ titulo }}</span>
     <span class="text-muted" style="font-size:0.66rem;">
-      <span class="d-inline-block rounded-1 bg-{{ cor_barra }}" style="width:0.9rem;height:0.4rem;"></span> média geral
-      <span class="d-inline-block rounded-1 bg-primary ms-1" style="width:0.9rem;height:0.25rem;"></span> {{ mes_curto }}
+      <span class="d-inline-block rounded-1 bg-{{ cor_barra }}" style="width:0.9rem;height:0.4rem;"></span> média {{ lt.ano }}
+      <span class="d-inline-block rounded-1 bg-primary ms-1" style="width:0.9rem;height:0.25rem;"></span> {{ lt.mes_curto }}
+      <span class="d-inline-block rounded-1 ms-1" style="width:0.9rem;height:0.25rem;background:#fd7e14;"></span> {{ lt.atual_curto }}
     </span>
   </div>
   {% if linhas %}
     {% for l in linhas %}
-    <div class="d-flex align-items-center gap-1 mb-1" title="{{ l.nome }}: média {{ l.media }}d ({{ l.n }}) · {{ mes_curto }}: {{ (l.mes_media|string + 'd (' ~ l.mes_n ~ ')') if l.mes_media is not none else 'sem dados' }}">
+    <div class="d-flex align-items-center gap-1 mb-1" title="{{ l.nome }}: média do ano {{ l.media }}d ({{ l.n }}) · {{ lt.mes_curto }}: {{ (l.mes_media|string + 'd (' ~ l.mes_n ~ ')') if l.mes_media is not none else 'sem dados' }} · {{ lt.atual_curto }}: {{ (l.atual_media|string + 'd (' ~ l.atual_n ~ ')') if l.atual_media is not none else 'sem dados' }}">
       <span style="width:1.3rem;">{{ l.emoji }}</span>
-      <span class="small text-truncate" style="width:7.4rem;">{{ l.nome }}</span>
+      <span class="small text-truncate" style="width:6rem;">{{ l.nome }}</span>
       <div class="flex-grow-1">
         <div class="progress" style="height:0.5rem;"><div class="progress-bar bg-{{ cor_barra }}" style="width: {{ l.barra_pct }}%"></div></div>
         <div class="progress mt-1" style="height:0.28rem;"><div class="progress-bar bg-primary" style="width: {{ l.barra_mes_pct }}%"></div></div>
+        <div class="progress mt-1" style="height:0.28rem;"><div class="progress-bar" style="width: {{ l.barra_atual_pct }}%;background:#fd7e14;"></div></div>
       </div>
-      <span class="small fw-semibold text-end text-nowrap" style="width:3.3rem;">{{ l.media }}d</span>
-      <span class="small text-primary text-end text-nowrap" style="width:3.3rem;">{{ dias(l.mes_media) }}</span>
+      <span class="small fw-semibold text-end text-nowrap" style="width:2.9rem;">{{ l.media }}d</span>
+      <span class="small text-primary text-end text-nowrap" style="width:2.9rem;">{{ dias(l.mes_media) }}</span>
+      <span class="small text-end text-nowrap" style="width:2.9rem;color:#fd7e14;">{{ dias(l.atual_media) }}</span>
       <span style="width:1.1rem;" class="small">{{ l.semaforo }}</span>
     </div>
     {% endfor %}
-    <div class="text-muted" style="font-size:0.66rem;">dias corridos · 🟢 até a média · 🟡 acima · 🔴 &gt;25% acima · coluna azul = {{ mes_curto }}</div>
+    <div class="text-muted" style="font-size:0.66rem;">dias corridos · 🟢 até a média · 🟡 acima · 🔴 &gt;25% acima · colunas: média {{ lt.ano }} · <span class="text-primary">{{ lt.mes_curto }}</span> · <span style="color:#fd7e14;">{{ lt.atual_curto }}</span></div>
   {% else %}
     <div class="text-muted small">Sem dados neste recorte.</div>
   {% endif %}
@@ -182,23 +194,23 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
       <h6 class="text-uppercase mb-0 fw-bold text-success">🏭 Quadrante 01 · Gestão Produção — lead time</h6>
-      <span class="badge text-bg-light border">média geral + 📅 {{ lt.mes_label }} (mês anterior)</span>
+      <span class="badge text-bg-light border">média do ano {{ lt.ano }} + 📅 {{ lt.mes_label }} (mês anterior) + 📅 {{ lt.atual_label }} (mês atual, parcial)</span>
     </div>
     <div class="row g-3">
       <div class="col-12 col-xl-4">
-        {{ lt_tile("⏳", "Fila de espera", "Inclusão → Início produção", lp.fila, lt.mes_curto, "warning", altura_total=False) }}
-        <div class="mt-2">{{ lt_linhas(lp.fila.por_estacao, "⏳ Fila de espera por estação", lt.mes_curto, "warning") }}</div>
+        {{ lt_tile("⏳", "Fila de espera", "Inclusão → Início produção", lp.fila, lt, "warning", altura_total=False) }}
+        <div class="mt-2">{{ lt_linhas(lp.fila.por_estacao, "⏳ Fila de espera por estação", lt, "warning") }}</div>
       </div>
       <div class="col-12 col-xl-4">
-        {{ lt_tile("🛠️", "Chão de fábrica", "Início produção → Liberação efetiva", lp.chao, lt.mes_curto, "success", altura_total=False) }}
-        <div class="mt-2">{{ lt_linhas(lp.chao.por_estacao, "🛠️ Chão de fábrica por estação", lt.mes_curto, "success") }}</div>
+        {{ lt_tile("🛠️", "Chão de fábrica", "Início produção → Liberação efetiva", lp.chao, lt, "success", altura_total=False) }}
+        <div class="mt-2">{{ lt_linhas(lp.chao.por_estacao, "🛠️ Chão de fábrica por estação", lt, "success") }}</div>
       </div>
       <div class="col-12 col-xl-4">
-        {{ lt_tile("🏆", "Lead time total produção", "Fila de espera + Chão de fábrica (Inclusão → Liberação efetiva)", lp.total, lt.mes_curto, "dark", destaque=True, altura_total=False) }}
-        <div class="mt-2">{{ lt_linhas(lp.total.por_estacao, "🏆 Total produção por estação", lt.mes_curto, "dark") }}</div>
+        {{ lt_tile("🏆", "Lead time total produção", "Fila de espera + Chão de fábrica (Inclusão → Liberação efetiva)", lp.total, lt, "dark", destaque=True, altura_total=False) }}
+        <div class="mt-2">{{ lt_linhas(lp.total.por_estacao, "🏆 Total produção por estação", lt, "dark") }}</div>
       </div>
     </div>
-    <p class="text-muted small mb-0 mt-2">Vem só de Gestão Produção/Listagem Geral. Cada média entra no mês em que o período fecha (chão de fábrica e total produção = liberação efetiva no mês · fila de espera = início de produção no mês). Por estação = estação atual do item.</p>
+    <p class="text-muted small mb-0 mt-2">Vem só de Gestão Produção/Listagem Geral. A média do ano vai de 01/01 até hoje; o mês atual ainda está em andamento. Cada média entra no mês em que o período fecha (chão de fábrica e total produção = liberação efetiva no mês · fila de espera = início de produção no mês). Por estação = estação atual do item.</p>
   </div>
 </div>
 
@@ -206,22 +218,22 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
       <h6 class="text-uppercase mb-0 fw-bold text-primary">🚚 Quadrante 02 · Gestão Operação — lead time</h6>
-      <span class="badge text-bg-light border">média geral + 📅 {{ lt.mes_label }} (mês anterior)</span>
+      <span class="badge text-bg-light border">média do ano {{ lt.ano }} + 📅 {{ lt.mes_label }} (mês anterior) + 📅 {{ lt.atual_label }} (mês atual, parcial)</span>
     </div>
     <div class="row g-3">
       <div class="col-12 col-xl-7">
         <div class="row g-3">
-          <div class="col-12 col-md-6">{{ lt_tile("🚛", "Total operação CIF", "Inclusão → Entrega no cliente · frete CIF", lo.cif, lt.mes_curto, "primary", unidade="pedido(s)") }}</div>
-          <div class="col-12 col-md-6">{{ lt_tile("📦", "Total operação FOB", "Inclusão → Entrega no cliente · frete FOB", lo.fob, lt.mes_curto, "warning", unidade="pedido(s)") }}</div>
-          <div class="col-12 col-md-6">{{ lt_tile("🚚", "Total operação (geral)", "CIF + FOB + sem frete informado", lo.total, lt.mes_curto, "secondary", unidade="pedido(s)") }}</div>
-          <div class="col-12 col-md-6">{{ lt_tile("🤝", "Prazo comercial", "Inclusão → Solicitado cliente (o prometido)", lo.prazo, lt.mes_curto, "info", neutro=True, unidade="pedido(s)") }}</div>
+          <div class="col-12 col-md-6">{{ lt_tile("🚛", "Total operação CIF", "Inclusão → Entrega no cliente · frete CIF", lo.cif, lt, "primary", unidade="pedido(s)") }}</div>
+          <div class="col-12 col-md-6">{{ lt_tile("📦", "Total operação FOB", "Inclusão → Entrega no cliente · frete FOB", lo.fob, lt, "warning", unidade="pedido(s)") }}</div>
+          <div class="col-12 col-md-6">{{ lt_tile("🚚", "Total operação (geral)", "CIF + FOB + sem frete informado", lo.total, lt, "secondary", unidade="pedido(s)") }}</div>
+          <div class="col-12 col-md-6">{{ lt_tile("🤝", "Prazo comercial", "Inclusão → Solicitado cliente (o prometido)", lo.prazo, lt, "info", neutro=True, unidade="pedido(s)") }}</div>
         </div>
       </div>
       <div class="col-12 col-xl-5">
-        {{ lt_linhas(lo.regioes_cif, "🗺️ Lead time CIF por região do Brasil", lt.mes_curto, "primary") }}
+        {{ lt_linhas(lo.regioes_cif, "🗺️ Lead time CIF por região do Brasil", lt, "primary") }}
       </div>
     </div>
-    <p class="text-muted small mb-0 mt-2">Total operação cruza Gestão Produção com Gestão Operação (data de entrega no cliente) pelo Pedido de venda. Região = região da UF do pedido, só frete CIF. Mês anterior: total = entrega no cliente no mês · prazo comercial = pedidos incluídos no mês. ▲ vermelho = mês pior que a média, ▼ verde = melhor (prazo comercial é só informativo).</p>
+    <p class="text-muted small mb-0 mt-2">Total operação cruza Gestão Produção com Gestão Operação (data de entrega no cliente) pelo Pedido de venda. Região = região da UF do pedido, só frete CIF. Mês anterior/atual: total = entrega no cliente no mês · prazo comercial = pedidos incluídos no mês. ▲ vermelho = mês pior que a média do ano, ▼ verde = melhor (prazo comercial é só informativo).</p>
   </div>
 </div>
 

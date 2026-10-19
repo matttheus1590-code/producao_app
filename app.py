@@ -786,30 +786,34 @@ def _gerar_pdf_painel_diario(ctx):
     lt = ctx["lead_time_agrupado"]
     lp, lo = lt["producao"], lt["operacao"]
     mes_c = lt["mes_curto"]
+    atu_c = lt["atual_curto"]
     elementos += banner("stopwatch", "5. GESTÃO DE LEAD TIME", "#fd7e14",
-                        f'Média geral + {lt["mes_label"]} (mês anterior). Dias corridos. Variação: vermelho = mês pior que a média, verde = melhor.')
+                        f'Média do ano ({lt["ano"]}) + {lt["mes_label"]} (mês anterior) + {lt["atual_label"]} (mês atual, parcial). Dias corridos. Variação contra a média do ano: vermelho = pior, verde = melhor.')
 
     def linha_metrica(icone, nome, desc, m, neutro=False):
-        if m["delta"] is None:
-            d = "—"
-        elif neutro:
-            d = f'{m["delta"]:+}d'
-        else:
-            d = delta_txt(m["delta"])
+        def _var(delta):
+            if delta is None:
+                return "—"
+            return f"{delta:+}d" if neutro else delta_txt(delta)
         return [
             P(f'{_icone_pdf(icone, 10)} <b>{esc(nome)}</b><br/><font size="7" color="#6c757d">{esc(desc)}</font>', base),
             P(f'<b>{dias(m["media"])}</b> <font size="7" color="#6c757d">({m["n"]})</font>', centro),
             P(f'<b>{dias(m["mes_media"])}</b> <font size="7" color="#6c757d">({m["mes_n"]})</font>', centro),
-            P(d, centro),
+            P(_var(m["delta"]), centro),
+            P(f'<b>{dias(m["atual_media"])}</b> <font size="7" color="#6c757d">({m["atual_n"]})</font>', centro),
+            P(_var(m["delta_atual"]), centro),
         ]
+
+    cab_lt = ["Indicador", f"Média {lt['ano']} (n)", f"{mes_c} (n)", "Var.", f"{atu_c} (n)", "Var."]
+    pesos_lt = [34, 15, 15, 9, 15, 9]
 
     elementos.append(P(cor_txt("QUADRANTE 01 · GESTÃO PRODUÇÃO", VERDE) + ' — fila de espera, chão de fábrica e o total de produção', base))
     elementos.append(Spacer(1, 1 * mm))
-    elementos.append(tabela(["Indicador", "Média geral (n)", f"{mes_c} (n)", "Variação"], [
+    elementos.append(tabela(cab_lt, [
         linha_metrica("hourglass", "Fila de espera", "Inclusão do pedido até o início da produção", lp["fila"]),
         linha_metrica("gear", "Chão de fábrica", "Início da produção até a liberação efetiva", lp["chao"]),
         linha_metrica("trophy", "LEAD TIME TOTAL PRODUÇÃO", "Fila de espera + chão de fábrica", lp["total"]),
-    ], [46, 18, 18, 12], alin="LCCC", estilo_extra=[("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#fff3cd"))]))
+    ], pesos_lt, alin="LCCCCC", estilo_extra=[("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#fff3cd"))]))
     elementos.append(Spacer(1, 2 * mm))
 
     # por estação (3 métricas lado a lado numa tabela só)
@@ -822,7 +826,8 @@ def _gerar_pdf_painel_diario(ctx):
             if not l:
                 return P("—", centro)
             mes_txt = dias(l["mes_media"])
-            return P(f'{semaforo_icone(l["semaforo"])} <b>{l["media"]}d</b> <font size="7" color="#6c757d">· {mes_c.split("/")[0]} {mes_txt}</font>', centro)
+            atu_txt = dias(l["atual_media"])
+            return P(f'{semaforo_icone(l["semaforo"])} <b>{l["media"]}d</b> <font size="7" color="#6c757d">· {mes_c.split("/")[0]} {mes_txt} · {atu_c.split("/")[0]} {atu_txt}</font>', centro)
         ordem = sorted(estacoes.values(), key=lambda e: -((e.get("total") or {}).get("media") or 0))
         nomes_icone = {"✂️": "gear", "🔩": "gear", "⚙️": "gear", "🫧": "factory", "🧴": "test_tube", "🧪": "test_tube", "🛞": "gear",
                        "🔧": "gear", "⭐": "target", "🏷️": "receipt", "♻️": "check", "📦": "package"}
@@ -832,29 +837,30 @@ def _gerar_pdf_painel_diario(ctx):
                 P(f'{_icone_pdf(nomes_icone.get(e["emoji"], "factory"), 9)} {esc(e["nome"])}', base),
                 celula_est(e.get("fila")), celula_est(e.get("chao")), celula_est(e.get("total")),
             ])
-        elementos.append(P(f'{_icone_pdf("factory", 10)} <b>Por estação</b> — média geral (semáforo: verde até a média da coluna, amarelo acima, vermelho mais de 25% acima) e o mês anterior ao lado', nota))
+        elementos.append(P(f'{_icone_pdf("factory", 10)} <b>Por estação</b> — média do ano (semáforo: verde até a média da coluna, amarelo acima, vermelho mais de 25% acima) e o mês anterior e o mês atual ao lado', nota))
         elementos.append(Spacer(1, 1 * mm))
         elementos.append(tabela(["Estação", "Fila de espera", "Chão de fábrica", "Total produção"], linhas_est, [26, 22, 22, 22], alin="LCCC"))
     elementos.append(Spacer(1, 4 * mm))
 
     elementos.append(P(cor_txt("QUADRANTE 02 · GESTÃO OPERAÇÃO", AZUL) + ' — total operação (inclusão até a entrega no cliente), CIF x FOB, prazo comercial', base))
     elementos.append(Spacer(1, 1 * mm))
-    elementos.append(tabela(["Indicador", "Média geral (n)", f"{mes_c} (n)", "Variação"], [
+    elementos.append(tabela(cab_lt, [
         linha_metrica("truck", "Total operação CIF", "Inclusão até entrega no cliente · frete CIF", lo["cif"]),
         linha_metrica("package", "Total operação FOB", "Inclusão até entrega no cliente · frete FOB", lo["fob"]),
         linha_metrica("globe", "Total operação (geral)", "CIF + FOB + sem frete informado", lo["total"]),
         linha_metrica("handshake", "Prazo comercial", "Inclusão até a data solicitada pelo cliente (o prometido)", lo["prazo"], neutro=True),
-    ], [46, 18, 18, 12], alin="LCCC"))
+    ], pesos_lt, alin="LCCCCC"))
     elementos.append(Spacer(1, 2 * mm))
     if lo["regioes_cif"]:
         linhas_reg = [[
             P(f'{_icone_pdf("globe", 9)} {esc(l["nome"])}', base),
             P(f'{semaforo_icone(l["semaforo"])} <b>{l["media"]}d</b> <font size="7" color="#6c757d">({l["n"]})</font>', centro),
             P(f'<b>{dias(l["mes_media"])}</b> <font size="7" color="#6c757d">({l["mes_n"]})</font>', centro),
+            P(f'<b>{dias(l["atual_media"])}</b> <font size="7" color="#6c757d">({l["atual_n"]})</font>', centro),
         ] for l in lo["regioes_cif"]]
         elementos.append(P(f'{_icone_pdf("globe", 10)} <b>Lead time CIF por região do Brasil</b> (região da UF do pedido)', nota))
         elementos.append(Spacer(1, 1 * mm))
-        elementos.append(tabela(["Região", "Média geral CIF (n)", f"{mes_c} (n)"], linhas_reg, [26, 22, 22], alin="LCC"))
+        elementos.append(tabela(["Região", f"Média {lt['ano']} CIF (n)", f"{mes_c} (n)", f"{atu_c} (n)"], linhas_reg, [26, 22, 22, 22], alin="LCCC"))
     elementos.append(Spacer(1, 4 * mm))
 
     # ================= 6. OTD E LEAD TIME DA OPERAÇÃO (MÊS) =================
@@ -6398,21 +6404,31 @@ def _coletar_lead_times_painel(inicio=None, fim=None):
     return r
 
 
-def _metrica_lt(valores_hist, valores_mes):
-    """{media, n} do histórico + {mes_media, mes_n} do mês anterior + delta
-    (mês - média, em dias; None se faltar um dos dois) e `delta_sentido`
-    ("sobe"/"desce"/"igual") pro badge ▲▼ do Painel."""
+def _metrica_lt(valores_hist, valores_mes, valores_atual=None):
+    """{media, n} da MÉDIA DO ANO (ano corrente, pedido do Bruno, 19/10/2026)
+    + {mes_media, mes_n} do mês anterior + {atual_media, atual_n} do mês
+    atual (parcial, em andamento) + deltas (mês - média do ano, em dias; None
+    se faltar um dos dois) e `delta_sentido` ("sobe"/"desce"/"igual") pro badge
+    ▲▼ do Painel. `delta`/`delta_sentido` = mês anterior (como sempre);
+    `delta_atual`/`delta_atual_sentido` = mês atual."""
     media, n = _media_dias(valores_hist)
     mes_media, mes_n = _media_dias(valores_mes)
+    atual_media, atual_n = _media_dias(valores_atual or [])
     delta = round(mes_media - media, 1) if (media is not None and mes_media is not None) else None
-    sentido = None if delta is None else ("sobe" if delta > 0 else "desce" if delta < 0 else "igual")
+    delta_atual = round(atual_media - media, 1) if (media is not None and atual_media is not None) else None
+
+    def _sentido(d):
+        return None if d is None else ("sobe" if d > 0 else "desce" if d < 0 else "igual")
+
     return {
         "media": media, "n": n, "mes_media": mes_media, "mes_n": mes_n,
-        "delta": delta, "delta_sentido": sentido,
+        "atual_media": atual_media, "atual_n": atual_n,
+        "delta": delta, "delta_sentido": _sentido(delta),
+        "delta_atual": delta_atual, "delta_atual_sentido": _sentido(delta_atual),
     }
 
 
-def _linhas_lt_comparativo(hist_por_chave, mes_por_chave, media_geral, nome_fn, emoji_fn):
+def _linhas_lt_comparativo(hist_por_chave, mes_por_chave, media_geral, nome_fn, emoji_fn, atual_por_chave=None):
     """Linhas dos mini-quadrantes (por estação / por região): média
     histórica + média do mês anterior, barras na MESMA escala (a maior
     média entre as duas séries = 100%) e semáforo 🟢🟡🔴 da média histórica
@@ -6424,15 +6440,23 @@ def _linhas_lt_comparativo(hist_por_chave, mes_por_chave, media_geral, nome_fn, 
         if media is None:
             continue
         mes_media, mes_n = _media_dias(mes_por_chave.get(chave, []))
+        atual_media, atual_n = _media_dias((atual_por_chave or {}).get(chave, []))
         linhas.append({
             "chave": chave, "nome": nome_fn(chave), "emoji": emoji_fn(chave),
             "media": media, "n": n, "mes_media": mes_media, "mes_n": mes_n,
+            "atual_media": atual_media, "atual_n": atual_n,
         })
     linhas.sort(key=lambda l: (-l["media"], l["nome"]))
-    maior = max([l["media"] for l in linhas] + [l["mes_media"] for l in linhas if l["mes_media"] is not None], default=0)
+    maior = max(
+        [l["media"] for l in linhas]
+        + [l["mes_media"] for l in linhas if l["mes_media"] is not None]
+        + [l["atual_media"] for l in linhas if l["atual_media"] is not None],
+        default=0,
+    )
     for l in linhas:
         l["barra_pct"] = round(100 * max(l["media"], 0) / maior) if maior > 0 else 0
         l["barra_mes_pct"] = round(100 * max(l["mes_media"], 0) / maior) if (maior > 0 and l["mes_media"] is not None) else 0
+        l["barra_atual_pct"] = round(100 * max(l["atual_media"], 0) / maior) if (maior > 0 and l["atual_media"] is not None) else 0
         if media_geral is None or media_geral <= 0:
             l["semaforo"] = "⚪"
         elif l["media"] > media_geral * 1.25:
@@ -6446,47 +6470,59 @@ def _linhas_lt_comparativo(hist_por_chave, mes_por_chave, media_geral, nome_fn, 
 
 def _lead_time_painel_agrupado(hoje=None):
     """Lead times do Painel agrupados em 2 quadrantes (pedido do Bruno,
-    05/10/2026):
+    05/10/2026), agora com 3 leituras (pedido do Bruno, 19/10/2026: "o lead
+    time do mês anterior, o lead time do mês atual e a média do ano"):
+
+      - MÉDIA DO ANO (ano corrente, 01/01 até hoje) — antes era a média de todo
+        o histórico ("média geral");
+      - MÊS ANTERIOR (fechado) e MÊS ATUAL (parcial, em andamento).
 
       - "producao" (Gestão Produção): fila de espera, chão de fábrica e o
         principal — LEAD TIME TOTAL PRODUÇÃO (fila + chão) — cada um com a
-        média histórica + a do mês anterior e a quebra por estação.
+        quebra por estação.
       - "operacao" (Gestão Operação): total operação (geral, CIF e FOB) e
-        prazo comercial, média + mês anterior; e, ao lado, o lead time CIF
-        por região do Brasil (média + mês anterior).
+        prazo comercial; e, ao lado, o lead time CIF por região do Brasil.
 
-    O mês anterior é dinâmico (em novembro vira outubro) e segue as regras
-    de recorte de _coletar_lead_times_painel."""
+    Os meses são dinâmicos (em novembro: anterior = outubro, atual =
+    novembro) e seguem as regras de recorte de _coletar_lead_times_painel."""
     hoje = hoje or date.today()
     ano_ant, mes_ant = _somar_meses(hoje.year, hoje.month, -1)
-    hist = _coletar_lead_times_painel()
+    hist = _coletar_lead_times_painel(inicio=date(hoje.year, 1, 1), fim=date(hoje.year, 12, 31))
     mes = _coletar_lead_times_painel(
         inicio=date(ano_ant, mes_ant, 1), fim=date(ano_ant, mes_ant, monthrange(ano_ant, mes_ant)[1])
     )
+    atual = _coletar_lead_times_painel(
+        inicio=date(hoje.year, hoje.month, 1), fim=date(hoje.year, hoje.month, monthrange(hoje.year, hoje.month)[1])
+    )
 
     def _com_estacoes(chave):
-        m = _metrica_lt(hist[chave], mes[chave])
+        m = _metrica_lt(hist[chave], mes[chave], atual[chave])
         m["por_estacao"] = _linhas_lt_comparativo(
-            hist[chave + "_est"], mes[chave + "_est"], m["media"], _nome_curto_estacao_painel, _emoji_estacao_painel
+            hist[chave + "_est"], mes[chave + "_est"], m["media"], _nome_curto_estacao_painel, _emoji_estacao_painel,
+            atual_por_chave=atual[chave + "_est"],
         )
         return m
 
     producao = {"fila": _com_estacoes("fila"), "chao": _com_estacoes("chao"), "total": _com_estacoes("total_producao")}
 
-    cif = _metrica_lt(hist["cif"], mes["cif"])
+    cif = _metrica_lt(hist["cif"], mes["cif"], atual["cif"])
     regioes_cif = _linhas_lt_comparativo(
-        hist["cif_regiao"], mes["cif_regiao"], cif["media"], lambda r: r, lambda r: _EMOJI_REGIAO_PAINEL.get(r, "🗺️")
+        hist["cif_regiao"], mes["cif_regiao"], cif["media"], lambda r: r, lambda r: _EMOJI_REGIAO_PAINEL.get(r, "🗺️"),
+        atual_por_chave=atual["cif_regiao"],
     )
     operacao = {
-        "total": _metrica_lt(hist["total"], mes["total"]),
+        "total": _metrica_lt(hist["total"], mes["total"], atual["total"]),
         "cif": cif,
-        "fob": _metrica_lt(hist["fob"], mes["fob"]),
-        "prazo": _metrica_lt(hist["prazo"], mes["prazo"]),
+        "fob": _metrica_lt(hist["fob"], mes["fob"], atual["fob"]),
+        "prazo": _metrica_lt(hist["prazo"], mes["prazo"], atual["prazo"]),
         "regioes_cif": regioes_cif,
     }
     return {
+        "ano": hoje.year,
         "mes_label": f"{MESES_PT_EXTENSO[mes_ant - 1].upper()}/{ano_ant}",
         "mes_curto": f"{MESES_PT[mes_ant - 1].upper()}/{ano_ant}",
+        "atual_label": f"{MESES_PT_EXTENSO[hoje.month - 1].upper()}/{hoje.year}",
+        "atual_curto": f"{MESES_PT[hoje.month - 1].upper()}/{hoje.year}",
         "producao": producao,
         "operacao": operacao,
     }
