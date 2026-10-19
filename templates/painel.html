@@ -111,31 +111,34 @@
    prazo comercial (média + mês anterior) + CIF por região do Brasil. #}
 {% macro dias(v) -%}{{ (v|string + "d") if v is not none else "—" }}{%- endmacro %}
 
-{# chips do mês anterior e do mês atual (pedido do Bruno, 19/10/2026): "📅 SET/2026 23.5d ▲ +12.8d"
-   — o delta é contra a MÉDIA DO ANO. Para lead time, subir = ruim (vermelho) e
-   descer = bom (verde); `neutro` (prazo comercial = promessa, não desempenho)
-   usa azul/cinza em vez de bom/ruim. O mês atual é parcial (em andamento). #}
-{% macro chip(rotulo, media, n, delta, neutro=False, parcial=False) %}
+{# O MÊS ATUAL é o protagonista (pedido do Bruno, 19/10/2026: "o lead time do
+   atual mês como principal, e a média troque de lugar" — o gestor olha o
+   cenário de agora). Número grande = mês atual (parcial, em andamento); os
+   chips abaixo são as REFERÊNCIAS: mês anterior e média do ano, cada uma com a
+   variação do mês atual contra ela ("atual ▲ +3.6d"). Para lead time, subir =
+   ruim (vermelho) e descer = bom (verde); `neutro` (prazo comercial = promessa,
+   não desempenho) usa azul/cinza em vez de bom/ruim. #}
+{% macro chip(rotulo, media, n, delta, neutro=False) %}
 <div class="lt-chip-mes d-inline-flex align-items-center gap-1 flex-wrap justify-content-center rounded-pill border px-2 py-1 small bg-body">
-  <span>📅 {{ rotulo }}{% if parcial %} <span class="text-muted" style="font-size:0.66rem;">(parcial)</span>{% endif %}</span>
+  <span>{{ rotulo }}</span>
   {% if media is not none %}
     <strong>{{ dias(media) }}</strong>
+    <span class="text-muted" style="font-size:0.68rem;">({{ n }})</span>
     {% if delta is not none %}
       {% if neutro %}{% set cor = "text-primary" if delta != 0 else "text-muted" %}
       {% else %}{% set cor = "text-danger" if delta > 0 else ("text-success" if delta < 0 else "text-muted") %}{% endif %}
-      <span class="{{ cor }} fw-semibold" title="Diferença contra a média do ano">{{ "▲" if delta > 0 else ("▼" if delta < 0 else "＝") }} {{ "%+.1f"|format(delta) }}d</span>
+      <span class="{{ cor }} fw-semibold" title="Mês atual contra esta referência (▲ = mês atual maior)">atual {{ "▲" if delta > 0 else ("▼" if delta < 0 else "＝") }} {{ "%+.1f"|format(delta) }}d</span>
     {% endif %}
-    <span class="text-muted" style="font-size:0.68rem;">({{ n }})</span>
   {% else %}
     <span class="text-muted">sem dados</span>
   {% endif %}
 </div>
 {% endmacro %}
 
-{% macro chips_mes(m, lt, neutro=False) %}
+{% macro chips_ref(m, lt, neutro=False) %}
 <div class="d-flex flex-column align-items-center gap-1">
-  {{ chip(lt.mes_curto, m.mes_media, m.mes_n, m.delta, neutro) }}
-  {{ chip(lt.atual_curto, m.atual_media, m.atual_n, m.delta_atual, neutro, parcial=True) }}
+  {{ chip("📅 " ~ lt.mes_curto, m.mes_media, m.mes_n, m.delta_atual_mes, neutro) }}
+  {{ chip("📊 média " ~ lt.ano, m.media, m.n, m.delta_atual, neutro) }}
 </div>
 {% endmacro %}
 
@@ -143,43 +146,44 @@
 <div class="lt-tile{{ ' h-100' if altura_total else '' }} text-center rounded-3 p-3 border border-{{ borda }}{{ ' border-2 shadow-sm' if destaque else '' }} bg-body">
   <div class="fs-2 mb-1">{{ emoji }}</div>
   <div class="small fw-semibold text-uppercase text-{{ borda }}">{{ titulo }}</div>
-  <div class="{{ 'display-6' if destaque else 'fs-2' }} fw-bold lh-1 my-1">{{ dias(m.media) }}</div>
+  <div class="{{ 'display-6' if destaque else 'fs-2' }} fw-bold lh-1 my-1">{{ dias(m.atual_media) }}</div>
+  <div class="small fw-semibold">📅 {{ lt.atual_curto }} <span class="text-muted fw-normal" style="font-size:0.7rem;">(mês atual · parcial)</span></div>
   <div class="text-muted" style="font-size:0.72rem;">{{ sub }}</div>
-  <div class="text-muted mb-2" style="font-size:0.7rem;">média do ano {{ lt.ano }} · {{ m.n }} {{ unidade }}</div>
-  {{ chips_mes(m, lt, neutro) }}
+  <div class="text-muted mb-2" style="font-size:0.7rem;">{{ m.atual_n }} {{ unidade }} no mês</div>
+  {{ chips_ref(m, lt, neutro) }}
 </div>
 {% endmacro %}
 
-{# mini-quadrante comparativo (por estação / por região): barra grossa = média
-   do ano (semáforo na cor), barra fina azul = mês anterior, barra fina laranja =
-   mês atual, na mesma escala. #}
+{# mini-quadrante comparativo (por estação / por região): barra grossa = mês
+   atual (cor do card), barra fina azul = mês anterior, barra fina cinza = média
+   do ano, todas na mesma escala. Ordem e semáforo seguem o mês atual. #}
 {% macro lt_linhas(linhas, titulo, lt, cor_barra="success") %}
 <div class="lt-linhas border rounded-3 p-2 h-100 text-start bg-body-tertiary">
   <div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
     <span class="small fw-semibold">{{ titulo }}</span>
     <span class="text-muted" style="font-size:0.66rem;">
-      <span class="d-inline-block rounded-1 bg-{{ cor_barra }}" style="width:0.9rem;height:0.4rem;"></span> média {{ lt.ano }}
+      <span class="d-inline-block rounded-1 bg-{{ cor_barra }}" style="width:0.9rem;height:0.4rem;"></span> {{ lt.atual_curto }}
       <span class="d-inline-block rounded-1 bg-primary ms-1" style="width:0.9rem;height:0.25rem;"></span> {{ lt.mes_curto }}
-      <span class="d-inline-block rounded-1 ms-1" style="width:0.9rem;height:0.25rem;background:#fd7e14;"></span> {{ lt.atual_curto }}
+      <span class="d-inline-block rounded-1 ms-1 bg-secondary" style="width:0.9rem;height:0.25rem;"></span> média {{ lt.ano }}
     </span>
   </div>
   {% if linhas %}
     {% for l in linhas %}
-    <div class="d-flex align-items-center gap-1 mb-1" title="{{ l.nome }}: média do ano {{ l.media }}d ({{ l.n }}) · {{ lt.mes_curto }}: {{ (l.mes_media|string + 'd (' ~ l.mes_n ~ ')') if l.mes_media is not none else 'sem dados' }} · {{ lt.atual_curto }}: {{ (l.atual_media|string + 'd (' ~ l.atual_n ~ ')') if l.atual_media is not none else 'sem dados' }}">
+    <div class="d-flex align-items-center gap-1 mb-1" title="{{ l.nome }}: {{ lt.atual_curto }} {{ (l.atual_media|string + 'd (' ~ l.atual_n ~ ')') if l.atual_media is not none else 'sem dados' }} · {{ lt.mes_curto }}: {{ (l.mes_media|string + 'd (' ~ l.mes_n ~ ')') if l.mes_media is not none else 'sem dados' }} · média do ano {{ l.media }}d ({{ l.n }})">
       <span style="width:1.3rem;">{{ l.emoji }}</span>
       <span class="small text-truncate" style="width:6rem;">{{ l.nome }}</span>
       <div class="flex-grow-1">
-        <div class="progress" style="height:0.5rem;"><div class="progress-bar bg-{{ cor_barra }}" style="width: {{ l.barra_pct }}%"></div></div>
+        <div class="progress" style="height:0.5rem;"><div class="progress-bar bg-{{ cor_barra }}" style="width: {{ l.barra_atual_pct }}%"></div></div>
         <div class="progress mt-1" style="height:0.28rem;"><div class="progress-bar bg-primary" style="width: {{ l.barra_mes_pct }}%"></div></div>
-        <div class="progress mt-1" style="height:0.28rem;"><div class="progress-bar" style="width: {{ l.barra_atual_pct }}%;background:#fd7e14;"></div></div>
+        <div class="progress mt-1" style="height:0.28rem;"><div class="progress-bar bg-secondary" style="width: {{ l.barra_pct }}%"></div></div>
       </div>
-      <span class="small fw-semibold text-end text-nowrap" style="width:2.9rem;">{{ l.media }}d</span>
+      <span class="small fw-semibold text-end text-nowrap" style="width:2.9rem;">{{ dias(l.atual_media) }}</span>
       <span class="small text-primary text-end text-nowrap" style="width:2.9rem;">{{ dias(l.mes_media) }}</span>
-      <span class="small text-end text-nowrap" style="width:2.9rem;color:#fd7e14;">{{ dias(l.atual_media) }}</span>
+      <span class="small text-secondary text-end text-nowrap" style="width:2.9rem;">{{ l.media }}d</span>
       <span style="width:1.1rem;" class="small">{{ l.semaforo }}</span>
     </div>
     {% endfor %}
-    <div class="text-muted" style="font-size:0.66rem;">dias corridos · 🟢 até a média · 🟡 acima · 🔴 &gt;25% acima · colunas: média {{ lt.ano }} · <span class="text-primary">{{ lt.mes_curto }}</span> · <span style="color:#fd7e14;">{{ lt.atual_curto }}</span></div>
+    <div class="text-muted" style="font-size:0.66rem;">dias corridos · 🟢 até o lead time do mês atual do card · 🟡 acima · 🔴 &gt;25% acima · colunas: <strong class="text-body">{{ lt.atual_curto }}</strong> · <span class="text-primary">{{ lt.mes_curto }}</span> · <span class="text-secondary">média {{ lt.ano }}</span></div>
   {% else %}
     <div class="text-muted small">Sem dados neste recorte.</div>
   {% endif %}
@@ -194,7 +198,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
       <h6 class="text-uppercase mb-0 fw-bold text-success">🏭 Quadrante 01 · Gestão Produção — lead time</h6>
-      <span class="badge text-bg-light border">média do ano {{ lt.ano }} + 📅 {{ lt.mes_label }} (mês anterior) + 📅 {{ lt.atual_label }} (mês atual, parcial)</span>
+      <span class="badge text-bg-light border">📅 {{ lt.atual_label }} (mês atual, parcial) · ref.: {{ lt.mes_label }} (mês anterior) e 📊 média {{ lt.ano }}</span>
     </div>
     <div class="row g-3">
       <div class="col-12 col-xl-4">
@@ -210,7 +214,7 @@
         <div class="mt-2">{{ lt_linhas(lp.total.por_estacao, "🏆 Total produção por estação", lt, "dark") }}</div>
       </div>
     </div>
-    <p class="text-muted small mb-0 mt-2">Vem só de Gestão Produção/Listagem Geral. A média do ano vai de 01/01 até hoje; o mês atual ainda está em andamento. Cada média entra no mês em que o período fecha (chão de fábrica e total produção = liberação efetiva no mês · fila de espera = início de produção no mês). Por estação = estação atual do item.</p>
+    <p class="text-muted small mb-0 mt-2">Vem só de Gestão Produção/Listagem Geral. O número grande é o mês atual (ainda em andamento); mês anterior e média do ano (01/01 até hoje) são só referência — "atual ▲/▼" é o mês atual contra cada uma. Cada média entra no mês em que o período fecha (chão de fábrica e total produção = liberação efetiva no mês · fila de espera = início de produção no mês). Por estação = estação atual do item.</p>
   </div>
 </div>
 
@@ -218,7 +222,7 @@
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
       <h6 class="text-uppercase mb-0 fw-bold text-primary">🚚 Quadrante 02 · Gestão Operação — lead time</h6>
-      <span class="badge text-bg-light border">média do ano {{ lt.ano }} + 📅 {{ lt.mes_label }} (mês anterior) + 📅 {{ lt.atual_label }} (mês atual, parcial)</span>
+      <span class="badge text-bg-light border">📅 {{ lt.atual_label }} (mês atual, parcial) · ref.: {{ lt.mes_label }} (mês anterior) e 📊 média {{ lt.ano }}</span>
     </div>
     <div class="row g-3">
       <div class="col-12 col-xl-7">
@@ -233,7 +237,7 @@
         {{ lt_linhas(lo.regioes_cif, "🗺️ Lead time CIF por região do Brasil", lt, "primary") }}
       </div>
     </div>
-    <p class="text-muted small mb-0 mt-2">Total operação cruza Gestão Produção com Gestão Operação (data de entrega no cliente) pelo Pedido de venda. Região = região da UF do pedido, só frete CIF. Mês anterior/atual: total = entrega no cliente no mês · prazo comercial = pedidos incluídos no mês. ▲ vermelho = mês pior que a média do ano, ▼ verde = melhor (prazo comercial é só informativo).</p>
+    <p class="text-muted small mb-0 mt-2">Total operação cruza Gestão Produção com Gestão Operação (data de entrega no cliente) pelo Pedido de venda. Região = região da UF do pedido, só frete CIF. Mês atual/anterior: total = entrega no cliente no mês · prazo comercial = pedidos incluídos no mês. ▲ vermelho = mês atual pior que a referência, ▼ verde = melhor (prazo comercial é só informativo).</p>
   </div>
 </div>
 
