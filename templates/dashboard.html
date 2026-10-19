@@ -313,9 +313,11 @@
           <a href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">
             <i class="bi bi-eye"></i>
           </a>
+          {% if current_user.role in ('ADMIN', 'PCP', 'LIDER') %}
           <a href="{{ url_for('editar_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
             <i class="bi bi-pencil-square"></i>
           </a>
+          {% endif %}
         </td>
         <td>{{ l.pedido_venda or "—" }}</td>
         <td class="text-truncate" title="{{ l.cliente }}">{{ l.cliente }}</td>

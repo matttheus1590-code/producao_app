@@ -4934,6 +4934,24 @@ def _migrar_densidade_estrutura_produto(app):
         app.logger.info("Gestão de Custos: chave_busca corrigida pra família H (H, H-COM-SELO, H-COM-SELO-CORDA) e HFLEX (-> \"H FLEX\").")
 
 
+def _destino_pos_login(usuario, destino):
+    """Destino do redirect pós-login: o `next` pedido só vale se for caminho
+    local (sem esquema/host — nada de open redirect) que o papel do usuário
+    realmente pode abrir; senão, a página inicial do papel."""
+    if destino and destino.startswith("/") and not destino.startswith("//") and "\\" not in destino:
+        try:
+            from urllib.parse import urlsplit
+            from flask import current_app
+
+            caminho = urlsplit(destino).path
+            endpoint, _args = current_app.url_map.bind("localhost").match(caminho, method="GET")
+            if endpoint and pode_acessar_endpoint(usuario, endpoint):
+                return destino
+        except Exception:
+            pass
+    return _pagina_inicial(usuario)
+
+
 def _pagina_inicial(usuario):
     """Pra onde mandar o usuário logo após o login (e se ele visitar /login
     já autenticado) — normalmente a Listagem Geral de Produção, mas o papel
@@ -17285,7 +17303,12 @@ def register_routes(app):
             usuario = Usuario.query.filter_by(username=username).first()
             if usuario and usuario.checar_senha(senha):
                 login_user(usuario)
-                destino = request.args.get("next") or _pagina_inicial(usuario)
+                # Bug do Roberto (19/10/2026): o login mandava pro ?next= (ex.:
+                # /painel) mesmo quando o papel dele não pode abrir aquela tela
+                # — dava 403 logo após entrar. Agora só segue o `next` se for um
+                # caminho local E o papel puder acessar; senão cai na página
+                # inicial do papel.
+                destino = _destino_pos_login(usuario, request.args.get("next"))
                 return redirect(destino)
             flash("Usuário ou senha inválidos.", "danger")
 

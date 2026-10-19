@@ -26,6 +26,11 @@ Papéis existentes:
            bloqueados por prefixo de rota (PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL
            abaixo), tanto no menu quanto direto pela URL (403).
 
+  LISTAGEM_FAT - (pedido do Bruno, 19/10/2026, caso do Roberto): só leitura e só
+           Listagem Geral, Faturamento e Consulta Pedido/Planejamento PCP —
+           mesmo mecanismo de allowlist do PD/COMERCIAL
+           (ENDPOINTS_PERMITIDOS_LISTAGEM_FAT); o resto devolve 403.
+
 Uso:
   @requer_role("ADMIN", "PCP")
   def minha_rota(): ...
@@ -39,7 +44,7 @@ from functools import wraps
 from flask import abort
 from flask_login import current_user, login_required
 
-ROLES = ("ADMIN", "PCP", "LIDER", "GESTAO", "PD", "COMERCIAL", "COMERCIAL_GERAL")
+ROLES = ("ADMIN", "PCP", "LIDER", "GESTAO", "PD", "COMERCIAL", "COMERCIAL_GERAL", "LISTAGEM_FAT")
 
 ROLES_LABELS = {
     "ADMIN": "Administrador",
@@ -49,6 +54,7 @@ ROLES_LABELS = {
     "PD": "Líder de P&D",
     "COMERCIAL": "Comercial",
     "COMERCIAL_GERAL": "Comercial (acesso geral)",
+    "LISTAGEM_FAT": "Listagem Geral + Faturamento + Consulta Pedido",
 }
 
 # Endpoints (nomes de rota Flask, não caminhos de URL) que o papel PD pode
@@ -70,6 +76,19 @@ ENDPOINTS_PERMITIDOS_PD = {
 ENDPOINTS_PERMITIDOS_COMERCIAL = {
     "consulta_pedido", "consulta_pedido_busca_sugestoes", "consulta_pedido_busca_detalhe",
     "consulta_planejamento_pcp", "relatorio_listagem_geral_semanal_pdf",
+}
+
+# Endpoints que o papel LISTAGEM_FAT pode acessar (pedido do Bruno, 19/10/2026,
+# caso do Roberto: "somente listagem geral, faturamento e consulta pedido"),
+# SÓ leitura: Listagem Geral (+ exportações CSV/XLSX/PDF semanal e o detalhe do
+# pedido que o botão "olho" da linha abre), Faturamento (+ exportações CSV/XLSX)
+# e Consulta Pedido/Planejamento PCP (as 2 abas + autocomplete/detalhe).
+ENDPOINTS_PERMITIDOS_LISTAGEM_FAT = {
+    "dashboard", "relatorio_listagem_csv", "relatorio_listagem_xlsx", "relatorio_listagem_geral_semanal_pdf",
+    "detalhe_pedido", "espelho_pedido_pdf",
+    "faturamento", "relatorio_faturamento_csv", "relatorio_faturamento_xlsx",
+    "consulta_pedido", "consulta_pedido_busca_sugestoes", "consulta_pedido_busca_detalhe",
+    "consulta_planejamento_pcp",
 }
 
 # Áreas bloqueadas pro COMERCIAL_GERAL: o nome do endpoint (rota Flask) começa
@@ -94,7 +113,7 @@ def pode_acessar_endpoint(usuario, endpoint):
     já era restrito por papel, via `requer_role`/`pode_editar_estacao`)."""
     if not usuario or not usuario.is_authenticated:
         return True  # quem não está logado nem chega aqui — @login_required cuida disso antes
-    if usuario.role not in ("PD", "COMERCIAL", "COMERCIAL_GERAL"):
+    if usuario.role not in ("PD", "COMERCIAL", "COMERCIAL_GERAL", "LISTAGEM_FAT"):
         return True
     if endpoint in ENDPOINTS_SEMPRE_LIVRES:
         return True
@@ -102,6 +121,8 @@ def pode_acessar_endpoint(usuario, endpoint):
         return endpoint not in ENDPOINTS_BLOQUEADOS_COMERCIAL_GERAL and not endpoint.startswith(PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL)
     if usuario.role == "COMERCIAL":
         return endpoint in ENDPOINTS_PERMITIDOS_COMERCIAL
+    if usuario.role == "LISTAGEM_FAT":
+        return endpoint in ENDPOINTS_PERMITIDOS_LISTAGEM_FAT
     return endpoint in ENDPOINTS_PERMITIDOS_PD
 
 
@@ -109,7 +130,7 @@ def ve_pd_qualidade_custos(usuario):
     """False pros papéis que NÃO enxergam P&D, Qualidade e Gestão de Custos
     (COMERCIAL e COMERCIAL_GERAL) — usado nos templates pra esconder menus,
     colunas e links dessas áreas (senão virariam links que dão 403)."""
-    return not (usuario and usuario.is_authenticated and usuario.role in ("COMERCIAL", "COMERCIAL_GERAL"))
+    return not (usuario and usuario.is_authenticated and usuario.role in ("COMERCIAL", "COMERCIAL_GERAL", "LISTAGEM_FAT"))
 
 
 def requer_role(*roles_permitidos):
