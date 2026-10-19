@@ -10151,6 +10151,67 @@ CAMPOS_GO_COMERCIAL_NOVO_PEDIDO = [
 ]
 
 
+def _parse_valor_br(texto):
+    """Converte o texto digitado num valor em R$ ("1234.56", "1234,56",
+    "1.234,56", "R$ 1.234,56") em float. Devolve None se vazio OU se não for
+    um número válido — _parse_float_form sozinho devolvia o default (e portanto
+    apagava o valor sem avisar) pra "1.234,56"."""
+    t = (texto or "").replace("R$", "").replace(" ", "").strip()
+    if not t:
+        return None
+    if "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _pedido_operacao_do_pedido(pedido_venda):
+    """PedidoOperacao (Gestão Operação) que casa com este nº de pedido de
+    venda de Gestão Produção — mesmo casamento (sem zeros à esquerda) usado em
+    todo o resto do sistema. None se não houver número ou não houver linha."""
+    chave = _normalizar_pedido_venda(pedido_venda)
+    if not chave:
+        return None
+    return (
+        PedidoOperacao.query
+        .filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave)
+        .order_by(PedidoOperacao.id)
+        .first()
+    )
+
+
+def _salvar_valor_comercial_pedido(pedido, pedido_venda_original, f):
+    """Grava "Valor do pedido (comercial)" vindo da tela de editar pedido de
+    Gestão Produção em PedidoOperacao.go_valor_pedido_operacao (campo vazio =
+    limpa o valor). Se ainda não existir PedidoOperacao pra esse pedido de
+    venda (pedido antigo/importado) e foi informado um valor, cria um — igual
+    ao que a inclusão já faz. Histórico de alteração registrado."""
+    texto = (f.get("go_valor_pedido_operacao") or "").strip()
+    novo_valor = _parse_valor_br(texto)
+    if texto and novo_valor is None:
+        flash(f'Valor do pedido (comercial) "{texto}" não é um número válido — o valor anterior foi mantido.', "warning")
+        return
+    po = _pedido_operacao_do_pedido(pedido_venda_original) or _pedido_operacao_do_pedido(pedido.pedido_venda)
+    if po is None:
+        if novo_valor is None:
+            return
+        po = _criar_pedido_operacao_a_partir_de_producao(pedido, f)
+        db.session.flush()
+        _registrar_alteracoes(
+            "pedido_operacao", po.id, None, {"go_valor_pedido_operacao": None},
+            {"go_valor_pedido_operacao": novo_valor}, ["go_valor_pedido_operacao"],
+        )
+        return
+    antes = {"go_valor_pedido_operacao": po.go_valor_pedido_operacao}
+    po.go_valor_pedido_operacao = novo_valor
+    _registrar_alteracoes(
+        "pedido_operacao", po.id, None, antes, {"go_valor_pedido_operacao": novo_valor},
+        ["go_valor_pedido_operacao"],
+    )
+
+
 def _criar_pedido_operacao_a_partir_de_producao(pedido, f):
     """Cria automaticamente 1 PedidoOperacao a partir de um Pedido recém-
     incluído em Gestão Produção (pedido do Bruno, 01/09/2026) — SÓ na
@@ -10184,11 +10245,7 @@ def _criar_pedido_operacao_a_partir_de_producao(pedido, f):
         go_proposta=f.get("go_proposta", "").strip() or None,
         go_pedido_compra_cliente=f.get("go_pedido_compra_cliente", "").strip() or None,
         go_status_pedido_info=f.get("go_status_pedido_info", "").strip() or None,
-        go_valor_pedido_operacao=(
-            _parse_float_form(f.get("go_valor_pedido_operacao"), default=None)
-            if f.get("go_valor_pedido_operacao", "").strip()
-            else None
-        ),
+        go_valor_pedido_operacao=_parse_valor_br(f.get("go_valor_pedido_operacao")),
     )
     db.session.add(novo)
     return novo
@@ -18731,6 +18788,7 @@ def register_routes(app):
             f = request.form
 
             pedido_antes = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_PEDIDO}
+            pedido_venda_original = pedido.pedido_venda
 
             pedido.data_cliente = _parse_data_form(f.get("data_cliente"))
             pedido.data_inclusao_pedido = _parse_data_form(f.get("data_inclusao_pedido"))
@@ -18748,6 +18806,15 @@ def register_routes(app):
 
             pedido_depois = {c: getattr(pedido, c) for c in CAMPOS_HISTORICO_PEDIDO}
             _registrar_alteracoes("pedido", pedido.id, pedido.id, pedido_antes, pedido_depois, CAMPOS_HISTORICO_PEDIDO)
+
+            # "Valor do pedido (comercial)" (pedido do Bruno, 19/10/2026: "depois
+            # da inclusão do pedido de venda, não está sendo possível editar o
+            # valor"): o valor digitado na inclusão mora em PedidoOperacao
+            # (go_valor_pedido_operacao), tabela separada ligada só pelo nº do
+            # pedido de venda — e esta tela nunca teve o campo. Só ADMIN/PCP
+            # editam (LIDER vê, mas não altera valor comercial).
+            if current_user.role in ("ADMIN", "PCP") and "go_valor_pedido_operacao" in f:
+                _salvar_valor_comercial_pedido(pedido, pedido_venda_original, f)
 
             # Planejamento semanal / liberação prevista / liberação real (pedido do
             # Bruno, 31/08/2026): deixaram de ser editáveis por item — agora só
@@ -18851,9 +18918,12 @@ def register_routes(app):
         # em 01/10/2026 pra reaproveitar também no relatório PDF da Listagem
         # Geral — ver relatorio_listagem_geral_semanal_pdf).
         simulado_a = _simulado_a_pedido(pedido)
+        po_valor = _pedido_operacao_do_pedido(pedido.pedido_venda)
 
         return render_template(
             "editar_pedido.html", pedido=pedido, transportadoras=transportadoras, simulado_a=simulado_a,
+            valor_comercial=po_valor.go_valor_pedido_operacao if po_valor is not None else None,
+            tem_pedido_operacao=po_valor is not None,
         )
 
     @app.route("/pedidos/<int:pedido_id>")
