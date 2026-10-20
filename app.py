@@ -10292,7 +10292,7 @@ CAMPOS_GO_COMERCIAL_NOVO_PEDIDO = [
 
 def _parse_valor_br(texto):
     """Converte o texto digitado num valor em R$ ("1234.56", "1234,56",
-    "1.234,56", "R$ 1.234,56") em float. Devolve None se vazio OU se não for
+    "1.234,56", "R$ 1.234,56", "100.000" = cem mil) em float. Devolve None se vazio OU se não for
     um número válido — _parse_float_form sozinho devolvia o default (e portanto
     apagava o valor sem avisar) pra "1.234,56"."""
     t = (texto or "").replace("R$", "").replace(" ", "").strip()
@@ -10300,6 +10300,10 @@ def _parse_valor_br(texto):
         return None
     if "," in t:
         t = t.replace(".", "").replace(",", ".")
+    elif re.fullmatch(r"\d{1,3}(\.\d{3})+", t):
+        # "100.000" / "1.250.000" sem vírgula = milhar no padrão brasileiro
+        # (antes virava 100.0 — Bruno, 20/10/2026: "100 mil considera só 100")
+        t = t.replace(".", "")
     try:
         return float(t)
     except ValueError:

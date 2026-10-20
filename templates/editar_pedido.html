@@ -108,7 +108,7 @@
             <div class="input-group">
               <span class="input-group-text">R$</span>
               <input type="text" inputmode="decimal" class="form-control" name="go_valor_pedido_operacao"
-                     value="{{ ('%.2f' % valor_comercial).replace('.', ',') if valor_comercial is not none and valor_comercial is defined else '' }}"
+                     value="{{ ('{:,.2f}'.format(valor_comercial)).replace(',', 'X').replace('.', ',').replace('X', '.') if valor_comercial is not none and valor_comercial is defined else '' }}"
                      placeholder="0,00" {% if current_user.role not in ('ADMIN', 'PCP') %}disabled{% endif %}>
             </div>
             <div class="form-text">
