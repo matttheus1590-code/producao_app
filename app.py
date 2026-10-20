@@ -6444,6 +6444,13 @@ def _metrica_lt(valores_hist, valores_mes, valores_atual=None):
     media, n = _media_dias(valores_hist)
     mes_media, mes_n = _media_dias(valores_mes)
     atual_media, atual_n = _media_dias(valores_atual or [])
+    return _metrica_lt_de_medias(media, n, mes_media, mes_n, atual_media, atual_n)
+
+
+def _metrica_lt_de_medias(media, n, mes_media, mes_n, atual_media, atual_n):
+    """Monta o dict de _metrica_lt a partir de médias JÁ calculadas (usado
+    também pelo LEAD TIME TOTAL PRODUÇÃO, que é a SOMA das médias de fila +
+    chão — ver _somar_metricas_lt)."""
     delta = round(mes_media - media, 1) if (media is not None and mes_media is not None) else None
     delta_atual = round(atual_media - media, 1) if (media is not None and atual_media is not None) else None
     # mês atual contra o mês anterior (o mês atual é o protagonista — pedido do
@@ -6460,6 +6467,51 @@ def _metrica_lt(valores_hist, valores_mes, valores_atual=None):
         "delta_atual": delta_atual, "delta_atual_sentido": _sentido(delta_atual),
         "delta_atual_mes": delta_atual_mes, "delta_atual_mes_sentido": _sentido(delta_atual_mes),
     }
+
+
+def _soma_medias_lt(a, b):
+    """a + b (1 casa) ou None se faltar uma das parcelas — nunca trata
+    ausência como zero."""
+    return round(a + b, 1) if (a is not None and b is not None) else None
+
+
+def _min_n_lt(a, b):
+    return min(a, b) if (a and b) else 0
+
+
+def _somar_metricas_lt(fila, chao):
+    """LEAD TIME TOTAL PRODUÇÃO = média da fila de espera + média do chão de
+    fábrica, em cada leitura (mês atual / mês anterior / média do ano).
+    Correção de 20/10/2026 (Bruno: "o lead time total produção atual está
+    somando errado"): antes o total era a média de Inclusão -> Liberação só
+    dos itens LIBERADOS no mês (94), enquanto a fila entra pelo mês do INÍCIO
+    de produção (111 itens, inclui quem ainda está no chão) — populações
+    diferentes, então 13,2d + 13,1d aparecia como 18,1d. Agora o total é
+    exatamente a soma dos dois números mostrados nos cards ao lado."""
+    return _metrica_lt_de_medias(
+        _soma_medias_lt(fila["media"], chao["media"]), _min_n_lt(fila["n"], chao["n"]),
+        _soma_medias_lt(fila["mes_media"], chao["mes_media"]), _min_n_lt(fila["mes_n"], chao["mes_n"]),
+        _soma_medias_lt(fila["atual_media"], chao["atual_media"]), _min_n_lt(fila["atual_n"], chao["atual_n"]),
+    )
+
+
+def _somar_linhas_lt(linhas_fila, linhas_chao, media_ref):
+    """Linhas do mini-quadrante 'Total produção por estação' = fila + chão da
+    MESMA estação (só entra a estação que tem as duas parcelas na média do
+    ano; no mês, a soma só existe se as duas parcelas existirem)."""
+    chao_por_chave = {l["chave"]: l for l in linhas_chao}
+    linhas = []
+    for f in linhas_fila:
+        c = chao_por_chave.get(f["chave"])
+        if c is None:
+            continue
+        linhas.append({
+            "chave": f["chave"], "nome": f["nome"], "emoji": f["emoji"],
+            "media": _soma_medias_lt(f["media"], c["media"]), "n": _min_n_lt(f["n"], c["n"]),
+            "mes_media": _soma_medias_lt(f["mes_media"], c["mes_media"]), "mes_n": _min_n_lt(f["mes_n"], c["mes_n"]),
+            "atual_media": _soma_medias_lt(f["atual_media"], c["atual_media"]), "atual_n": _min_n_lt(f["atual_n"], c["atual_n"]),
+        })
+    return _finalizar_linhas_lt(linhas, media_ref)
 
 
 def _linhas_lt_comparativo(hist_por_chave, mes_por_chave, media_ref, nome_fn, emoji_fn, atual_por_chave=None):
@@ -6484,6 +6536,12 @@ def _linhas_lt_comparativo(hist_por_chave, mes_por_chave, media_ref, nome_fn, em
             "media": media, "n": n, "mes_media": mes_media, "mes_n": mes_n,
             "atual_media": atual_media, "atual_n": atual_n,
         })
+    return _finalizar_linhas_lt(linhas, media_ref)
+
+
+def _finalizar_linhas_lt(linhas, media_ref):
+    """Ordena (maior lead time do mês atual primeiro), calcula as barras
+    (mesma escala) e o semáforo de cada linha."""
     linhas.sort(key=lambda l: (l["atual_media"] is None, -(l["atual_media"] or 0), -l["media"], l["nome"]))
     maior = max(
         [l["media"] for l in linhas]
@@ -6543,7 +6601,12 @@ def _lead_time_painel_agrupado(hoje=None):
         )
         return m
 
-    producao = {"fila": _com_estacoes("fila"), "chao": _com_estacoes("chao"), "total": _com_estacoes("total_producao")}
+    fila_m = _com_estacoes("fila")
+    chao_m = _com_estacoes("chao")
+    # total = fila + chão (soma das médias mostradas ao lado) — ver _somar_metricas_lt
+    total_m = _somar_metricas_lt(fila_m, chao_m)
+    total_m["por_estacao"] = _somar_linhas_lt(fila_m["por_estacao"], chao_m["por_estacao"], total_m["atual_media"])
+    producao = {"fila": fila_m, "chao": chao_m, "total": total_m}
 
     cif = _metrica_lt(hist["cif"], mes["cif"], atual["cif"])
     regioes_cif = _linhas_lt_comparativo(
