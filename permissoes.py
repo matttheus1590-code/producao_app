@@ -20,16 +20,17 @@ Papéis existentes:
            programação do PCP por semana). Mesmo mecanismo do PD: qualquer
            rota fora do allowlist ENDPOINTS_PERMITIDOS_COMERCIAL devolve 403.
 
-  COMERCIAL_GERAL - comercial com visão ampla (pedido do Bruno, 13/10/2026,
-           caso da Andrieli): vê o sistema todo como o papel GESTAO (só
-           leitura), EXCETO Painel, P&D, Qualidade (RNC/RDIM) e Gestão de Custos —
-           bloqueados por prefixo de rota (PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL
-           abaixo), tanto no menu quanto direto pela URL (403).
-
-  LISTAGEM_FAT - (pedido do Bruno, 19/10/2026, caso do Roberto): só leitura e só
-           Listagem Geral, Faturamento e Consulta Pedido/Planejamento PCP —
-           mesmo mecanismo de allowlist do PD/COMERCIAL
-           (ENDPOINTS_PERMITIDOS_LISTAGEM_FAT); o resto devolve 403.
+  COMERCIAL_GERAL - comercial com visão ampla (pedido do Bruno, 13/10/2026, caso
+           da Andrieli; refeito em 19/10/2026 junto com o caso do Roberto): só
+           LEITURA de (1) Gestão Operação completa (Operação 360, Expedição/
+           Logística, Resultados + exportações), (2) Gestão Produção só
+           Listagem Geral, Programação e Faturamento e (3) Consulta Pedido/
+           Planejamento PCP. Mesmo mecanismo de allowlist do PD/COMERCIAL
+           (ENDPOINTS_PERMITIDOS_COMERCIAL_GERAL + prefixo "gestao_operacao_");
+           o resto — Painel, Estações, KPIs, Gargalos, Alertas, Relatórios,
+           Qualidade, P&D, Custos, Cadastros, Administração — devolve 403,
+           inclusive direto pela URL. (O papel LISTAGEM_FAT criado no mesmo dia
+           foi absorvido por este: migração em app.py troca quem tinha.)
 
 Uso:
   @requer_role("ADMIN", "PCP")
@@ -44,7 +45,7 @@ from functools import wraps
 from flask import abort
 from flask_login import current_user, login_required
 
-ROLES = ("ADMIN", "PCP", "LIDER", "GESTAO", "PD", "COMERCIAL", "COMERCIAL_GERAL", "LISTAGEM_FAT")
+ROLES = ("ADMIN", "PCP", "LIDER", "GESTAO", "PD", "COMERCIAL", "COMERCIAL_GERAL")
 
 ROLES_LABELS = {
     "ADMIN": "Administrador",
@@ -53,8 +54,7 @@ ROLES_LABELS = {
     "GESTAO": "Gestão",
     "PD": "Líder de P&D",
     "COMERCIAL": "Comercial",
-    "COMERCIAL_GERAL": "Comercial (acesso geral)",
-    "LISTAGEM_FAT": "Listagem Geral + Faturamento + Consulta Pedido",
+    "COMERCIAL_GERAL": "Comercial (Gestão Operação + Listagem/Programação/Faturamento)",
 }
 
 # Endpoints (nomes de rota Flask, não caminhos de URL) que o papel PD pode
@@ -78,27 +78,22 @@ ENDPOINTS_PERMITIDOS_COMERCIAL = {
     "consulta_planejamento_pcp", "relatorio_listagem_geral_semanal_pdf",
 }
 
-# Endpoints que o papel LISTAGEM_FAT pode acessar (pedido do Bruno, 19/10/2026,
-# caso do Roberto: "somente listagem geral, faturamento e consulta pedido"),
-# SÓ leitura: Listagem Geral (+ exportações CSV/XLSX/PDF semanal e o detalhe do
-# pedido que o botão "olho" da linha abre), Faturamento (+ exportações CSV/XLSX)
-# e Consulta Pedido/Planejamento PCP (as 2 abas + autocomplete/detalhe).
-ENDPOINTS_PERMITIDOS_LISTAGEM_FAT = {
+# Endpoints (nomes de rota Flask) que o COMERCIAL_GERAL pode acessar, além de
+# TODOS os que começam com "gestao_operacao_" (Gestão Operação completa — as
+# rotas que gravam já são protegidas por @requer_role("ADMIN", "PCP")).
+PREFIXO_GESTAO_OPERACAO = "gestao_operacao_"
+ENDPOINTS_PERMITIDOS_COMERCIAL_GERAL = {
+    # Gestão Produção > Listagem Geral (+ exportações, detalhe/espelho do pedido)
     "dashboard", "relatorio_listagem_csv", "relatorio_listagem_xlsx", "relatorio_listagem_geral_semanal_pdf",
     "detalhe_pedido", "espelho_pedido_pdf",
+    # Gestão Produção > Programação
+    "programacao_semana",
+    # Gestão Produção > Faturamento (+ exportações)
     "faturamento", "relatorio_faturamento_csv", "relatorio_faturamento_xlsx",
+    # Consulta Pedido/Planejamento PCP
     "consulta_pedido", "consulta_pedido_busca_sugestoes", "consulta_pedido_busca_detalhe",
     "consulta_planejamento_pcp",
 }
-
-# Áreas bloqueadas pro COMERCIAL_GERAL: o nome do endpoint (rota Flask) começa
-# com um destes prefixos — P&D (pd_), Qualidade/RNC (qualidade_), Inspeções/
-# RDIM (rdim_) e Gestão de Custos (custos_).
-PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL = ("pd_", "qualidade_", "rdim_", "custos_")
-
-# Painel (tela inicial de gestão + PDF) também bloqueado pro COMERCIAL_GERAL
-# (pedido do Bruno, 13/10/2026: "bloqueia o painel por completo").
-ENDPOINTS_BLOQUEADOS_COMERCIAL_GERAL = {"painel", "painel_relatorio_pdf"}
 
 # Rotas sempre liberadas, mesmo pra um papel restrito por área — sem isso o
 # PD nem conseguiria fazer login/logout, e os arquivos estáticos (CSS/JS)
@@ -113,16 +108,14 @@ def pode_acessar_endpoint(usuario, endpoint):
     já era restrito por papel, via `requer_role`/`pode_editar_estacao`)."""
     if not usuario or not usuario.is_authenticated:
         return True  # quem não está logado nem chega aqui — @login_required cuida disso antes
-    if usuario.role not in ("PD", "COMERCIAL", "COMERCIAL_GERAL", "LISTAGEM_FAT"):
+    if usuario.role not in ("PD", "COMERCIAL", "COMERCIAL_GERAL"):
         return True
     if endpoint in ENDPOINTS_SEMPRE_LIVRES:
         return True
     if usuario.role == "COMERCIAL_GERAL":
-        return endpoint not in ENDPOINTS_BLOQUEADOS_COMERCIAL_GERAL and not endpoint.startswith(PREFIXOS_BLOQUEADOS_COMERCIAL_GERAL)
+        return endpoint in ENDPOINTS_PERMITIDOS_COMERCIAL_GERAL or endpoint.startswith(PREFIXO_GESTAO_OPERACAO)
     if usuario.role == "COMERCIAL":
         return endpoint in ENDPOINTS_PERMITIDOS_COMERCIAL
-    if usuario.role == "LISTAGEM_FAT":
-        return endpoint in ENDPOINTS_PERMITIDOS_LISTAGEM_FAT
     return endpoint in ENDPOINTS_PERMITIDOS_PD
 
 
@@ -130,7 +123,7 @@ def ve_pd_qualidade_custos(usuario):
     """False pros papéis que NÃO enxergam P&D, Qualidade e Gestão de Custos
     (COMERCIAL e COMERCIAL_GERAL) — usado nos templates pra esconder menus,
     colunas e links dessas áreas (senão virariam links que dão 403)."""
-    return not (usuario and usuario.is_authenticated and usuario.role in ("COMERCIAL", "COMERCIAL_GERAL", "LISTAGEM_FAT"))
+    return not (usuario and usuario.is_authenticated and usuario.role in ("COMERCIAL", "COMERCIAL_GERAL"))
 
 
 def requer_role(*roles_permitidos):

@@ -1366,6 +1366,7 @@ def create_app():
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
         _migrar_itens_pedido(app)
+        _migrar_papel_listagem_fat(app)
         _migrar_producao_para_itens(app)
         _migrar_usuarios_role(app)
         _migrar_estacoes_tabela(app)
@@ -1597,6 +1598,17 @@ def create_app():
 
     register_routes(app)
     return app
+
+
+def _migrar_papel_listagem_fat(app):
+    """O papel LISTAGEM_FAT (criado em 19/10/2026 pro Roberto) foi absorvido
+    pelo COMERCIAL_GERAL — os dois ficaram com o mesmo acesso (pedido do Bruno,
+    mesmo dia). Quem já tinha sido gravado como LISTAGEM_FAT passa a
+    COMERCIAL_GERAL. Idempotente (não faz nada se não houver ninguém)."""
+    n = Usuario.query.filter_by(role="LISTAGEM_FAT").update({"role": "COMERCIAL_GERAL"}, synchronize_session=False)
+    if n:
+        db.session.commit()
+        app.logger.info("Migração de papéis: %d usuário(s) LISTAGEM_FAT -> COMERCIAL_GERAL.", n)
 
 
 def _migrar_itens_pedido(app):

@@ -18,7 +18,7 @@
       </div>
 
       <nav class="app-sidebar-nav">
-        {% if current_user.role not in ('PD', 'COMERCIAL', 'COMERCIAL_GERAL', 'LISTAGEM_FAT') %}
+        {% if current_user.role not in ('PD', 'COMERCIAL', 'COMERCIAL_GERAL') %}
         <a class="app-nav-link {% if request.endpoint == 'painel' %}active{% endif %}" href="{{ url_for('painel') }}">
           <span>🎛️ Painel</span>
         </a>
@@ -31,7 +31,7 @@
         </a>
         {% endif %}
 
-        {% if current_user.role not in ('PD', 'COMERCIAL', 'LISTAGEM_FAT') %}
+        {% if current_user.role not in ('PD', 'COMERCIAL') %}
         <div class="app-nav-section">📦 Gestão Operação</div>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_listagem_geral' %}active{% endif %}" href="{{ url_for('gestao_operacao_listagem_geral') }}">
           <span>📃 Operação 360</span>
@@ -48,7 +48,7 @@
         {% if current_user.role != 'COMERCIAL' %}
         <div class="app-nav-section">🏭 Gestão Produção</div>
         {% if current_user.role != 'PD' %}
-        {% if current_user.role not in ('COMERCIAL_GERAL', 'LISTAGEM_FAT') %}
+        {% if current_user.role != 'COMERCIAL_GERAL' %}
         <a class="app-nav-link {% if request.endpoint == 'novo_pedido' %}active{% endif %}" href="{{ url_for('novo_pedido') }}">
           <span>➕ Novo pedido</span>
         </a>
@@ -57,23 +57,21 @@
           <span>📋 Listagem Geral</span>
         </a>
         {% endif %}
-        {% if current_user.role != 'LISTAGEM_FAT' %}
+        {% if current_user.role != 'COMERCIAL_GERAL' %}
         <a class="app-nav-link {% if request.endpoint in ('estacoes_lista', 'estacao_kanban') %}active{% endif %}" href="{{ url_for('estacoes_lista') }}">
           <span>🗂️ Estações{% if current_user.role == 'PD' %} (visualização){% endif %}</span>
         </a>
         {% endif %}
         {% if current_user.role != 'PD' %}
-        {% if current_user.role != 'LISTAGEM_FAT' %}
         <a class="app-nav-link {% if request.endpoint == 'programacao_semana' %}active{% endif %}" href="{{ url_for('programacao_semana') }}">
           <span>🗓️ Programação</span>
         </a>
-        {% endif %}
-        {% if current_user.role != 'LISTAGEM_FAT' %}
+        {% if current_user.role != 'COMERCIAL_GERAL' %}
         <a class="app-nav-link {% if request.endpoint == 'kpis' %}active{% endif %}" href="{{ url_for('kpis') }}">
           <span>📊 KPIs</span>
         </a>
         {% endif %}
-        {% if current_user.role != 'LISTAGEM_FAT' %}
+        {% if current_user.role != 'COMERCIAL_GERAL' %}
         <a class="app-nav-link {% if request.endpoint == 'gargalos' %}active{% endif %}" href="{{ url_for('gargalos') }}">
           <span>⚠️ Gargalos</span>
         </a>
@@ -82,12 +80,12 @@
           <span>💵 Faturamento</span>
         </a>
 
-        {% if current_user.role != 'LISTAGEM_FAT' %}
+        {% if current_user.role != 'COMERCIAL_GERAL' %}
         <a class="app-nav-link {% if request.endpoint == 'alertas' %}active{% endif %}" href="{{ url_for('alertas') }}">
           <span>🔔 Alertas</span>
         </a>
         {% endif %}
-        {% if current_user.role != 'LISTAGEM_FAT' %}
+        {% if current_user.role != 'COMERCIAL_GERAL' %}
         <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('relatorio') %}active{% endif %}" href="{{ url_for('relatorios') }}">
           <span>📥 Relatórios</span>
         </a>

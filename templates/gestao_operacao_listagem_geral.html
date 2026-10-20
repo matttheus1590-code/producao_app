@@ -253,9 +253,11 @@
         {% endif %}
         <td class="text-truncate" title="{{ 'Automático — direto do Planejamento semanal em Gestão Produção' if m.termino_semanal_automatico else (m.termino_semanal or '') }}">{{ m.termino_semanal or "—" }}</td>
         <td class="text-end">
+          {% if current_user.role in ('ADMIN', 'PCP') %}
           <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary" title="Editar">
             <i class="bi bi-pencil-square"></i>
           </a>
+          {% endif %}
         </td>
       </tr>
       {% else %}
