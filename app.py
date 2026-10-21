@@ -6415,7 +6415,7 @@ def _coletar_lead_times_painel(inicio=None, fim=None):
                     # 21/10/2026). fila + chão = total, exatamente, por item.
                     fila_item = (item.inicio_producao - pedido.data_inclusao_pedido).days
                     r["concluidos"].append({
-                        "pedido_id": pedido.id,
+                        "pedido_id": pedido.id, "itens_total": len(pedido.itens),
                         "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
                         "produto": item.descricao_produto, "estacao": item.estacao,
                         "liberacao": item.liberacao_real,
@@ -6580,27 +6580,59 @@ def _finalizar_linhas_lt(linhas, media_ref):
     return linhas
 
 
+def _dias_txt(v):
+    """13.0 -> 13 ; 13.25 -> 13.2 (dias do Painel: ponto decimal, como no resto
+    do Painel)."""
+    if v is None:
+        return None
+    v = round(v, 1)
+    return int(v) if v == int(v) else v
+
+
 def _resumo_concluidos_painel(itens, limite=8):
-    """Resumo dos itens JÁ CONCLUÍDOS (liberação efetiva) no mês atual, pro
-    popover que aparece ao passar o mouse nos cards de lead time do Painel
-    (pedido do Bruno, 21/10/2026): os `limite` mais recentes (liberação mais
-    nova primeiro) com fila / chão / total de cada um + a média do conjunto.
-    As médias aqui são só dos itens concluídos, por isso podem diferir do
-    número grande do card (a fila do card também conta o que ainda está no
-    chão de fábrica)."""
-    n = len(itens)
-    ordenados = sorted(itens, key=lambda i: (i["liberacao"], i["total"]), reverse=True)
+    """Resumo dos PEDIDOS JÁ CONCLUÍDOS (têm item com liberação efetiva no mês
+    atual) pros cards de lead time do Painel — popover ao passar o mouse e a
+    janela "Ver todos". UMA LINHA POR PEDIDO (pedido do Bruno, 21/10/2026: "uma
+    linha para cada pedido... está repetindo o mesmo lead time dentro do
+    pedido"): fila / chão / total do pedido = média dos itens liberados dele
+    (a faixa mín–máx vai junto quando os itens divergem) e a lista de itens
+    segue dentro de cada pedido (aparece ao passar o mouse na linha).
+
+    As médias do rodapé são POR PEDIDO e só dos concluídos; o número grande do
+    card é por item e a fila também conta quem ainda está no chão de fábrica —
+    por isso podem diferir."""
+    por_pedido = {}
+    for i in itens:
+        por_pedido.setdefault(i["pedido_id"], []).append(i)
+    pedidos = []
+    for pid, its in por_pedido.items():
+        its = sorted(its, key=lambda x: (-x["total"], x["produto"] or ""))
+        linha = {
+            "pedido_id": pid, "pedido_venda": its[0]["pedido_venda"], "cliente": its[0]["cliente"],
+            "n_liberados": len(its), "n_total": max(its[0]["itens_total"], len(its)),
+            "liberacao": max(x["liberacao"] for x in its),
+            "itens": its,
+        }
+        for k in ("fila", "chao", "total"):
+            vals = [x[k] for x in its]
+            linha[k] = _dias_txt(sum(vals) / len(vals))
+            linha[k + "_min"], linha[k + "_max"] = min(vals), max(vals)
+            linha[k + "_varia"] = min(vals) != max(vals)
+        pedidos.append(linha)
+    ordenados = sorted(pedidos, key=lambda p: (p["liberacao"], p["total"]), reverse=True)
     recentes = ordenados[:limite]
+    n = len(ordenados)
     return {
         "n": n,
+        "n_itens": len(itens),
         "itens": recentes,
-        # TODOS os concluídos (micro janela "Ver todos" do Painel — pedido do
-        # Bruno, 21/10/2026: "ele ocultou alguns").
+        # TODOS os pedidos concluídos (micro janela "Ver todos" do Painel —
+        # pedido do Bruno, 21/10/2026: "ele ocultou alguns").
         "todos": ordenados,
         "restantes": max(0, n - len(recentes)),
-        "media_fila": _media_dias([i["fila"] for i in itens])[0],
-        "media_chao": _media_dias([i["chao"] for i in itens])[0],
-        "media_total": _media_dias([i["total"] for i in itens])[0],
+        "media_fila": _media_dias([p["fila"] for p in pedidos])[0],
+        "media_chao": _media_dias([p["chao"] for p in pedidos])[0],
+        "media_total": _media_dias([p["total"] for p in pedidos])[0],
     }
 
 

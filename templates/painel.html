@@ -146,41 +146,41 @@
    liberados no mês atual; `col` = qual coluna é a do card (destaque). #}
 {% macro lt_concluidos(c, lt, col, lado="esq") %}
 <div class="lt-pop lt-pop-{{ lado }} text-start">
-  <div class="fw-semibold small mb-1">✅ Concluídos em {{ lt.atual_curto }} <span class="text-muted fw-normal">· {{ c.n }} item(ns) liberado(s)</span></div>
+  <div class="fw-semibold small mb-1">✅ Concluídos em {{ lt.atual_curto }} <span class="text-muted fw-normal">· {{ c.n }} pedido(s) · {{ c.n_itens }} item(ns) liberado(s)</span></div>
   {% if c.itens %}
   <table class="table table-sm mb-1 lt-pop-tabela">
     <thead>
       <tr class="text-muted">
-        <th>Pedido · produto</th>
+        <th>Pedido</th>
         <th class="text-end{{ ' lt-col-destaque' if col == 'fila' else '' }}">Fila</th>
         <th class="text-end{{ ' lt-col-destaque' if col == 'chao' else '' }}">Chão</th>
         <th class="text-end{{ ' lt-col-destaque' if col == 'total' else '' }}">Total</th>
       </tr>
     </thead>
     <tbody>
-      {% for i in c.itens %}
+      {% for p in c.itens %}
       <tr>
-        <td class="text-truncate" style="max-width:14rem;" title="{{ i.cliente }} · {{ i.produto }}">
-          <span class="fw-semibold">{{ i.pedido_venda or '—' }}</span> <span class="text-muted">{{ i.cliente }}</span>
-          <div class="text-muted text-truncate" style="font-size:0.66rem;">{{ i.produto }}{% if i.estacao %} · {{ i.estacao }}{% endif %} · lib. {{ i.liberacao.strftime('%d/%m') }}</div>
+        <td class="text-truncate" style="max-width:14rem;" title="{{ p.cliente }}">
+          <span class="fw-semibold">{{ p.pedido_venda or '—' }}</span> <span class="text-muted">{{ p.cliente }}</span>
+          <div class="text-muted text-truncate" style="font-size:0.66rem;">{{ p.n_liberados }} item(ns){% if p.n_total > p.n_liberados %} de {{ p.n_total }}{% endif %} · lib. {{ p.liberacao.strftime('%d/%m') }}</div>
         </td>
-        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'fila' else '' }}">{{ i.fila }}d</td>
-        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'chao' else '' }}">{{ i.chao }}d</td>
-        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'total' else '' }}">{{ i.total }}d</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'fila' else '' }}">{{ p.fila }}d</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'chao' else '' }}">{{ p.chao }}d</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'total' else '' }}">{{ p.total }}d</td>
       </tr>
       {% endfor %}
     </tbody>
     <tfoot>
       <tr class="fw-semibold">
-        <td>Média dos {{ c.n }} concluído(s){% if c.restantes %} <span class="text-muted fw-normal">(+{{ c.restantes }} não listado(s))</span>{% endif %}</td>
+        <td>Média dos {{ c.n }} pedido(s){% if c.restantes %} <span class="text-muted fw-normal">(+{{ c.restantes }} não listado(s))</span>{% endif %}</td>
         <td class="text-end text-nowrap{{ ' lt-col-destaque' if col == 'fila' else '' }}">{{ dias(c.media_fila) }}</td>
         <td class="text-end text-nowrap{{ ' lt-col-destaque' if col == 'chao' else '' }}">{{ dias(c.media_chao) }}</td>
         <td class="text-end text-nowrap{{ ' lt-col-destaque' if col == 'total' else '' }}">{{ dias(c.media_total) }}</td>
       </tr>
     </tfoot>
   </table>
-  {% if c.restantes %}<div class="mb-1"><button type="button" class="btn btn-sm btn-outline-primary py-0" data-lt-todos="{{ col }}">🔎 Ver todos os {{ c.n }} em uma janela</button></div>{% endif %}
-  <div class="text-muted" style="font-size:0.64rem;">Só itens com liberação efetiva no mês · dias corridos · fila + chão = total. O número grande do card também considera o que ainda está em produção.</div>
+  {% if c.restantes %}<div class="mb-1"><button type="button" class="btn btn-sm btn-outline-primary py-0" data-lt-todos="{{ col }}">🔎 Ver todos os {{ c.n }} pedidos em uma janela</button></div>{% endif %}
+  <div class="text-muted" style="font-size:0.64rem;">Uma linha por pedido (média dos itens liberados no mês) · dias corridos · fila + chão = total. O número grande do card é por item e também considera o que ainda está em produção.</div>
   {% else %}
   <div class="text-muted small">Nenhum item concluído (liberação efetiva) neste mês ainda.</div>
   {% endif %}
@@ -197,7 +197,7 @@
   <div class="text-muted" style="font-size:0.72rem;">{{ sub }}</div>
   <div class="text-muted mb-2" style="font-size:0.7rem;">{{ m.atual_n }} {{ unidade }} no mês</div>
   {{ chips_ref(m, lt, neutro) }}
-  {% if concl is not none %}<button type="button" class="btn btn-sm btn-outline-secondary py-0 mt-2" style="font-size:0.72rem;" data-lt-todos="{{ col }}">🔎 Ver todos os concluídos ({{ concl.n }})</button>{% endif %}
+  {% if concl is not none %}<button type="button" class="btn btn-sm btn-outline-secondary py-0 mt-2" style="font-size:0.72rem;" data-lt-todos="{{ col }}">🔎 Ver todos os concluídos ({{ concl.n }} pedidos)</button>{% endif %}
 </div>
 {% if concl is not none %}{{ lt_concluidos(concl, lt, col, lado) }}{% endif %}
 </div>
@@ -834,7 +834,7 @@
       <div class="modal-header">
         <div>
           <h5 class="modal-title" id="modalLtConcluidosTitulo">✅ Concluídos em {{ lead_time_agrupado.atual_curto }} — <span id="ltModalFoco">lead time</span></h5>
-          <div class="text-muted small">Itens com liberação efetiva no mês · dias corridos · fila + chão = total · clique no título da coluna para ordenar</div>
+          <div class="text-muted small">Uma linha por pedido (média dos itens liberados no mês) · dias corridos · fila + chão = total · passe o mouse na linha para ver os itens do pedido · clique no título da coluna para ordenar</div>
         </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
       </div>
@@ -853,8 +853,7 @@
             <tr>
               <th role="button" data-ord="pedido">Pedido</th>
               <th role="button" data-ord="cliente">Cliente</th>
-              <th role="button" data-ord="produto">Produto</th>
-              <th role="button" data-ord="estacao">Estação</th>
+              <th role="button" data-ord="itens" class="text-end">Itens</th>
               <th role="button" data-ord="lib" class="text-nowrap">Liberação</th>
               <th role="button" data-ord="fila" class="text-end">Fila</th>
               <th role="button" data-ord="chao" class="text-end">Chão</th>
@@ -862,17 +861,31 @@
             </tr>
           </thead>
           <tbody>
-            {% for i in concl_todos.todos %}
-            <tr data-pedido="{{ i.pedido_venda or '' }}" data-cliente="{{ i.cliente }}" data-produto="{{ i.produto }}" data-estacao="{{ i.estacao or '' }}"
-                data-lib="{{ i.liberacao.isoformat() }}" data-fila="{{ i.fila }}" data-chao="{{ i.chao }}" data-total="{{ i.total }}">
-              <td class="text-nowrap"><a href="{{ url_for('detalhe_pedido', pedido_id=i.pedido_id) }}" class="fw-semibold text-decoration-none" title="Ver pedido (somente visualização)">{{ i.pedido_venda or '—' }}</a></td>
-              <td>{{ i.cliente }}</td>
-              <td>{{ i.produto }}</td>
-              <td>{{ i.estacao or '—' }}</td>
-              <td class="text-nowrap">{{ i.liberacao.strftime('%d/%m/%Y') }}</td>
-              <td class="text-end text-nowrap" data-col="fila">{{ i.fila }}d</td>
-              <td class="text-end text-nowrap" data-col="chao">{{ i.chao }}d</td>
-              <td class="text-end text-nowrap" data-col="total">{{ i.total }}d</td>
+            {% for p in concl_todos.todos %}
+            <tr class="lt-linha-pedido" data-pedido="{{ p.pedido_venda or '' }}" data-cliente="{{ p.cliente }}"
+                data-produtos="{% for x in p.itens %}{{ x.produto }} {{ x.estacao or '' }} {% endfor %}"
+                data-lib="{{ p.liberacao.isoformat() }}" data-itens="{{ p.n_liberados }}" data-fila="{{ p.fila }}" data-chao="{{ p.chao }}" data-total="{{ p.total }}">
+              <td class="text-nowrap"><a href="{{ url_for('detalhe_pedido', pedido_id=p.pedido_id) }}" class="fw-semibold text-decoration-none" title="Ver pedido (somente visualização)">{{ p.pedido_venda or '—' }}</a></td>
+              <td>{{ p.cliente }}</td>
+              <td class="text-end text-nowrap">{{ p.n_liberados }}{% if p.n_total > p.n_liberados %} <span class="text-muted">de {{ p.n_total }}</span>{% endif %}</td>
+              <td class="text-nowrap">{{ p.liberacao.strftime('%d/%m/%Y') }}</td>
+              {% for k in ('fila', 'chao', 'total') %}
+              <td class="text-end text-nowrap" data-col="{{ k }}">{{ p[k] }}d{% if p[k ~ '_varia'] %}<div class="text-muted" style="font-size:0.64rem;">{{ p[k ~ '_min'] }}–{{ p[k ~ '_max'] }}</div>{% endif %}</td>
+              {% endfor %}
+              <td class="d-none lt-detalhe-itens">
+                <div class="fw-semibold mb-1">Pedido {{ p.pedido_venda or '—' }} · {{ p.cliente }}</div>
+                <div class="text-muted mb-1" style="font-size:0.7rem;">{{ p.n_liberados }} item(ns) liberado(s){% if p.n_total > p.n_liberados %} de {{ p.n_total }} no pedido (os demais ainda em produção){% endif %}</div>
+                <table class="table table-sm mb-0 lt-pop-tabela">
+                  <thead><tr class="text-muted"><th>Produto</th><th>Estação</th><th>Lib.</th><th class="text-end" data-c="fila">Fila</th><th class="text-end" data-c="chao">Chão</th><th class="text-end" data-c="total">Total</th></tr></thead>
+                  <tbody>
+                    {% for x in p.itens[:16] %}
+                    <tr><td>{{ x.produto }}</td><td>{{ x.estacao or '—' }}</td><td class="text-nowrap">{{ x.liberacao.strftime('%d/%m') }}</td>
+                      <td class="text-end text-nowrap" data-c="fila">{{ x.fila }}d</td><td class="text-end text-nowrap" data-c="chao">{{ x.chao }}d</td><td class="text-end text-nowrap" data-c="total">{{ x.total }}d</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% if p.itens|length > 16 %}<div class="text-muted mt-1" style="font-size:0.7rem;">+ {{ p.itens|length - 16 }} item(ns) não listado(s)</div>{% endif %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>
@@ -1086,7 +1099,13 @@
   const modal = new bootstrap.Modal(modalEl);
   const tbody = modalEl.querySelector('tbody');
   const FOCO = { fila: 'fila de espera', chao: 'chão de fábrica', total: 'lead time total' };
+  const NUMERICAS = { lib: false, itens: true, fila: true, chao: true, total: true };
   let ordCol = 'lib', ordDir = -1, foco = 'total';
+
+  // Painel flutuante com os itens do pedido (segue o mouse; não captura clique)
+  const tip = document.createElement('div');
+  tip.className = 'lt-itens-pop d-none';
+  modalEl.querySelector('.modal-content').appendChild(tip);
 
   function media(linhas, k) {
     if (!linhas.length) return '—';
@@ -1096,27 +1115,27 @@
 
   function aplicar() {
     const termo = modalEl.querySelector('#ltModalBusca').value.trim().toLowerCase();
-    const trs = Array.from(tbody.querySelectorAll('tr'));
-    const numericas = { lib: false, fila: true, chao: true, total: true };
+    const trs = Array.from(tbody.querySelectorAll('tr.lt-linha-pedido'));
     trs.sort(function (a, b) {
       let va = a.dataset[ordCol], vb = b.dataset[ordCol];
-      if (numericas[ordCol]) { va = Number(va); vb = Number(vb); }
+      if (NUMERICAS[ordCol]) { va = Number(va); vb = Number(vb); }
       else { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
       return va < vb ? -ordDir : va > vb ? ordDir : 0;
     });
     const visiveis = [];
     trs.forEach(function (tr) {
       tbody.appendChild(tr);
-      const texto = (tr.dataset.pedido + ' ' + tr.dataset.cliente + ' ' + tr.dataset.produto + ' ' + tr.dataset.estacao).toLowerCase();
+      const texto = (tr.dataset.pedido + ' ' + tr.dataset.cliente + ' ' + tr.dataset.produtos).toLowerCase();
       const ok = !termo || texto.indexOf(termo) >= 0;
       tr.classList.toggle('d-none', !ok);
       if (ok) visiveis.push(tr);
       ['fila', 'chao', 'total'].forEach(function (c) {
-        tr.querySelector('[data-col="' + c + '"]').classList.toggle('lt-col-destaque', c === foco);
-        tr.querySelector('[data-col="' + c + '"]').classList.toggle('fw-bold', c === foco);
+        const td = tr.querySelector('td[data-col="' + c + '"]');
+        td.classList.toggle('lt-col-destaque', c === foco);
+        td.classList.toggle('fw-bold', c === foco);
       });
     });
-    modalEl.querySelector('#ltModalContagem').textContent = 'Mostrando ' + visiveis.length + ' de ' + trs.length + ' item(ns)';
+    modalEl.querySelector('#ltModalContagem').textContent = 'Mostrando ' + visiveis.length + ' de ' + trs.length + ' pedido(s)';
     modalEl.querySelector('#ltModalMFila').textContent = media(visiveis, 'fila');
     modalEl.querySelector('#ltModalMChao').textContent = media(visiveis, 'chao');
     modalEl.querySelector('#ltModalMTotal').textContent = media(visiveis, 'total');
@@ -1127,6 +1146,30 @@
       th.classList.toggle('lt-col-destaque', th.dataset.ord === foco);
     });
   }
+
+  function posicionarTip(ev) {
+    const m = 16, w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = ev.clientX + m, y = ev.clientY + m;
+    if (x + w > window.innerWidth - 8) x = Math.max(8, ev.clientX - w - m);
+    if (y + h > window.innerHeight - 8) y = Math.max(8, window.innerHeight - h - 8);
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+
+  tbody.addEventListener('mouseover', function (ev) {
+    const tr = ev.target.closest('tr.lt-linha-pedido');
+    if (!tr || tr.contains(ev.relatedTarget)) return;
+    tip.innerHTML = tr.querySelector('.lt-detalhe-itens').innerHTML;
+    tip.querySelectorAll('[data-c]').forEach(function (el) { el.classList.toggle('lt-col-destaque', el.getAttribute('data-c') === foco); });
+    tip.classList.remove('d-none');
+    posicionarTip(ev);
+  });
+  tbody.addEventListener('mousemove', function (ev) { if (!tip.classList.contains('d-none')) posicionarTip(ev); });
+  tbody.addEventListener('mouseout', function (ev) {
+    const tr = ev.target.closest('tr.lt-linha-pedido');
+    if (tr && !tr.contains(ev.relatedTarget)) tip.classList.add('d-none');
+  });
+  modalEl.addEventListener('hidden.bs.modal', function () { tip.classList.add('d-none'); });
 
   document.addEventListener('click', function (ev) {
     const bt = ev.target.closest('[data-lt-todos]');
@@ -1140,7 +1183,7 @@
   modalEl.querySelectorAll('th[data-ord]').forEach(function (th) {
     th.addEventListener('click', function () {
       if (ordCol === th.dataset.ord) ordDir = -ordDir;
-      else { ordCol = th.dataset.ord; ordDir = ['fila', 'chao', 'total', 'lib'].indexOf(ordCol) >= 0 ? -1 : 1; }
+      else { ordCol = th.dataset.ord; ordDir = NUMERICAS[ordCol] ? -1 : 1; }
       aplicar();
     });
   });
