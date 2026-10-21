@@ -6418,7 +6418,7 @@ def _coletar_lead_times_painel(inicio=None, fim=None, incluir_operacao=True):
                         "pedido_id": pedido.id, "itens_total": len(pedido.itens),
                         "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
                         "produto": item.descricao_produto, "estacao": item.estacao,
-                        "liberacao": item.liberacao_real,
+                        "inclusao": pedido.data_inclusao_pedido, "liberacao": item.liberacao_real,
                         "fila": fila_item, "chao": dias, "total": fila_item + dias,
                     })
                     if item.estacao:
@@ -6627,6 +6627,7 @@ def _resumo_concluidos_painel(itens, limite=8, refs=None):
         linha = {
             "pedido_id": pid, "pedido_venda": its[0]["pedido_venda"], "cliente": its[0]["cliente"],
             "n_liberados": len(its), "n_total": max(its[0]["itens_total"], len(its)),
+            "inclusao": its[0]["inclusao"],
             "liberacao": max(x["liberacao"] for x in its),
             "itens": its,
         }
@@ -7133,14 +7134,14 @@ def _gerar_pdf_lead_time_q1(dados):
             alertas = _alertas_pedido_lt(p)
             itens_txt = f'{p["n_liberados"]}' + (f' de {p["n_total"]}' if p["n_total"] > p["n_liberados"] else "")
             linhas_p.append([
-                T(p["pedido_venda"] or "—", base_b), T(p["cliente"]), P(itens_txt, centro), P(f'{p["liberacao"]:%d/%m/%Y}', centro),
+                T(p["pedido_venda"] or "—", base_b), T(p["cliente"]), P(itens_txt, centro), P(f'{p["inclusao"]:%d/%m/%Y}', centro), P(f'{p["liberacao"]:%d/%m/%Y}', centro),
                 val(p, "fila"), val(p, "chao"), val(p, "total"),
                 P((_icone_pdf("warning", 9) + " " + cor("CRÍTICO: " + ", ".join(alertas), VERMELHO)) if alertas else "", base),
             ])
             if p["acima_total"]:
                 extra_p.append(("BACKGROUND", (0, i), (-1, i), COR_ACIMA_BG))
-        elementos.append(tabela(["Pedido", "Cliente", "Itens", "Liberação", "Fila", "Chão", "Total", "Criticidade"], linhas_p,
-                                [9, 33, 7, 10, 10, 10, 10, 18], alin="LLCCCCCL", extra=extra_p, zebra=False))
+        elementos.append(tabela(["Pedido", "Cliente", "Itens", "Inclusão", "Liberação", "Fila", "Chão", "Total", "Criticidade"], linhas_p,
+                                [8, 28, 6, 9, 9, 9, 9, 9, 16], alin="LLCCCCCCL", extra=extra_p, zebra=False))
     else:
         elementos.append(P("Nenhum pedido concluído (liberação efetiva) neste período.", nota))
     elementos.append(Spacer(1, 4 * mm))
@@ -7161,11 +7162,11 @@ def _gerar_pdf_lead_time_q1(dados):
             for x in p["itens"]:
                 n_linha += 1
                 linhas_i.append([T(p["pedido_venda"] or "—", base_b), T(p["cliente"]), T(x["produto"]), T(x["estacao"] or "—"),
-                                 P(f'{x["liberacao"]:%d/%m/%Y}', centro), vi(x, "fila"), vi(x, "chao"), vi(x, "total")])
+                                 P(f'{x["inclusao"]:%d/%m/%Y}', centro), P(f'{x["liberacao"]:%d/%m/%Y}', centro), vi(x, "fila"), vi(x, "chao"), vi(x, "total")])
                 if x["acima_total"]:
                     extra_i.append(("BACKGROUND", (0, n_linha), (-1, n_linha), COR_ACIMA_BG))
-        elementos.append(tabela(["Pedido", "Cliente", "Produto", "Estação", "Liberação", "Fila", "Chão", "Total"], linhas_i,
-                                [8, 22, 36, 12, 9, 7, 7, 7], alin="LLLLCCCC", extra=extra_i, zebra=False))
+        elementos.append(tabela(["Pedido", "Cliente", "Produto", "Estação", "Inclusão", "Liberação", "Fila", "Chão", "Total"], linhas_i,
+                                [8, 20, 31, 11, 9, 9, 6, 6, 6], alin="LLLLCCCCC", extra=extra_i, zebra=False))
     else:
         elementos.append(P("Nenhum item liberado neste período.", nota))
 
@@ -7328,48 +7329,48 @@ def _gerar_xlsx_lead_time_q1(dados):
     topo(wsP, f'Pedidos concluídos · {lt["atual_rotulo"]}')
     wsP["A4"] = f'Linha vermelha = lead time total acima da média {lt["ano"]} ({refs.get("total")} d) · valor vermelho = métrica acima da sua média (fila {refs.get("fila")} · chão {refs.get("chao")}) · CRÍTICO = acima de {LT_CRITICO_DIAS} dias'
     wsP["A4"].font = f_sub
-    cabecalho(wsP, 5, ["Pedido", "Cliente", "Itens liberados", "Itens no pedido", "Última liberação", "Fila (dias)", "Chão (dias)", "Total (dias)",
+    cabecalho(wsP, 5, ["Pedido", "Cliente", "Itens liberados", "Itens no pedido", "Data de inclusão", "Última liberação", "Fila (dias)", "Chão (dias)", "Total (dias)",
                        "Total mín.", "Total máx.", "Acima da média (total)", "Crítico (>30d)", "Métricas críticas"],
-              [11, 38, 10, 10, 14, 11, 11, 11, 10, 10, 14, 12, 22])
+              [11, 38, 10, 10, 14, 14, 11, 11, 11, 10, 10, 14, 12, 22])
     for i, p in enumerate(conc["todos"], 6):
-        vals = [p["pedido_venda"] or "—", p["cliente"], p["n_liberados"], p["n_total"], p["liberacao"], p["fila"], p["chao"], p["total"],
+        vals = [p["pedido_venda"] or "—", p["cliente"], p["n_liberados"], p["n_total"], p["inclusao"], p["liberacao"], p["fila"], p["chao"], p["total"],
                 p["total_min"], p["total_max"], "SIM" if p["acima_total"] else "", "SIM" if p["critico_total"] else "", ", ".join(_alertas_pedido_lt(p))]
         for j, v in enumerate(vals, 1):
             c = wsP.cell(row=i, column=j, value=v)
-            c.font, c.border, c.alignment = f_normal, borda, (esq if j in (1, 2, 13) else centro)
-            if j == 5:
+            c.font, c.border, c.alignment = f_normal, borda, (esq if j in (1, 2, 14) else centro)
+            if j in (5, 6):
                 c.number_format = "DD/MM/YYYY"
-            if j in (6, 7, 8):
+            if j in (7, 8, 9):
                 c.number_format = "0.0"
-                if p["acima_" + ("fila", "chao", "total")[j - 6]]:
+                if p["acima_" + ("fila", "chao", "total")[j - 7]]:
                     c.font = f_vermelho
             if p["acima_total"]:
                 c.fill = fill_acima
     ultima = 5 + max(len(conc["todos"]), 1)
-    wsP.auto_filter.ref = f"A5:{get_column_letter(13)}{ultima}"
+    wsP.auto_filter.ref = f"A5:{get_column_letter(14)}{ultima}"
     wsP.freeze_panes = "C6"
 
     # ---------------- 5. Itens concluídos ----------------
     wsI = wb.create_sheet("Itens concluídos")
     topo(wsI, f'Itens liberados · {lt["atual_rotulo"]}')
-    cabecalho(wsI, 5, ["Pedido", "Cliente", "Produto", "Estação", "Liberação efetiva", "Fila (dias)", "Chão (dias)", "Total (dias)", "Acima da média (total)", "Crítico (>30d)"],
-              [11, 34, 44, 18, 15, 11, 11, 11, 14, 12])
+    cabecalho(wsI, 5, ["Pedido", "Cliente", "Produto", "Estação", "Data de inclusão", "Liberação efetiva", "Fila (dias)", "Chão (dias)", "Total (dias)", "Acima da média (total)", "Crítico (>30d)"],
+              [11, 34, 44, 18, 15, 15, 11, 11, 11, 14, 12])
     i = 6
     for p in conc["todos"]:
         for x in p["itens"]:
-            vals = [p["pedido_venda"] or "—", p["cliente"], x["produto"], x["estacao"] or "—", x["liberacao"], x["fila"], x["chao"], x["total"],
+            vals = [p["pedido_venda"] or "—", p["cliente"], x["produto"], x["estacao"] or "—", x["inclusao"], x["liberacao"], x["fila"], x["chao"], x["total"],
                     "SIM" if x["acima_total"] else "", "SIM" if x["critico_total"] else ""]
             for j, v in enumerate(vals, 1):
                 c = wsI.cell(row=i, column=j, value=v)
                 c.font, c.border, c.alignment = f_normal, borda, (esq if j in (1, 2, 3, 4) else centro)
-                if j == 5:
+                if j in (5, 6):
                     c.number_format = "DD/MM/YYYY"
-                if j in (6, 7, 8) and x["acima_" + ("fila", "chao", "total")[j - 6]]:
+                if j in (7, 8, 9) and x["acima_" + ("fila", "chao", "total")[j - 7]]:
                     c.font = f_vermelho
                 if x["acima_total"]:
                     c.fill = fill_acima
             i += 1
-    wsI.auto_filter.ref = f"A5:J{max(i - 1, 6)}"
+    wsI.auto_filter.ref = f"A5:K{max(i - 1, 6)}"
     wsI.freeze_panes = "C6"
 
     buffer = io.BytesIO()

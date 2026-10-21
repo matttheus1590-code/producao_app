@@ -162,7 +162,7 @@
       <tr class="{{ 'lt-row-acima' if p['acima_' ~ col] else '' }}">
         <td class="text-truncate" style="max-width:14rem;" title="{{ p.cliente }}">
           <span class="fw-semibold">{{ p.pedido_venda or '—' }}</span>{% if p['critico_' ~ col] %} <span title="Mais de 30 dias">🚨</span>{% endif %} <span class="text-muted">{{ p.cliente }}</span>
-          <div class="text-muted text-truncate" style="font-size:0.66rem;">{{ p.n_liberados }} item(ns){% if p.n_total > p.n_liberados %} de {{ p.n_total }}{% endif %} · lib. {{ p.liberacao.strftime('%d/%m') }}</div>
+          <div class="text-muted text-truncate" style="font-size:0.66rem;">{{ p.n_liberados }} item(ns){% if p.n_total > p.n_liberados %} de {{ p.n_total }}{% endif %} · incl. {{ p.inclusao.strftime('%d/%m') }} → lib. {{ p.liberacao.strftime('%d/%m') }}</div>
         </td>
         <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'fila' else '' }}{{ ' lt-val-acima' if p.acima_fila else '' }}">{{ p.fila }}d{% if p.critico_fila %} 🚨{% endif %}</td>
         <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'chao' else '' }}{{ ' lt-val-acima' if p.acima_chao else '' }}">{{ p.chao }}d{% if p.critico_chao %} 🚨{% endif %}</td>
@@ -901,7 +901,8 @@
               <th role="button" data-ord="pedido">Pedido</th>
               <th role="button" data-ord="cliente">Cliente</th>
               <th role="button" data-ord="itens" class="text-end">Itens</th>
-              <th role="button" data-ord="lib" class="text-nowrap">Liberação</th>
+              <th role="button" data-ord="inc" class="text-nowrap ps-4" title="Data de inclusão do pedido">Inclusão</th>
+              <th role="button" data-ord="lib" class="text-nowrap" title="Liberação efetiva (última do pedido)">Liberação</th>
               <th role="button" data-ord="fila" class="text-end">Fila</th>
               <th role="button" data-ord="chao" class="text-end">Chão</th>
               <th role="button" data-ord="total" class="text-end">Total</th>
@@ -913,10 +914,11 @@
                 data-acima-fila="{{ 1 if p.acima_fila else 0 }}" data-acima-chao="{{ 1 if p.acima_chao else 0 }}" data-acima-total="{{ 1 if p.acima_total else 0 }}"
                 data-critico-fila="{{ 1 if p.critico_fila else 0 }}" data-critico-chao="{{ 1 if p.critico_chao else 0 }}" data-critico-total="{{ 1 if p.critico_total else 0 }}"
                 data-produtos="{% for x in p.itens %}{{ x.produto }} {{ x.estacao or '' }} {% endfor %}"
-                data-lib="{{ p.liberacao.isoformat() }}" data-itens="{{ p.n_liberados }}" data-fila="{{ p.fila }}" data-chao="{{ p.chao }}" data-total="{{ p.total }}">
+                data-inc="{{ p.inclusao.isoformat() }}" data-lib="{{ p.liberacao.isoformat() }}" data-itens="{{ p.n_liberados }}" data-fila="{{ p.fila }}" data-chao="{{ p.chao }}" data-total="{{ p.total }}">
               <td class="text-nowrap"><a href="{{ url_for('detalhe_pedido', pedido_id=p.pedido_id) }}" class="fw-semibold text-decoration-none" title="Ver pedido (somente visualização)">{{ p.pedido_venda or '—' }}</a> <span class="lt-crit-pedido d-none" title="Mais de 30 dias nesta métrica">🚨</span></td>
               <td>{{ p.cliente }}</td>
               <td class="text-end text-nowrap">{{ p.n_liberados }}{% if p.n_total > p.n_liberados %} <span class="text-muted">de {{ p.n_total }}</span>{% endif %}</td>
+              <td class="text-nowrap ps-4">{{ p.inclusao.strftime('%d/%m/%Y') }}</td>
               <td class="text-nowrap">{{ p.liberacao.strftime('%d/%m/%Y') }}</td>
               {% for k in ('fila', 'chao', 'total') %}
               <td class="text-end text-nowrap{{ ' lt-val-acima' if p['acima_' ~ k] else '' }}" data-col="{{ k }}">{{ p[k] }}d{% if p['critico_' ~ k] %} 🚨{% endif %}{% if p[k ~ '_varia'] %}<div class="text-muted" style="font-size:0.64rem;">{{ p[k ~ '_min'] }}–{{ p[k ~ '_max'] }}</div>{% endif %}</td>
@@ -1215,7 +1217,7 @@
   const modal = new bootstrap.Modal(modalEl);
   const tbody = modalEl.querySelector('tbody');
   const FOCO = { fila: 'fila de espera', chao: 'chão de fábrica', total: 'lead time total' };
-  const NUMERICAS = { lib: false, itens: true, fila: true, chao: true, total: true };
+  const NUMERICAS = { inc: false, lib: false, itens: true, fila: true, chao: true, total: true };
   let ordCol = 'lib', ordDir = -1, foco = 'total';
 
   // Painel flutuante com os itens do pedido (segue o mouse; não captura clique)
