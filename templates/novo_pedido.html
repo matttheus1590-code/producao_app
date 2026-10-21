@@ -113,7 +113,7 @@
         </div>
         <div class="col-md-4">
           <label class="form-label">Valor do pedido (comercial)</label>
-          <input type="text" class="form-control" name="go_valor_pedido_operacao" value="{{ form.get('go_valor_pedido_operacao','') }}">
+          <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_valor_pedido_operacao" value="{{ form.get('go_valor_pedido_operacao','') }}" placeholder="0,00">
           <div class="form-text">Valor comercial do pedido — pode ser diferente do valor calculado a partir dos itens abaixo.</div>
         </div>
 
@@ -136,10 +136,10 @@
                 </select>
               </div>
               <div class="col-md-2">
-                <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" value="{{ item.quantidade }}" placeholder="Qtd">
+                <input type="text" inputmode="decimal" autocomplete="off" data-br="qtd" class="form-control item-quantidade" name="item_quantidade[]" value="{{ item.quantidade }}" placeholder="Qtd">
               </div>
               <div class="col-md-2">
-                <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" value="{{ item.custo }}" placeholder="Custo unitário (R$)">
+                <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control item-custo" name="item_custo[]" value="{{ item.custo }}" placeholder="Custo unitário (R$) 0,00">
               </div>
               <div class="col-md-1 d-grid">
                 <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
@@ -159,10 +159,10 @@
                 </select>
               </div>
               <div class="col-md-2">
-                <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
+                <input type="text" inputmode="decimal" autocomplete="off" data-br="qtd" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
               </div>
               <div class="col-md-2">
-                <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
+                <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$) 0,00">
               </div>
               <div class="col-md-1 d-grid">
                 <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
@@ -233,10 +233,10 @@
         <select class="form-select item-estacao" name="item_estacao[]">${opcoesEstacao()}</select>
       </div>
       <div class="col-md-2">
-        <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
+        <input type="text" inputmode="decimal" autocomplete="off" data-br="qtd" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
       </div>
       <div class="col-md-2">
-        <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
+        <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$) 0,00">
       </div>
       <div class="col-md-1 d-grid">
         <button type="button" class="btn btn-outline-danger btn-remover-item" title="Remover item"><i class="bi bi-trash"></i></button>
@@ -247,11 +247,11 @@
   function atualizarTotal() {
     let total = 0;
     container.querySelectorAll('.item-row').forEach(function(row) {
-      const q = parseFloat(row.querySelector('.item-quantidade').value || 0);
-      const c = parseFloat(row.querySelector('.item-custo').value || 0);
+      const q = BR.num(row.querySelector('.item-quantidade').value);
+      const c = BR.num(row.querySelector('.item-custo').value);
       total += q * c;
     });
-    totalEl.textContent = 'R$ ' + total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    totalEl.textContent = 'R$ ' + BR.fmt(total, 2, 2);
   }
 
   btnAdd.addEventListener('click', function() {

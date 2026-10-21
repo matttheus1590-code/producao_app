@@ -242,8 +242,7 @@ def _parse_campo_go(campo, f):
     if campo in _GO_CAMPOS_DATA:
         return _parse_data_form(f.get(campo))
     if campo in _GO_CAMPOS_FLOAT:
-        valor = f.get(campo, "")
-        return _parse_float_form(valor, default=None) if valor.strip() else None
+        return _parse_valor_br(f.get(campo, ""))
     return f.get(campo, "").strip() or None
 
 
@@ -1487,6 +1486,10 @@ def create_app():
         return "R$ " + "{:,.2f}".format(valor).replace(",", "X").replace(".", ",").replace("X", ".")
 
     app.jinja_env.filters["moeda_brl"] = _moeda_brl
+    # Filtros pros <input> no formato brasileiro (21/10/2026): "5.273,91" /
+    # quantidade "2" — ver _fmt_br e a máscara BR em static/js/app.js.
+    app.jinja_env.filters["br_num"] = lambda v: _fmt_br(v, 2, 5)
+    app.jinja_env.filters["br_qtd"] = lambda v: _fmt_br(v, 0, 3)
 
     # Filtro Jinja "otd_status_go" (pedido do Bruno, 23/09/2026: "otd
     # totalmente automático") — pros partials que mostram um PedidoOperacao
@@ -10291,23 +10294,60 @@ CAMPOS_GO_COMERCIAL_NOVO_PEDIDO = [
 
 
 def _parse_valor_br(texto):
-    """Converte o texto digitado num valor em R$ ("1234.56", "1234,56",
-    "1.234,56", "R$ 1.234,56", "100.000" = cem mil) em float. Devolve None se vazio OU se não for
-    um número válido — _parse_float_form sozinho devolvia o default (e portanto
-    apagava o valor sem avisar) pra "1.234,56"."""
-    t = (texto or "").replace("R$", "").replace(" ", "").strip()
+    """Converte o texto digitado (formato brasileiro) num número: "5.273,91",
+    "5273,91", "R$ 5.273,91", "100.000" (= cem mil), "1.250.000", "5273.91"
+    (ponto decimal, como vem de planilha) -> float. Devolve None se vazio OU
+    inválido. Regra (a MESMA do JS `BR.parse` em static/js/app.js):
+
+      - tem vírgula -> vírgula é o decimal e os pontos são milhar;
+      - só pontos no padrão de milhar (1-3 dígitos + grupos de 3: "100.000",
+        "1.250.000") -> milhar;
+      - senão o ponto é decimal ("12.5", "5273.91").
+
+    Antes o ponto era sempre decimal: "100.000" virava 100 e "5.273,91" virava
+    5,27391 (Bruno, 20-21/10/2026: "ela considera somente 100 reais"). Os
+    campos <input type="number"> NÃO passam por aqui — o navegador manda com
+    ponto decimal e o _parse_float_form dá conta."""
+    t = (texto or "").replace("R$", "").replace(" ", "").replace("\xa0", "").strip()
     if not t:
         return None
     if "," in t:
         t = t.replace(".", "").replace(",", ".")
     elif re.fullmatch(r"\d{1,3}(\.\d{3})+", t):
-        # "100.000" / "1.250.000" sem vírgula = milhar no padrão brasileiro
-        # (antes virava 100.0 — Bruno, 20/10/2026: "100 mil considera só 100")
         t = t.replace(".", "")
-    try:
-        return float(t)
-    except ValueError:
+    if not re.fullmatch(r"\d+(\.\d+)?|\.\d+", t):
         return None
+    return float(t)
+
+
+def _numero_item_form(texto, atual, rotulo):
+    """Quantidade / custo unitário de um item vindos de campo de texto no
+    formato brasileiro. Vazio -> 0. Texto inválido -> mantém o valor `atual`
+    (se houver) e avisa, em vez de gravar zero em silêncio."""
+    t = (texto or "").strip()
+    if not t:
+        return 0.0
+    valor = _parse_valor_br(t)
+    if valor is None:
+        flash(f'{rotulo} "{t}" não é um número válido — o valor anterior foi mantido.', "warning")
+        return atual if atual is not None else 0.0
+    return valor
+
+
+def _fmt_br(valor, min_dec=2, max_dec=5):
+    """1234.5 -> "1.234,50"; 5.27391 -> "5,27391"; 2.0 (min 0) -> "2". Sem
+    "R$" (usado no valor dos <input> de moeda; o R$ fica no rótulo/addon)."""
+    if valor is None or valor == "":
+        return ""
+    try:
+        v = float(valor)
+    except (TypeError, ValueError):
+        return ""
+    inteiro, _, dec = f"{abs(v):.{max_dec}f}".partition(".")
+    dec = dec.rstrip("0").ljust(min_dec, "0")
+    inteiro = f"{int(inteiro):,}".replace(",", ".")
+    sinal = "-" if v < 0 and (int(inteiro.replace(".", "")) or dec.strip("0")) else ""
+    return sinal + inteiro + ("," + dec if dec else "")
 
 
 def _pedido_operacao_do_pedido(pedido_venda):
@@ -18878,8 +18918,8 @@ def register_routes(app):
                 itens.append(
                     ItemPedido(
                         descricao_produto=desc,
-                        quantidade=_parse_float_form(qtd),
-                        custo_unitario=_parse_float_form(custo),
+                        quantidade=_numero_item_form(qtd, None, "Quantidade"),
+                        custo_unitario=_numero_item_form(custo, None, "Custo unitário"),
                         estacao=estacao_item or None,
                     )
                 )
@@ -19020,8 +19060,8 @@ def register_routes(app):
                     pedido.itens.append(item)
 
                 item.descricao_produto = desc
-                item.quantidade = _parse_float_form(qtd)
-                item.custo_unitario = _parse_float_form(custo)
+                item.quantidade = _numero_item_form(qtd, item.quantidade, "Quantidade")
+                item.custo_unitario = _numero_item_form(custo, item.custo_unitario, "Custo unitário")
                 item.estacao = estacao_item or None
                 item.inicio_producao = _parse_data_form(ini_prod)
                 data_conclusao = _parse_data_form(concl_prod)
@@ -19503,6 +19543,9 @@ def register_routes(app):
             antes = {c: getattr(pedido, c) for c in campos_historico}
 
             for campo in campos_secao:
+                if campo in _GO_CAMPOS_FLOAT and (f.get(campo) or "").strip() and _parse_valor_br(f.get(campo)) is None:
+                    flash(f'Valor "{f.get(campo).strip()}" não é um número válido — o valor anterior foi mantido.', "warning")
+                    continue
                 setattr(pedido, campo, _parse_campo_go(campo, f))
 
             depois = {c: getattr(pedido, c) for c in campos_historico}

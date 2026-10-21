@@ -58,7 +58,7 @@
           </div>
           <div class="col-md-4">
             <label class="form-label">Valor do pedido</label>
-            <input type="text" class="form-control" name="go_valor_pedido_operacao" value="{{ pedido.go_valor_pedido_operacao if pedido.go_valor_pedido_operacao is not none else '' }}">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_valor_pedido_operacao" value="{{ pedido.go_valor_pedido_operacao|br_num if pedido.go_valor_pedido_operacao is not none else '' }}" placeholder="0,00">
             <div class="form-text">Valor total do pedido comercial.</div>
           </div>
         </div>
@@ -115,7 +115,7 @@
           </div>
           <div class="col-md-4">
             <label class="form-label">Custo produção real (MP/serviços)</label>
-            <input type="text" class="form-control" name="go_custo_producao_real" value="{{ pedido.go_custo_producao_real if pedido.go_custo_producao_real is not none else '' }}">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_producao_real" value="{{ pedido.go_custo_producao_real|br_num if pedido.go_custo_producao_real is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-8 d-flex align-items-end">
             <div class="text-muted small">
@@ -141,7 +141,7 @@
           </div>
           <div class="col-md-3">
             <label class="form-label">Valor NF emitida</label>
-            <input type="text" class="form-control" name="go_valor_nf_emitida" value="{{ pedido.go_valor_nf_emitida if pedido.go_valor_nf_emitida is not none else '' }}">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_valor_nf_emitida" value="{{ pedido.go_valor_nf_emitida|br_num if pedido.go_valor_nf_emitida is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-3">
             <label class="form-label">Transportadora</label>
@@ -188,15 +188,15 @@
           </div>
           <div class="col-md-3">
             <label class="form-label">Custo frete previsto</label>
-            <input type="text" class="form-control" name="go_custo_frete_previsto" value="{{ pedido.go_custo_frete_previsto if pedido.go_custo_frete_previsto is not none else '' }}">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_previsto" value="{{ pedido.go_custo_frete_previsto|br_num if pedido.go_custo_frete_previsto is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-3">
             <label class="form-label">Custo frete final</label>
-            <input type="text" class="form-control" name="go_custo_frete_final" value="{{ pedido.go_custo_frete_final if pedido.go_custo_frete_final is not none else '' }}">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_final" value="{{ pedido.go_custo_frete_final|br_num if pedido.go_custo_frete_final is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-3">
             <label class="form-label">Custo frete sobre a nota (%)</label>
-            <input type="text" class="form-control" name="go_custo_frete_sobre_nota" value="{{ pedido.go_custo_frete_sobre_nota if pedido.go_custo_frete_sobre_nota is not none else '' }}">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_sobre_nota" value="{{ pedido.go_custo_frete_sobre_nota|br_num if pedido.go_custo_frete_sobre_nota is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-12">
             <label class="form-label">Observação/Pendência</label>

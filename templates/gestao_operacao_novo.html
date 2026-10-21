@@ -92,7 +92,7 @@
         </div>
         <div class="col-md-4">
           <label class="form-label">Valor do pedido</label>
-          <input type="text" class="form-control" name="go_valor_pedido_operacao" value="{{ form.get('go_valor_pedido_operacao','') }}">
+          <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_valor_pedido_operacao" value="{{ form.get('go_valor_pedido_operacao','') }}" placeholder="0,00">
         </div>
       </div>
 

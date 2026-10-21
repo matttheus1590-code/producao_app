@@ -192,3 +192,96 @@ document.addEventListener("DOMContentLoaded", () => {
     if (botao) entrar(botao, false);
   });
 })();
+
+
+/* ------------------------------------------------------------------------
+ * Máscara de moeda / número no formato brasileiro (pedido do Bruno,
+ * 21/10/2026: "deixe fácil e correto o formato da moeda REAL, está confuso
+ * os pontos, sinais etc").
+ *
+ *   <input type="text" inputmode="decimal" data-br="moeda">  -> 5.273,91
+ *   <input type="text" inputmode="decimal" data-br="qtd">    -> 2  /  2,5
+ *
+ * Regra de leitura (a MESMA do servidor, _parse_valor_br em app.py):
+ *   - tem vírgula  -> vírgula é o decimal, pontos são milhar ("5.273,91");
+ *   - só pontos no padrão de milhar ("100.000", "1.250.000") -> milhar;
+ *   - senão o ponto é decimal ("12.5", "5273.91").
+ * Ao sair do campo o texto é reescrito já formatado ("100.000" -> "100.000,00")
+ * e uma linha logo abaixo mostra como o sistema entendeu ("= R$ 100.000,00").
+ * ---------------------------------------------------------------------- */
+(function () {
+  function parse(texto) {
+    if (texto === null || texto === undefined) return null;
+    var t = String(texto).replace(/R\$/g, "").replace(/[\s ]/g, "");
+    if (t === "") return null;
+    if (t.indexOf(",") >= 0) t = t.replace(/\./g, "").replace(",", ".");
+    else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, "");
+    if (!/^(\d+(\.\d+)?|\.\d+)$/.test(t)) return NaN;
+    return parseFloat(t);
+  }
+
+  function fmt(n, minD, maxD) {
+    return n.toLocaleString("pt-BR", { minimumFractionDigits: minD, maximumFractionDigits: maxD });
+  }
+
+  // número (0 se vazio/inválido) — pros cálculos de total na tela
+  function num(texto) {
+    var n = parse(texto);
+    return n === null || isNaN(n) ? 0 : n;
+  }
+
+  function casas(input) {
+    return input.getAttribute("data-br") === "qtd" ? [0, 3] : [2, 5];
+  }
+
+  function previewDe(input) {
+    if (input.getAttribute("data-br") !== "moeda") return null;
+    var ancora = input.closest(".input-group") || input;
+    var el = ancora.nextElementSibling;
+    if (!el || !el.classList.contains("br-preview")) {
+      el = document.createElement("div");
+      el.className = "br-preview small";
+      ancora.insertAdjacentElement("afterend", el);
+    }
+    return el;
+  }
+
+  function atualizar(input, formatar) {
+    var n = parse(input.value);
+    var c = casas(input);
+    var prev = previewDe(input);
+    if (n === null) {
+      input.classList.remove("is-invalid");
+      if (prev) prev.textContent = "";
+      return;
+    }
+    if (isNaN(n)) {
+      input.classList.add("is-invalid");
+      if (prev) { prev.textContent = "Valor inválido — use o formato 1.234,56"; prev.className = "br-preview small text-danger"; }
+      return;
+    }
+    input.classList.remove("is-invalid");
+    var texto = fmt(n, c[0], c[1]);
+    if (formatar) input.value = texto;
+    if (prev) { prev.textContent = "= R$ " + texto; prev.className = "br-preview small text-success"; }
+  }
+
+  document.addEventListener("input", function (ev) {
+    var el = ev.target;
+    if (!el.matches || !el.matches("input[data-br]")) return;
+    var limpo = el.value.replace(/[^0-9.,R$\s-]/g, "");
+    if (limpo !== el.value) el.value = limpo;
+    atualizar(el, false);
+  });
+
+  document.addEventListener("focusout", function (ev) {
+    var el = ev.target;
+    if (el.matches && el.matches("input[data-br]")) atualizar(el, true);
+  });
+
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("input[data-br]").forEach(function (el) { atualizar(el, false); });
+  });
+
+  window.BR = { parse: parse, fmt: fmt, num: num };
+})();

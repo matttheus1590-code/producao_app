@@ -107,8 +107,8 @@
             <label class="form-label">Valor do pedido (comercial)</label>
             <div class="input-group">
               <span class="input-group-text">R$</span>
-              <input type="text" inputmode="decimal" class="form-control" name="go_valor_pedido_operacao"
-                     value="{{ ('{:,.2f}'.format(valor_comercial)).replace(',', 'X').replace('.', ',').replace('X', '.') if valor_comercial is not none and valor_comercial is defined else '' }}"
+              <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_valor_pedido_operacao"
+                     value="{{ (valor_comercial|br_num) if valor_comercial is defined and valor_comercial is not none else '' }}"
                      placeholder="0,00" {% if current_user.role not in ('ADMIN', 'PCP') %}disabled{% endif %}>
             </div>
             <div class="form-text">
@@ -169,11 +169,11 @@
             </div>
             <div class="col-md-2">
               <label class="form-label small text-muted mb-1">Quantidade</label>
-              <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" value="{{ item.quantidade }}" placeholder="Qtd">
+              <input type="text" inputmode="decimal" autocomplete="off" data-br="qtd" class="form-control item-quantidade" name="item_quantidade[]" value="{{ item.quantidade|br_qtd }}" placeholder="Qtd">
             </div>
             <div class="col-md-2">
               <label class="form-label small text-muted mb-1">Custo unitário (R$)</label>
-              <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" value="{{ item.custo_unitario }}" placeholder="Custo unitário (R$)">
+              <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control item-custo" name="item_custo[]" value="{{ item.custo_unitario|br_num }}" placeholder="0,00">
             </div>
             <div class="col-md-2">
               <span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span>
@@ -273,11 +273,11 @@
         </div>
         <div class="col-md-2">
           <label class="form-label small text-muted mb-1">Quantidade</label>
-          <input type="number" step="any" min="0" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
+          <input type="text" inputmode="decimal" autocomplete="off" data-br="qtd" class="form-control item-quantidade" name="item_quantidade[]" placeholder="Qtd">
         </div>
         <div class="col-md-2">
           <label class="form-label small text-muted mb-1">Custo unitário (R$)</label>
-          <input type="number" step="any" min="0" class="form-control item-custo" name="item_custo[]" placeholder="Custo unitário (R$)">
+          <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control item-custo" name="item_custo[]" placeholder="0,00">
         </div>
         <div class="col-md-2">
           <span class="badge bg-secondary">PENDENTE</span>
@@ -315,11 +315,11 @@
   function atualizarTotal() {
     let total = 0;
     container.querySelectorAll('.item-row').forEach(function(row) {
-      const q = parseFloat(row.querySelector('.item-quantidade').value || 0);
-      const c = parseFloat(row.querySelector('.item-custo').value || 0);
+      const q = BR.num(row.querySelector('.item-quantidade').value);
+      const c = BR.num(row.querySelector('.item-custo').value);
       total += q * c;
     });
-    totalEl.textContent = 'R$ ' + total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    totalEl.textContent = 'R$ ' + BR.fmt(total, 2, 2);
   }
 
   btnAdd.addEventListener('click', function() {
