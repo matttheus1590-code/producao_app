@@ -6401,6 +6401,7 @@ def _coletar_lead_times_painel(inicio=None, fim=None):
         "chao": [], "fila": [], "total_producao": [],
         "chao_est": {}, "fila_est": {}, "total_producao_est": {},
         "prazo": [], "total": [], "cif": [], "fob": [], "cif_regiao": {},
+        "concluidos": [],
     }
     for pedido in pedidos:
         for item in pedido.itens:
@@ -6408,6 +6409,17 @@ def _coletar_lead_times_painel(inicio=None, fim=None):
                 if item.inicio_producao:
                     dias = (item.liberacao_real - item.inicio_producao).days
                     r["chao"].append(dias)
+                    # Itens CONCLUÍDOS (liberação efetiva no período) com as 3
+                    # leituras lado a lado — alimenta o resumo que aparece ao
+                    # passar o mouse nos cards do Painel (pedido do Bruno,
+                    # 21/10/2026). fila + chão = total, exatamente, por item.
+                    fila_item = (item.inicio_producao - pedido.data_inclusao_pedido).days
+                    r["concluidos"].append({
+                        "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
+                        "produto": item.descricao_produto, "estacao": item.estacao,
+                        "liberacao": item.liberacao_real,
+                        "fila": fila_item, "chao": dias, "total": fila_item + dias,
+                    })
                     if item.estacao:
                         r["chao_est"].setdefault(item.estacao, []).append(dias)
                 dias_tp = (item.liberacao_real - pedido.data_inclusao_pedido).days
@@ -6567,6 +6579,26 @@ def _finalizar_linhas_lt(linhas, media_ref):
     return linhas
 
 
+def _resumo_concluidos_painel(itens, limite=8):
+    """Resumo dos itens JÁ CONCLUÍDOS (liberação efetiva) no mês atual, pro
+    popover que aparece ao passar o mouse nos cards de lead time do Painel
+    (pedido do Bruno, 21/10/2026): os `limite` mais recentes (liberação mais
+    nova primeiro) com fila / chão / total de cada um + a média do conjunto.
+    As médias aqui são só dos itens concluídos, por isso podem diferir do
+    número grande do card (a fila do card também conta o que ainda está no
+    chão de fábrica)."""
+    n = len(itens)
+    recentes = sorted(itens, key=lambda i: (i["liberacao"], i["total"]), reverse=True)[:limite]
+    return {
+        "n": n,
+        "itens": recentes,
+        "restantes": max(0, n - len(recentes)),
+        "media_fila": _media_dias([i["fila"] for i in itens])[0],
+        "media_chao": _media_dias([i["chao"] for i in itens])[0],
+        "media_total": _media_dias([i["total"] for i in itens])[0],
+    }
+
+
 def _lead_time_painel_agrupado(hoje=None):
     """Lead times do Painel agrupados em 2 quadrantes (pedido do Bruno,
     05/10/2026), agora com 3 leituras (pedido do Bruno, 19/10/2026: "o lead
@@ -6610,6 +6642,7 @@ def _lead_time_painel_agrupado(hoje=None):
     total_m = _somar_metricas_lt(fila_m, chao_m)
     total_m["por_estacao"] = _somar_linhas_lt(fila_m["por_estacao"], chao_m["por_estacao"], total_m["atual_media"])
     producao = {"fila": fila_m, "chao": chao_m, "total": total_m}
+    producao["concluidos"] = _resumo_concluidos_painel(atual["concluidos"])
 
     cif = _metrica_lt(hist["cif"], mes["cif"], atual["cif"])
     regioes_cif = _linhas_lt_comparativo(

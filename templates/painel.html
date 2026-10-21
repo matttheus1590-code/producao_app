@@ -142,7 +142,52 @@
 </div>
 {% endmacro %}
 
-{% macro lt_tile(emoji, titulo, sub, m, lt, borda="secondary", destaque=False, neutro=False, unidade="item(ns)", altura_total=True) %}
+{# resumo dos concluídos (hover/foco no card): fila/chão/total dos itens já
+   liberados no mês atual; `col` = qual coluna é a do card (destaque). #}
+{% macro lt_concluidos(c, lt, col, lado="esq") %}
+<div class="lt-pop lt-pop-{{ lado }} text-start">
+  <div class="fw-semibold small mb-1">✅ Concluídos em {{ lt.atual_curto }} <span class="text-muted fw-normal">· {{ c.n }} item(ns) liberado(s)</span></div>
+  {% if c.itens %}
+  <table class="table table-sm mb-1 lt-pop-tabela">
+    <thead>
+      <tr class="text-muted">
+        <th>Pedido · produto</th>
+        <th class="text-end{{ ' lt-col-destaque' if col == 'fila' else '' }}">Fila</th>
+        <th class="text-end{{ ' lt-col-destaque' if col == 'chao' else '' }}">Chão</th>
+        <th class="text-end{{ ' lt-col-destaque' if col == 'total' else '' }}">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for i in c.itens %}
+      <tr>
+        <td class="text-truncate" style="max-width:14rem;" title="{{ i.cliente }} · {{ i.produto }}">
+          <span class="fw-semibold">{{ i.pedido_venda or '—' }}</span> <span class="text-muted">{{ i.cliente }}</span>
+          <div class="text-muted text-truncate" style="font-size:0.66rem;">{{ i.produto }}{% if i.estacao %} · {{ i.estacao }}{% endif %} · lib. {{ i.liberacao.strftime('%d/%m') }}</div>
+        </td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'fila' else '' }}">{{ i.fila }}d</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'chao' else '' }}">{{ i.chao }}d</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'total' else '' }}">{{ i.total }}d</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr class="fw-semibold">
+        <td>Média dos {{ c.n }} concluído(s){% if c.restantes %} <span class="text-muted fw-normal">(+{{ c.restantes }} não listado(s))</span>{% endif %}</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque' if col == 'fila' else '' }}">{{ dias(c.media_fila) }}</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque' if col == 'chao' else '' }}">{{ dias(c.media_chao) }}</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque' if col == 'total' else '' }}">{{ dias(c.media_total) }}</td>
+      </tr>
+    </tfoot>
+  </table>
+  <div class="text-muted" style="font-size:0.64rem;">Só itens com liberação efetiva no mês · dias corridos · fila + chão = total. O número grande do card também considera o que ainda está em produção.</div>
+  {% else %}
+  <div class="text-muted small">Nenhum item concluído (liberação efetiva) neste mês ainda.</div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro lt_tile(emoji, titulo, sub, m, lt, borda="secondary", destaque=False, neutro=False, unidade="item(ns)", altura_total=True, concl=None, col=None, lado="esq") %}
+<div class="lt-tile-wrap{{ ' h-100' if altura_total else '' }}"{% if concl is not none %} tabindex="0"{% endif %}>
 <div class="lt-tile{{ ' h-100' if altura_total else '' }} text-center rounded-3 p-3 border border-{{ borda }}{{ ' border-2 shadow-sm' if destaque else '' }} bg-body">
   <div class="fs-2 mb-1">{{ emoji }}</div>
   <div class="small fw-semibold text-uppercase text-{{ borda }}">{{ titulo }}</div>
@@ -151,6 +196,8 @@
   <div class="text-muted" style="font-size:0.72rem;">{{ sub }}</div>
   <div class="text-muted mb-2" style="font-size:0.7rem;">{{ m.atual_n }} {{ unidade }} no mês</div>
   {{ chips_ref(m, lt, neutro) }}
+</div>
+{% if concl is not none %}{{ lt_concluidos(concl, lt, col, lado) }}{% endif %}
 </div>
 {% endmacro %}
 
@@ -202,15 +249,15 @@
     </div>
     <div class="row g-3">
       <div class="col-12 col-xl-4">
-        {{ lt_tile("⏳", "Fila de espera", "Inclusão → Início produção", lp.fila, lt, "warning", altura_total=False) }}
+        {{ lt_tile("⏳", "Fila de espera", "Inclusão → Início produção", lp.fila, lt, "warning", altura_total=False, concl=lp.concluidos, col="fila", lado="esq") }}
         <div class="mt-2">{{ lt_linhas(lp.fila.por_estacao, "⏳ Fila de espera por estação", lt, "warning") }}</div>
       </div>
       <div class="col-12 col-xl-4">
-        {{ lt_tile("🛠️", "Chão de fábrica", "Início produção → Liberação efetiva", lp.chao, lt, "success", altura_total=False) }}
+        {{ lt_tile("🛠️", "Chão de fábrica", "Início produção → Liberação efetiva", lp.chao, lt, "success", altura_total=False, concl=lp.concluidos, col="chao", lado="esq") }}
         <div class="mt-2">{{ lt_linhas(lp.chao.por_estacao, "🛠️ Chão de fábrica por estação", lt, "success") }}</div>
       </div>
       <div class="col-12 col-xl-4">
-        {{ lt_tile("🏆", "Lead time total produção", "Fila de espera + Chão de fábrica (Inclusão → Liberação efetiva)", lp.total, lt, "dark", destaque=True, altura_total=False) }}
+        {{ lt_tile("🏆", "Lead time total produção", "Fila de espera + Chão de fábrica (Inclusão → Liberação efetiva)", lp.total, lt, "dark", destaque=True, altura_total=False, concl=lp.concluidos, col="total", lado="dir") }}
         <div class="mt-2">{{ lt_linhas(lp.total.por_estacao, "🏆 Total produção por estação", lt, "dark") }}</div>
       </div>
     </div>

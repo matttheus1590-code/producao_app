@@ -1996,3 +1996,35 @@ body.tela-cheia-body {
   max-height: none;
   height: 100%;
 }
+
+/* Painel · Lead time: resumo dos itens concluídos ao passar o mouse (ou focar)
+   no card (pedido do Bruno, 21/10/2026). CSS puro; o popover fica colado ao
+   card (filho do wrapper), então o mouse pode entrar nele sem fechar. */
+.lt-tile-wrap { position: relative; }
+.lt-tile-wrap:focus { outline: none; }
+.lt-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% - 0.35rem);
+  z-index: 40;
+  width: 30rem;
+  max-width: 92vw;
+  padding: 0.75rem 0.85rem;
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.6rem;
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.22);
+}
+.lt-pop-esq { left: 0; }
+.lt-pop-dir { right: 0; }
+.lt-tile-wrap:hover > .lt-pop,
+.lt-tile-wrap:focus-within > .lt-pop { display: block; }
+.lt-pop-tabela { font-size: 0.74rem; --bs-table-bg: transparent; }
+.lt-pop-tabela th { font-size: 0.66rem; font-weight: 600; }
+.lt-pop-tabela td, .lt-pop-tabela th { padding: 0.2rem 0.35rem; }
+.lt-pop-tabela .lt-col-destaque { background: rgba(255, 193, 7, 0.18); }
+
+/* Listagem Geral: linha inteira clicável -> abre a visualização do pedido
+   (pedido do Bruno, 21/10/2026). */
+tr.linha-clicavel { cursor: pointer; }

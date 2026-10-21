@@ -285,3 +285,32 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.BR = { parse: parse, fmt: fmt, num: num };
 })();
+
+
+/* Linha inteira clicável (Listagem Geral — pedido do Bruno, 21/10/2026): um
+ * clique em qualquer área da linha abre o link em data-href (visualização do
+ * pedido, sem edição). Não dispara quando o clique foi num link/botão/campo
+ * (esses seguem o comportamento próprio), nem ao selecionar texto. Ctrl/Cmd ou
+ * botão do meio abrem em nova aba. */
+(function () {
+  function destino(ev) {
+    var tr = ev.target.closest && ev.target.closest("tr[data-href]");
+    if (!tr) return null;
+    if (ev.target.closest("a, button, input, select, textarea, label, summary, [data-no-row-click]")) return null;
+    var sel = window.getSelection && window.getSelection().toString();
+    if (sel) return null;
+    return tr.getAttribute("data-href");
+  }
+  document.addEventListener("click", function (ev) {
+    if (ev.button !== 0) return;
+    var href = destino(ev);
+    if (!href) return;
+    if (ev.ctrlKey || ev.metaKey) window.open(href, "_blank");
+    else window.location.href = href;
+  });
+  document.addEventListener("auxclick", function (ev) {
+    if (ev.button !== 1) return;
+    var href = destino(ev);
+    if (href) window.open(href, "_blank");
+  });
+})();
