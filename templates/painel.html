@@ -179,6 +179,7 @@
       </tr>
     </tfoot>
   </table>
+  {% if c.restantes %}<div class="mb-1"><button type="button" class="btn btn-sm btn-outline-primary py-0" data-lt-todos="{{ col }}">🔎 Ver todos os {{ c.n }} em uma janela</button></div>{% endif %}
   <div class="text-muted" style="font-size:0.64rem;">Só itens com liberação efetiva no mês · dias corridos · fila + chão = total. O número grande do card também considera o que ainda está em produção.</div>
   {% else %}
   <div class="text-muted small">Nenhum item concluído (liberação efetiva) neste mês ainda.</div>
@@ -196,6 +197,7 @@
   <div class="text-muted" style="font-size:0.72rem;">{{ sub }}</div>
   <div class="text-muted mb-2" style="font-size:0.7rem;">{{ m.atual_n }} {{ unidade }} no mês</div>
   {{ chips_ref(m, lt, neutro) }}
+  {% if concl is not none %}<button type="button" class="btn btn-sm btn-outline-secondary py-0 mt-2" style="font-size:0.72rem;" data-lt-todos="{{ col }}">🔎 Ver todos os concluídos ({{ concl.n }})</button>{% endif %}
 </div>
 {% if concl is not none %}{{ lt_concluidos(concl, lt, col, lado) }}{% endif %}
 </div>
@@ -820,6 +822,66 @@
   </div>
 </div>
 
+
+{# Micro janela com TODOS os itens concluídos no mês (fila / chão / total) —
+   pedido do Bruno, 21/10/2026. Abre pelo botão "Ver todos" dos 3 cards de lead
+   time; coluna do card em destaque, ordenável, com busca. #}
+{% set concl_todos = lead_time_agrupado.producao.concluidos if lead_time_agrupado is defined and lead_time_agrupado else None %}
+{% if concl_todos %}
+<div class="modal fade" id="modalLtConcluidos" tabindex="-1" aria-labelledby="modalLtConcluidosTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="modalLtConcluidosTitulo">✅ Concluídos em {{ lead_time_agrupado.atual_curto }} — <span id="ltModalFoco">lead time</span></h5>
+          <div class="text-muted small">Itens com liberação efetiva no mês · dias corridos · fila + chão = total · clique no título da coluna para ordenar</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+          <input type="search" id="ltModalBusca" class="form-control form-control-sm" style="max-width:16rem;" placeholder="Buscar pedido, cliente, produto…">
+          <span class="small text-muted" id="ltModalContagem"></span>
+          <span class="ms-auto small">
+            <span class="badge text-bg-light border">Média fila: <strong id="ltModalMFila">—</strong></span>
+            <span class="badge text-bg-light border">Média chão: <strong id="ltModalMChao">—</strong></span>
+            <span class="badge text-bg-light border">Média total: <strong id="ltModalMTotal">—</strong></span>
+          </span>
+        </div>
+        <table class="table table-sm table-hover align-middle" id="ltModalTabela">
+          <thead class="table-light position-sticky top-0">
+            <tr>
+              <th role="button" data-ord="pedido">Pedido</th>
+              <th role="button" data-ord="cliente">Cliente</th>
+              <th role="button" data-ord="produto">Produto</th>
+              <th role="button" data-ord="estacao">Estação</th>
+              <th role="button" data-ord="lib" class="text-nowrap">Liberação</th>
+              <th role="button" data-ord="fila" class="text-end">Fila</th>
+              <th role="button" data-ord="chao" class="text-end">Chão</th>
+              <th role="button" data-ord="total" class="text-end">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for i in concl_todos.todos %}
+            <tr data-pedido="{{ i.pedido_venda or '' }}" data-cliente="{{ i.cliente }}" data-produto="{{ i.produto }}" data-estacao="{{ i.estacao or '' }}"
+                data-lib="{{ i.liberacao.isoformat() }}" data-fila="{{ i.fila }}" data-chao="{{ i.chao }}" data-total="{{ i.total }}">
+              <td class="text-nowrap"><a href="{{ url_for('detalhe_pedido', pedido_id=i.pedido_id) }}" class="fw-semibold text-decoration-none" title="Ver pedido (somente visualização)">{{ i.pedido_venda or '—' }}</a></td>
+              <td>{{ i.cliente }}</td>
+              <td>{{ i.produto }}</td>
+              <td>{{ i.estacao or '—' }}</td>
+              <td class="text-nowrap">{{ i.liberacao.strftime('%d/%m/%Y') }}</td>
+              <td class="text-end text-nowrap" data-col="fila">{{ i.fila }}d</td>
+              <td class="text-end text-nowrap" data-col="chao">{{ i.chao }}d</td>
+              <td class="text-end text-nowrap" data-col="total">{{ i.total }}d</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -1014,6 +1076,75 @@
   document.querySelectorAll('.pcp-preview-card[data-bs-toggle="popover"]').forEach(function (el) {
     new bootstrap.Popover(el);
   });
+})();
+</script>
+<script>
+(function () {
+  const modalEl = document.getElementById('modalLtConcluidos');
+  if (!modalEl) return;
+  document.body.appendChild(modalEl); // fora de qualquer container (tela cheia, overflow)
+  const modal = new bootstrap.Modal(modalEl);
+  const tbody = modalEl.querySelector('tbody');
+  const FOCO = { fila: 'fila de espera', chao: 'chão de fábrica', total: 'lead time total' };
+  let ordCol = 'lib', ordDir = -1, foco = 'total';
+
+  function media(linhas, k) {
+    if (!linhas.length) return '—';
+    const s = linhas.reduce(function (a, tr) { return a + Number(tr.dataset[k]); }, 0);
+    return (Math.round(s / linhas.length * 10) / 10).toLocaleString('pt-BR') + 'd';
+  }
+
+  function aplicar() {
+    const termo = modalEl.querySelector('#ltModalBusca').value.trim().toLowerCase();
+    const trs = Array.from(tbody.querySelectorAll('tr'));
+    const numericas = { lib: false, fila: true, chao: true, total: true };
+    trs.sort(function (a, b) {
+      let va = a.dataset[ordCol], vb = b.dataset[ordCol];
+      if (numericas[ordCol]) { va = Number(va); vb = Number(vb); }
+      else { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
+      return va < vb ? -ordDir : va > vb ? ordDir : 0;
+    });
+    const visiveis = [];
+    trs.forEach(function (tr) {
+      tbody.appendChild(tr);
+      const texto = (tr.dataset.pedido + ' ' + tr.dataset.cliente + ' ' + tr.dataset.produto + ' ' + tr.dataset.estacao).toLowerCase();
+      const ok = !termo || texto.indexOf(termo) >= 0;
+      tr.classList.toggle('d-none', !ok);
+      if (ok) visiveis.push(tr);
+      ['fila', 'chao', 'total'].forEach(function (c) {
+        tr.querySelector('[data-col="' + c + '"]').classList.toggle('lt-col-destaque', c === foco);
+        tr.querySelector('[data-col="' + c + '"]').classList.toggle('fw-bold', c === foco);
+      });
+    });
+    modalEl.querySelector('#ltModalContagem').textContent = 'Mostrando ' + visiveis.length + ' de ' + trs.length + ' item(ns)';
+    modalEl.querySelector('#ltModalMFila').textContent = media(visiveis, 'fila');
+    modalEl.querySelector('#ltModalMChao').textContent = media(visiveis, 'chao');
+    modalEl.querySelector('#ltModalMTotal').textContent = media(visiveis, 'total');
+    modalEl.querySelector('#ltModalFoco').textContent = FOCO[foco];
+    modalEl.querySelectorAll('th[data-ord]').forEach(function (th) {
+      const base = th.textContent.replace(/[ ▲▼]+$/, '');
+      th.textContent = base + (th.dataset.ord === ordCol ? (ordDir > 0 ? ' ▲' : ' ▼') : '');
+      th.classList.toggle('lt-col-destaque', th.dataset.ord === foco);
+    });
+  }
+
+  document.addEventListener('click', function (ev) {
+    const bt = ev.target.closest('[data-lt-todos]');
+    if (!bt) return;
+    foco = bt.getAttribute('data-lt-todos');
+    ordCol = foco; ordDir = -1; // maior lead time primeiro
+    modalEl.querySelector('#ltModalBusca').value = '';
+    aplicar();
+    modal.show();
+  });
+  modalEl.querySelectorAll('th[data-ord]').forEach(function (th) {
+    th.addEventListener('click', function () {
+      if (ordCol === th.dataset.ord) ordDir = -ordDir;
+      else { ordCol = th.dataset.ord; ordDir = ['fila', 'chao', 'total', 'lib'].indexOf(ordCol) >= 0 ? -1 : 1; }
+      aplicar();
+    });
+  });
+  modalEl.querySelector('#ltModalBusca').addEventListener('input', aplicar);
 })();
 </script>
 {% endblock %}

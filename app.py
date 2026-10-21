@@ -6415,6 +6415,7 @@ def _coletar_lead_times_painel(inicio=None, fim=None):
                     # 21/10/2026). fila + chão = total, exatamente, por item.
                     fila_item = (item.inicio_producao - pedido.data_inclusao_pedido).days
                     r["concluidos"].append({
+                        "pedido_id": pedido.id,
                         "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
                         "produto": item.descricao_produto, "estacao": item.estacao,
                         "liberacao": item.liberacao_real,
@@ -6588,10 +6589,14 @@ def _resumo_concluidos_painel(itens, limite=8):
     número grande do card (a fila do card também conta o que ainda está no
     chão de fábrica)."""
     n = len(itens)
-    recentes = sorted(itens, key=lambda i: (i["liberacao"], i["total"]), reverse=True)[:limite]
+    ordenados = sorted(itens, key=lambda i: (i["liberacao"], i["total"]), reverse=True)
+    recentes = ordenados[:limite]
     return {
         "n": n,
         "itens": recentes,
+        # TODOS os concluídos (micro janela "Ver todos" do Painel — pedido do
+        # Bruno, 21/10/2026: "ele ocultou alguns").
+        "todos": ordenados,
         "restantes": max(0, n - len(recentes)),
         "media_fila": _media_dias([i["fila"] for i in itens])[0],
         "media_chao": _media_dias([i["chao"] for i in itens])[0],
