@@ -159,14 +159,14 @@
     </thead>
     <tbody>
       {% for p in c.itens %}
-      <tr>
+      <tr class="{{ 'lt-row-acima' if p['acima_' ~ col] else '' }}">
         <td class="text-truncate" style="max-width:14rem;" title="{{ p.cliente }}">
-          <span class="fw-semibold">{{ p.pedido_venda or '—' }}</span> <span class="text-muted">{{ p.cliente }}</span>
+          <span class="fw-semibold">{{ p.pedido_venda or '—' }}</span>{% if p['critico_' ~ col] %} <span title="Mais de 30 dias">🚨</span>{% endif %} <span class="text-muted">{{ p.cliente }}</span>
           <div class="text-muted text-truncate" style="font-size:0.66rem;">{{ p.n_liberados }} item(ns){% if p.n_total > p.n_liberados %} de {{ p.n_total }}{% endif %} · lib. {{ p.liberacao.strftime('%d/%m') }}</div>
         </td>
-        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'fila' else '' }}">{{ p.fila }}d</td>
-        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'chao' else '' }}">{{ p.chao }}d</td>
-        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'total' else '' }}">{{ p.total }}d</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'fila' else '' }}{{ ' lt-val-acima' if p.acima_fila else '' }}">{{ p.fila }}d{% if p.critico_fila %} 🚨{% endif %}</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'chao' else '' }}{{ ' lt-val-acima' if p.acima_chao else '' }}">{{ p.chao }}d{% if p.critico_chao %} 🚨{% endif %}</td>
+        <td class="text-end text-nowrap{{ ' lt-col-destaque fw-bold' if col == 'total' else '' }}{{ ' lt-val-acima' if p.acima_total else '' }}">{{ p.total }}d{% if p.critico_total %} 🚨{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -180,7 +180,7 @@
     </tfoot>
   </table>
   {% if c.restantes %}<div class="mb-1"><button type="button" class="btn btn-sm btn-outline-primary py-0" data-lt-todos="{{ col }}">🔎 Ver todos os {{ c.n }} pedidos em uma janela</button></div>{% endif %}
-  <div class="text-muted" style="font-size:0.64rem;">Uma linha por pedido (média dos itens liberados no mês) · dias corridos · fila + chão = total. O número grande do card é por item e também considera o que ainda está em produção.</div>
+  <div class="text-muted" style="font-size:0.64rem;"><span class="lt-legenda-acima">vermelho</span> = acima da média {{ lt.ano }} ({{ dias(c.refs.get(col)) }}) · 🚨 = mais de 30 dias · uma linha por pedido (média dos itens liberados) · dias corridos · fila + chão = total. O número grande do card é por item e também considera o que ainda está em produção.</div>
   {% else %}
   <div class="text-muted small">Nenhum item concluído (liberação efetiva) neste mês ainda.</div>
   {% endif %}
@@ -193,9 +193,9 @@
   <div class="fs-2 mb-1">{{ emoji }}</div>
   <div class="small fw-semibold text-uppercase text-{{ borda }}">{{ titulo }}</div>
   <div class="{{ 'display-6' if destaque else 'fs-2' }} fw-bold lh-1 my-1">{{ dias(m.atual_media) }}</div>
-  <div class="small fw-semibold">📅 {{ lt.atual_curto }} <span class="text-muted fw-normal" style="font-size:0.7rem;">(mês atual · parcial)</span></div>
+  <div class="small fw-semibold">📅 {{ lt.atual_curto }} <span class="text-muted fw-normal" style="font-size:0.7rem;">({{ lt.atual_sub }})</span></div>
   <div class="text-muted" style="font-size:0.72rem;">{{ sub }}</div>
-  <div class="text-muted mb-2" style="font-size:0.7rem;">{{ m.atual_n }} {{ unidade }} no mês</div>
+  <div class="text-muted mb-2" style="font-size:0.7rem;">{{ m.atual_n }} {{ unidade }} {{ 'no período' if lt.periodo_tipo and lt.periodo_tipo != 'mes' else 'no mês' }}</div>
   {{ chips_ref(m, lt, neutro) }}
   {% if concl is not none %}<button type="button" class="btn btn-sm btn-outline-secondary py-0 mt-2" style="font-size:0.72rem;" data-lt-todos="{{ col }}">🔎 Ver todos os concluídos ({{ concl.n }} pedidos)</button>{% endif %}
 </div>
@@ -242,12 +242,29 @@
 {% set lt = lead_time_agrupado %}
 {% set lp = lt.producao %}
 {% set lo = lt.operacao %}
+{% set lt_op = lt.op %}
 
 <div class="card mb-4 painel-hero-card-lt" style="border-left-color:#198754;">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
       <h6 class="text-uppercase mb-0 fw-bold text-success">🏭 Quadrante 01 · Gestão Produção — lead time</h6>
-      <span class="badge text-bg-light border">📅 {{ lt.atual_label }} (mês atual, parcial) · ref.: {{ lt.mes_label }} (mês anterior) e 📊 média {{ lt.ano }}</span>
+      <span class="badge text-bg-light border">📅 {{ lt.atual_rotulo }}{% if lt.periodo == 'mes' %} (mês atual, parcial){% endif %} · ref.: {{ lt.mes_label }} (mês anterior) e 📊 média {{ lt.ano }}</span>
+    </div>
+    {# seletor de período do mês atual (mês / semana 01-04 / quinzena) + relatórios #}
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3" id="lt-quadrante">
+      <span class="small text-muted">Período do mês atual:</span>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Período do lead time">
+        {% for p in lt.periodos %}
+        <a class="btn btn-outline-success{{ ' active' if p.chave == lt.periodo else '' }}{{ ' fw-bold' if p.atual and p.chave != 'mes' else '' }}"
+           href="{{ url_for('painel', _anchor='lt-quadrante', **dict(request.args.to_dict(), lt=p.chave)) }}"
+           title="{{ p.sub }}{{ ' · período em andamento' if p.atual and p.chave != 'mes' else '' }}">{{ p.botao }}</a>
+        {% endfor %}
+      </div>
+      <span class="small text-muted d-none d-lg-inline">{{ lt.atual_sub }}</span>
+      <span class="ms-auto d-flex gap-2">
+        <a class="btn btn-sm btn-danger" target="_blank" href="{{ url_for('painel_lead_time_pdf', lt=lt.periodo) }}" title="Relatório do quadrante 01 em PDF (período selecionado)"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+        <a class="btn btn-sm btn-success" href="{{ url_for('painel_lead_time_xlsx', lt=lt.periodo) }}" title="Relatório completo do quadrante 01 em Excel (período selecionado)"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+      </span>
     </div>
     <div class="row g-3">
       <div class="col-12 col-xl-4">
@@ -263,6 +280,34 @@
         <div class="mt-2">{{ lt_linhas(lp.total.por_estacao, "🏆 Total produção por estação", lt, "dark") }}</div>
       </div>
     </div>
+    {# comparativo semana a semana / quinzena a quinzena do mês atual #}
+    {% set cmp = lt.comparativo %}
+    <div class="border rounded-3 p-3 mt-3 bg-body-tertiary" id="lt-comparativo">
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <span class="fw-semibold">📈 Comparativo <span id="ltCmpTitulo">semana a semana</span> · {{ lt.atual_label }}</span>
+        <div class="btn-group btn-group-sm ms-2" role="group">
+          <button type="button" class="btn btn-outline-secondary active" data-lt-cmp="semana">Semanas</button>
+          <button type="button" class="btn btn-outline-secondary" data-lt-cmp="quinzena">Quinzenas</button>
+        </div>
+        <span class="small text-muted ms-auto">Fila / chão / total dos pedidos do período · linha tracejada = média {{ lt.ano }} do lead time total · clique no nome do período para filtrar o quadrante</span>
+      </div>
+      <div class="row g-3">
+        <div class="col-12 col-xl-8"><div style="position:relative;height:250px;"><canvas id="ltComparativoChart"></canvas></div></div>
+        <div class="col-12 col-xl-4">
+          <table class="table table-sm mb-0 small align-middle" id="ltComparativoTabela">
+            <thead><tr class="text-muted"><th>Período</th><th class="text-end">Fila</th><th class="text-end">Chão</th><th class="text-end">Total</th><th class="text-end" title="Pedidos concluídos">Ped.</th></tr></thead>
+            <tbody>
+              {% for c in cmp %}
+              <tr data-tipo="{{ c.tipo }}" class="{{ 'table-success' if c.chave == lt.periodo else '' }}{{ ' d-none' if c.tipo == 'quinzena' else '' }}">
+                <td><a class="text-decoration-none fw-semibold" href="{{ url_for('painel', _anchor='lt-quadrante', **dict(request.args.to_dict(), lt=c.chave)) }}">{{ c.titulo }}</a>{% if c.atual %} <span class="badge text-bg-success">agora</span>{% endif %}<div class="text-muted" style="font-size:0.66rem;">{{ c.inicio.strftime('%d/%m') }} a {{ c.fim.strftime('%d/%m') }}</div></td>
+                <td class="text-end">{{ dias(c.fila) }}</td><td class="text-end">{{ dias(c.chao) }}</td><td class="text-end fw-bold">{{ dias(c.total) }}</td><td class="text-end">{{ c.n_pedidos }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
     <p class="text-muted small mb-0 mt-2">Vem só de Gestão Produção/Listagem Geral. O número grande é o mês atual (ainda em andamento); mês anterior e média do ano (01/01 até hoje) são só referência — "atual ▲/▼" é o mês atual contra cada uma. Cada média entra no mês em que o período fecha (chão de fábrica e total produção = liberação efetiva no mês · fila de espera = início de produção no mês). Por estação = estação atual do item.</p>
   </div>
 </div>
@@ -276,14 +321,14 @@
     <div class="row g-3">
       <div class="col-12 col-xl-7">
         <div class="row g-3">
-          <div class="col-12 col-md-6">{{ lt_tile("🚛", "Total operação CIF", "Inclusão → Entrega no cliente · frete CIF", lo.cif, lt, "primary", unidade="pedido(s)") }}</div>
-          <div class="col-12 col-md-6">{{ lt_tile("📦", "Total operação FOB", "Inclusão → Entrega no cliente · frete FOB", lo.fob, lt, "warning", unidade="pedido(s)") }}</div>
-          <div class="col-12 col-md-6">{{ lt_tile("🚚", "Total operação (geral)", "CIF + FOB + sem frete informado", lo.total, lt, "secondary", unidade="pedido(s)") }}</div>
-          <div class="col-12 col-md-6">{{ lt_tile("🤝", "Prazo comercial", "Inclusão → Solicitado cliente (o prometido)", lo.prazo, lt, "info", neutro=True, unidade="pedido(s)") }}</div>
+          <div class="col-12 col-md-6">{{ lt_tile("🚛", "Total operação CIF", "Inclusão → Entrega no cliente · frete CIF", lo.cif, lt_op, "primary", unidade="pedido(s)") }}</div>
+          <div class="col-12 col-md-6">{{ lt_tile("📦", "Total operação FOB", "Inclusão → Entrega no cliente · frete FOB", lo.fob, lt_op, "warning", unidade="pedido(s)") }}</div>
+          <div class="col-12 col-md-6">{{ lt_tile("🚚", "Total operação (geral)", "CIF + FOB + sem frete informado", lo.total, lt_op, "secondary", unidade="pedido(s)") }}</div>
+          <div class="col-12 col-md-6">{{ lt_tile("🤝", "Prazo comercial", "Inclusão → Solicitado cliente (o prometido)", lo.prazo, lt_op, "info", neutro=True, unidade="pedido(s)") }}</div>
         </div>
       </div>
       <div class="col-12 col-xl-5">
-        {{ lt_linhas(lo.regioes_cif, "🗺️ Lead time CIF por região do Brasil", lt, "primary") }}
+        {{ lt_linhas(lo.regioes_cif, "🗺️ Lead time CIF por região do Brasil", lt_op, "primary") }}
       </div>
     </div>
     <p class="text-muted small mb-0 mt-2">Total operação cruza Gestão Produção com Gestão Operação (data de entrega no cliente) pelo Pedido de venda. Região = região da UF do pedido, só frete CIF. Mês atual/anterior: total = entrega no cliente no mês · prazo comercial = pedidos incluídos no mês. ▲ vermelho = mês atual pior que a referência, ▼ verde = melhor (prazo comercial é só informativo).</p>
@@ -834,7 +879,9 @@
       <div class="modal-header">
         <div>
           <h5 class="modal-title" id="modalLtConcluidosTitulo">✅ Concluídos em {{ lead_time_agrupado.atual_curto }} — <span id="ltModalFoco">lead time</span></h5>
-          <div class="text-muted small">Uma linha por pedido (média dos itens liberados no mês) · dias corridos · fila + chão = total · passe o mouse na linha para ver os itens do pedido · clique no título da coluna para ordenar</div>
+          <div class="text-muted small">Uma linha por pedido (média dos itens liberados) · dias corridos · fila + chão = total · passe o mouse na linha para ver os itens · clique no título da coluna para ordenar</div>
+          <div class="small mt-1"><span class="lt-legenda-acima">linha vermelha</span> = acima da média {{ lead_time_agrupado.ano }} da coluna em foco ·
+            <span title="Mais de 30 dias">🚨</span> = mais de 30 dias · médias {{ lead_time_agrupado.ano }}: fila <strong>{{ dias(concl_todos.refs.get('fila')) }}</strong> · chão <strong>{{ dias(concl_todos.refs.get('chao')) }}</strong> · total <strong>{{ dias(concl_todos.refs.get('total')) }}</strong></div>
         </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
       </div>
@@ -863,14 +910,16 @@
           <tbody>
             {% for p in concl_todos.todos %}
             <tr class="lt-linha-pedido" data-pedido="{{ p.pedido_venda or '' }}" data-cliente="{{ p.cliente }}"
+                data-acima-fila="{{ 1 if p.acima_fila else 0 }}" data-acima-chao="{{ 1 if p.acima_chao else 0 }}" data-acima-total="{{ 1 if p.acima_total else 0 }}"
+                data-critico-fila="{{ 1 if p.critico_fila else 0 }}" data-critico-chao="{{ 1 if p.critico_chao else 0 }}" data-critico-total="{{ 1 if p.critico_total else 0 }}"
                 data-produtos="{% for x in p.itens %}{{ x.produto }} {{ x.estacao or '' }} {% endfor %}"
                 data-lib="{{ p.liberacao.isoformat() }}" data-itens="{{ p.n_liberados }}" data-fila="{{ p.fila }}" data-chao="{{ p.chao }}" data-total="{{ p.total }}">
-              <td class="text-nowrap"><a href="{{ url_for('detalhe_pedido', pedido_id=p.pedido_id) }}" class="fw-semibold text-decoration-none" title="Ver pedido (somente visualização)">{{ p.pedido_venda or '—' }}</a></td>
+              <td class="text-nowrap"><a href="{{ url_for('detalhe_pedido', pedido_id=p.pedido_id) }}" class="fw-semibold text-decoration-none" title="Ver pedido (somente visualização)">{{ p.pedido_venda or '—' }}</a> <span class="lt-crit-pedido d-none" title="Mais de 30 dias nesta métrica">🚨</span></td>
               <td>{{ p.cliente }}</td>
               <td class="text-end text-nowrap">{{ p.n_liberados }}{% if p.n_total > p.n_liberados %} <span class="text-muted">de {{ p.n_total }}</span>{% endif %}</td>
               <td class="text-nowrap">{{ p.liberacao.strftime('%d/%m/%Y') }}</td>
               {% for k in ('fila', 'chao', 'total') %}
-              <td class="text-end text-nowrap" data-col="{{ k }}">{{ p[k] }}d{% if p[k ~ '_varia'] %}<div class="text-muted" style="font-size:0.64rem;">{{ p[k ~ '_min'] }}–{{ p[k ~ '_max'] }}</div>{% endif %}</td>
+              <td class="text-end text-nowrap{{ ' lt-val-acima' if p['acima_' ~ k] else '' }}" data-col="{{ k }}">{{ p[k] }}d{% if p['critico_' ~ k] %} 🚨{% endif %}{% if p[k ~ '_varia'] %}<div class="text-muted" style="font-size:0.64rem;">{{ p[k ~ '_min'] }}–{{ p[k ~ '_max'] }}</div>{% endif %}</td>
               {% endfor %}
               <td class="d-none lt-detalhe-itens">
                 <div class="fw-semibold mb-1">Pedido {{ p.pedido_venda or '—' }} · {{ p.cliente }}</div>
@@ -880,7 +929,7 @@
                   <tbody>
                     {% for x in p.itens[:16] %}
                     <tr><td>{{ x.produto }}</td><td>{{ x.estacao or '—' }}</td><td class="text-nowrap">{{ x.liberacao.strftime('%d/%m') }}</td>
-                      <td class="text-end text-nowrap" data-c="fila">{{ x.fila }}d</td><td class="text-end text-nowrap" data-c="chao">{{ x.chao }}d</td><td class="text-end text-nowrap" data-c="total">{{ x.total }}d</td></tr>
+                      {% for k in ('fila', 'chao', 'total') %}<td class="text-end text-nowrap{{ ' lt-val-acima' if x['acima_' ~ k] else '' }}" data-c="{{ k }}">{{ x[k] }}d{% if x['critico_' ~ k] %} 🚨{% endif %}</td>{% endfor %}</tr>
                     {% endfor %}
                   </tbody>
                 </table>
@@ -1093,6 +1142,73 @@
 </script>
 <script>
 (function () {
+  // Gráfico comparativo semana a semana / quinzena a quinzena (quadrante 01)
+  const canvas = document.getElementById('ltComparativoChart');
+  if (!canvas || typeof Chart === 'undefined') return;
+  const CMP = [
+    {% for c in lead_time_agrupado.comparativo %}
+    { tipo: {{ c.tipo | tojson }}, titulo: {{ c.titulo | tojson }}, sub: {{ (c.inicio.strftime('%d/%m') ~ ' a ' ~ c.fim.strftime('%d/%m')) | tojson }},
+      fila: {{ c.fila | tojson }}, chao: {{ c.chao | tojson }}, total: {{ c.total | tojson }}, n: {{ c.n_pedidos }}, chave: {{ c.chave | tojson }} },
+    {% endfor %}
+  ];
+  const REF_TOTAL = {{ lead_time_agrupado.producao.total.media | tojson }};
+  let chart = null;
+
+  function desenhar(tipo) {
+    const itens = CMP.filter(function (c) { return c.tipo === tipo; });
+    const ctx = canvas.getContext('2d');
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+      data: {
+        labels: itens.map(function (c) { return c.titulo + ' (' + c.sub + ')'; }),
+        datasets: [
+          { type: 'bar', label: 'Fila de espera', data: itens.map(function (c) { return c.fila; }), backgroundColor: '#ffc107' },
+          { type: 'bar', label: 'Chão de fábrica', data: itens.map(function (c) { return c.chao; }), backgroundColor: '#198754' },
+          { type: 'bar', label: 'Lead time total', data: itens.map(function (c) { return c.total; }), backgroundColor: '#212529' },
+          { type: 'line', label: 'Média {{ lead_time_agrupado.ano }} (total)', data: itens.map(function () { return REF_TOTAL; }),
+            borderColor: '#dc3545', borderDash: [6, 4], borderWidth: 2, pointRadius: 0, fill: false },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+          tooltip: { callbacks: { label: function (i) { return ' ' + i.dataset.label + ': ' + (i.parsed.y === null ? 'sem dados' : i.parsed.y + 'd'); } } },
+        },
+        scales: { y: { beginAtZero: true, title: { display: true, text: 'dias corridos' } }, x: { ticks: { font: { size: 11 } } } },
+      },
+      plugins: [{
+        id: 'valoresNasBarras',
+        afterDatasetsDraw: function (c) {
+          const g = c.ctx; g.save(); g.font = 'bold 10px sans-serif'; g.fillStyle = '#495057'; g.textAlign = 'center';
+          c.data.datasets.forEach(function (ds, di) {
+            if (ds.type !== 'bar') return;
+            c.getDatasetMeta(di).data.forEach(function (bar, i) {
+              const v = ds.data[i]; if (v === null || v === undefined) return;
+              g.fillText(v, bar.x, bar.y - 4);
+            });
+          });
+          g.restore();
+        },
+      }],
+    });
+  }
+
+  desenhar('semana');
+  document.querySelectorAll('[data-lt-cmp]').forEach(function (bt) {
+    bt.addEventListener('click', function () {
+      const tipo = bt.getAttribute('data-lt-cmp');
+      document.querySelectorAll('[data-lt-cmp]').forEach(function (b) { b.classList.toggle('active', b === bt); });
+      document.querySelectorAll('#ltComparativoTabela tbody tr').forEach(function (tr) { tr.classList.toggle('d-none', tr.dataset.tipo !== tipo); });
+      document.getElementById('ltCmpTitulo').textContent = tipo === 'semana' ? 'semana a semana' : 'quinzena a quinzena';
+      desenhar(tipo);
+    });
+  });
+})();
+</script>
+<script>
+(function () {
   const modalEl = document.getElementById('modalLtConcluidos');
   if (!modalEl) return;
   document.body.appendChild(modalEl); // fora de qualquer container (tela cheia, overflow)
@@ -1129,6 +1245,8 @@
       const ok = !termo || texto.indexOf(termo) >= 0;
       tr.classList.toggle('d-none', !ok);
       if (ok) visiveis.push(tr);
+      tr.classList.toggle('lt-row-acima', tr.dataset['acima' + foco.charAt(0).toUpperCase() + foco.slice(1)] === '1');
+      tr.querySelector('.lt-crit-pedido').classList.toggle('d-none', tr.dataset['critico' + foco.charAt(0).toUpperCase() + foco.slice(1)] !== '1');
       ['fila', 'chao', 'total'].forEach(function (c) {
         const td = tr.querySelector('td[data-col="' + c + '"]');
         td.classList.toggle('lt-col-destaque', c === foco);

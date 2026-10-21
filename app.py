@@ -330,7 +330,7 @@ def _contexto_painel(args, ultima_visita=None):
 
     # Detalhamento de Lead Time (chão de fábrica, total, fila de espera,
     # prazo comercial) — pedido do Bruno (16/09/2026), quadrante próprio.
-    lead_time_agrupado = _lead_time_painel_agrupado(hoje)
+    lead_time_agrupado = _lead_time_painel_agrupado(hoje, (args.get("lt") or "mes"))
 
     pedidos_atrasados = (
         Pedido.query.options(selectinload(Pedido.itens))
@@ -6365,7 +6365,7 @@ _EMOJI_REGIAO_PAINEL = {
 }
 
 
-def _coletar_lead_times_painel(inicio=None, fim=None):
+def _coletar_lead_times_painel(inicio=None, fim=None, incluir_operacao=True):
     """Valores crus (listas de dias) dos lead times do Painel, num recorte
     opcional de datas inclusivas (`inicio`/`fim`). Cada valor entra no mês em
     que o seu período FECHA (pedido do Bruno, 05/10/2026: "lead time
@@ -6395,7 +6395,7 @@ def _coletar_lead_times_painel(inicio=None, fim=None):
             return False
         return True
 
-    pedidos = Pedido.query.filter(Pedido.data_inclusao_pedido.isnot(None)).all()
+    pedidos = Pedido.query.options(selectinload(Pedido.itens)).filter(Pedido.data_inclusao_pedido.isnot(None)).all()
 
     r = {
         "chao": [], "fila": [], "total_producao": [],
@@ -6433,6 +6433,9 @@ def _coletar_lead_times_painel(inicio=None, fim=None):
                     r["fila_est"].setdefault(item.estacao, []).append(item.tempo_espera_dias)
         if pedido.data_cliente and _no_periodo(pedido.data_inclusao_pedido):
             r["prazo"].append((pedido.data_cliente - pedido.data_inclusao_pedido).days)
+
+    if not incluir_operacao:
+        return r  # só Gestão Produção (comparativo semanal do Painel/relatório)
 
     entrega_por_pedido = _entrega_cliente_por_pedido_venda([p.pedido_venda for p in pedidos if p.pedido_venda])
     for p in pedidos:
@@ -6589,7 +6592,10 @@ def _dias_txt(v):
     return int(v) if v == int(v) else v
 
 
-def _resumo_concluidos_painel(itens, limite=8):
+LT_CRITICO_DIAS = 30  # pedido/item acima disso ganha o emoji de criticidade 🚨 (Bruno, 21/10/2026)
+
+
+def _resumo_concluidos_painel(itens, limite=8, refs=None):
     """Resumo dos PEDIDOS JÁ CONCLUÍDOS (têm item com liberação efetiva no mês
     atual) pros cards de lead time do Painel — popover ao passar o mouse e a
     janela "Ver todos". UMA LINHA POR PEDIDO (pedido do Bruno, 21/10/2026: "uma
@@ -6601,8 +6607,19 @@ def _resumo_concluidos_painel(itens, limite=8):
     As médias do rodapé são POR PEDIDO e só dos concluídos; o número grande do
     card é por item e a fila também conta quem ainda está no chão de fábrica —
     por isso podem diferir."""
+    refs = refs or {}
+
+    def _marcar(linha, k, valor):
+        """Flags por métrica (pedido do Bruno, 21/10/2026): acima da MÉDIA DO ANO
+        da métrica -> linha vermelha; acima de LT_CRITICO_DIAS -> 🚨."""
+        ref = refs.get(k)
+        linha["acima_" + k] = bool(ref is not None and valor is not None and valor > ref)
+        linha["critico_" + k] = bool(valor is not None and valor > LT_CRITICO_DIAS)
+
     por_pedido = {}
     for i in itens:
+        for k in ("fila", "chao", "total"):
+            _marcar(i, k, i[k])
         por_pedido.setdefault(i["pedido_id"], []).append(i)
     pedidos = []
     for pid, its in por_pedido.items():
@@ -6618,6 +6635,7 @@ def _resumo_concluidos_painel(itens, limite=8):
             linha[k] = _dias_txt(sum(vals) / len(vals))
             linha[k + "_min"], linha[k + "_max"] = min(vals), max(vals)
             linha[k + "_varia"] = min(vals) != max(vals)
+            _marcar(linha, k, linha[k])
         pedidos.append(linha)
     ordenados = sorted(pedidos, key=lambda p: (p["liberacao"], p["total"]), reverse=True)
     recentes = ordenados[:limite]
@@ -6633,10 +6651,75 @@ def _resumo_concluidos_painel(itens, limite=8):
         "media_fila": _media_dias([p["fila"] for p in pedidos])[0],
         "media_chao": _media_dias([p["chao"] for p in pedidos])[0],
         "media_total": _media_dias([p["total"] for p in pedidos])[0],
+        "refs": refs,
+        "criticos": {k: sum(1 for p in pedidos if p["critico_" + k]) for k in ("fila", "chao", "total")},
+        "acima": {k: sum(1 for p in pedidos if p["acima_" + k]) for k in ("fila", "chao", "total")},
     }
 
 
-def _lead_time_painel_agrupado(hoje=None):
+def _periodos_lt_painel(hoje):
+    """Períodos selecionáveis do mês ATUAL no quadrante 01 do Painel (pedido do
+    Bruno, 21/10/2026: "filtrar o controle semanal (semana 01, 02...)... ou por
+    quinzena"): mês inteiro, SEMANA 01-04 e 1ª/2ª QUINZENA. As semanas são as
+    MESMAS da Listagem Geral/Programação (domingo a sábado, semana 01 = 1º
+    domingo dentro do mês, sempre 4 semanas — ver _domingo_semana_01); a 4ª
+    semana é cortada no último dia do mês. Os dias fora das 4 semanas só
+    entram em "Mês inteiro"."""
+    ano, mes = hoje.year, hoje.month
+    ultimo = monthrange(ano, mes)[1]
+    mes_ini, mes_fim = date(ano, mes, 1), date(ano, mes, ultimo)
+    mes_curto = f"{MESES_PT[mes - 1].upper()}/{ano}"
+    fmt = lambda d: d.strftime("%d/%m")
+    periodos = [{
+        "chave": "mes", "tipo": "mes", "botao": "Mês inteiro", "titulo": "Mês inteiro",
+        "inicio": mes_ini, "fim": mes_fim, "curto": mes_curto, "sub": "mês atual · parcial",
+    }]
+    dom1 = _domingo_semana_01(ano, mes)
+    for n in range(1, 5):
+        ini = dom1 + timedelta(days=7 * (n - 1))
+        fim = min(ini + timedelta(days=6), mes_fim)
+        periodos.append({
+            "chave": f"s{n}", "tipo": "semana", "botao": f"Sem {n:02d}", "titulo": f"Semana {n:02d}",
+            "inicio": ini, "fim": fim, "curto": f"{mes_curto} · SEM {n:02d}",
+            "sub": f"semana {n:02d} · {fmt(ini)} a {fmt(fim)}",
+        })
+    for n, (ini, fim) in enumerate([(mes_ini, date(ano, mes, 15)), (date(ano, mes, 16), mes_fim)], 1):
+        periodos.append({
+            "chave": f"q{n}", "tipo": "quinzena", "botao": f"{n}ª Quinz.", "titulo": f"{n}ª quinzena",
+            "inicio": ini, "fim": fim, "curto": f"{mes_curto} · {n}ª QUINZ.",
+            "sub": f"{n}ª quinzena · {fmt(ini)} a {fmt(fim)}",
+        })
+    for p in periodos:
+        p["atual"] = p["inicio"] <= hoje <= p["fim"]
+        p["futuro"] = p["inicio"] > hoje
+    return periodos
+
+
+def _comparativo_periodos_lt(hoje, periodos):
+    """Fila / chão / total (e quantos pedidos concluídos) de CADA semana e
+    quinzena do mês atual — alimenta o gráfico "semana a semana" do Painel e do
+    relatório. Mesmas regras de _coletar_lead_times_painel (fila pelo mês do
+    INÍCIO de produção, chão e total pela LIBERAÇÃO) e o total = fila + chão
+    (soma das médias, como nos cards)."""
+    linhas = []
+    for p in periodos:
+        if p["tipo"] == "mes":
+            continue
+        r = _coletar_lead_times_painel(inicio=p["inicio"], fim=p["fim"], incluir_operacao=False)
+        fila, n_fila = _media_dias(r["fila"])
+        chao, n_chao = _media_dias(r["chao"])
+        total = _soma_medias_lt(fila, chao)
+        linhas.append({
+            "chave": p["chave"], "tipo": p["tipo"], "titulo": p["titulo"], "sub": p["sub"],
+            "inicio": p["inicio"], "fim": p["fim"], "atual": p["atual"], "futuro": p["futuro"],
+            "fila": fila, "chao": chao, "total": total, "n_fila": n_fila, "n_chao": n_chao,
+            "n_pedidos": len({i["pedido_id"] for i in r["concluidos"]}),
+            "n_itens": len(r["concluidos"]),
+        })
+    return linhas
+
+
+def _lead_time_painel_agrupado(hoje=None, periodo="mes"):
     """Lead times do Painel agrupados em 2 quadrantes (pedido do Bruno,
     05/10/2026), agora com 3 leituras (pedido do Bruno, 19/10/2026: "o lead
     time do mês anterior, o lead time do mês atual e a média do ano"), sendo o
@@ -6656,14 +6739,19 @@ def _lead_time_painel_agrupado(hoje=None):
     Os meses são dinâmicos (em novembro: anterior = outubro, atual =
     novembro) e seguem as regras de recorte de _coletar_lead_times_painel."""
     hoje = hoje or date.today()
+    periodos = _periodos_lt_painel(hoje)
+    sel = next((p for p in periodos if p["chave"] == periodo), periodos[0])
     ano_ant, mes_ant = _somar_meses(hoje.year, hoje.month, -1)
     hist = _coletar_lead_times_painel(inicio=date(hoje.year, 1, 1), fim=date(hoje.year, 12, 31))
     mes = _coletar_lead_times_painel(
         inicio=date(ano_ant, mes_ant, 1), fim=date(ano_ant, mes_ant, monthrange(ano_ant, mes_ant)[1])
     )
-    atual = _coletar_lead_times_painel(
-        inicio=date(hoje.year, hoje.month, 1), fim=date(hoje.year, hoje.month, monthrange(hoje.year, hoje.month)[1])
-    )
+    # O "atual" é o mês corrente INTEIRO ou o recorte escolhido (semana /
+    # quinzena) — mês anterior e média do ano seguem como referência.
+    atual = _coletar_lead_times_painel(inicio=sel["inicio"], fim=sel["fim"])
+    # Quadrante 02 (Gestão Operação) NÃO acompanha o filtro de semana/quinzena
+    # do quadrante 01 — segue sempre o mês inteiro.
+    atual_op = atual if sel["tipo"] == "mes" else _coletar_lead_times_painel(inicio=periodos[0]["inicio"], fim=periodos[0]["fim"])
 
     def _com_estacoes(chave):
         m = _metrica_lt(hist[chave], mes[chave], atual[chave])
@@ -6679,18 +6767,21 @@ def _lead_time_painel_agrupado(hoje=None):
     total_m = _somar_metricas_lt(fila_m, chao_m)
     total_m["por_estacao"] = _somar_linhas_lt(fila_m["por_estacao"], chao_m["por_estacao"], total_m["atual_media"])
     producao = {"fila": fila_m, "chao": chao_m, "total": total_m}
-    producao["concluidos"] = _resumo_concluidos_painel(atual["concluidos"])
+    producao["concluidos"] = _resumo_concluidos_painel(
+        atual["concluidos"],
+        refs={"fila": fila_m["media"], "chao": chao_m["media"], "total": total_m["media"]},
+    )
 
-    cif = _metrica_lt(hist["cif"], mes["cif"], atual["cif"])
+    cif = _metrica_lt(hist["cif"], mes["cif"], atual_op["cif"])
     regioes_cif = _linhas_lt_comparativo(
         hist["cif_regiao"], mes["cif_regiao"], cif["atual_media"], lambda r: r, lambda r: _EMOJI_REGIAO_PAINEL.get(r, "🗺️"),
-        atual_por_chave=atual["cif_regiao"],
+        atual_por_chave=atual_op["cif_regiao"],
     )
     operacao = {
-        "total": _metrica_lt(hist["total"], mes["total"], atual["total"]),
+        "total": _metrica_lt(hist["total"], mes["total"], atual_op["total"]),
         "cif": cif,
-        "fob": _metrica_lt(hist["fob"], mes["fob"], atual["fob"]),
-        "prazo": _metrica_lt(hist["prazo"], mes["prazo"], atual["prazo"]),
+        "fob": _metrica_lt(hist["fob"], mes["fob"], atual_op["fob"]),
+        "prazo": _metrica_lt(hist["prazo"], mes["prazo"], atual_op["prazo"]),
         "regioes_cif": regioes_cif,
     }
     return {
@@ -6698,10 +6789,594 @@ def _lead_time_painel_agrupado(hoje=None):
         "mes_label": f"{MESES_PT_EXTENSO[mes_ant - 1].upper()}/{ano_ant}",
         "mes_curto": f"{MESES_PT[mes_ant - 1].upper()}/{ano_ant}",
         "atual_label": f"{MESES_PT_EXTENSO[hoje.month - 1].upper()}/{hoje.year}",
-        "atual_curto": f"{MESES_PT[hoje.month - 1].upper()}/{hoje.year}",
+        "atual_curto": sel["curto"],
+        "atual_sub": sel["sub"],
+        "atual_rotulo": (
+            f"{MESES_PT_EXTENSO[hoje.month - 1].upper()}/{hoje.year}"
+            + ("" if sel["tipo"] == "mes" else f" · {sel['titulo'].upper()} ({sel['inicio']:%d/%m} a {sel['fim']:%d/%m})")
+        ),
+        "periodo": sel["chave"],
+        "periodo_tipo": sel["tipo"],
+        "periodos": periodos,
+        "comparativo": _comparativo_periodos_lt(hoje, periodos),
+        # rótulos do MÊS inteiro, pro quadrante 02 (não acompanha o filtro)
+        "op": {
+            "atual_curto": periodos[0]["curto"], "atual_sub": periodos[0]["sub"],
+            "mes_curto": f"{MESES_PT[mes_ant - 1].upper()}/{ano_ant}", "ano": hoje.year,
+        },
         "producao": producao,
         "operacao": operacao,
     }
+
+
+# ---------------------------------------------------------------------------
+# Relatório do QUADRANTE 01 (Gestão Produção — lead time) do Painel: PDF e Excel
+# completos (pedido do Bruno, 21/10/2026). Mesmos números da tela
+# (_lead_time_painel_agrupado), com o MESMO filtro de período (mês / semana 01-04
+# / quinzena) e as mesmas regras: linha vermelha = acima da média do ano,
+# 🚨 (ícone de alerta no PDF) = mais de LT_CRITICO_DIAS dias.
+# ---------------------------------------------------------------------------
+def _dados_lt_q1(periodo="mes", hoje=None):
+    hoje = hoje or date.today()
+    lt = _lead_time_painel_agrupado(hoje, periodo or "mes")
+    return {"lt": lt, "agora": _agora_brt(), "hoje": hoje}
+
+
+def _var_lt_txt(delta):
+    """+1.2d / -0.5d / 0d / — (variação de lead time em dias)."""
+    if delta is None:
+        return "—"
+    return f"+{delta}d" if delta > 0 else (f"{delta}d" if delta < 0 else "0d")
+
+
+def _alertas_pedido_lt(p):
+    """Lista das métricas do pedido acima de LT_CRITICO_DIAS (texto)."""
+    nomes = {"fila": "Fila", "chao": "Chão", "total": "Total"}
+    return [nomes[k] for k in ("fila", "chao", "total") if p.get("critico_" + k)]
+
+
+def _gerar_pdf_lead_time_q1(dados):
+    from xml.sax.saxutils import escape as esc
+    from reportlab.graphics.charts.barcharts import VerticalBarChart
+    from reportlab.graphics.charts.legends import Legend
+    from reportlab.graphics.shapes import Drawing, Line, String
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.platypus import CondPageBreak, HRFlowable, Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    lt, agora = dados["lt"], dados["agora"]
+    lp = lt["producao"]
+    conc = lp["concluidos"]
+    cmp_ = lt["comparativo"]
+    refs = conc["refs"]
+
+    LARGURA_PAGINA, _ = landscape(A4)
+    COR_TEXTO = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_TEXTO_HEX)
+    COR_CAB_BG = colors.HexColor(_RELATORIO_GO_COR_CABECALHO_BG_HEX)
+    COR_BORDA = colors.HexColor("#dee2e6")
+    COR_ZEBRA = colors.HexColor("#f8f9fa")
+    COR_ACIMA_BG = colors.HexColor("#f5c2c7")
+    VERDE, VERMELHO, AZUL, AMARELO, PRETO = "#198754", "#b02a37", "#0d6efd", "#e0a800", "#212529"
+    CINZA = colors.HexColor("#6c757d")
+    CORES_SERIE = {"fila": "#ffc107", "chao": "#198754", "total": "#212529"}
+
+    titulo_periodo = lt["atual_rotulo"]
+    buffer = io.BytesIO()
+
+    class _Canvas(rl_canvas.Canvas):
+        """Rodapé com 'Página X de Y' (precisa do total, por isso 2 passes)."""
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._paginas = []
+
+        def showPage(self):
+            self._paginas.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._paginas)
+            for estado in self._paginas:
+                self.__dict__.update(estado)
+                self.setFont("Helvetica", 7.4)
+                self.setFillColor(CINZA)
+                self.drawString(10 * mm, 7 * mm, f"Relatório de Lead Time · Gestão Produção (Quadrante 01) · {titulo_periodo} · emitido em {agora:%d/%m/%Y} às {agora:%H:%M} (horário de Brasília)")
+                self.drawRightString(LARGURA_PAGINA - 10 * mm, 7 * mm, f"Página {self._pageNumber} de {total}")
+                super().showPage()
+            super().save()
+
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4), leftMargin=10 * mm, rightMargin=10 * mm, topMargin=9 * mm, bottomMargin=13 * mm,
+        title="Relatório de Lead Time — Gestão Produção",
+    )
+    largura = LARGURA_PAGINA - doc.leftMargin - doc.rightMargin
+    estilos = getSampleStyleSheet()
+    base = ParagraphStyle("lt_base", parent=estilos["Normal"], fontSize=8.4, leading=10.4)
+    base_b = ParagraphStyle("lt_base_b", parent=base, fontName="Helvetica-Bold")
+    cab_tab = ParagraphStyle("lt_cab", parent=base_b, textColor=COR_TEXTO)
+    centro = ParagraphStyle("lt_centro", parent=base, alignment=1)
+    direita = ParagraphStyle("lt_dir", parent=base, alignment=2)
+    nota = ParagraphStyle("lt_nota", parent=base, fontSize=7.6, leading=10, textColor=CINZA)
+    titulo_st = ParagraphStyle("lt_titulo", parent=estilos["Title"], fontSize=21, leading=24, spaceAfter=0, alignment=0, textColor=COR_TEXTO)
+    sub_st = ParagraphStyle("lt_sub", parent=base, fontSize=9.6, leading=13, textColor=colors.HexColor("#444"))
+
+    def P(txt, estilo=None):
+        return Paragraph(txt if txt is not None else "—", estilo or base)
+
+    def T(txt, estilo=None):
+        return Paragraph(esc(str(txt)) if txt not in (None, "") else "—", estilo or base)
+
+    def cor(txt, hexcor, bold=True):
+        return f'<font color="{hexcor}">{"<b>" if bold else ""}{txt}{"</b>" if bold else ""}</font>'
+
+    def dias(v):
+        return f"{v}d" if v is not None else "—"
+
+    def delta_html(d):
+        """Subir lead time = ruim (vermelho); descer = verde."""
+        if d is None:
+            return "—"
+        if d > 0:
+            return cor(f"+{d}d", VERMELHO)
+        if d < 0:
+            return cor(f"{d}d", VERDE)
+        return "0d"
+
+    def banner(icone, titulo, cor_hex, espaco_mm=45):
+        est = ParagraphStyle("lt_banner", parent=base_b, fontSize=11.5, leading=14, textColor=colors.white)
+        t = Table([[P(f'{_icone_pdf(icone, 12)} {esc(titulo)}', est)]], colWidths=[largura])
+        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(cor_hex)), ("TOPPADDING", (0, 0), (-1, -1), 4),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
+        return [CondPageBreak(espaco_mm * mm), t, Spacer(1, 2 * mm)]
+
+    def tabela(cabecalho, linhas, pesos, alin=None, extra=None, zebra=True, pad=2.4):
+        alin = alin or "L" * len(cabecalho)
+        est_cab = {"L": cab_tab, "C": ParagraphStyle("lt_cab_c", parent=cab_tab, alignment=1), "R": ParagraphStyle("lt_cab_r", parent=cab_tab, alignment=2)}
+        dados_t = [[P(c, est_cab[alin[i]]) for i, c in enumerate(cabecalho)]] + linhas
+        soma = float(sum(pesos))
+        t = Table(dados_t, colWidths=[p / soma * largura for p in pesos], repeatRows=1)
+        est = [
+            ("BACKGROUND", (0, 0), (-1, 0), COR_CAB_BG), ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+            ("GRID", (0, 0), (-1, -1), 0.3, COR_BORDA), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), pad), ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5), ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+        ]
+        if zebra:
+            for i in range(2, len(dados_t), 2):
+                est.append(("BACKGROUND", (0, i), (-1, i), COR_ZEBRA))
+        est += (extra or [])
+        t.setStyle(TableStyle(est))
+        return t
+
+    def grafico(categorias, series, largura_mm, altura_mm, ref_total=None):
+        """Barras agrupadas (fila / chão / total) + linha tracejada da média do ano."""
+        larg = largura_mm * mm
+        dw = Drawing(larg, altura_mm * mm)
+        ch = VerticalBarChart()
+        ch.x, ch.y = 11 * mm, 13 * mm
+        ch.width, ch.height = larg - 15 * mm, altura_mm * mm - 22 * mm
+        ch.data = [[(v if v is not None else 0) for v in s[0]] for s in series]
+        ch.categoryAxis.categoryNames = categorias
+        ch.categoryAxis.labels.fontSize = 7.6
+        ch.categoryAxis.labels.dy = -2
+        ch.valueAxis.valueMin = 0
+        topo = max([v for s in series for v in s[0] if v is not None] + [ref_total or 0, 1])
+        ch.valueAxis.valueMax = math.ceil(topo * 1.18 / 5.0) * 5 if topo > 5 else math.ceil(topo * 1.18)
+        ch.valueAxis.labels.fontSize = 7.4
+        ch.groupSpacing = 6
+        ch.barSpacing = 1
+        ch.barLabelFormat = lambda v: "" if not v else ("%g" % v)
+        ch.barLabels.fontSize = 7
+        ch.barLabels.fontName = "Helvetica-Bold"
+        ch.barLabels.nudge = 5
+        for i, (_, cor_hex, _) in enumerate(series):
+            ch.bars[i].fillColor = colors.HexColor(cor_hex)
+        dw.add(ch)
+        if ref_total:
+            y = ch.y + ch.height * (ref_total / ch.valueAxis.valueMax)
+            linha = Line(ch.x, y, ch.x + ch.width, y)
+            linha.strokeColor = colors.HexColor("#dc3545")
+            linha.strokeWidth = 1.2
+            linha.strokeDashArray = [4, 3]
+            dw.add(linha)
+            dw.add(String(ch.x + ch.width - 2, y + 2, f"média {lt['ano']} total: {ref_total}d", fontSize=6.8, fillColor=colors.HexColor("#dc3545"), textAnchor="end"))
+        leg = Legend()
+        leg.x, leg.y = ch.x, altura_mm * mm - 1
+        leg.alignment = "right"
+        leg.fontSize = 7.4
+        leg.columnMaximum = 1
+        leg.deltax = 70
+        leg.boxAnchor = "nw"
+        leg.colorNamePairs = [(colors.HexColor(s[1]), s[2]) for s in series]
+        dw.add(leg)
+        return dw
+
+    elementos = []
+
+    # ================= CABEÇALHO =================
+    logo = Image(_ESPELHO_LOGO_PATH, width=52 * mm, height=52 * mm * (63 / 261)) if os.path.exists(_ESPELHO_LOGO_PATH) else P("")
+    bloco = [
+        P(f'{_icone_pdf("factory", 19)} RELATÓRIO DE LEAD TIME · GESTÃO PRODUÇÃO', titulo_st),
+        Spacer(1, 1.2 * mm),
+        P(f'{_icone_pdf("calendar", 11)} Período: <b>{esc(titulo_periodo)}</b> ({esc(lt["atual_sub"])}) · '
+          f'{_icone_pdf("alarm_clock", 11)} Emitido em <b>{agora:%d/%m/%Y}</b> às <b>{agora:%H:%M}</b> (horário de Brasília)', sub_st),
+        P(f'Referências: mês anterior <b>{esc(lt["mes_label"])}</b> e média do ano <b>{lt["ano"]}</b> (01/01 até hoje) · '
+          f'Quadrante 01 do Painel — Gestão Produção · valores em dias corridos', nota),
+    ]
+    cab = Table([[logo, bloco]], colWidths=[58 * mm, largura - 58 * mm])
+    cab.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    elementos += [cab, Spacer(1, 1.5 * mm), HRFlowable(width="100%", thickness=1.8, color=COR_TEXTO), Spacer(1, 3 * mm)]
+
+    # ================= 1. CARDS (fila / chão / total) =================
+    elementos += banner("trophy", "1. LEAD TIME DO PERÍODO — FILA DE ESPERA, CHÃO DE FÁBRICA E TOTAL PRODUÇÃO", "#1b2a4a", 60)
+    colunas = []
+    for chave, icone, nome, sub in (
+        ("fila", "hourglass", "FILA DE ESPERA", "Inclusão do pedido → início da produção"),
+        ("chao", "gear", "CHÃO DE FÁBRICA", "Início da produção → liberação efetiva"),
+        ("total", "trophy", "LEAD TIME TOTAL PRODUÇÃO", "Fila de espera + chão de fábrica"),
+    ):
+        m = lp[chave]
+        grande = ParagraphStyle("lt_grande", parent=base_b, fontSize=30, leading=34, alignment=1, textColor=colors.HexColor(CORES_SERIE[chave] if chave != "fila" else "#b8860b"))
+        colunas.append([
+            P(f'{_icone_pdf(icone, 13)} <b>{nome}</b>', ParagraphStyle("lt_card_t", parent=base_b, fontSize=10, alignment=1, textColor=COR_TEXTO)),
+            P(dias(m["atual_media"]), grande),
+            P(f'{esc(lt["atual_curto"])} · {m["atual_n"]} item(ns)', ParagraphStyle("lt_card_s", parent=base, alignment=1, fontSize=8.2)),
+            P(esc(sub), ParagraphStyle("lt_card_s2", parent=nota, alignment=1)),
+            Spacer(1, 1.5 * mm),
+            P(f'{_icone_pdf("calendar", 9)} <b>{esc(lt["mes_curto"])}</b> (mês anterior): <b>{dias(m["mes_media"])}</b> '
+              f'<font size="7.4" color="#6c757d">({m["mes_n"]})</font> · atual vs mês ant.: {delta_html(m["delta_atual_mes"])}', ParagraphStyle("lt_card_r", parent=base, alignment=1)),
+            P(f'{_icone_pdf("bar_chart", 9)} <b>Média {lt["ano"]}</b>: <b>{dias(m["media"])}</b> '
+              f'<font size="7.4" color="#6c757d">({m["n"]})</font> · atual vs média: {delta_html(m["delta_atual"])}', ParagraphStyle("lt_card_r2", parent=base, alignment=1)),
+        ])
+    cards = Table([colunas], colWidths=[largura / 3.0] * 3)
+    cards.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.6, COR_BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.6, COR_BORDA), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#fff8e1")), ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#e8f5ee")),
+        ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#eef0f2")),
+    ]))
+    elementos += [cards, Spacer(1, 2 * mm)]
+
+    # resumo executivo (contagens)
+    n_ped = conc["n"]
+    resumo = [
+        (str(n_ped), "check", "Pedidos concluídos no período", None),
+        (str(conc["n_itens"]), "clipboard", "Itens liberados", None),
+        (f'{conc["acima"]["total"]}', "target", f'Pedidos acima da média {lt["ano"]} (lead time total)', VERMELHO if conc["acima"]["total"] else VERDE),
+        (f'{conc["criticos"]["total"]}', "warning", f'Pedidos críticos (total acima de {LT_CRITICO_DIAS} dias)', VERMELHO if conc["criticos"]["total"] else VERDE),
+    ]
+    topo, rodape = [], []
+    for valor, icone, rotulo, cor_v in resumo:
+        topo.append(P(valor, ParagraphStyle("lt_kv", parent=base_b, fontSize=16, leading=18, alignment=1, textColor=colors.HexColor(cor_v) if cor_v else colors.black)))
+        rodape.append(P(f'{_icone_pdf(icone, 9)} {esc(rotulo)}', ParagraphStyle("lt_kr", parent=base, fontSize=7.8, alignment=1)))
+    kpis = Table([topo, rodape], colWidths=[largura / len(resumo)] * len(resumo))
+    kpis.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.5, COR_BORDA),
+                              ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+    elementos += [kpis, Spacer(1, 4 * mm)]
+
+    # ================= 2. POR ESTAÇÃO =================
+    estacoes = {}
+    for chave in ("fila", "chao", "total"):
+        for l in lp[chave]["por_estacao"]:
+            estacoes.setdefault(l["chave"], {"nome": l["nome"]})[chave] = l
+    elementos += banner("factory", "2. LEAD TIME POR ESTAÇÃO — PERÍODO SELECIONADO x MÊS ANTERIOR x MÉDIA DO ANO", "#6f42c1", 60)
+    if estacoes:
+        def cel(l):
+            if not l:
+                return P("—", centro)
+            sem = {"🟢": "green_circle", "🟡": "yellow_circle", "🔴": "red_circle"}.get(l["semaforo"])
+            ic = _icone_pdf(sem, 8) + " " if sem else ""
+            return P(f'{ic}<b>{dias(l["atual_media"])}</b> <font size="7" color="#6c757d">· ant. {dias(l["mes_media"])} · média {dias(l["media"])}</font>', centro)
+        ordem = sorted(estacoes.values(), key=lambda e: -(((e.get("total") or {}).get("atual_media")) or ((e.get("total") or {}).get("media")) or 0))
+        linhas_e = [[T(e["nome"], base_b), cel(e.get("fila")), cel(e.get("chao")), cel(e.get("total"))] for e in ordem]
+        elementos.append(tabela(["Estação", "Fila de espera", "Chão de fábrica", "Total produção"], linhas_e, [20, 26, 26, 26], alin="LCCC", pad=5.2))
+        elementos.append(P("Semáforo: verde = até o lead time do período do card · amarelo = acima · vermelho = mais de 25% acima. 'ant.' = mês anterior.", nota))
+    else:
+        elementos.append(P("Sem dados por estação neste recorte.", nota))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 3. COMPARATIVO SEMANAL / QUINZENAL =================
+    _ini_cmp = len(elementos)
+    elementos += banner("bar_chart", f'3. COMPARATIVO SEMANA A SEMANA E QUINZENA A QUINZENA — {lt["atual_label"]}', "#198754", 90)
+    semanas = [c for c in cmp_ if c["tipo"] == "semana"]
+    quinz = [c for c in cmp_ if c["tipo"] == "quinzena"]
+
+    def serie(itens):
+        return [([c["fila"] for c in itens], CORES_SERIE["fila"], "Fila de espera"),
+                ([c["chao"] for c in itens], CORES_SERIE["chao"], "Chão de fábrica"),
+                ([c["total"] for c in itens], CORES_SERIE["total"], "Lead time total")]
+
+    g1 = grafico([c["titulo"] for c in semanas], serie(semanas), (largura / mm) * 0.6 - 2, 66, refs.get("total"))
+    g2 = grafico([c["titulo"] for c in quinz], serie(quinz), (largura / mm) * 0.4 - 2, 66, refs.get("total"))
+    elementos.append(Table([[g1, g2]], colWidths=[largura * 0.6, largura * 0.4], style=TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("VALIGN", (0, 0), (-1, -1), "TOP")])))
+    linhas_c = []
+    extra_c = []
+    for i, c in enumerate(cmp_, 1):
+        marca = " " + cor("(agora)", VERDE) if c["atual"] else (" " + cor("(futuro)", "#6c757d", False) if c["futuro"] else "")
+        selecionado = c["chave"] == lt["periodo"]
+        linhas_c.append([
+            P(f'<b>{esc(c["titulo"])}</b>{marca}', base), P(f'{c["inicio"]:%d/%m} a {c["fim"]:%d/%m}', centro),
+            P(dias(c["fila"]), centro), P(dias(c["chao"]), centro), P(f'<b>{dias(c["total"])}</b>', centro),
+            P(str(c["n_pedidos"]), centro), P(str(c["n_itens"]), centro),
+            P(cor("selecionado", VERDE) if selecionado else "", centro),
+        ])
+        if selecionado:
+            extra_c.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#d1e7dd")))
+    elementos.append(tabela(["Período", "Datas", "Fila", "Chão", "Total", "Pedidos concluídos", "Itens liberados", ""], linhas_c,
+                            [16, 14, 9, 9, 9, 13, 12, 10], alin="LCCCCCCC", extra=extra_c, zebra=False))
+    elementos.append(Spacer(1, 1 * mm))
+    elementos.append(P("Fila = pelo início da produção no período · chão e total = pela liberação efetiva no período · total = fila + chão (soma das médias). Semanas = mesmas da Programação PCP (domingo a sábado, 4 por mês); dias fora delas só entram no mês inteiro.", nota))
+    elementos.append(Spacer(1, 4 * mm))
+    elementos[_ini_cmp:] = [KeepTogether(elementos[_ini_cmp:])]
+
+    # ================= 4. PEDIDOS CONCLUÍDOS =================
+    elementos += banner("clipboard", f'4. PEDIDOS CONCLUÍDOS NO PERÍODO — {titulo_periodo}', "#dc3545", 50)
+    elementos.append(P(
+        f'{_icone_pdf("target", 9)} Linha <b>vermelha</b> = lead time total acima da média {lt["ano"]} ({dias(refs.get("total"))}) · '
+        f'valores em <font color="{VERMELHO}"><b>vermelho</b></font> = métrica acima da sua média (fila {dias(refs.get("fila"))} · chão {dias(refs.get("chao"))} · total {dias(refs.get("total"))}) · '
+        f'{_icone_pdf("warning", 9)} = acima de {LT_CRITICO_DIAS} dias (crítico). Uma linha por pedido: média dos itens liberados (faixa mín–máx quando os itens divergem).', nota))
+    elementos.append(Spacer(1, 1.5 * mm))
+    if conc["todos"]:
+        def val(p, k):
+            txt = dias(p[k])
+            if p[k + "_varia"]:
+                txt += f' <font size="6.6" color="#6c757d">({p[k + "_min"]}–{p[k + "_max"]})</font>'
+            if p["acima_" + k]:
+                txt = cor(txt, VERMELHO)
+            if p["critico_" + k]:
+                txt = _icone_pdf("warning", 8) + " " + txt
+            return P(txt, centro)
+        linhas_p, extra_p = [], []
+        for i, p in enumerate(conc["todos"], 1):
+            alertas = _alertas_pedido_lt(p)
+            itens_txt = f'{p["n_liberados"]}' + (f' de {p["n_total"]}' if p["n_total"] > p["n_liberados"] else "")
+            linhas_p.append([
+                T(p["pedido_venda"] or "—", base_b), T(p["cliente"]), P(itens_txt, centro), P(f'{p["liberacao"]:%d/%m/%Y}', centro),
+                val(p, "fila"), val(p, "chao"), val(p, "total"),
+                P((_icone_pdf("warning", 9) + " " + cor("CRÍTICO: " + ", ".join(alertas), VERMELHO)) if alertas else "", base),
+            ])
+            if p["acima_total"]:
+                extra_p.append(("BACKGROUND", (0, i), (-1, i), COR_ACIMA_BG))
+        elementos.append(tabela(["Pedido", "Cliente", "Itens", "Liberação", "Fila", "Chão", "Total", "Criticidade"], linhas_p,
+                                [9, 33, 7, 10, 10, 10, 10, 18], alin="LLCCCCCL", extra=extra_p, zebra=False))
+    else:
+        elementos.append(P("Nenhum pedido concluído (liberação efetiva) neste período.", nota))
+    elementos.append(Spacer(1, 4 * mm))
+
+    # ================= 5. ITENS CONCLUÍDOS (detalhe completo) =================
+    elementos += banner("memo", "5. DETALHAMENTO POR ITEM — TODOS OS ITENS LIBERADOS NO PERÍODO", "#0d6efd", 50)
+    if conc["todos"]:
+        def vi(x, k):
+            txt = dias(x[k])
+            if x["acima_" + k]:
+                txt = cor(txt, VERMELHO)
+            if x["critico_" + k]:
+                txt = _icone_pdf("warning", 7.5) + " " + txt
+            return P(txt, centro)
+        linhas_i, extra_i = [], []
+        n_linha = 0
+        for p in conc["todos"]:
+            for x in p["itens"]:
+                n_linha += 1
+                linhas_i.append([T(p["pedido_venda"] or "—", base_b), T(p["cliente"]), T(x["produto"]), T(x["estacao"] or "—"),
+                                 P(f'{x["liberacao"]:%d/%m/%Y}', centro), vi(x, "fila"), vi(x, "chao"), vi(x, "total")])
+                if x["acima_total"]:
+                    extra_i.append(("BACKGROUND", (0, n_linha), (-1, n_linha), COR_ACIMA_BG))
+        elementos.append(tabela(["Pedido", "Cliente", "Produto", "Estação", "Liberação", "Fila", "Chão", "Total"], linhas_i,
+                                [8, 22, 36, 12, 9, 7, 7, 7], alin="LLLLCCCC", extra=extra_i, zebra=False))
+    else:
+        elementos.append(P("Nenhum item liberado neste período.", nota))
+
+    doc.build(elementos, canvasmaker=_Canvas)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    resposta.headers["Content-Disposition"] = f"attachment; filename=lead_time_gestao_producao_{lt['periodo']}_{agora:%Y-%m-%d_%H%M}.pdf"
+    return resposta
+
+
+def _gerar_xlsx_lead_time_q1(dados):
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.styles import Border, Side
+    from openpyxl.worksheet.table import Table as XlTable
+
+    lt, agora = dados["lt"], dados["agora"]
+    lp = lt["producao"]
+    conc = lp["concluidos"]
+    refs = conc["refs"]
+    wb = Workbook()
+
+    AZUL_ESC = "1B2A4A"
+    f_titulo = Font(name="Calibri", size=16, bold=True, color=AZUL_ESC)
+    f_sub = Font(name="Calibri", size=10, color="555555")
+    f_cab = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    fill_cab = PatternFill("solid", fgColor=AZUL_ESC)
+    fill_acima = PatternFill("solid", fgColor="F5C2C7")
+    fill_zebra = PatternFill("solid", fgColor="F8F9FA")
+    fill_sel = PatternFill("solid", fgColor="D1E7DD")
+    f_vermelho = Font(name="Calibri", size=10, bold=True, color="B02A37")
+    f_normal = Font(name="Calibri", size=10)
+    f_bold = Font(name="Calibri", size=10, bold=True)
+    borda = Border(*(Side(style="thin", color="DEE2E6"),) * 4)
+    centro = Alignment(horizontal="center", vertical="center")
+    esq = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    def cabecalho(ws, linha, titulos, larguras=None):
+        for j, t in enumerate(titulos, 1):
+            c = ws.cell(row=linha, column=j, value=t)
+            c.font, c.fill, c.alignment, c.border = f_cab, fill_cab, Alignment(horizontal="center", vertical="center", wrap_text=True), borda
+            if larguras:
+                ws.column_dimensions[get_column_letter(j)].width = larguras[j - 1]
+        ws.row_dimensions[linha].height = 30
+
+    def topo(ws, titulo, ate_col=8):
+        ws["A1"] = titulo
+        ws["A1"].font = f_titulo
+        ws["A2"] = f'Período: {lt["atual_rotulo"]} ({lt["atual_sub"]}) · emitido em {agora:%d/%m/%Y} às {agora:%H:%M} (horário de Brasília)'
+        ws["A2"].font = f_sub
+        ws["A3"] = f'Referências: mês anterior {lt["mes_label"]} e média do ano {lt["ano"]} · dias corridos · Gestão Produção (Quadrante 01 do Painel)'
+        ws["A3"].font = f_sub
+        ws.sheet_view.showGridLines = False
+
+    def num(v):
+        return v if v is not None else "—"
+
+    # ---------------- 1. Resumo ----------------
+    ws = wb.active
+    ws.title = "Resumo"
+    topo(ws, "Relatório de Lead Time · Gestão Produção")
+    cabecalho(ws, 5, ["Indicador", f'{lt["atual_curto"]} (período)', "Itens", f'{lt["mes_curto"]} (mês anterior)', "Itens", "Var. período vs mês ant. (dias)",
+                      f'Média {lt["ano"]}', "Itens", "Var. período vs média (dias)"], [34, 18, 9, 20, 9, 20, 14, 9, 20])
+    linhas = [("Fila de espera (inclusão → início produção)", lp["fila"]), ("Chão de fábrica (início produção → liberação efetiva)", lp["chao"]),
+              ("LEAD TIME TOTAL PRODUÇÃO (fila + chão)", lp["total"])]
+    for i, (nome, m) in enumerate(linhas, 6):
+        vals = [nome, num(m["atual_media"]), m["atual_n"], num(m["mes_media"]), m["mes_n"], num(m["delta_atual_mes"]), num(m["media"]), m["n"], num(m["delta_atual"])]
+        for j, v in enumerate(vals, 1):
+            c = ws.cell(row=i, column=j, value=v)
+            c.font, c.border = (f_bold if i == 8 else f_normal), borda
+            c.alignment = esq if j == 1 else centro
+            if isinstance(v, (int, float)) and j in (2, 4, 7, 6, 9):
+                c.number_format = "0.0"
+    ws["A10"] = "Resumo do período"
+    ws["A10"].font = f_bold
+    resumo = [("Pedidos concluídos (liberação efetiva no período)", conc["n"]), ("Itens liberados", conc["n_itens"]),
+              (f'Pedidos acima da média {lt["ano"]} — lead time total ({refs.get("total")} d)', conc["acima"]["total"]),
+              (f'Pedidos acima da média {lt["ano"]} — fila ({refs.get("fila")} d)', conc["acima"]["fila"]),
+              (f'Pedidos acima da média {lt["ano"]} — chão ({refs.get("chao")} d)', conc["acima"]["chao"]),
+              (f'Pedidos CRÍTICOS — total acima de {LT_CRITICO_DIAS} dias', conc["criticos"]["total"]),
+              (f'Pedidos CRÍTICOS — fila acima de {LT_CRITICO_DIAS} dias', conc["criticos"]["fila"]),
+              (f'Pedidos CRÍTICOS — chão acima de {LT_CRITICO_DIAS} dias', conc["criticos"]["chao"])]
+    for i, (nome, v) in enumerate(resumo, 11):
+        ws.cell(row=i, column=1, value=nome).font = f_normal
+        c = ws.cell(row=i, column=2, value=v)
+        c.font, c.alignment = f_bold, centro
+        ws.cell(row=i, column=1).border = c.border = borda
+    ws["A20"] = "Como ler: fila entra pelo mês do INÍCIO de produção; chão e total, pela LIBERAÇÃO efetiva. Total = fila + chão (soma das médias). Linha vermelha = acima da média do ano; 🚨 = acima de 30 dias."
+    ws["A20"].font = f_sub
+    ws.freeze_panes = "A6"
+
+    # ---------------- 2. Semanal ----------------
+    wsS = wb.create_sheet("Semanal e quinzenal")
+    topo(wsS, f'Comparativo semana a semana e quinzena a quinzena · {lt["atual_label"]}')
+    cabecalho(wsS, 5, ["Período", "Tipo", "Início", "Fim", "Fila (dias)", "Chão (dias)", "Total (dias)", "Pedidos concluídos", "Itens liberados", "Em foco no relatório"],
+              [18, 11, 12, 12, 12, 12, 12, 14, 14, 18])
+    for i, c in enumerate(lt["comparativo"], 6):
+        vals = [c["titulo"], c["tipo"].capitalize(), c["inicio"], c["fim"], c["fila"], c["chao"], c["total"], c["n_pedidos"], c["n_itens"],
+                "sim" if c["chave"] == lt["periodo"] else ""]
+        for j, v in enumerate(vals, 1):
+            cel = wsS.cell(row=i, column=j, value=v)
+            cel.font, cel.border, cel.alignment = f_normal, borda, (esq if j == 1 else centro)
+            if j in (3, 4):
+                cel.number_format = "DD/MM/YYYY"
+            if j in (5, 6, 7) and v is not None:
+                cel.number_format = "0.0"
+            if c["chave"] == lt["periodo"]:
+                cel.fill = fill_sel
+    n_cmp = len(lt["comparativo"])
+    sem = [c for c in lt["comparativo"] if c["tipo"] == "semana"]
+    graf = BarChart()
+    graf.type, graf.grouping = "col", "clustered"
+    graf.title = f'Semana a semana · {lt["atual_label"]} (dias)'
+    graf.y_axis.title, graf.height, graf.width = "dias corridos", 9, 20
+    dados_ref = Reference(wsS, min_col=5, max_col=7, min_row=5, max_row=5 + len(sem))
+    cats = Reference(wsS, min_col=1, min_row=6, max_row=5 + len(sem))
+    graf.add_data(dados_ref, titles_from_data=True)
+    graf.set_categories(cats)
+    for s, cor_hex in zip(graf.series, ("FFC107", "198754", "212529")):
+        s.graphicalProperties.solidFill = cor_hex
+    wsS.add_chart(graf, f"A{7 + n_cmp}")
+    quinz = [c for c in lt["comparativo"] if c["tipo"] == "quinzena"]
+    if quinz:
+        graf2 = BarChart()
+        graf2.type, graf2.grouping = "col", "clustered"
+        graf2.title = f'Quinzena a quinzena · {lt["atual_label"]} (dias)'
+        graf2.y_axis.title, graf2.height, graf2.width = "dias corridos", 9, 14
+        graf2.add_data(Reference(wsS, min_col=5, max_col=7, min_row=6 + len(sem), max_row=5 + len(sem) + len(quinz)), titles_from_data=False)
+        graf2.set_categories(Reference(wsS, min_col=1, min_row=6 + len(sem), max_row=5 + len(sem) + len(quinz)))
+        for s, cor_hex in zip(graf2.series, ("FFC107", "198754", "212529")):
+            s.graphicalProperties.solidFill = cor_hex
+        graf2.legend = None
+        wsS.add_chart(graf2, f"G{7 + n_cmp}")
+    wsS.freeze_panes = "A6"
+
+    # ---------------- 3. Por estação ----------------
+    wsE = wb.create_sheet("Por estação")
+    topo(wsE, "Lead time por estação")
+    cab = ["Estação"]
+    for nome in ("Fila", "Chão", "Total"):
+        cab += [f"{nome} · período", f"{nome} · mês ant.", f"{nome} · média {lt['ano']}"]
+    cabecalho(wsE, 5, cab, [24] + [14] * 9)
+    estacoes = {}
+    for chave in ("fila", "chao", "total"):
+        for l in lp[chave]["por_estacao"]:
+            estacoes.setdefault(l["chave"], {"nome": l["nome"]})[chave] = l
+    ordem = sorted(estacoes.values(), key=lambda e: -(((e.get("total") or {}).get("atual_media")) or ((e.get("total") or {}).get("media")) or 0))
+    for i, e in enumerate(ordem, 6):
+        vals = [e["nome"]]
+        for chave in ("fila", "chao", "total"):
+            l = e.get(chave)
+            vals += [num(l["atual_media"]) if l else "—", num(l["mes_media"]) if l else "—", num(l["media"]) if l else "—"]
+        for j, v in enumerate(vals, 1):
+            c = wsE.cell(row=i, column=j, value=v)
+            c.font, c.border, c.alignment = f_normal, borda, (esq if j == 1 else centro)
+            if isinstance(v, float):
+                c.number_format = "0.0"
+    wsE.freeze_panes = "B6"
+
+    # ---------------- 4. Pedidos concluídos ----------------
+    wsP = wb.create_sheet("Pedidos concluídos")
+    topo(wsP, f'Pedidos concluídos · {lt["atual_rotulo"]}')
+    wsP["A4"] = f'Linha vermelha = lead time total acima da média {lt["ano"]} ({refs.get("total")} d) · valor vermelho = métrica acima da sua média (fila {refs.get("fila")} · chão {refs.get("chao")}) · CRÍTICO = acima de {LT_CRITICO_DIAS} dias'
+    wsP["A4"].font = f_sub
+    cabecalho(wsP, 5, ["Pedido", "Cliente", "Itens liberados", "Itens no pedido", "Última liberação", "Fila (dias)", "Chão (dias)", "Total (dias)",
+                       "Total mín.", "Total máx.", "Acima da média (total)", "Crítico (>30d)", "Métricas críticas"],
+              [11, 38, 10, 10, 14, 11, 11, 11, 10, 10, 14, 12, 22])
+    for i, p in enumerate(conc["todos"], 6):
+        vals = [p["pedido_venda"] or "—", p["cliente"], p["n_liberados"], p["n_total"], p["liberacao"], p["fila"], p["chao"], p["total"],
+                p["total_min"], p["total_max"], "SIM" if p["acima_total"] else "", "SIM" if p["critico_total"] else "", ", ".join(_alertas_pedido_lt(p))]
+        for j, v in enumerate(vals, 1):
+            c = wsP.cell(row=i, column=j, value=v)
+            c.font, c.border, c.alignment = f_normal, borda, (esq if j in (1, 2, 13) else centro)
+            if j == 5:
+                c.number_format = "DD/MM/YYYY"
+            if j in (6, 7, 8):
+                c.number_format = "0.0"
+                if p["acima_" + ("fila", "chao", "total")[j - 6]]:
+                    c.font = f_vermelho
+            if p["acima_total"]:
+                c.fill = fill_acima
+    ultima = 5 + max(len(conc["todos"]), 1)
+    wsP.auto_filter.ref = f"A5:{get_column_letter(13)}{ultima}"
+    wsP.freeze_panes = "C6"
+
+    # ---------------- 5. Itens concluídos ----------------
+    wsI = wb.create_sheet("Itens concluídos")
+    topo(wsI, f'Itens liberados · {lt["atual_rotulo"]}')
+    cabecalho(wsI, 5, ["Pedido", "Cliente", "Produto", "Estação", "Liberação efetiva", "Fila (dias)", "Chão (dias)", "Total (dias)", "Acima da média (total)", "Crítico (>30d)"],
+              [11, 34, 44, 18, 15, 11, 11, 11, 14, 12])
+    i = 6
+    for p in conc["todos"]:
+        for x in p["itens"]:
+            vals = [p["pedido_venda"] or "—", p["cliente"], x["produto"], x["estacao"] or "—", x["liberacao"], x["fila"], x["chao"], x["total"],
+                    "SIM" if x["acima_total"] else "", "SIM" if x["critico_total"] else ""]
+            for j, v in enumerate(vals, 1):
+                c = wsI.cell(row=i, column=j, value=v)
+                c.font, c.border, c.alignment = f_normal, borda, (esq if j in (1, 2, 3, 4) else centro)
+                if j == 5:
+                    c.number_format = "DD/MM/YYYY"
+                if j in (6, 7, 8) and x["acima_" + ("fila", "chao", "total")[j - 6]]:
+                    c.font = f_vermelho
+                if x["acima_total"]:
+                    c.fill = fill_acima
+            i += 1
+    wsI.auto_filter.ref = f"A5:J{max(i - 1, 6)}"
+    wsI.freeze_panes = "C6"
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    resposta = Response(buffer.getvalue(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resposta.headers["Content-Disposition"] = f"attachment; filename=lead_time_gestao_producao_{lt['periodo']}_{agora:%Y-%m-%d_%H%M}.xlsx"
+    return resposta
 
 
 def _otd_percentual():
@@ -17624,6 +18299,21 @@ def register_routes(app):
         (só a tela usa)."""
         contexto = _contexto_painel(request.args, None)
         return _gerar_pdf_painel_diario(contexto)
+
+    @app.route("/painel/lead-time/relatorio.pdf")
+    @login_required
+    def painel_lead_time_pdf():
+        """PDF do Quadrante 01 (Gestão Produção — lead time) do Painel, no
+        período escolhido na tela (?lt=mes|s1..s4|q1|q2) — pedido do Bruno,
+        21/10/2026."""
+        return _gerar_pdf_lead_time_q1(_dados_lt_q1(request.args.get("lt") or "mes"))
+
+    @app.route("/painel/lead-time/relatorio.xlsx")
+    @login_required
+    def painel_lead_time_xlsx():
+        """Excel completo do Quadrante 01 (resumo, semanal/quinzenal, por
+        estação, pedidos e itens concluídos) — mesmo período da tela."""
+        return _gerar_xlsx_lead_time_q1(_dados_lt_q1(request.args.get("lt") or "mes"))
 
     @app.route("/kpis")
     @login_required

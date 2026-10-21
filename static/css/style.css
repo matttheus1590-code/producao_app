@@ -2048,3 +2048,23 @@ tr.linha-clicavel { cursor: pointer; }
 .lt-itens-pop .lt-pop-tabela { font-size: 0.74rem; }
 .lt-itens-pop .lt-col-destaque { background: rgba(255, 193, 7, 0.18); }
 tr.lt-linha-pedido { cursor: default; }
+
+/* Painel · lead time: pedido ACIMA DA MÉDIA -> linha inteira vermelha; valor
+   acima da média em vermelho forte (pedido do Bruno, 21/10/2026). */
+tr.lt-row-acima > * {
+  --bs-table-bg: #f5c2c7;
+  background-color: #f5c2c7 !important;
+  color: #58151c;
+}
+.table-hover > tbody > tr.lt-row-acima:hover > * {
+  --bs-table-bg: #efa3ab;
+  background-color: #efa3ab !important;
+}
+.lt-val-acima { color: #b02a37; font-weight: 700; }
+.lt-legenda-acima {
+  display: inline-block;
+  padding: 0 0.4rem;
+  border-radius: 0.25rem;
+  background: #f5c2c7;
+  color: #58151c;
+}
