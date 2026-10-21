@@ -6453,6 +6453,59 @@ def _coletar_lead_times_painel(inicio=None, fim=None, incluir_operacao=True):
     return r
 
 
+def _coletar_lead_times_pcp(rotulos):
+    """Lead times do Gestão Produção do recorte do PLANEJAMENTO SEMANAL PCP
+    (pedido do Bruno, 21/10/2026: "todo esse planejamento seja baseado no
+    planejamento semanal PCP"): os itens cujo `planejamento_semanal` é um dos
+    `rotulos` ("SEMANA NN / MÊS / ANO"). Só entram os itens JÁ CONCLUÍDOS
+    (início de produção + liberação efetiva), e fila, chão e total saem dos
+    MESMOS itens — por item, fila + chão = total exatamente, então a média do
+    total é a soma das médias (antes, na visão por semana de calendário, a fila
+    vinha de quem INICIOU na semana e o chão de quem foi LIBERADO nela, e a
+    soma inflava o total). `n_plan_*` = quantos itens/pedidos estão planejados
+    nesses rótulos (concluídos ou não), pra mostrar o andamento."""
+    rotulos = list(rotulos or [])
+    r = {
+        "chao": [], "fila": [], "total_producao": [],
+        "chao_est": {}, "fila_est": {}, "total_producao_est": {},
+        "prazo": [], "total": [], "cif": [], "fob": [], "cif_regiao": {},
+        "concluidos": [], "n_plan_itens": 0, "n_plan_pedidos": 0,
+    }
+    if not rotulos:
+        return r
+    itens = (
+        ItemPedido.query.options(selectinload(ItemPedido.pedido).selectinload(Pedido.itens))
+        .filter(ItemPedido.planejamento_semanal.in_(rotulos)).all()
+    )
+    pedidos_plan = set()
+    for item in itens:
+        pedido = item.pedido
+        if not pedido or not pedido.data_inclusao_pedido:
+            continue
+        r["n_plan_itens"] += 1
+        pedidos_plan.add(pedido.id)
+        if not (item.inicio_producao and item.liberacao_real):
+            continue
+        fila = (item.inicio_producao - pedido.data_inclusao_pedido).days
+        chao = (item.liberacao_real - item.inicio_producao).days
+        r["fila"].append(fila)
+        r["chao"].append(chao)
+        r["total_producao"].append(fila + chao)
+        r["concluidos"].append({
+            "pedido_id": pedido.id, "itens_total": len(pedido.itens),
+            "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
+            "produto": item.descricao_produto, "estacao": item.estacao,
+            "inclusao": pedido.data_inclusao_pedido, "liberacao": item.liberacao_real,
+            "fila": fila, "chao": chao, "total": fila + chao,
+        })
+        if item.estacao:
+            r["fila_est"].setdefault(item.estacao, []).append(fila)
+            r["chao_est"].setdefault(item.estacao, []).append(chao)
+            r["total_producao_est"].setdefault(item.estacao, []).append(fila + chao)
+    r["n_plan_pedidos"] = len(pedidos_plan)
+    return r
+
+
 def _metrica_lt(valores_hist, valores_mes, valores_atual=None):
     """{media, n} da MÉDIA DO ANO (ano corrente, pedido do Bruno, 19/10/2026)
     + {mes_media, mes_n} do mês anterior + {atual_media, atual_n} do mês
@@ -6675,20 +6728,33 @@ def _periodos_lt_painel(hoje):
         "chave": "mes", "tipo": "mes", "botao": "Mês inteiro", "titulo": "Mês inteiro",
         "inicio": mes_ini, "fim": mes_fim, "curto": mes_curto, "sub": "mês atual · parcial",
     }]
+    from models import _MESES_ABREV_PCP
+
+    def _rot(n):  # rótulo PCP gravado em ItemPedido.planejamento_semanal
+        return f"SEMANA {n:02d} / {_MESES_ABREV_PCP[mes - 1]} / {ano}"
+
     dom1 = _domingo_semana_01(ano, mes)
+    janela = {}
     for n in range(1, 5):
         ini = dom1 + timedelta(days=7 * (n - 1))
         fim = min(ini + timedelta(days=6), mes_fim)
+        janela[n] = (ini, fim)
         periodos.append({
             "chave": f"s{n}", "tipo": "semana", "botao": f"Sem {n:02d}", "titulo": f"Semana {n:02d}",
             "inicio": ini, "fim": fim, "curto": f"{mes_curto} · SEM {n:02d}",
-            "sub": f"semana {n:02d} · {fmt(ini)} a {fmt(fim)}",
+            "sub": f"planejamento PCP · semana {n:02d} · {fmt(ini)} a {fmt(fim)}",
+            "rotulos": [_rot(n)],
         })
-    for n, (ini, fim) in enumerate([(mes_ini, date(ano, mes, 15)), (date(ano, mes, 16), mes_fim)], 1):
+    # Quinzena = 2 semanas do planejamento PCP: 1ª = semanas 01+02; 2ª = 03+04
+    # (+ o 5º rótulo "SEMANA 05", dias 29-31, quando o mês tem).
+    for n, (sems, (ini, _), (_, fim)) in enumerate(
+        [((1, 2), janela[1], janela[2]), ((3, 4, 5), janela[3], (None, mes_fim))], 1
+    ):
         periodos.append({
             "chave": f"q{n}", "tipo": "quinzena", "botao": f"{n}ª Quinz.", "titulo": f"{n}ª quinzena",
             "inicio": ini, "fim": fim, "curto": f"{mes_curto} · {n}ª QUINZ.",
-            "sub": f"{n}ª quinzena · {fmt(ini)} a {fmt(fim)}",
+            "sub": f"planejamento PCP · {n}ª quinzena (semanas {' + '.join(f'{s:02d}' for s in sems if s <= 4 or ultimo >= 29)}) · {fmt(ini)} a {fmt(fim)}",
+            "rotulos": [_rot(s) for s in sems],
         })
     for p in periodos:
         p["atual"] = p["inicio"] <= hoje <= p["fim"]
@@ -6706,7 +6772,7 @@ def _comparativo_periodos_lt(hoje, periodos):
     for p in periodos:
         if p["tipo"] == "mes":
             continue
-        r = _coletar_lead_times_painel(inicio=p["inicio"], fim=p["fim"], incluir_operacao=False)
+        r = _coletar_lead_times_pcp(p["rotulos"])
         fila, n_fila = _media_dias(r["fila"])
         chao, n_chao = _media_dias(r["chao"])
         total = _soma_medias_lt(fila, chao)
@@ -6716,6 +6782,7 @@ def _comparativo_periodos_lt(hoje, periodos):
             "fila": fila, "chao": chao, "total": total, "n_fila": n_fila, "n_chao": n_chao,
             "n_pedidos": len({i["pedido_id"] for i in r["concluidos"]}),
             "n_itens": len(r["concluidos"]),
+            "n_plan_pedidos": r["n_plan_pedidos"], "n_plan_itens": r["n_plan_itens"],
         })
     return linhas
 
@@ -6749,7 +6816,11 @@ def _lead_time_painel_agrupado(hoje=None, periodo="mes"):
     )
     # O "atual" é o mês corrente INTEIRO ou o recorte escolhido (semana /
     # quinzena) — mês anterior e média do ano seguem como referência.
-    atual = _coletar_lead_times_painel(inicio=sel["inicio"], fim=sel["fim"])
+    if sel["tipo"] == "mes":
+        atual = _coletar_lead_times_painel(inicio=sel["inicio"], fim=sel["fim"])
+    else:
+        # semana / quinzena = planejamento semanal PCP (ver _coletar_lead_times_pcp)
+        atual = _coletar_lead_times_pcp(sel["rotulos"])
     # Quadrante 02 (Gestão Operação) NÃO acompanha o filtro de semana/quinzena
     # do quadrante 01 — segue sempre o mês inteiro.
     atual_op = atual if sel["tipo"] == "mes" else _coletar_lead_times_painel(inicio=periodos[0]["inicio"], fim=periodos[0]["fim"])
@@ -6798,6 +6869,7 @@ def _lead_time_painel_agrupado(hoje=None, periodo="mes"):
         ),
         "periodo": sel["chave"],
         "periodo_tipo": sel["tipo"],
+        "atual_plan": {"pedidos": atual.get("n_plan_pedidos"), "itens": atual.get("n_plan_itens")},
         "periodos": periodos,
         "comparativo": _comparativo_periodos_lt(hoje, periodos),
         # rótulos do MÊS inteiro, pro quadrante 02 (não acompanha o filtro)
@@ -7100,15 +7172,15 @@ def _gerar_pdf_lead_time_q1(dados):
         linhas_c.append([
             P(f'<b>{esc(c["titulo"])}</b>{marca}', base), P(f'{c["inicio"]:%d/%m} a {c["fim"]:%d/%m}', centro),
             P(dias(c["fila"]), centro), P(dias(c["chao"]), centro), P(f'<b>{dias(c["total"])}</b>', centro),
-            P(str(c["n_pedidos"]), centro), P(str(c["n_itens"]), centro),
+            P(f'{c["n_pedidos"]} / {c["n_plan_pedidos"]}', centro), P(f'{c["n_itens"]} / {c["n_plan_itens"]}', centro),
             P(cor("selecionado", VERDE) if selecionado else "", centro),
         ])
         if selecionado:
             extra_c.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#d1e7dd")))
-    elementos.append(tabela(["Período", "Datas", "Fila", "Chão", "Total", "Pedidos concluídos", "Itens liberados", ""], linhas_c,
-                            [16, 14, 9, 9, 9, 13, 12, 10], alin="LCCCCCCC", extra=extra_c, zebra=False))
+    elementos.append(tabela(["Período", "Datas", "Fila", "Chão", "Total", "Pedidos concluídos / planejados", "Itens concluídos / planejados", ""], linhas_c,
+                            [16, 14, 9, 9, 9, 14, 14, 8], alin="LCCCCCCC", extra=extra_c, zebra=False))
     elementos.append(Spacer(1, 1 * mm))
-    elementos.append(P("Fila = pelo início da produção no período · chão e total = pela liberação efetiva no período · total = fila + chão (soma das médias). Semanas = mesmas da Programação PCP (domingo a sábado, 4 por mês); dias fora delas só entram no mês inteiro.", nota))
+    elementos.append(P("Semanas e quinzenas = PLANEJAMENTO SEMANAL PCP (campo 'Planej. semanal' de cada item; 1ª quinzena = semanas 01+02, 2ª = 03+04). Só entram itens já concluídos e fila, chão e total são dos mesmos itens (total = fila + chão). 'Mês inteiro' usa as datas reais: fila pelo mês do início de produção, chão e total pelo mês da liberação efetiva. Datas das semanas = domingo a sábado, como na Programação PCP.", nota))
     elementos.append(Spacer(1, 4 * mm))
     elementos[_ini_cmp:] = [KeepTogether(elementos[_ini_cmp:])]
 
@@ -7259,10 +7331,10 @@ def _gerar_xlsx_lead_time_q1(dados):
     # ---------------- 2. Semanal ----------------
     wsS = wb.create_sheet("Semanal e quinzenal")
     topo(wsS, f'Comparativo semana a semana e quinzena a quinzena · {lt["atual_label"]}')
-    cabecalho(wsS, 5, ["Período", "Tipo", "Início", "Fim", "Fila (dias)", "Chão (dias)", "Total (dias)", "Pedidos concluídos", "Itens liberados", "Em foco no relatório"],
-              [18, 11, 12, 12, 12, 12, 12, 14, 14, 18])
+    cabecalho(wsS, 5, ["Período", "Tipo", "Início", "Fim", "Fila (dias)", "Chão (dias)", "Total (dias)", "Pedidos concluídos", "Itens liberados", "Pedidos planejados (PCP)", "Itens planejados (PCP)", "Em foco no relatório"],
+              [18, 11, 12, 12, 12, 12, 12, 14, 14, 16, 16, 18])
     for i, c in enumerate(lt["comparativo"], 6):
-        vals = [c["titulo"], c["tipo"].capitalize(), c["inicio"], c["fim"], c["fila"], c["chao"], c["total"], c["n_pedidos"], c["n_itens"],
+        vals = [c["titulo"], c["tipo"].capitalize(), c["inicio"], c["fim"], c["fila"], c["chao"], c["total"], c["n_pedidos"], c["n_itens"], c["n_plan_pedidos"], c["n_plan_itens"],
                 "sim" if c["chave"] == lt["periodo"] else ""]
         for j, v in enumerate(vals, 1):
             cel = wsS.cell(row=i, column=j, value=v)

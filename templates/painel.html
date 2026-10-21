@@ -289,18 +289,18 @@
           <button type="button" class="btn btn-outline-secondary active" data-lt-cmp="semana">Semanas</button>
           <button type="button" class="btn btn-outline-secondary" data-lt-cmp="quinzena">Quinzenas</button>
         </div>
-        <span class="small text-muted ms-auto">Fila / chão / total dos pedidos do período · linha tracejada = média {{ lt.ano }} do lead time total · clique no nome do período para filtrar o quadrante</span>
+        <span class="small text-muted ms-auto">Baseado no <strong>Planejamento Semanal PCP</strong> · fila / chão / total dos itens já concluídos de cada semana planejada (mesmos itens nas 3 barras) · linha tracejada = média {{ lt.ano }} do total · clique no período para filtrar o quadrante</span>
       </div>
       <div class="row g-3">
         <div class="col-12 col-xl-8"><div style="position:relative;height:250px;"><canvas id="ltComparativoChart"></canvas></div></div>
         <div class="col-12 col-xl-4">
           <table class="table table-sm mb-0 small align-middle" id="ltComparativoTabela">
-            <thead><tr class="text-muted"><th>Período</th><th class="text-end">Fila</th><th class="text-end">Chão</th><th class="text-end">Total</th><th class="text-end" title="Pedidos concluídos">Ped.</th></tr></thead>
+            <thead><tr class="text-muted"><th>Período</th><th class="text-end">Fila</th><th class="text-end">Chão</th><th class="text-end">Total</th><th class="text-end" title="Pedidos concluídos / pedidos planejados na semana (Planejamento Semanal PCP)">Concl./Plan.</th></tr></thead>
             <tbody>
               {% for c in cmp %}
               <tr data-tipo="{{ c.tipo }}" class="{{ 'table-success' if c.chave == lt.periodo else '' }}{{ ' d-none' if c.tipo == 'quinzena' else '' }}">
                 <td><a class="text-decoration-none fw-semibold" href="{{ url_for('painel', _anchor='lt-quadrante', **dict(request.args.to_dict(), lt=c.chave)) }}">{{ c.titulo }}</a>{% if c.atual %} <span class="badge text-bg-success">agora</span>{% endif %}<div class="text-muted" style="font-size:0.66rem;">{{ c.inicio.strftime('%d/%m') }} a {{ c.fim.strftime('%d/%m') }}</div></td>
-                <td class="text-end">{{ dias(c.fila) }}</td><td class="text-end">{{ dias(c.chao) }}</td><td class="text-end fw-bold">{{ dias(c.total) }}</td><td class="text-end">{{ c.n_pedidos }}</td>
+                <td class="text-end">{{ dias(c.fila) }}</td><td class="text-end">{{ dias(c.chao) }}</td><td class="text-end fw-bold">{{ dias(c.total) }}</td><td class="text-end">{{ c.n_pedidos }}<span class="text-muted">/{{ c.n_plan_pedidos }}</span></td>
               </tr>
               {% endfor %}
             </tbody>
@@ -308,7 +308,7 @@
         </div>
       </div>
     </div>
-    <p class="text-muted small mb-0 mt-2">Vem só de Gestão Produção/Listagem Geral. O número grande é o mês atual (ainda em andamento); mês anterior e média do ano (01/01 até hoje) são só referência — "atual ▲/▼" é o mês atual contra cada uma. Cada média entra no mês em que o período fecha (chão de fábrica e total produção = liberação efetiva no mês · fila de espera = início de produção no mês). Por estação = estação atual do item.</p>
+    <p class="text-muted small mb-0 mt-2">Vem só de Gestão Produção/Listagem Geral. O número grande é o mês atual (ainda em andamento); mês anterior e média do ano (01/01 até hoje) são só referência — "atual ▲/▼" é o mês atual contra cada uma. Cada média entra no mês em que o período fecha (chão de fábrica e total produção = liberação efetiva no mês · fila de espera = início de produção no mês). Por estação = estação atual do item. <strong>Semanas e quinzenas</strong> seguem o <strong>Planejamento Semanal PCP</strong> (campo "Planej. semanal" de cada item; 1ª quinzena = semanas 01+02, 2ª = 03+04): só entram os itens já concluídos, e fila, chão e total são dos mesmos itens (total = fila + chão). "Concl./Plan." = pedidos concluídos / pedidos planejados naquele período.</p>
   </div>
 </div>
 
