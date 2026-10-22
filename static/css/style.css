@@ -377,6 +377,74 @@ body.col-resizing-ativo {
   }
 }
 
+/* Resumo "N pedidos · X concluídos" dentro dos quadrantes de Planejamento PCP
+   (pedido do Bruno, 05/10/2026) — chips + barra de progresso. */
+.stat-card-un {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #6c757d;
+  margin-left: 0.3rem;
+  text-transform: lowercase;
+}
+
+.stat-card-prog-wrap {
+  margin-top: 0.35rem;
+}
+
+.stat-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.25rem;
+  margin-bottom: 0.35rem;
+}
+
+.stat-chip {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.stat-chip-ok {
+  background: #d1e7dd;
+  color: #0a5c36;
+}
+
+.stat-chip-aberto {
+  background: #fff3cd;
+  color: #7a5200;
+}
+
+.stat-card-prog {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.stat-card-prog > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #198754;
+  transition: width 0.4s ease;
+}
+
+.stat-card-prog-ok > span {
+  background: linear-gradient(90deg, #198754, #20c997);
+}
+
+.stat-card-pct {
+  margin-top: 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #495057;
+}
+
 /* Quadrantes de Planejamento PCP da Listagem Geral (mês atual + até 5
    semanas + quadrante OUTUBRO/mês seguinte, pedido do Bruno 17/09/2026:
    "ao lado do quadrante SEMANA 05, o quadrante OUTUBRO"). Cada card usa
@@ -392,6 +460,13 @@ body.col-resizing-ativo {
     flex: 0 0 calc(100% / 7);
     max-width: calc(100% / 7);
   }
+}
+
+/* Quadrantes com alturas diferentes (cards com/sem barra de progresso):
+   o link ocupa a coluna inteira pra todos os cards da linha ficarem da
+   mesma altura. */
+.row-quadrantes-pcp .stat-card-link {
+  height: 100%;
 }
 
 /* Cabeçalho de cada uma das 3 colunas da tela de monitoramento de Estações
@@ -1714,6 +1789,54 @@ body.col-resizing-ativo {
 .pcp-preview-coluna-total {
   padding: 0 0.6rem 0.5rem;
   border-bottom: 1px solid #eef0f2;
+}
+.pcp-preview-coluna-resumo {
+  padding: 0.15rem 0.6rem 0.5rem;
+  border-bottom: 1px solid #eef0f2;
+}
+.pcp-preview-coluna-resumo-linha {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.3rem;
+  font-size: 0.78rem;
+}
+.pcp-preview-coluna-n {
+  flex: 0 0 100%;
+  font-size: 0.85rem;
+}
+.pcp-preview-coluna-valor {
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+}
+/* Faixa-resumo do mês no topo do Planejamento Semanal do Painel
+   (pedido do Bruno, 05/10/2026). */
+.pcp-resumo-mes {
+  margin-bottom: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e3e8ee;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+}
+.pcp-resumo-mes-txt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.85rem;
+}
+.pcp-resumo-mes-titulo {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #495057;
+}
+.pcp-resumo-mes-pct {
+  margin-left: auto;
+  font-weight: 700;
+  color: #198754;
 }
 .pcp-preview-coluna-corpo {
   padding: 0.4rem;

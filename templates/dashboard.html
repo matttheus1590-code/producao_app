@@ -127,11 +127,11 @@
      verde (mês atual) e do azul (mês seguinte), já que é um período que já
      passou. #}
   <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(quadrantes_pcp.mes_anterior.titulo, quadrantes_pcp.mes_anterior.total, sufixo=quadrantes_pcp.mes_anterior.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_anterior.filtros_link), ativo=quadrantes_pcp.mes_anterior.ativo, fundo="secondary-subtle") }}
+    {{ stat_card(quadrantes_pcp.mes_anterior.titulo, quadrantes_pcp.mes_anterior.total, sufixo=quadrantes_pcp.mes_anterior.subtitulo, concluidos=quadrantes_pcp.mes_anterior.concluidos, em_aberto=quadrantes_pcp.mes_anterior.em_aberto, pct=quadrantes_pcp.mes_anterior.pct, unidade="pedidos", link=url_for('dashboard', **quadrantes_pcp.mes_anterior.filtros_link), ativo=quadrantes_pcp.mes_anterior.ativo, fundo="secondary-subtle") }}
   </div>
   {% for semana in quadrantes_pcp.semanas %}
   <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, link=url_for('dashboard', **semana.filtros_link), ativo=semana.ativo, piscante=semana.atual) }}
+    {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, concluidos=semana.concluidos, em_aberto=semana.em_aberto, pct=semana.pct, unidade="pedidos", link=url_for('dashboard', **semana.filtros_link), ativo=semana.ativo, piscante=semana.atual) }}
   </div>
   {% endfor %}
   <div class="col-6 col-md-4 col-lg-2">
@@ -141,17 +141,17 @@
        seguinte (bg-primary-subtle) logo abaixo, só que verde pro mês
        ATUAL/corrente. Reposicionado (01/10/2026) pra depois das semanas, já
        que agora o card único do mês passado abre a linha. #}
-    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="success", fundo="success-subtle") }}
+    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, concluidos=quadrantes_pcp.mes_atual.concluidos, em_aberto=quadrantes_pcp.mes_atual.em_aberto, pct=quadrantes_pcp.mes_atual.pct, unidade="pedidos", link=url_for('dashboard', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="success", fundo="success-subtle") }}
   </div>
   <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(quadrantes_pcp.mes_seguinte.titulo, quadrantes_pcp.mes_seguinte.total, sufixo=quadrantes_pcp.mes_seguinte.subtitulo, link=url_for('dashboard', **quadrantes_pcp.mes_seguinte.filtros_link), ativo=quadrantes_pcp.mes_seguinte.ativo, fundo="primary-subtle") }}
+    {{ stat_card(quadrantes_pcp.mes_seguinte.titulo, quadrantes_pcp.mes_seguinte.total, sufixo=quadrantes_pcp.mes_seguinte.subtitulo, concluidos=quadrantes_pcp.mes_seguinte.concluidos, em_aberto=quadrantes_pcp.mes_seguinte.em_aberto, pct=quadrantes_pcp.mes_seguinte.pct, unidade="pedidos", link=url_for('dashboard', **quadrantes_pcp.mes_seguinte.filtros_link), ativo=quadrantes_pcp.mes_seguinte.ativo, fundo="primary-subtle") }}
   </div>
   {# Pedido do Bruno (21/09/2026): quadrante ao lado de OUTUBRO pra achar
      pedidos com item ainda sem Planejamento semanal (PCP) nenhum — cor de
      alerta (âmbar) porque é uma pendência a resolver, diferente dos outros
      que só mostram período. #}
   <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(quadrantes_pcp.sem_planejamento.titulo, quadrantes_pcp.sem_planejamento.total, sufixo=quadrantes_pcp.sem_planejamento.subtitulo, link=url_for('dashboard', **quadrantes_pcp.sem_planejamento.filtros_link), ativo=quadrantes_pcp.sem_planejamento.ativo, borda="warning", fundo="warning-subtle") }}
+    {{ stat_card(quadrantes_pcp.sem_planejamento.titulo, quadrantes_pcp.sem_planejamento.total, sufixo=quadrantes_pcp.sem_planejamento.subtitulo, unidade="pedidos", link=url_for('dashboard', **quadrantes_pcp.sem_planejamento.filtros_link), ativo=quadrantes_pcp.sem_planejamento.ativo, borda="warning", fundo="warning-subtle") }}
   </div>
 </div>
 

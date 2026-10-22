@@ -1,4 +1,29 @@
-{% macro stat_card(titulo, valor, cor=None, link=None, ativo=False, borda=None, sufixo=None, piscante=False, fundo=None) %}
+{% macro _stat_corpo(titulo, valor, cor, sufixo, piscante, concluidos, em_aberto, pct, unidade) %}
+{% if piscante %}<span class="stat-card-selo-atual" title="Semana atual"><span class="stat-card-dot"></span>Atual</span>{% endif %}
+<div class="text-muted small">{{ titulo }}</div>
+<div class="fs-3 fw-semibold {% if cor %}text-{{ cor }}{% endif %}">{{ valor }}{% if unidade %}<span class="stat-card-un">{{ unidade }}</span>{% endif %}</div>
+{# Pedido do Bruno (05/10/2026): dentro de cada quadrante de Planejamento PCP,
+   total de pedidos do período + quantos já estão CONCLUÍDOS (ex.: "10
+   pedidos · 8 concluídos"), com barra de progresso. Só aparece quando a
+   view passa `concluidos` (os demais cards do sistema ficam como sempre). #}
+{% if concluidos is not none %}
+<div class="stat-card-prog-wrap" title="Concluído = todos os itens do pedido neste período já têm Liberação real preenchida">
+  {% if pct is not none %}
+  <div class="stat-card-chips">
+    <span class="stat-chip stat-chip-ok">✔ {{ concluidos }} concluído{{ '' if concluidos == 1 else 's' }}</span>
+    {% if em_aberto %}<span class="stat-chip stat-chip-aberto">⏳ {{ em_aberto }} em aberto</span>{% endif %}
+  </div>
+  <div class="stat-card-prog {% if pct >= 100 %}stat-card-prog-ok{% endif %}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ pct }}"><span style="width: {{ pct }}%"></span></div>
+  <div class="stat-card-pct">{% if pct >= 100 %}tudo concluído 🎉{% else %}{{ pct }}% concluído{% endif %}</div>
+  {% else %}
+  <div class="stat-card-pct">sem pedidos no período</div>
+  {% endif %}
+</div>
+{% endif %}
+{% if sufixo %}<div class="text-muted small">{{ sufixo }}</div>{% endif %}
+{% endmacro %}
+
+{% macro stat_card(titulo, valor, cor=None, link=None, ativo=False, borda=None, sufixo=None, piscante=False, fundo=None, concluidos=None, em_aberto=None, pct=None, unidade=None) %}
 {# `piscante` (pedido do Bruno, 10/09/2026): selo "Atual" com bolinha
    pulsando, pro card que representa o período de hoje (ver .stat-card-dot
    em style.css) — hoje só usado nos quadrantes de Planejamento PCP da
@@ -8,25 +33,23 @@
    claro, diferenciando dos demais") — classe de fundo Bootstrap (ex.:
    "primary-subtle" -> bg-primary-subtle, um azul bem claro), pra
    diferenciar visualmente um card específico dos outros que só têm borda
-   (`borda`). Opcional e genérico, mesmo espírito de `borda`/`cor` acima. #}
+   (`borda`). Opcional e genérico, mesmo espírito de `borda`/`cor` acima.
+
+   `concluidos`/`em_aberto`/`pct`/`unidade` (pedido do Bruno, 05/10/2026):
+   resumo "N pedidos · X concluídos" + barra de progresso dentro do card —
+   ver _stat_corpo. Opcionais; sem eles o card é idêntico ao de antes. #}
 {% if link %}
 <a class="stat-card-link" href="{{ link }}">
   <div class="card text-center h-100 stat-card {% if borda %}border-{{ borda }}{% endif %} {% if fundo %}bg-{{ fundo }}{% endif %} {% if ativo %}stat-card-active{% endif %}">
     <div class="card-body position-relative">
-      {% if piscante %}<span class="stat-card-selo-atual" title="Semana atual"><span class="stat-card-dot"></span>Atual</span>{% endif %}
-      <div class="text-muted small">{{ titulo }}</div>
-      <div class="fs-3 fw-semibold {% if cor %}text-{{ cor }}{% endif %}">{{ valor }}</div>
-      {% if sufixo %}<div class="text-muted small">{{ sufixo }}</div>{% endif %}
+      {{ _stat_corpo(titulo, valor, cor, sufixo, piscante, concluidos, em_aberto, pct, unidade) }}
     </div>
   </div>
 </a>
 {% else %}
 <div class="card text-center h-100 {% if borda %}border-{{ borda }}{% endif %} {% if fundo %}bg-{{ fundo }}{% endif %}">
   <div class="card-body position-relative">
-    {% if piscante %}<span class="stat-card-selo-atual" title="Semana atual"><span class="stat-card-dot"></span>Atual</span>{% endif %}
-    <div class="text-muted small">{{ titulo }}</div>
-    <div class="fs-3 fw-semibold {% if cor %}text-{{ cor }}{% endif %}">{{ valor }}</div>
-    {% if sufixo %}<div class="text-muted small">{{ sufixo }}</div>{% endif %}
+    {{ _stat_corpo(titulo, valor, cor, sufixo, piscante, concluidos, em_aberto, pct, unidade) }}
   </div>
 </div>
 {% endif %}

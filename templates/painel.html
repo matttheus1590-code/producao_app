@@ -257,8 +257,21 @@
       </h6>
       <a href="{{ url_for('gestao_operacao_listagem_geral') }}" class="small"><i class="bi bi-diagram-3"></i> Gestão Operação · Operação 360</a>
     </div>
-    <p class="text-muted small mb-2">Passe o mouse num pedido pra ver o contexto, ou clique pra abrir o Detalhe do Pedido.</p>
     {% if preview_pcp_semanal.semanas %}
+    {% set rs = preview_pcp_semanal.resumo %}
+    <div class="pcp-resumo-mes">
+      <div class="pcp-resumo-mes-txt">
+        <span class="pcp-resumo-mes-titulo">{{ rs.mes_label }}</span>
+        <span class="pcp-resumo-mes-num"><b>{{ rs.n_pedidos }}</b> pedido{{ '' if rs.n_pedidos == 1 else 's' }}</span>
+        <span class="stat-chip stat-chip-ok">✔ {{ rs.n_concluidos }} concluído{{ '' if rs.n_concluidos == 1 else 's' }}</span>
+        {% if rs.n_abertos %}<span class="stat-chip stat-chip-aberto">⏳ {{ rs.n_abertos }} em aberto</span>{% endif %}
+        {% if rs.pct is not none %}<span class="pcp-resumo-mes-pct">{{ rs.pct }}%</span>{% endif %}
+      </div>
+      {% if rs.pct is not none %}
+      <div class="stat-card-prog {% if rs.pct >= 100 %}stat-card-prog-ok{% endif %}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ rs.pct }}"><span style="width: {{ rs.pct }}%"></span></div>
+      {% endif %}
+    </div>
+    <p class="text-muted small mb-2">Concluído = todos os itens do pedido na semana já com Liberação real. Passe o mouse num pedido pra ver o contexto, ou clique pra abrir o Detalhe do Pedido.</p>
     <div class="pcp-preview-scroll">
       {% for s in preview_pcp_semanal.semanas %}
       <div class="pcp-preview-coluna {% if s.atual %}pcp-preview-coluna-atual{% endif %}">
@@ -266,8 +279,18 @@
           <span>{{ s.rotulo_curto }}</span>
           {% if s.atual %}<span class="badge bg-primary">Atual</span>{% endif %}
         </div>
-        <div class="pcp-preview-coluna-total text-muted small">
-          {{ s.pedidos|length }} pedido(s) · R$ {{ "{:,.0f}".format(s.total).replace(",", ".") }}
+        <div class="pcp-preview-coluna-resumo">
+          <div class="pcp-preview-coluna-resumo-linha">
+            <span class="pcp-preview-coluna-n"><b>{{ s.n_pedidos }}</b> pedido{{ '' if s.n_pedidos == 1 else 's' }}</span>
+            {% if s.n_pedidos %}<span class="stat-chip stat-chip-ok" title="Pedidos com todos os itens da semana já liberados">✔ {{ s.n_concluidos }} concluído{{ '' if s.n_concluidos == 1 else 's' }}</span>{% endif %}
+            {% if s.n_abertos %}<span class="stat-chip stat-chip-aberto" title="Pedidos ainda em aberto">⏳ {{ s.n_abertos }} em aberto</span>{% endif %}
+          </div>
+          {% if s.pct is not none %}
+          <div class="stat-card-prog {% if s.pct >= 100 %}stat-card-prog-ok{% endif %}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ s.pct }}"><span style="width: {{ s.pct }}%"></span></div>
+          {% endif %}
+          <div class="text-muted pcp-preview-coluna-valor">
+            {% if s.pct is not none %}{{ s.pct }}% concluído · {% endif %}R$ {{ "{:,.0f}".format(s.total).replace(",", ".") }}
+          </div>
         </div>
         <div class="pcp-preview-coluna-corpo">
           {% for p in s.pedidos %}

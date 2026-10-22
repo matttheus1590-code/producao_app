@@ -5659,6 +5659,10 @@ def _preview_semanal_pcp_painel(hoje=None):
         )
         for p in pedidos:
             p["valor"] = round(p["valor"], 2)
+        # Pedido do Bruno (05/10/2026): total de pedidos da semana + quantos
+        # já CONCLUÍDOS (mesmo critério `finalizado` de sempre — todos os
+        # itens do pedido naquela semana com Liberação real) + barra de %.
+        n_concl = sum(1 for p in pedidos if p["finalizado"])
         semanas.append(
             {
                 "rotulo": rotulo,
@@ -5666,9 +5670,32 @@ def _preview_semanal_pcp_painel(hoje=None):
                 "atual": _chave_semana_pcp(rotulo) == chave_atual,
                 "pedidos": pedidos,
                 "total": round(sum(p["valor"] for p in pedidos), 2),
+                "n_pedidos": len(pedidos),
+                "n_concluidos": n_concl,
+                "n_abertos": len(pedidos) - n_concl,
+                "pct": round(100 * n_concl / len(pedidos)) if pedidos else None,
+                "valor_concluido": round(sum(p["valor"] for p in pedidos if p["finalizado"]), 2),
             }
         )
-    return {"semanas": semanas}
+
+    # Resumo do mês inteiro (pedidos DISTINTOS: um pedido com itens em duas
+    # semanas conta uma vez só e só é concluído se todas as semanas dele
+    # estiverem concluídas — mesma regra de _resumo_mes_pcp).
+    distintos = {}
+    for sem in semanas:
+        for p in sem["pedidos"]:
+            d = distintos.setdefault(p["pedido_id"], True)
+            distintos[p["pedido_id"]] = d and p["finalizado"]
+    n_tot = len(distintos)
+    n_ok = sum(1 for v in distintos.values() if v)
+    resumo = {
+        "n_pedidos": n_tot,
+        "n_concluidos": n_ok,
+        "n_abertos": n_tot - n_ok,
+        "pct": round(100 * n_ok / n_tot) if n_tot else None,
+        "mes_label": f"{MESES_PT[hoje.month - 1]}/{hoje.year}",
+    }
+    return {"semanas": semanas, "resumo": resumo}
 
 
 def _resumo_mes_pcp(ano, mes):
@@ -9518,9 +9545,36 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
 
     filtros_outros = dict(filtros, planejamento_semanal="", planejamento_mensal="", sem_planejamento_semanal="")
 
-    def contar(**override):
-        query, _ = _filtrar_pedidos(dict(filtros_outros, **override))
-        return query.count()
+    def resumir(**override):
+        """(total de pedidos, pedidos concluídos) do recorte `override`.
+
+        Pedido do Bruno (05/10/2026): cada quadrante mostra, além do total de
+        pedidos do período, quantos já estão CONCLUÍDOS (ex.: "semana 02 —
+        10 pedidos, 8 concluídos"). Concluído = TODOS os itens do pedido que
+        caem naquele período já têm "Liberação real" preenchida — o mesmo
+        critério "verde bandeira" do Planejamento Semanal do Painel
+        (_pedidos_pcp_por_semana). Usa as MESMAS linhas que a tabela mostra
+        ao clicar no quadrante (_linhas_listagem_geral), então o número
+        nunca diverge da listagem (inclui filtros de estação/produto)."""
+        args = dict(filtros_outros, **override)
+        query, _ = _filtrar_pedidos(args)
+        pedidos = query.all()
+        por_pedido = {}
+        for linha in _linhas_listagem_geral(pedidos, args):
+            por_pedido.setdefault(linha.pedido_id, []).append(linha)
+        concluidos = sum(
+            1 for ls in por_pedido.values() if ls and all(l.item.liberacao_real for l in ls)
+        )
+        return len(pedidos), concluidos
+
+    def montar(**override):
+        total, concluidos = resumir(**override)
+        return {
+            "total": total,
+            "concluidos": concluidos,
+            "em_aberto": total - concluidos,
+            "pct": round(100 * concluidos / total) if total else None,
+        }
 
     # Quadrante MES_ANTERIOR (pedido do Bruno, 01/10/2026: "card único
     # setembro, primeira posição") — mesmo padrão exato de mes_seguinte
@@ -9532,7 +9586,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     mes_anterior = {
         "titulo": MESES_PT_EXTENSO[mes_ant - 1].upper(),
         "subtitulo": f"01/{mes_ant:02d} – {dias_no_mes_ant:02d}/{mes_ant:02d}",
-        "total": contar(planejamento_mensal=valor_mes_anterior),
+        **montar(planejamento_mensal=valor_mes_anterior),
         "ativo": filtros.get("planejamento_mensal") == valor_mes_anterior,
         "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes_anterior),
     }
@@ -9541,7 +9595,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     mes_atual = {
         "titulo": MESES_PT_EXTENSO[mes - 1].upper(),
         "subtitulo": f"01/{mes:02d} – {dias_no_mes:02d}/{mes:02d}",
-        "total": contar(planejamento_mensal=valor_mes),
+        **montar(planejamento_mensal=valor_mes),
         "ativo": filtros.get("planejamento_mensal") == valor_mes,
         "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes),
     }
@@ -9561,7 +9615,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
             {
                 "titulo": f"SEMANA {n:02d}",
                 "subtitulo": f"{inicio_semana.strftime('%d/%m')} a {fim_semana.strftime('%d/%m')}",
-                "total": contar(planejamento_semanal=rotulo),
+                **montar(planejamento_semanal=rotulo),
                 "ativo": filtros.get("planejamento_semanal") == rotulo,
                 "filtros_link": dict(filtros_outros, planejamento_semanal=rotulo),
                 "atual": inicio_semana <= hoje <= fim_semana,
@@ -9574,7 +9628,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     mes_seguinte = {
         "titulo": MESES_PT_EXTENSO[mes_seg - 1].upper(),
         "subtitulo": f"01/{mes_seg:02d} – {dias_no_mes_seg:02d}/{mes_seg:02d}",
-        "total": contar(planejamento_mensal=valor_mes_seguinte),
+        **montar(planejamento_mensal=valor_mes_seguinte),
         "ativo": filtros.get("planejamento_mensal") == valor_mes_seguinte,
         "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes_seguinte),
     }
@@ -9589,7 +9643,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     sem_planejamento = {
         "titulo": "SEM PLANEJAMENTO PCP",
         "subtitulo": "ainda não planejados por semana",
-        "total": contar(sem_planejamento_semanal="1"),
+        "total": resumir(sem_planejamento_semanal="1")[0],
         "ativo": filtros.get("sem_planejamento_semanal") == "1",
         "filtros_link": dict(filtros_outros, sem_planejamento_semanal="1"),
     }
