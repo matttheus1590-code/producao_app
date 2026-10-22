@@ -18235,6 +18235,8 @@ def register_routes(app):
         acordado: no plano Free do Render o serviço "dorme" após ~15 min sem
         acesso e leva ~1 min pra acordar (pedido do Bruno, 22/10/2026). A tarefa
         de envio automático (auto_push.ps1) chama esta rota a cada 3 minutos."""
+        # uma linha curta no log do Render pra dar pra conferir que o ping está chegando
+        print(f"[health] ping {datetime.utcnow():%d/%m %H:%M:%S} UTC", flush=True)
         return Response("ok", mimetype="text/plain", headers={"Cache-Control": "no-store"})
 
     @app.route("/login", methods=["GET", "POST"])
