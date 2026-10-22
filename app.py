@@ -18229,6 +18229,14 @@ def register_routes(app):
         if not pode_acessar_endpoint(current_user, endpoint):
             abort(403)
 
+    @app.route("/health")
+    def health():
+        """Resposta mínima (sem login, sem banco) usada só pra manter o site
+        acordado: no plano Free do Render o serviço "dorme" após ~15 min sem
+        acesso e leva ~1 min pra acordar (pedido do Bruno, 22/10/2026). A tarefa
+        de envio automático (auto_push.ps1) chama esta rota a cada 3 minutos."""
+        return Response("ok", mimetype="text/plain", headers={"Cache-Control": "no-store"})
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if current_user.is_authenticated:
