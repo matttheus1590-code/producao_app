@@ -18359,7 +18359,7 @@ def register_routes(app):
         # Só atualiza "última visita" DEPOIS de calcular tudo, pra este mesmo
         # carregamento ainda mostrar o que entrou desde a visita anterior.
         session["ultima_visita_painel"] = datetime.utcnow().isoformat()
-        return render_template("painel.html", **contexto)
+        return render_template("painel.html", agora_painel=_agora_brt(), **contexto)
 
     @app.route("/painel/relatorio.pdf")
     @login_required

@@ -7,12 +7,18 @@
   <link href="{{ url_for('static', filename='vendor/bootstrap/css/bootstrap.min.css') }}" rel="stylesheet">
   <link href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.css') }}" rel="stylesheet">
   <link href="{{ url_for('static', filename='css/style.css') }}?v={{ ASSET_V }}" rel="stylesheet">
+  <script>
+    /* menu lateral recolhido: aplica já no <head> pra não "piscar" a largura */
+    try { if (localStorage.getItem("menuLateralMini") === "1") document.documentElement.classList.add("sb-mini"); } catch (e) {}
+  </script>
 </head>
 <body>
   {% if current_user.is_authenticated %}
   <div class="app-shell">
     <aside class="app-sidebar" id="appSidebar">
+      <button type="button" class="app-sidebar-toggle" id="btnMiniSidebar" aria-label="Recolher ou expandir o menu" title="Recolher menu">«</button>
       <div class="app-sidebar-brand">
+        <span class="app-sidebar-mark" aria-hidden="true">4P</span>
         <img src="{{ url_for('static', filename='img/logo_4pipe.png') }}" alt="4PIPE Solutions" class="app-sidebar-logo">
         <span class="app-sidebar-brand-subtitulo">Gestão da Produção e Operação</span>
       </div>
@@ -201,7 +207,7 @@
           </div>
         </div>
         <a class="btn btn-outline-light btn-sm w-100 mt-2" href="{{ url_for('logout') }}">
-          <i class="bi bi-box-arrow-right"></i> Sair
+          <i class="bi bi-box-arrow-right"></i> <span class="app-sidebar-sair-txt">Sair</span>
         </a>
       </div>
     </aside>

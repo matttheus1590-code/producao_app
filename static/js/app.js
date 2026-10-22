@@ -314,3 +314,87 @@ document.addEventListener("DOMContentLoaded", () => {
     if (href) window.open(href, "_blank");
   });
 })();
+
+
+/* ---------------------------------------------------------------------
+   Menu lateral recolhível (pedido do Bruno, 22/10/2026): (1) botão na borda
+   do menu recolhe a coluna inteira num trilho só de ícones (classe sb-mini
+   no <html>, guardada em localStorage); (2) clicar no título de cada área
+   (Gestão Operação, Produção, Qualidade, P&D...) recolhe/expande os itens
+   dela — a área da página aberta nunca fica recolhida.
+--------------------------------------------------------------------- */
+document.addEventListener("DOMContentLoaded", () => {
+  const aside = document.getElementById("appSidebar");
+  const nav = document.querySelector(".app-sidebar-nav");
+  if (!aside || !nav) return;
+  const html = document.documentElement;
+  const guardar = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const ler = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+
+  // separa "emoji + texto" de cada item (o emoji vira o ícone do trilho)
+  const ehEmoji = (t) => t && !/^[\p{L}\p{N}]/u.test(t);
+  nav.querySelectorAll(".app-nav-link > span, .app-nav-section").forEach((el) => {
+    if (el.dataset.sbOk) return;
+    const txt = el.textContent.trim().replace(/\s+/g, " ");
+    const i = txt.indexOf(" ");
+    const emoji = i > 0 ? txt.slice(0, i) : "";
+    const resto = i > 0 ? txt.slice(i + 1) : txt;
+    el.dataset.sbOk = "1";
+    if (ehEmoji(emoji)) {
+      el.textContent = "";
+      const e = document.createElement("span");
+      e.className = "app-nav-emoji";
+      e.textContent = emoji;
+      const l = document.createElement("span");
+      l.className = "app-nav-label";
+      l.textContent = resto;
+      el.append(e, l);
+    }
+    const alvo = el.closest(".app-nav-link") || el;
+    alvo.title = resto;
+  });
+
+  // áreas recolhíveis
+  const KEY_G = "menuLateralGruposFechados";
+  let fechados = [];
+  try { fechados = JSON.parse(ler(KEY_G) || "[]"); } catch (e) { fechados = []; }
+  const grupos = [];
+  let atual = null;
+  Array.from(nav.children).forEach((el) => {
+    if (el.classList.contains("app-nav-section")) { atual = { sec: el, itens: [], nome: el.textContent.trim() }; grupos.push(atual); }
+    else if (atual && el.classList.contains("app-nav-link")) atual.itens.push(el);
+  });
+  grupos.forEach((g) => {
+    const temAtivo = g.itens.some((a) => a.classList.contains("active"));
+    const aplicar = (fechar) => {
+      g.sec.classList.toggle("sb-fechado", fechar);
+      g.itens.forEach((a) => a.classList.toggle("sb-grupo-fechado", fechar));
+    };
+    aplicar(!temAtivo && fechados.includes(g.nome));
+    g.sec.addEventListener("click", () => {
+      if (html.classList.contains("sb-mini")) return;
+      const fechar = !g.sec.classList.contains("sb-fechado");
+      aplicar(fechar);
+      fechados = fechados.filter((n) => n !== g.nome);
+      if (fechar) fechados.push(g.nome);
+      guardar(KEY_G, JSON.stringify(fechados));
+    });
+  });
+
+  // trilho (menu inteiro recolhido)
+  const botao = document.getElementById("btnMiniSidebar");
+  if (botao) {
+    const atualizar = () => {
+      const mini = html.classList.contains("sb-mini");
+      botao.textContent = mini ? "»" : "«";
+      botao.title = mini ? "Expandir menu" : "Recolher menu";
+    };
+    atualizar();
+    botao.addEventListener("click", () => {
+      html.classList.toggle("sb-mini");
+      guardar("menuLateralMini", html.classList.contains("sb-mini") ? "1" : "0");
+      atualizar();
+      window.dispatchEvent(new Event("resize")); // gráficos se reajustam à nova largura
+    });
+  }
+});

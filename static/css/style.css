@@ -2068,3 +2068,319 @@ tr.lt-row-acima > * {
   background: #f5c2c7;
   color: #58151c;
 }
+
+/* ---------------------------------------------------------------------
+   Painel gerencial (pedido do Bruno, 22/10/2026): "padrão gerencial
+   multinacional com cards, emoticons intuitivos e dinâmicos" — cabeçalho
+   executivo, navegação rápida por área, faixa de indicadores, grupos por
+   área (Financeiro / Radar / Lead time / Desempenho) e seções recolhíveis.
+--------------------------------------------------------------------- */
+:root {
+  --pn-ink: #1b2a4a;
+  --pn-muted: #6b7280;
+  --pn-line: #e3e8ef;
+  --pn-soft: #eef2f8;
+}
+
+.pn-topo {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+.pn-titulo {
+  margin: 0;
+  font-weight: 800;
+  font-size: 1.6rem;
+  letter-spacing: -0.01em;
+  color: var(--pn-ink);
+}
+.pn-subtitulo { color: var(--pn-muted); font-size: 0.85rem; }
+.pn-acoes { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* navegação rápida (fica visível ao rolar) */
+.pn-nav {
+  position: sticky;
+  top: 0;
+  z-index: 1015;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--pn-line);
+  border-radius: 0.8rem;
+  padding: 0.4rem 0.55rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.07);
+}
+.pn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--pn-ink);
+  background: var(--pn-soft);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.pn-pill:hover { background: #dde6f5; color: var(--pn-ink); }
+.pn-pill.ativo { background: var(--pn-ink); color: #fff; }
+.pn-pill-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  color: #fff;
+  background: #6b7280;
+}
+.pn-pill-badge-bad { background: #dc3545; }
+.pn-pill-badge-novo { background: #fd7e14; }
+.pn-nav-acoes { margin-left: auto; display: flex; gap: 0.35rem; flex-wrap: wrap; }
+
+/* faixa de indicadores executivos */
+.pn-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+@media (min-width: 768px) {
+  .pn-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+  .pn-kpis { grid-template-columns: minmax(0, 1fr); }
+}
+.pn-kpi {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.75rem 0.9rem;
+  background: #fff;
+  border: 1px solid var(--pn-line);
+  border-left: 4px solid #94a3b8;
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+a.pn-kpi:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(16, 24, 40, 0.1);
+  color: inherit;
+}
+.pn-kpi-emoji { font-size: 1.9rem; line-height: 1; }
+.pn-kpi-corpo { display: flex; flex-direction: column; min-width: 0; }
+.pn-kpi-rotulo {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pn-muted);
+}
+.pn-kpi-valor { font-size: 1.45rem; font-weight: 800; line-height: 1.15; color: var(--pn-ink); }
+.pn-kpi-sub { font-size: 0.72rem; color: var(--pn-muted); }
+.pn-kpi-ok { border-left-color: #198754; background: linear-gradient(90deg, #f1faf4, #fff 60%); }
+.pn-kpi-ok .pn-kpi-valor { color: #146c43; }
+.pn-kpi-bad { border-left-color: #dc3545; background: linear-gradient(90deg, #fff1f2, #fff 60%); }
+.pn-kpi-bad .pn-kpi-valor { color: #b02a37; }
+.pn-kpi-warn { border-left-color: #e0a800; background: linear-gradient(90deg, #fff9e6, #fff 60%); }
+.pn-kpi-warn .pn-kpi-valor { color: #997404; }
+.pn-kpi-info { border-left-color: #0d6efd; }
+
+/* cabeçalho de cada área */
+.pn-grupo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.7rem 0 0.85rem;
+  scroll-margin-top: 4.5rem;
+}
+.pn-grupo-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  font-size: 1.35rem;
+  background: #fff;
+  border: 1px solid var(--pn-line);
+  border-radius: 0.7rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+.pn-grupo-titulo {
+  font-size: 1.02rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--pn-ink);
+}
+.pn-grupo-sub { font-size: 0.8rem; color: var(--pn-muted); }
+.pn-grupo-linha { flex: 1 1 auto; height: 1px; background: var(--pn-line); }
+
+/* seções (cards) padronizadas e recolhíveis */
+.pn-sec {
+  --pn-tone: #94a3b8;
+  position: relative;
+  margin-bottom: 1.1rem;
+  border: 1px solid var(--pn-line);
+  border-left: 4px solid var(--pn-tone);
+  border-radius: 0.8rem;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
+  scroll-margin-top: 4.5rem;
+}
+.pn-t-green { --pn-tone: #198754; }
+.pn-t-blue { --pn-tone: #0d6efd; }
+.pn-t-teal { --pn-tone: #0f9d8a; }
+.pn-t-amber { --pn-tone: #e0a800; }
+.pn-t-cyan { --pn-tone: #0aa2c0; }
+.pn-t-purple { --pn-tone: #7c3aed; }
+.pn-t-red { --pn-tone: #dc3545; }
+.pn-t-indigo { --pn-tone: #4f46e5; }
+.pn-t-slate { --pn-tone: #64748b; }
+.pn-t-violet { --pn-tone: #9333ea; }
+.pn-sec.painel-hero-card-lt { border-left-width: 4px; }
+
+.pn-sec:not(.painel-hero-card-lt) > .card-body > h6,
+.pn-sec:not(.painel-hero-card-lt) > .card-body > div:first-child > h6 {
+  font-size: 0.86rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.05em;
+  color: var(--pn-ink) !important;
+}
+.pn-sec h6 > i.bi { display: none; }
+
+.pn-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  margin-right: 0.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.4rem;
+  background: var(--pn-soft);
+  color: var(--pn-ink);
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: transform 0.15s, background 0.15s;
+}
+.pn-toggle:hover { background: #dde6f5; }
+.pn-sec.pn-fechado .pn-toggle { transform: rotate(-90deg); }
+.pn-sec.pn-fechado > .card-body > *:not(.pn-head) { display: none !important; }
+.pn-sec.pn-fechado .pn-head { margin-bottom: 0 !important; }
+.pn-sec.pn-fechado { opacity: 0.92; }
+
+@media (max-width: 991.98px) {
+  .pn-nav { top: 56px; }
+  .pn-nav-acoes { margin-left: 0; }
+}
+
+/* ---------------------------------------------------------------------
+   Menu lateral recolhível (pedido do Bruno, 22/10/2026): botão na borda do
+   menu recolhe a coluna inteira num "trilho" só de ícones (estado guardado
+   no navegador); cada área (Gestão Operação, Produção...) também recolhe.
+--------------------------------------------------------------------- */
+.app-sidebar { transition: width 0.2s ease, transform 0.2s ease; }
+.app-main { transition: margin-left 0.2s ease; }
+.app-sidebar-mark { display: none; }
+.app-sidebar-toggle {
+  position: absolute;
+  top: 1.15rem;
+  right: -14px;
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid #cfd6e2;
+  background: #fff;
+  color: var(--pn-ink);
+  font-size: 0.78rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+}
+.app-sidebar-toggle:hover { background: #eef2f8; }
+.app-nav-section { cursor: pointer; user-select: none; position: relative; }
+.app-nav-section::after {
+  content: "▾";
+  position: absolute;
+  right: 0.7rem;
+  top: 50%;
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  transition: transform 0.15s;
+}
+.app-nav-section.sb-fechado::after { transform: rotate(-90deg); }
+.app-nav-link.sb-grupo-fechado { display: none; }
+.app-nav-link > span,
+.app-nav-section {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.app-nav-link > span { flex: 1 1 auto; min-width: 0; }
+.app-nav-emoji { flex: 0 0 auto; }
+.app-nav-label { flex: 1 1 auto; min-width: 0; }
+
+@media (max-width: 991.98px) {
+  .app-sidebar-toggle { display: none; }
+}
+@media (min-width: 992px) {
+  .sb-mini .app-sidebar { width: 68px; }
+  .sb-mini .app-main { margin-left: 68px; }
+  .sb-mini .app-sidebar-brand { padding: 0.75rem 0.4rem; }
+  .sb-mini .app-sidebar-logo,
+  .sb-mini .app-sidebar-brand-subtitulo { display: none; }
+  .sb-mini .app-sidebar-mark {
+    display: block;
+    font-weight: 800;
+    font-size: 1.15rem;
+    letter-spacing: -0.02em;
+    color: var(--pn-ink);
+  }
+  .sb-mini .app-sidebar-nav { padding: 0.5rem 0.3rem; overflow-x: hidden; }
+  .sb-mini .app-nav-label { display: none; }
+  .sb-mini .app-nav-link {
+    justify-content: center;
+    padding: 0.6rem 0;
+    gap: 0;
+  }
+  .sb-mini .app-nav-link.sb-grupo-fechado { display: flex; }
+  .sb-mini .app-nav-emoji { font-size: 1.3rem; }
+  .sb-mini .app-nav-section {
+    text-align: center;
+    padding: 0.7rem 0 0.25rem;
+    font-size: 1.1rem;
+    cursor: default;
+  }
+  .sb-mini .app-nav-section::after { display: none; }
+  .sb-mini .app-sidebar-footer { padding: 0.6rem 0.3rem; }
+  .sb-mini .app-sidebar-user { justify-content: center; }
+  .sb-mini .app-sidebar-user-info,
+  .sb-mini .app-sidebar-sair-txt { display: none; }
+}
+
+/* painel no celular: badges longos quebram linha e o seletor de período não estoura a largura */
+@media (max-width: 767.98px) {
+  .pn-sec .badge { white-space: normal; text-align: left; }
+  #lt-quadrante .btn-group { flex-wrap: wrap; }
+  .pn-grupo-sub { display: none; }
+  .pn-sec .table-responsive, .pn-sec table { max-width: 100%; }
+}
