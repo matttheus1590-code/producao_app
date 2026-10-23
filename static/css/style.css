@@ -3296,3 +3296,222 @@ a.pn-kpi:hover {
 .pre-spark { display: inline-flex; align-items: flex-end; gap: 1px; height: 14px; margin-left: 6px; vertical-align: middle; }
 .pre-spark i { display: block; width: 3px; background: #a5b4fc; border-radius: 1px; }
 .pre-spark i:last-child { background: #6366f1; }
+
+/* =====================================================================
+   Listagem Geral — v4 "alta direção" (Bruno, 23/10/2026): "muito
+   chamativo e números muito grossos — visual mais leve, mantendo a
+   clareza". Peso 600 em vez de 800, fundos planos e suaves, sombras
+   mínimas, Valor total em lilás claro (sem gradiente roxo), mês atual
+   discreto. Só afeta .kpi-s* e .pcpq* (Listagem Geral).
+   ===================================================================== */
+/* ---- KPIs ---- */
+.kpi-s {
+  gap: 0.75rem;
+  padding: 0.7rem 0.95rem;
+  background: #fff;
+  border: 1px solid #e6e9ee;
+  border-left: 3px solid var(--kpi-cor);
+  border-radius: 0.6rem;
+  box-shadow: none;
+}
+.kpi-s-link:hover .kpi-s {
+  transform: none;
+  border-color: #cfd6df;
+  border-left-color: var(--kpi-cor);
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.07);
+}
+.kpi-s-ativo {
+  background: var(--kpi-bg);
+  box-shadow: none;
+  border-color: var(--kpi-cor);
+}
+.kpi-s-ico {
+  font-size: 1.7rem;
+  opacity: 0.85;
+}
+.kpi-s-lbl {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #7b8794;
+}
+.kpi-s-val {
+  font-size: 1.7rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.kpi-s-neutro .kpi-s-val { color: #2b3440; }
+.kpi-s-sub {
+  font-size: 0.74rem;
+  color: #7b8794;
+}
+.kpi-s-faixa {
+  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.6fr);
+}
+/* Valor total: lilás claro, sem gradiente nem sombra colorida */
+.kpi-s-valor {
+  --kpi-cor: #7c5cbf;
+  background: #f7f4fc;
+  border: 1px solid #e2d9f3;
+  border-left: 3px solid #7c5cbf;
+  box-shadow: none;
+  color: inherit;
+}
+.kpi-s-valor .kpi-s-lbl { color: #7b6aa3; }
+.kpi-s-valor .kpi-s-val {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #4c2f94;
+}
+.kpi-s-valor .kpi-s-sub { color: #7b8794; }
+.kpi-s-valor .kpi-s-ico {
+  font-size: 1.9rem;
+  filter: none;
+}
+
+/* ---- Linha do tempo PCP ---- */
+.pcpq-cab-tit {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #2b3440;
+}
+.pcpq-cab-leg { color: #7b8794; }
+.pcpq-grupo-tit {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #9aa4b1;
+}
+.pcpq {
+  gap: 0.25rem;
+  padding: 0.7rem 0.85rem 0.65rem;
+  background: #fff;
+  border: 1px solid #e6e9ee;
+  border-top: 3px solid var(--pq-cor);
+  border-radius: 0.6rem;
+  box-shadow: none;
+}
+.pcpq:hover {
+  transform: none;
+  border-color: #cfd6df;
+  border-top-color: var(--pq-cor);
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.07);
+}
+.pcpq-passado  { --pq-cor: #b8c0ca; --pq-bg: #fafbfc; background: #fafbfc; }
+.pcpq-semana   { --pq-cor: #5b8def; }
+.pcpq-seguinte { --pq-cor: #9db8ef; --pq-bg: #f7f9fe; background: #f7f9fe; }
+.pcpq-sem      { --pq-cor: #e3c15f; --pq-bg: #fffcf2; background: #fffcf2; }
+.pcpq-alerta   { box-shadow: none; border-color: #f0c9cd; }
+.pcpq-atual {
+  background: #f5f8ff;
+  border-color: #b9cdf6;
+  box-shadow: none;
+}
+.pcpq-ativo {
+  outline: 1.5px solid #5b8def;
+  outline-offset: 0;
+  background: #f0f5ff;
+}
+.pcpq-tit {
+  font-size: 0.86rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #374151;
+}
+.pcpq-semana .pcpq-tit { color: #2f5fbf; }
+.pcpq-selo {
+  top: -8px;
+  background: #fff8e1;
+  border-color: #f2e1a4;
+  font-weight: 600;
+  color: #9a6b00;
+}
+.pcpq-n {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #2b3440;
+}
+.pcpq-un {
+  font-size: 0.76rem;
+  color: #7b8794;
+}
+.pcpq-pct {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.pcpq-pct-ok { color: #2f8f63; }
+.pcpq-bar {
+  height: 5px;
+  background: #edf0f4;
+}
+.pcpq-bar > span,
+.pcpq-bar-ok > span {
+  background: #4fae85;
+}
+.pcpq-st {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+.pcpq-ok, .pcpq-cab-leg .pcpq-ok { color: #2f8f63; }
+.pcpq-ab, .pcpq-cab-leg .pcpq-ab { color: #8a6b2c; }
+.pcpq-risco, .pcpq-cab-leg .pcpq-risco { color: #b4485a; }
+.pcpq-dt {
+  font-size: 0.72rem;
+  color: #8a94a0;
+}
+.pcpq-larga .pcpq-n {
+  font-size: 1.9rem;
+}
+.pcpq-larga .pcpq-pct {
+  font-size: 0.95rem;
+}
+/* Mês atual: discreto — tom verde suave, sem sombra pesada */
+.pcpq-mes {
+  --pq-cor: #4fae85;
+  background: #f4faf7;
+  border: 1px solid #b7ddc8;
+  border-top: 3px solid #4fae85;
+  box-shadow: none;
+}
+.pcpq-mes .pcpq-tit {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1f6b4a;
+}
+.pcpq-mes .pcpq-n,
+.pcpq-mes .pcpq-pct {
+  color: #1f6b4a;
+}
+.pcpq-mes .pcpq-bar { background: #dcefe5; }
+.pcpq-selo-mes {
+  background: #e3f3ea;
+  border-color: #b7ddc8;
+  color: #1f6b4a;
+}
+.pcpq-mes.pcpq-ativo { outline-color: #4fae85; }
+
+@media (max-width: 1499.98px) {
+  .kpi-s { padding: 0.6rem 0.7rem; gap: 0.5rem; }
+  .kpi-s-ico { font-size: 1.45rem; }
+  .kpi-s-val { font-size: 1.45rem; }
+  .kpi-s-valor .kpi-s-val { font-size: 1.3rem; }
+  .kpi-s-valor .kpi-s-ico { font-size: 1.6rem; }
+  .kpi-s-lbl { font-size: 0.62rem; }
+  .pcpq { padding: 0.55rem 0.65rem; }
+  .pcpq-n { font-size: 1.35rem; }
+  .pcpq-larga .pcpq-n { font-size: 1.7rem; }
+  .pcpq-tit { font-size: 0.78rem; }
+  .pcpq-mes .pcpq-tit { font-size: 0.88rem; }
+  .pcpq-st { font-size: 0.74rem; }
+}
+@media (max-width: 767.98px) {
+  .kpi-s-val { font-size: 1.3rem; }
+  .kpi-s-valor .kpi-s-val { font-size: 1.1rem; }
+}
+.kpi-s-neutro.kpi-s-ativo { border-color: #c5ccd6; border-left-color: #343a40; background: #f4f6f8; }
+@media (max-width: 1199.98px) {
+  .kpi-s-faixa { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 575.98px) {
+  .kpi-s-faixa { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
