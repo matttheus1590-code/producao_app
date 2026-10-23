@@ -670,68 +670,235 @@
 
 <div class="pn-grupo" id="grp-desempenho">
   <span class="pn-grupo-emoji">📈</span>
-  <div><div class="pn-grupo-titulo">Desempenho e entregas</div><div class="pn-grupo-sub">OTD, faturamento, projeção PCP, pipeline, entregues e pedidos atrasados</div></div>
+  <div><div class="pn-grupo-titulo">Desempenho e entregas</div><div class="pn-grupo-sub">Desempenho 360, faturamento, projeção PCP, pipeline, entregues e atrasados com causa e cenário</div></div>
   <span class="pn-grupo-linha"></span>
 </div>
+
+{# ===== Desempenho 360 (pedido do Bruno, 23/10/2026): visão única de OTD, lead times,
+   pedidos projetados no mês, aderência ao plano, atrasados e estações. Os cards
+   nunca ficam vazios: sem entrega no mês atual, mostra o último período com dado
+   (selo com o período de referência). ===== #}
+{% macro d360_brl(v) %}R$ {{ "{:,.0f}".format(v or 0).replace(",", ".") }}{% endmacro %}
+{% macro d360_delta(atual, ant, menor_melhor=True, unid="") %}
+  {%- if atual is not none and ant is not none -%}
+    {%- set d = (atual - ant) | round(1) -%}
+    {%- if d == 0 -%}<span class="d360-delta d360-delta-igual">= 0{{ unid }}</span>
+    {%- else -%}
+      {%- set bom = (d < 0) if menor_melhor else (d > 0) -%}
+      <span class="d360-delta {{ 'd360-delta-bom' if bom else 'd360-delta-ruim' }}">{{ '▲' if d > 0 else '▼' }} {{ d | abs }}{{ unid }}</span>
+    {%- endif -%}
+  {%- else -%}<span class="text-muted">—</span>{%- endif -%}
+{% endmacro %}
+{% macro d360_tile(emoji, rotulo, ref, unid="d", tom="neutro", meta=None, n_rotulo="pedido(s)") %}
+  <div class="d360-tile d360-tile-{{ tom }}">
+    <div class="d360-tile-topo"><span>{{ emoji }} {{ rotulo }}</span>
+      {% if ref and not ref.atual %}<span class="d360-ref" title="O mês atual ainda não tem entregas para este indicador — mostrando o último período com dado">ref. {{ ref.periodo }}</span>{% endif %}
+    </div>
+    <div class="d360-tile-valor">{% if ref %}{{ ref.valor }}<small>{{ unid }}</small>{% else %}—{% endif %}</div>
+    <div class="d360-tile-sub">{% if ref %}{{ ref.n }} {{ n_rotulo }}{% if meta %} · meta {{ meta }}{% endif %}{% else %}sem dado no ano{% endif %}</div>
+  </div>
+{% endmacro %}
+
+{% set d360 = desempenho_360 %}
+{% set per_atual = d360.periodos[0] %}
+{% set per_ant = d360.periodos[1] %}
+{% set per_ano = d360.periodos[2] %}
+{% set pv = preview_pcp_semanal.resumo %}
+{% set atr = atrasados_360.resumo %}
+{% set est_alerta = d360.estacoes | selectattr('semaforo', 'ne', 'ok') | list %}
 
 <div class="card pn-sec pn-t-red" id="sec-otd" data-sec="otd">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-1">
       <h6 class="text-uppercase text-muted small mb-0">
-        📊 <i class="bi bi-speedometer2"></i> OTD e Lead Time — Operação · {{ mes_atual_label }}
+        📊 <i class="bi bi-speedometer2"></i> Desempenho 360 — Operação · {{ mes_atual_label }}
       </h6>
       <a href="{{ url_for('gestao_operacao_resultados') }}" class="small">Ver detalhado em Resultados/OTD <i class="bi bi-arrow-right"></i></a>
     </div>
     <p class="text-muted small mb-3">
-      Baseado no Planejamento Semanal de PCP (Término Semanal PCP) do mês atual — mesmos indicadores da tela Gestão Operação › Resultados/OTD.
+      Visão única do mês: entrega (OTD e lead times), pedidos projetados, aderência ao plano do PCP, atrasos e saúde das estações.
+      Indicador sem entrega no mês atual mostra o último período com dado (selo <span class="d360-ref">ref.</span>).
     </p>
-    <div class="row g-3">
-      <div class="col-6 col-lg-2">
-        {{ stat_card(
-          "🎯 OTD do mês",
-          (otd_operacao_mes.percentual ~ "%") if otd_operacao_mes.percentual is not none else "—",
-          cor=("success" if otd_operacao_mes.atinge_meta else "danger"),
-          borda=("success" if otd_operacao_mes.atinge_meta else "danger"),
-          sufixo=(otd_operacao_mes.total ~ " pedido(s) com OTD" if otd_operacao_mes.total else "sem OTD ainda")
-        ) }}
+
+    {# ---- 1) Pulso do mês: projetado x concluído, aderência, atrasos, estações ---- #}
+    <div class="d360-pulso">
+      <div class="d360-pulso-card">
+        <div class="d360-pulso-titulo">🗓️ Pedidos projetados em {{ pv.mes_label }}</div>
+        <div class="d360-pulso-num">{{ pv.n_pedidos }} <small>pedido(s)</small></div>
+        <div class="d360-prog" title="{{ pv.pct if pv.pct is not none else 0 }}% concluído · {{ pv.pct_mes_decorrido }}% do mês decorrido">
+          <div class="d360-prog-barra" style="width: {{ pv.pct or 0 }}%"></div>
+          <div class="d360-prog-marca" style="left: {{ pv.pct_mes_decorrido }}%"></div>
+        </div>
+        <div class="d360-pulso-sub">
+          ✅ {{ pv.n_concluidos }} concluído(s) · ⏳ {{ pv.n_abertos }} em aberto ·
+          {% if pv.ritmo == 'adiantado' %}<b class="text-success">no ritmo / adiantado</b>
+          {% elif pv.ritmo == 'no_ritmo' %}<b class="text-warning">ritmo ajustado</b>
+          {% elif pv.ritmo == 'atrasado' %}<b class="text-danger">abaixo do ritmo</b>{% else %}—{% endif %}
+        </div>
+        <div class="d360-pulso-nota">Marca = {{ pv.pct_mes_decorrido }}% do mês decorrido</div>
       </div>
-      <div class="col-6 col-lg-2">
-        {{ stat_card(
-          "⏱️ LT Operação",
-          (lead_times_operacao_mes.lt_operacao.media ~ "d") if lead_times_operacao_mes.lt_operacao.media is not none else "—",
-          cor="primary",
-          sufixo=(lead_times_operacao_mes.lt_operacao.n ~ " pedido(s)" if lead_times_operacao_mes.lt_operacao.n else "sem dado")
-        ) }}
+      <div class="d360-pulso-card">
+        <div class="d360-pulso-titulo">🎯 Aderência ao plano do PCP</div>
+        <div class="d360-pulso-num {{ 'text-success' if pv.aderencia is not none and pv.aderencia >= 80 else ('text-warning' if pv.aderencia is not none and pv.aderencia >= 60 else 'text-danger') }}">
+          {{ (pv.aderencia ~ '%') if pv.aderencia is not none else '—' }}
+        </div>
+        <div class="d360-pulso-sub">
+          {% if pv.planejado_encerrado %}{{ pv.concluido_encerrado }} de {{ pv.planejado_encerrado }} pedidos das semanas já encerradas foram concluídos{% else %}nenhuma semana do mês encerrou ainda{% endif %}
+        </div>
+        <div class="d360-semanas">
+          {% for s in preview_pcp_semanal.semanas %}
+          <span class="d360-sem {{ 'd360-sem-ok' if s.encerrada and s.pct == 100 else ('d360-sem-ruim' if s.encerrada else '') }}" title="{{ s.rotulo }}: {{ s.n_concluidos }}/{{ s.n_pedidos }} concluídos{{ ' (encerrada)' if s.encerrada else '' }}">
+            S{{ loop.index }} <b>{{ s.pct if s.pct is not none else '—' }}{% if s.pct is not none %}%{% endif %}</b>
+          </span>
+          {% endfor %}
+        </div>
       </div>
-      <div class="col-6 col-lg-2">
-        {{ stat_card(
-          "🚢 LT CIF",
-          (lead_times_operacao_mes.lt_operacao_cif.media ~ "d") if lead_times_operacao_mes.lt_operacao_cif.media is not none else "—",
-          sufixo=(lead_times_operacao_mes.lt_operacao_cif.n ~ " pedido(s)" if lead_times_operacao_mes.lt_operacao_cif.n else "sem dado")
-        ) }}
+      <div class="d360-pulso-card">
+        <div class="d360-pulso-titulo">🔴 Pedidos atrasados</div>
+        <div class="d360-pulso-num {{ 'text-danger' if atr.total else 'text-success' }}">{{ atr.total }} <small>pedido(s)</small></div>
+        <div class="d360-pulso-sub">
+          {{ d360_brl(atr.valor_em_risco) }} em risco
+          {% if atr.atraso_medio is not none %} · médio {{ atr.atraso_medio }}d · maior {{ atr.atraso_max }}d{% endif %}
+        </div>
+        <div class="d360-pulso-nota">
+          {% if atr.a_renegociar %}🤝 {{ atr.a_renegociar }} a renegociar{% endif %}
+          {% if atr.criticos %} · ⚡ {{ atr.criticos }} crítico(s){% endif %}
+          {% if atr.total %} · <a href="#sec-atrasados">ver motivos ↓</a>{% endif %}
+        </div>
       </div>
-      <div class="col-6 col-lg-2">
-        {{ stat_card(
-          "🚚 LT FOB",
-          (lead_times_operacao_mes.lt_operacao_fob.media ~ "d") if lead_times_operacao_mes.lt_operacao_fob.media is not none else "—",
-          sufixo=(lead_times_operacao_mes.lt_operacao_fob.n ~ " pedido(s)" if lead_times_operacao_mes.lt_operacao_fob.n else "sem dado")
-        ) }}
+      <div class="d360-pulso-card">
+        <div class="d360-pulso-titulo">🏭 Estações em alerta</div>
+        <div class="d360-pulso-num {{ 'text-danger' if est_alerta | selectattr('semaforo','eq','critico') | list | length else ('text-warning' if est_alerta else 'text-success') }}">
+          {{ est_alerta | length }} <small>de {{ d360.estacoes | length }}</small>
+        </div>
+        <div class="d360-pulso-sub">
+          {% if est_alerta %}{% for e in est_alerta[:4] %}<span class="d360-chip d360-chip-{{ e.semaforo }}">{{ e.nome }}</span>{% endfor %}{% else %}todas dentro do esperado{% endif %}
+        </div>
+        <div class="d360-pulso-nota">Alerta = atrasos na fila ou lead time de chão acima da meta</div>
       </div>
-      <div class="col-6 col-lg-2">
-        {{ stat_card(
-          "🚛 LT Frete",
-          (lead_times_operacao_mes.lt_frete.media ~ "d") if lead_times_operacao_mes.lt_frete.media is not none else "—",
-          sufixo=(lead_times_operacao_mes.lt_frete.n ~ " pedido(s)" if lead_times_operacao_mes.lt_frete.n else "sem dado")
-        ) }}
+    </div>
+
+    {# ---- 2) Indicadores de entrega (nunca vazios) ---- #}
+    <div class="d360-secao-titulo">🚚 Entrega — OTD e lead times</div>
+    <div class="d360-tiles">
+      {{ d360_tile('🎯', 'OTD', d360.refs.otd, unid='%', tom=('ok' if d360.refs.otd and d360.refs.otd.valor >= GO_OTD_META_PERCENTUAL else ('ruim' if d360.refs.otd else 'neutro')), meta=(GO_OTD_META_PERCENTUAL ~ '%'), n_rotulo='pedido(s) avaliado(s)') }}
+      {{ d360_tile('⏱️', 'LT Operação', d360.refs.lt_operacao) }}
+      {{ d360_tile('🚢', 'LT CIF', d360.refs.lt_cif) }}
+      {{ d360_tile('🚚', 'LT FOB', d360.refs.lt_fob) }}
+      {{ d360_tile('🚛', 'LT Frete', d360.refs.lt_frete) }}
+      {{ d360_tile('🏭', 'LT Chão de Fábrica', d360.refs.lt_producao, n_rotulo='item(ns)') }}
+    </div>
+
+    {# ---- 3) Comparativo de períodos ---- #}
+    <div class="d360-secao-titulo">📅 Comparativo de períodos</div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle d360-tabela mb-0">
+        <thead>
+          <tr>
+            <th>Indicador</th>
+            {% for p in d360.periodos %}<th class="text-end">{{ p.longo }}<div class="d360-th-sub">{{ p.curto }}</div></th>{% endfor %}
+            <th class="text-end">Δ atual × anterior</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>📦 Pedidos planejados (Término Semanal PCP)</td>
+            {% for p in d360.periodos %}<td class="text-end">{{ p.planejados }}</td>{% endfor %}
+            <td class="text-end">{{ d360_delta(per_atual.planejados, per_ant.planejados, menor_melhor=False) }}</td>
+          </tr>
+          <tr>
+            <td>✅ Entregues ao cliente</td>
+            {% for p in d360.periodos %}<td class="text-end">{{ p.entregues }}</td>{% endfor %}
+            <td class="text-end">{{ d360_delta(per_atual.entregues, per_ant.entregues, menor_melhor=False) }}</td>
+          </tr>
+          <tr>
+            <td>💰 Valor entregue</td>
+            {% for p in d360.periodos %}<td class="text-end">{{ d360_brl(p.valor_entregue) }}</td>{% endfor %}
+            <td class="text-end text-muted">—</td>
+          </tr>
+          <tr class="d360-linha-destaque">
+            <td>🎯 OTD (meta {{ GO_OTD_META_PERCENTUAL }}%)</td>
+            {% for p in d360.periodos %}
+            <td class="text-end">{% if p.otd.percentual is not none %}<b class="{{ 'text-success' if p.otd.atinge_meta else 'text-danger' }}">{{ p.otd.percentual }}%</b> <span class="text-muted small">({{ p.otd.no_prazo }}/{{ p.otd.total }})</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            {% endfor %}
+            <td class="text-end">{{ d360_delta(per_atual.otd.percentual, per_ant.otd.percentual, menor_melhor=False, unid=' p.p.') }}</td>
+          </tr>
+          {% for rot, chave in [('⏱️ LT Operação', 'lt_operacao'), ('🚢 LT Operação CIF', 'lt_operacao_cif'), ('🚚 LT Operação FOB', 'lt_operacao_fob'), ('🚛 LT Frete', 'lt_frete'), ('🏭 LT Chão de Fábrica', 'lt_producao')] %}
+          <tr>
+            <td>{{ rot }}</td>
+            {% for p in d360.periodos %}
+            {% set v = p.lt[chave] %}
+            <td class="text-end">{% if v.media is not none %}{{ v.media }}d <span class="text-muted small">({{ v.n }})</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            {% endfor %}
+            <td class="text-end">{{ d360_delta(per_atual.lt[chave].media, per_ant.lt[chave].media, unid='d') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="text-muted small mt-1 mb-3">Δ: ▼ verde = melhorou · ▲ vermelho = piorou (OTD: quanto maior melhor; lead time: quanto menor melhor). Entre parênteses: pedidos/itens na média.</p>
+
+    {# ---- 4) OTD por frete e região ---- #}
+    {% if d360.otd_frete or d360.otd_regiao %}
+    <div class="d360-secao-titulo">🧭 OTD por modalidade de frete e região <span class="d360-th-sub">({{ per_ano.curto }} acumulado)</span></div>
+    <div class="row g-3 mb-3">
+      {% for titulo, lista in [('🚢 Modalidade de frete', d360.otd_frete), ('🗺️ Região (UF do pedido)', d360.otd_regiao)] %}
+      <div class="col-md-6">
+        <div class="d360-barras">
+          <div class="d360-barras-titulo">{{ titulo }}</div>
+          {% for r in lista %}
+          <div class="d360-barra-linha" title="{{ r.no_prazo }} de {{ r.total }} no prazo">
+            <span class="d360-barra-rotulo">{{ r.chave }}</span>
+            <span class="d360-barra-trilho"><span class="d360-barra-preench {{ 'ok' if r.percentual >= GO_OTD_META_PERCENTUAL else 'ruim' }}" style="width: {{ r.percentual }}%"></span><span class="d360-barra-meta" style="left: {{ GO_OTD_META_PERCENTUAL }}%"></span></span>
+            <span class="d360-barra-valor">{{ r.percentual }}% <small>({{ r.no_prazo }}/{{ r.total }})</small></span>
+          </div>
+          {% else %}<div class="text-muted small">sem dados</div>{% endfor %}
+        </div>
       </div>
-      <div class="col-6 col-lg-2">
-        {{ stat_card(
-          "🏭 LT Chão de Fábrica",
-          (lead_times_operacao_mes.lt_producao.media ~ "d") if lead_times_operacao_mes.lt_producao.media is not none else "—",
-          cor="secondary",
-          sufixo=(lead_times_operacao_mes.lt_producao.n ~ " item(ns)" if lead_times_operacao_mes.lt_producao.n else "sem dado")
-        ) }}
-      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ---- 5) Placar por estação ---- #}
+    <div class="d360-secao-titulo">🏭 Placar das estações <span class="d360-th-sub">(carga atual · produção do mês · lead time de chão × meta)</span></div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle d360-tabela mb-0">
+        <thead>
+          <tr>
+            <th>Estação</th>
+            <th class="text-center" title="Itens aguardando início">Fila</th>
+            <th class="text-center" title="Itens em produção/inspeção">Em produção</th>
+            <th class="text-center" title="Itens em tratativa">Tratativa</th>
+            <th class="text-center" title="Itens com liberação prevista vencida">Atrasados</th>
+            <th class="text-center" title="Itens liberados/inspecionados no mês">Concl. mês</th>
+            <th class="text-center" title="Lead time médio de chão (mês; se vazio, ano) × meta da estação">LT chão × meta</th>
+            <th class="text-center" title="Itens concluídos por semana (média das últimas 8 semanas)">Vazão/sem</th>
+            <th class="text-center" title="Quantas semanas de trabalho há na fila no ritmo atual">Cobertura</th>
+            <th class="text-center">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in d360.estacoes %}
+          <tr>
+            <td><a href="{{ e.url }}" class="fw-semibold text-decoration-none">{{ e.nome }}</a></td>
+            <td class="text-center">{{ e.fila }}</td>
+            <td class="text-center">{{ e.producao }}</td>
+            <td class="text-center">{% if e.tratativa %}<span class="badge bg-warning text-dark">{{ e.tratativa }}</span>{% else %}0{% endif %}</td>
+            <td class="text-center">{% if e.atrasados %}<span class="badge bg-danger">{{ e.atrasados }}</span>{% else %}0{% endif %}</td>
+            <td class="text-center">{{ e.concl_mes }}</td>
+            <td class="text-center">
+              {% if e.lt_ref is not none %}<b>{{ e.lt_ref }}d</b>{% if not e.lt_ref_e_mes %}<span class="d360-ref ms-1">ano</span>{% endif %}{% else %}—{% endif %}
+              {% if e.meta %}<span class="text-muted small"> / {{ e.meta }}d</span>{% endif %}
+            </td>
+            <td class="text-center">{{ e.vazao if e.vazao else '—' }}</td>
+            <td class="text-center">{% if e.cobertura is not none %}{{ e.cobertura }} sem{% else %}—{% endif %}</td>
+            <td class="text-center"><span class="d360-semaforo d360-semaforo-{{ e.semaforo }}">{{ {'ok': '🟢 OK', 'atencao': '🟡 Atenção', 'critico': '🔴 Crítico'}[e.semaforo] }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="10" class="text-center text-muted py-3">Nenhuma estação com itens no momento.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -915,39 +1082,118 @@
   </div>
 </div>
 
+{# ===== Pedidos atrasados CONTEXTUALIZADOS (pedido do Bruno, 23/10/2026): por que
+   atrasou, datas, frete + região e cenário projetado com ação sugerida. ===== #}
+{% set A = atrasados_360 %}
+{% set AR = A.resumo %}
 <div class="card pn-sec pn-t-red" id="sec-atrasados" data-sec="atrasados">
   <div class="card-body">
-    <h6 class="text-uppercase text-muted small mb-3">🔴 Pedidos atrasados (mais recentes primeiro)</h6>
-    <div class="table-responsive">
-      <table class="table table-sm table-hover align-middle mb-0">
-        <thead class="table-light">
-          <tr>
-            <th>Pedido</th>
-            <th>Cliente</th>
-            <th>Itens</th>
-            <th>Valor total</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for p in pedidos_atrasados %}
-          <tr>
-            <td>{{ p.pedido_venda or "—" }}</td>
-            <td>{{ p.cliente }}</td>
-            <td class="text-truncate" style="max-width: 260px;">{{ p.descricao_resumo }}</td>
-            <td>R$ {{ "{:,.2f}".format(p.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-            <td><span class="badge bg-{{ STATUS_CORES.get(p.status_producao, 'secondary') }}">{{ p.status_producao }}</span></td>
-            <td class="text-end">
-              <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
-            </td>
-          </tr>
-          {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-4">Nenhum pedido atrasado no momento 🎉</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-1">
+      <h6 class="text-uppercase text-muted small mb-0">🔴 Pedidos atrasados — causa, datas e cenário projetado</h6>
+      {% if A.total %}<a href="{{ url_for('dashboard', atrasados='1') }}" class="small">Ver todos os {{ A.total }} na Listagem Geral <i class="bi bi-arrow-right"></i></a>{% endif %}
     </div>
+    <p class="text-muted small mb-3">
+      Atrasado = item com liberação prevista pelo PCP vencida e ainda não finalizado. Ordenado pelo maior atraso.
+      O cenário usa o lead time de produção cadastrado (o que falta) + o lead time de frete da UF (só CIF) contra a data solicitada pelo cliente.
+    </p>
+
+    {% if A.total %}
+    <div class="atr-resumo">
+      <div class="atr-kpi atr-kpi-red"><span class="atr-kpi-num">{{ AR.total }}</span><span class="atr-kpi-rot">pedido(s) atrasado(s)</span></div>
+      <div class="atr-kpi"><span class="atr-kpi-num">{{ d360_brl(AR.valor_em_risco) }}</span><span class="atr-kpi-rot">valor em risco</span></div>
+      <div class="atr-kpi"><span class="atr-kpi-num">{{ AR.atraso_medio }}d</span><span class="atr-kpi-rot">atraso médio · maior {{ AR.atraso_max }}d</span></div>
+      <div class="atr-kpi atr-kpi-purple"><span class="atr-kpi-num">{{ AR.a_renegociar }}</span><span class="atr-kpi-rot">a renegociar prazo</span></div>
+      <div class="atr-kpi atr-kpi-amber"><span class="atr-kpi-num">{{ AR.criticos }}</span><span class="atr-kpi-rot">críticos (antecipar)</span></div>
+      <div class="atr-kpi atr-kpi-green"><span class="atr-kpi-num">{{ AR.recuperaveis }}</span><span class="atr-kpi-rot">recuperáveis / atenção</span></div>
+    </div>
+    <div class="atr-faixas">
+      <div class="atr-faixa"><span class="atr-faixa-t">🧩 Por motivo</span>
+        {% for m in AR.por_motivo %}<span class="atr-chip">{{ m.emoji }} {{ m.titulo }} <b>{{ m.n }}</b></span>{% endfor %}</div>
+      <div class="atr-faixa"><span class="atr-faixa-t">🚢 Frete</span>
+        {% for k, n in AR.por_frete %}<span class="atr-chip">{{ k }} <b>{{ n }}</b></span>{% endfor %}</div>
+      <div class="atr-faixa"><span class="atr-faixa-t">🗺️ Região</span>
+        {% for k, n in AR.por_regiao %}<span class="atr-chip">{{ k }} <b>{{ n }}</b></span>{% endfor %}</div>
+    </div>
+
+    <div class="atr-lista">
+      {% for a in A.pedidos %}
+      {% set c = a.cenario %}
+      <div class="atr-card atr-sev-{{ a.severidade }}">
+        <div class="atr-topo">
+          <span class="atr-dias" title="Dias desde a liberação prevista pelo PCP">{{ a.dias_atraso }}<small>dias</small></span>
+          <div class="atr-id">
+            <div class="atr-pedido"><a href="{{ url_for('detalhe_pedido', pedido_id=a.id) }}">Pedido {{ a.pedido_venda or ('#' ~ a.id) }}</a>
+              <span class="atr-cliente">· {{ a.cliente }}</span></div>
+            <div class="atr-meta">
+              {{ d360_brl(a.valor) }}
+              · {{ a.n_atrasados }}/{{ a.n_itens }} item(ns) atrasado(s)
+              {% if a.vendedor %}· 👤 {{ a.vendedor }}{% endif %}
+            </div>
+          </div>
+          <div class="atr-logi">
+            <span class="atr-pill atr-pill-frete-{{ (a.frete or 'nd') | lower }}" title="Modalidade de frete">{{ '🚢' if a.frete == 'CIF' else ('🚚' if a.frete == 'FOB' else '❔') }} {{ a.frete or 'Frete n/d' }}</span>
+            <span class="atr-pill" title="{{ a.cidade or '' }}">📍 {{ a.uf or 'UF n/d' }}{% if a.regiao %} · {{ a.regiao }}{% endif %}</span>
+            <span class="atr-pill atr-st-{{ c.status }}">{{ {'renegociar': '🤝', 'critico': '⚡', 'recuperavel': '✅', 'atencao': '👀', 'sem_base': '❔'}[c.status] }} {{ c.rotulo }}</span>
+          </div>
+        </div>
+
+        <div class="atr-corpo">
+          <div class="atr-col">
+            <div class="atr-col-t">🧩 Por que atrasou</div>
+            <div class="atr-motivo"><span class="atr-motivo-ico">{{ a.motivo_emoji }}</span> <b>{{ a.motivo_titulo }}</b></div>
+            <div class="atr-motivo-det">{{ a.motivo_detalhe }}</div>
+            {% if a.tags %}<div class="atr-tags">Também: {% for t in a.tags %}<span class="atr-chip atr-chip-sm">{{ t.emoji }} {{ t.titulo }}</span>{% endfor %}</div>{% endif %}
+            <div class="atr-motivo-det mt-1">🏭 Estação(ões): <b>{{ a.estacoes }}</b></div>
+          </div>
+
+          <div class="atr-col">
+            <div class="atr-col-t">📅 Datas</div>
+            <ul class="atr-datas">
+              <li><span>Pedido incluído</span><b>{{ a.inclusao.strftime('%d/%m/%Y') if a.inclusao else '—' }}</b></li>
+              <li><span>Prazo do cliente</span><b>{{ a.prazo_cliente.strftime('%d/%m/%Y') if a.prazo_cliente else '—' }}</b></li>
+              <li class="atr-vencida"><span>Liberação prevista (PCP)</span><b>{{ a.prevista_pcp.strftime('%d/%m/%Y') }} · −{{ a.dias_atraso }}d</b></li>
+              <li><span>Semana PCP</span><b>{{ a.semana_pcp or 'sem planejamento' }}</b></li>
+            </ul>
+          </div>
+
+          <div class="atr-col">
+            <div class="atr-col-t">🔮 Cenário projetado</div>
+            <ul class="atr-datas">
+              <li><span>Falta p/ liberar</span><b>{% if c.restante is not none %}~{{ c.restante }}d{% if c.incompleto %}+{% endif %}{% else %}sem LT padrão{% endif %}</b></li>
+              <li><span>Liberação estimada</span><b>{{ c.libera_proj.strftime('%d/%m/%Y') if c.libera_proj else '—' }}</b></li>
+              <li><span>{{ 'Entrega estimada (+' ~ (c.transporte or 0) ~ 'd frete)' if c.cif else 'Retirada (FOB)' }}</span><b>{{ c.entrega_proj.strftime('%d/%m/%Y') if c.entrega_proj else '—' }}</b></li>
+              <li><span>Liberar até (p/ cumprir)</span><b>{{ c.liberar_ate.strftime('%d/%m/%Y') if c.liberar_ate else '—' }}{% if c.folga is not none %} <small class="{{ 'text-danger' if c.folga < 0 else 'text-success' }}">({{ c.folga }}d)</small>{% endif %}</b></li>
+              {% if c.delta_entrega is not none %}<li><span>Entrega × prazo cliente</span><b class="{{ 'text-danger' if c.delta_entrega > 0 else 'text-success' }}">{{ '+' if c.delta_entrega > 0 else '' }}{{ c.delta_entrega }}d</b></li>{% endif %}
+            </ul>
+          </div>
+        </div>
+
+        <div class="atr-acao atr-acao-{{ c.status }}">💡 {{ a.acao }}</div>
+
+        {% if a.itens %}
+        <details class="atr-itens">
+          <summary>Ver itens atrasados ({{ a.n_atrasados }})</summary>
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Produto</th><th>Estação</th><th>Status</th><th class="text-end">Previsto</th><th class="text-end">Atraso</th></tr></thead>
+            <tbody>
+              {% for i in a.itens %}
+              <tr><td class="text-truncate" style="max-width: 320px;">{{ i.produto }}</td><td>{{ i.estacao }}</td>
+                <td><span class="badge bg-{{ STATUS_CORES.get(i.status, 'secondary') }}">{{ i.status }}</span></td>
+                <td class="text-end">{{ i.prevista.strftime('%d/%m') }}</td><td class="text-end text-danger">{{ i.dias }}d</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% if A.total > A.pedidos | length %}
+    <div class="text-center mt-3"><a href="{{ url_for('dashboard', atrasados='1') }}" class="btn btn-outline-secondary btn-sm">Ver os outros {{ A.total - (A.pedidos | length) }} atrasados na Listagem Geral</a></div>
+    {% endif %}
+    {% else %}
+    <div class="text-center text-muted py-4">Nenhum pedido atrasado no momento 🎉</div>
+    {% endif %}
   </div>
 </div>
 

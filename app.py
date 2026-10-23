@@ -407,6 +407,8 @@ def _contexto_painel(args, ultima_visita=None):
         otd=_otd_percentual(),
         backlog_estacao=_backlog_por_estacao(),
         pedidos_atrasados=pedidos_atrasados,
+        atrasados_360=_atrasados_contextualizados(hoje),
+        desempenho_360=_visao_360_desempenho(hoje),
         projecao_pcp=_projecao_pcp(),
         projecao_pcp_mensal=_projecao_pcp_mensal(pcp_de, pcp_ate),
         pcp_de_str=f"{pcp_de[0]:04d}-{pcp_de[1]:02d}",
@@ -5370,7 +5372,7 @@ def _resumo_otd(query=None):
     def _quebra_por(atributo):
         contagem = {}
         for p, r in avaliados:
-            chave = getattr(p, atributo)
+            chave = atributo(p) if callable(atributo) else getattr(p, atributo)
             if not chave:
                 continue
             c = contagem.setdefault(chave, {"total": 0, "no_prazo": 0})
@@ -5395,6 +5397,10 @@ def _resumo_otd(query=None):
         "atinge_meta": (percentual is not None and percentual >= GO_OTD_META_PERCENTUAL),
         "por_vendedor": _quebra_por("vendedor"),
         "por_cliente": _quebra_por("cliente"),
+        # Desempenho 360 do Painel (23/10/2026): OTD por modalidade de frete
+        # e por região (a partir do Estado do pedido).
+        "por_frete": _quebra_por("frete"),
+        "por_regiao": _quebra_por(lambda p: REGIAO_POR_UF.get((p.estado or "").strip().upper())),
     }
 
 
@@ -5663,8 +5669,11 @@ def _preview_semanal_pcp_painel(hoje=None):
         # já CONCLUÍDOS (mesmo critério `finalizado` de sempre — todos os
         # itens do pedido naquela semana com Liberação real) + barra de %.
         n_concl = sum(1 for p in pedidos if p["finalizado"])
+        fim_semana = _fim_semana_pcp(rotulo)
         semanas.append(
             {
+                "fim": fim_semana,
+                "encerrada": bool(fim_semana and fim_semana < hoje),
                 "rotulo": rotulo,
                 "rotulo_curto": rotulo.replace("SEMANA ", "S").replace(" / ", "/"),
                 "atual": _chave_semana_pcp(rotulo) == chave_atual,
@@ -5695,6 +5704,24 @@ def _preview_semanal_pcp_painel(hoje=None):
         "pct": round(100 * n_ok / n_tot) if n_tot else None,
         "mes_label": f"{MESES_PT[hoje.month - 1]}/{hoje.year}",
     }
+    # Aderência ao plano (Desempenho 360): das semanas JÁ ENCERRADAS, quanto
+    # do que o PCP planejou foi de fato concluído; e o ritmo do mês (%
+    # concluído do planejado × % do mês já decorrido).
+    enc = [sem for sem in semanas if sem["encerrada"]]
+    plan_enc = sum(sem["n_pedidos"] for sem in enc)
+    conc_enc = sum(sem["n_concluidos"] for sem in enc)
+    dias_mes = monthrange(hoje.year, hoje.month)[1]
+    pct_mes = round(100 * hoje.day / dias_mes)
+    resumo.update({
+        "planejado_encerrado": plan_enc,
+        "concluido_encerrado": conc_enc,
+        "aderencia": round(100 * conc_enc / plan_enc) if plan_enc else None,
+        "pct_mes_decorrido": pct_mes,
+        "ritmo": (
+            None if resumo["pct"] is None
+            else ("adiantado" if resumo["pct"] >= pct_mes else ("no_ritmo" if resumo["pct"] >= pct_mes - 15 else "atrasado"))
+        ),
+    })
     return {"semanas": semanas, "resumo": resumo}
 
 
@@ -6234,6 +6261,484 @@ def _mini_risco_prazos_painel(limite=5):
             "vencendo": [_linha_risco_prazo(p, mapa_lead_time) for p in vencendo[:limite]],
         }
     return resultado
+
+
+# ---------------------------------------------------------------------------
+# Pedidos atrasados CONTEXTUALIZADOS + Desempenho 360 (pedido do Bruno,
+# 23/10/2026): "nessa área de atrasados, percebi que está muito vago —
+# contextualize o porquê e o motivo do atraso, com datas e cenários
+# projetados, junto com modalidade de frete e região" / "desempenho... visão
+# 360 de todos os KPIs, OTD, estações, pedidos projetados no mês". Tudo
+# calculado ao vivo em cima do que já existe (nenhum dado novo é gravado).
+# ---------------------------------------------------------------------------
+
+_MOTIVOS_ATRASO = {
+    "tratativa": ("🤝", "Em tratativa"),
+    "qualidade": ("🧪", "Qualidade / RNC"),
+    "sem_plano": ("🗓️", "Sem planejamento PCP"),
+    "fila": ("⏳", "Na fila — produção não iniciada"),
+    "inspecao": ("🔍", "Inspeção / liberação"),
+    "producao": ("🏭", "Produção acima do padrão"),
+    "replanejar": ("🔁", "Replanejamento pendente"),
+    "prazo": ("⚠️", "Prazo PCP vencido"),
+}
+
+_RNC_VAZIAS = {"", "-", "—", "N/A", "NA", "NAO", "NÃO", "NENHUMA", "NENHUM", "0"}
+
+
+def _fim_semana_pcp(rotulo):
+    """Data em que a semana de planejamento PCP ("SEMANA NN / MÊS / ANO")
+    termina — a mesma janela de calendário dos quadrantes da Listagem Geral
+    (domingo a sábado a partir do 1º domingo do mês; a "SEMANA 05", que só
+    existe nos meses com dias 29-31, vai até o fim do mês). None quando o
+    rótulo não segue o padrão."""
+    try:
+        chave = _chave_semana_pcp(rotulo)
+    except Exception:
+        return None
+    if not chave or chave[0] == 9999 or chave[2] < 1:
+        return None
+    ano, mes, num = chave
+    if num <= 4:
+        return _domingo_semana_01(ano, mes) + timedelta(days=7 * (num - 1) + 6)
+    return date(ano, mes, monthrange(ano, mes)[1])
+
+
+def _fmt_data_curta(d):
+    return d.strftime("%d/%m") if d else "—"
+
+
+def _fmt_data_cheia(d):
+    return d.strftime("%d/%m/%Y") if d else "—"
+
+
+def _motivo_atraso_item(item, pedido, hoje, mapa_prod):
+    """Classifica POR QUE um item está atrasado (liberação prevista vencida e
+    ainda não finalizado) — a causa mais provável olhando as datas/status que
+    o PCP e o chão de fábrica já registraram. Devolve (chave, detalhe,
+    tags_extras). A ordem das regras vai da causa mais "travada" (alguém
+    precisa agir) pra mais genérica."""
+    estacao = item.estacao or "sem estação"
+    tags = []
+    rnc = (item.rnc or "").strip()
+    if rnc.upper() not in _RNC_VAZIAS:
+        tags.append("qualidade")
+    fim_sem = _fim_semana_pcp(item.planejamento_semanal) if item.planejamento_semanal else None
+    if fim_sem and fim_sem < hoje:
+        tags.append("replanejar")
+
+    if item.status_producao == "EM TRATATIVA":
+        detalhe = f"Item em tratativa na estação {estacao} — há uma pendência (técnica/comercial) travando o avanço."
+        return "tratativa", detalhe, [t for t in tags if t != "tratativa"]
+
+    if "qualidade" in tags and item.inicio_producao:
+        detalhe = f"RNC registrada ({rnc[:60]}) — retrabalho/qualidade impactando a liberação na estação {estacao}."
+        return "qualidade", detalhe, [t for t in tags if t != "qualidade"]
+
+    if not item.inicio_producao:
+        espera = (hoje - pedido.data_inclusao_pedido).days if pedido.data_inclusao_pedido else None
+        if not item.planejamento_semanal:
+            detalhe = f"Item sem Planejamento Semanal PCP e sem início de produção (estação {estacao})"
+            detalhe += f" — {espera} dias desde a inclusão do pedido." if espera is not None else "."
+            return "sem_plano", detalhe, [t for t in tags if t != "sem_plano"]
+        detalhe = f"Produção ainda não iniciada na estação {estacao}"
+        detalhe += f" — {espera} dias desde a inclusão do pedido" if espera is not None else ""
+        if fim_sem and fim_sem < hoje:
+            detalhe += f"; a semana planejada ({item.planejamento_semanal}) já encerrou em {_fmt_data_curta(fim_sem)}"
+        return "fila", detalhe + ".", [t for t in tags if t != "fila"]
+
+    if item.termino_inspecao or item.inicio_inspecao:
+        if item.termino_inspecao:
+            detalhe = f"Inspeção concluída em {_fmt_data_curta(item.termino_inspecao)}, falta a liberação/faturamento."
+        else:
+            detalhe = f"Em inspeção desde {_fmt_data_curta(item.inicio_inspecao)} (estação {estacao})."
+        return "inspecao", detalhe, tags
+
+    dias_prod = (hoje - item.inicio_producao).days
+    lt_padrao = _lt_producao_parametrizado_item(item, mapa_prod)
+    if lt_padrao is not None and dias_prod > lt_padrao:
+        detalhe = (
+            f"Em produção há {dias_prod} dias na estação {estacao} — {dias_prod - lt_padrao} dia(s) acima "
+            f"do padrão de {lt_padrao} dias."
+        )
+        return "producao", detalhe, tags
+    detalhe = f"Em produção há {dias_prod} dias na estação {estacao}; a previsão do PCP venceu sem a liberação."
+    return "prazo", detalhe, tags
+
+
+def _restante_item_dias(item, hoje, mapa_prod):
+    """Estimativa de quantos dias ainda faltam pra LIBERAR um item em aberto
+    (LT de produção parametrizado − o que já andou). None = sem parâmetro
+    cadastrado pra estimar."""
+    if item.termino_inspecao:
+        return 1
+    lt = _lt_producao_parametrizado_item(item, mapa_prod)
+    if lt is None:
+        return None
+    if item.inicio_producao:
+        return max(0, lt - (hoje - item.inicio_producao).days)
+    return lt
+
+
+def _cenario_atraso_pedido(pedido, itens_abertos, hoje, mapa_prod, mapa_transp):
+    """Cenários projetados de um pedido atrasado: quando dá pra liberar
+    (estimativa pelo LT de produção parametrizado), quando chega no cliente
+    (soma o frete rodoviário cadastrado pra UF quando CIF; FOB o cliente
+    coleta) e até quando PRECISA liberar pra cumprir o prazo do cliente."""
+    restantes = [_restante_item_dias(i, hoje, mapa_prod) for i in itens_abertos]
+    conhecidos = [r for r in restantes if r is not None]
+    restante = max(conhecidos) if conhecidos else None
+    incompleto = len(conhecidos) < len(restantes)
+
+    uf = (pedido.estado or "").strip().upper()
+    cif = pedido.frete == "CIF"
+    transporte = None
+    if cif and uf:
+        transporte = _lead_time_transporte_dias(mapa_transp.get((uf, "Rodoviário")))
+
+    prazo = pedido.data_cliente
+    libera_proj = hoje + timedelta(days=restante) if restante is not None else None
+    entrega_proj = None
+    if libera_proj is not None and (transporte is not None or not cif):
+        entrega_proj = libera_proj + timedelta(days=transporte or 0)
+    entrega_hoje = None  # melhor caso: se liberasse HOJE
+    if transporte is not None or not cif:
+        entrega_hoje = hoje + timedelta(days=transporte or 0)
+
+    liberar_ate = None
+    if prazo and (transporte is not None or not cif):
+        liberar_ate = prazo - timedelta(days=transporte or 0)
+    folga = (liberar_ate - hoje).days if liberar_ate else None
+    delta_entrega = (entrega_proj - prazo).days if (entrega_proj and prazo) else None
+
+    if not prazo:
+        status, rotulo = "sem_base", "Sem prazo do cliente"
+    elif liberar_ate is None:
+        status, rotulo = "sem_base", "Sem LT de frete p/ a UF"
+    elif folga < 0:
+        status, rotulo = "renegociar", "Renegociar prazo"
+    elif restante is not None and restante > folga:
+        status, rotulo = "critico", "Crítico — antecipar"
+    elif restante is None:
+        status, rotulo = "atencao", "Atenção"
+    else:
+        status, rotulo = "recuperavel", "Recuperável"
+
+    return {
+        "status": status,
+        "rotulo": rotulo,
+        "restante": restante,
+        "incompleto": incompleto,
+        "transporte": transporte,
+        "cif": cif,
+        "libera_proj": libera_proj,
+        "entrega_proj": entrega_proj,
+        "entrega_hoje": entrega_hoje,
+        "liberar_ate": liberar_ate,
+        "folga": folga,
+        "delta_entrega": delta_entrega,
+        "prazo": prazo,
+        "dias_ate_prazo": (prazo - hoje).days if prazo else None,
+    }
+
+
+def _acao_atraso(cen, estacoes_txt):
+    st = cen["status"]
+    if st == "renegociar":
+        melhor = cen["entrega_proj"] or cen["entrega_hoje"]
+        if melhor:
+            return (
+                f"Prazo do cliente inviável mesmo liberando hoje — renegociar. Entrega mais cedo possível: "
+                f"{_fmt_data_cheia(melhor)}."
+            )
+        return "Prazo do cliente inviável — renegociar a data de entrega."
+    if st == "critico":
+        falta = cen["restante"] - cen["folga"]
+        return (
+            f"Antecipar {falta} dia(s): priorizar na estação {estacoes_txt} (faltam ~{cen['restante']} d de produção, "
+            f"só há {cen['folga']} d de folga até {_fmt_data_curta(cen['liberar_ate'])})."
+        )
+    if st == "recuperavel":
+        return (
+            f"Recuperável: manter prioridade — liberar até {_fmt_data_cheia(cen['liberar_ate'])} "
+            f"(folga de {cen['folga'] - cen['restante']} d sobre a estimativa)."
+        )
+    if st == "atencao":
+        return f"Liberar até {_fmt_data_cheia(cen['liberar_ate'])}; sem LT padrão cadastrado pra estimar o que falta."
+    return "Cadastre a data solicitada do cliente / o LT de frete da UF pra projetar o cenário."
+
+
+def _atrasados_contextualizados(hoje=None, limite=20):
+    """Pedidos atrasados (Gestão Produção) com o CONTEXTO que o gestor precisa:
+    quanto atrasou, por quê (motivo mais provável + tags), as datas
+    (inclusão → prazo do cliente → previsão PCP → semana PCP), frete +
+    região e os cenários projetados (liberação/entrega estimadas, até quando
+    liberar, recuperável ou não) com a ação sugerida. Ordena pelo MAIOR
+    atraso. Retorna {"resumo": {...}, "pedidos": [...], "total": n}."""
+    hoje = hoje or date.today()
+    pedidos = (
+        Pedido.query.options(selectinload(Pedido.itens))
+        .filter(_predicado_atrasado())
+        .all()
+    )
+    mapa_prod = _mapa_lead_time_producao()
+    mapa_transp = _mapa_lead_time_transportadora()
+
+    linhas = []
+    for p in pedidos:
+        abertos = [i for i in p.itens if i.status_producao != "FINALIZADO"]
+        atrasados = [i for i in abertos if i.liberacao_prevista and i.liberacao_prevista < hoje]
+        if not atrasados:
+            continue
+        atrasados.sort(key=lambda i: i.liberacao_prevista)
+        pior = atrasados[0]
+        dias_atraso = (hoje - pior.liberacao_prevista).days
+
+        chave, detalhe, tags = _motivo_atraso_item(pior, p, hoje, mapa_prod)
+        todas_tags = []
+        for i in atrasados[1:]:
+            k2, _, t2 = _motivo_atraso_item(i, p, hoje, mapa_prod)
+            for t in [k2] + t2:
+                if t != chave and t not in todas_tags:
+                    todas_tags.append(t)
+        for t in tags:
+            if t not in todas_tags and t != chave:
+                todas_tags.append(t)
+
+        estacoes = []
+        for i in atrasados:
+            if i.estacao and i.estacao not in estacoes:
+                estacoes.append(i.estacao)
+        estacoes_txt = ", ".join(estacoes) if estacoes else "—"
+
+        cen = _cenario_atraso_pedido(p, abertos, hoje, mapa_prod, mapa_transp)
+        uf = (p.estado or "").strip().upper()
+        sem_pcp = [i for i in abertos if not i.planejamento_semanal]
+        semanas = sorted({i.planejamento_semanal for i in atrasados if i.planejamento_semanal}, key=_chave_semana_pcp)
+
+        sev = "grave" if dias_atraso > 15 else ("medio" if dias_atraso > 7 else "leve")
+        linhas.append({
+            "id": p.id,
+            "pedido_venda": p.pedido_venda,
+            "cliente": p.cliente,
+            "vendedor": p.vendedor,
+            "valor": p.valor_total,
+            "status": p.status_producao,
+            "n_itens": len(p.itens),
+            "n_abertos": len(abertos),
+            "n_atrasados": len(atrasados),
+            "dias_atraso": dias_atraso,
+            "severidade": sev,
+            "motivo_chave": chave,
+            "motivo_emoji": _MOTIVOS_ATRASO[chave][0],
+            "motivo_titulo": _MOTIVOS_ATRASO[chave][1],
+            "motivo_detalhe": detalhe,
+            "tags": [{"emoji": _MOTIVOS_ATRASO[t][0], "titulo": _MOTIVOS_ATRASO[t][1]} for t in todas_tags],
+            "estacoes": estacoes_txt,
+            "inclusao": p.data_inclusao_pedido,
+            "prazo_cliente": p.data_cliente,
+            "prevista_pcp": pior.liberacao_prevista,
+            "semana_pcp": ", ".join(semanas) if semanas else None,
+            "itens_sem_plano": len(sem_pcp),
+            "frete": p.frete,
+            "uf": uf or None,
+            "regiao": REGIAO_POR_UF.get(uf),
+            "cidade": p.cidade,
+            "cenario": cen,
+            "acao": _acao_atraso(cen, estacoes_txt),
+            "itens": [
+                {
+                    "produto": i.descricao_produto,
+                    "estacao": i.estacao or "—",
+                    "status": i.status_producao,
+                    "prevista": i.liberacao_prevista,
+                    "dias": (hoje - i.liberacao_prevista).days,
+                }
+                for i in atrasados[:5]
+            ],
+        })
+
+    linhas.sort(key=lambda l: (-l["dias_atraso"], -(l["valor"] or 0)))
+
+    def _contagem(chave_fn):
+        c = {}
+        for l in linhas:
+            k = chave_fn(l)
+            if k:
+                c[k] = c.get(k, 0) + 1
+        return sorted(c.items(), key=lambda kv: -kv[1])
+
+    total = len(linhas)
+    resumo = {
+        "total": total,
+        "valor_em_risco": round(sum(l["valor"] or 0 for l in linhas), 2),
+        "atraso_medio": round(sum(l["dias_atraso"] for l in linhas) / total, 1) if total else None,
+        "atraso_max": max((l["dias_atraso"] for l in linhas), default=None),
+        "por_frete": _contagem(lambda l: l["frete"] or "Sem frete"),
+        "por_regiao": _contagem(lambda l: l["regiao"] or "Sem região"),
+        "por_motivo": [
+            {"emoji": _MOTIVOS_ATRASO[k][0], "titulo": _MOTIVOS_ATRASO[k][1], "n": n}
+            for k, n in _contagem(lambda l: l["motivo_chave"])
+        ],
+        "por_cenario": _contagem(lambda l: l["cenario"]["status"]),
+        "a_renegociar": sum(1 for l in linhas if l["cenario"]["status"] == "renegociar"),
+        "criticos": sum(1 for l in linhas if l["cenario"]["status"] == "critico"),
+        "recuperaveis": sum(1 for l in linhas if l["cenario"]["status"] in ("recuperavel", "atencao")),
+    }
+    return {"resumo": resumo, "pedidos": linhas[:limite], "total": total}
+
+
+def _periodo_desempenho(tipo, ano, valor, curto, longo):
+    """Indicadores de UM período (mês/ano) da Gestão Operação, juntos:
+    pedidos planejados (Término Semanal PCP no período), entregues ao
+    cliente, valor, OTD e os lead times — a base do comparativo do Desempenho
+    360 do Painel."""
+    query = _pedidos_operacao_do_periodo(tipo, ano, valor)
+    pedidos = query.all()
+    entregues = [p for p in pedidos if p.go_data_entregue_cliente]
+    otd = _resumo_otd(query)
+    lts = _resumo_lead_times(query)
+    return {
+        "tipo": tipo,
+        "curto": curto,
+        "longo": longo,
+        "planejados": len(pedidos),
+        "entregues": len(entregues),
+        "valor_planejado": round(sum(p.go_valor_pedido_operacao or 0 for p in pedidos), 2),
+        "valor_entregue": round(sum(p.go_valor_pedido_operacao or 0 for p in entregues), 2),
+        "otd": otd,
+        "lt": lts,
+    }
+
+
+def _scorecard_estacoes_painel(hoje=None):
+    """Placar por estação (Desempenho 360): carga (fila / em produção / em
+    tratativa), itens atrasados, concluídos no mês, lead time de chão médio
+    (mês, senão ano) contra a meta da estação, vazão semanal (últimas 8
+    semanas) e cobertura = quantas semanas de trabalho há na fila."""
+    hoje = hoje or date.today()
+    ignorar = {"OUTROS", "PROJETO ESPECIAL"}
+    estacoes_cad = Estacao.query.order_by(Estacao.ordem_exibicao, Estacao.nome).all()
+    metas = {e.nome: e.meta_lead_time_dias for e in estacoes_cad}
+    ordem = [e.nome for e in estacoes_cad if e.nome not in ignorar]
+
+    abertos = ItemPedido.query.filter(
+        ItemPedido.status_producao != "FINALIZADO", ItemPedido.estacao.isnot(None)
+    ).all()
+    inicio_ano = date(hoje.year, 1, 1)
+    inicio_mes = date(hoje.year, hoje.month, 1)
+    recentes = ItemPedido.query.filter(
+        ItemPedido.estacao.isnot(None),
+        or_(ItemPedido.termino_inspecao >= inicio_ano, ItemPedido.liberacao_real >= inicio_ano),
+    ).all()
+    corte_vazao = hoje - timedelta(days=56)
+
+    dados = {}
+
+    def _d(nome):
+        return dados.setdefault(nome, {
+            "nome": nome, "fila": 0, "producao": 0, "tratativa": 0, "atrasados": 0, "concl_mes": 0,
+            "lt_mes": [], "lt_ano": [], "concl_8sem": 0,
+        })
+
+    for i in abertos:
+        if i.estacao in ignorar:
+            continue
+        d = _d(i.estacao)
+        if i.status_producao == "PENDENTE":
+            d["fila"] += 1
+        elif i.status_producao == "EM TRATATIVA":
+            d["tratativa"] += 1
+        else:
+            d["producao"] += 1
+        if i.liberacao_prevista and i.liberacao_prevista < hoje:
+            d["atrasados"] += 1
+
+    for i in recentes:
+        if i.estacao in ignorar:
+            continue
+        d = _d(i.estacao)
+        fim = i.liberacao_real or i.termino_inspecao
+        if fim and fim >= inicio_mes and fim <= hoje:
+            d["concl_mes"] += 1
+        if fim and fim >= corte_vazao and fim <= hoje:
+            d["concl_8sem"] += 1
+        lt = i.lt_producao_dias
+        if lt is not None and i.termino_inspecao:
+            d["lt_ano"].append(lt)
+            if i.termino_inspecao >= inicio_mes:
+                d["lt_mes"].append(lt)
+
+    def _media(v):
+        return round(sum(v) / len(v), 1) if v else None
+
+    linhas = []
+    for nome, d in dados.items():
+        abertos_n = d["fila"] + d["producao"] + d["tratativa"]
+        lt_mes, lt_ano = _media(d["lt_mes"]), _media(d["lt_ano"])
+        lt_ref = lt_mes if lt_mes is not None else lt_ano
+        meta = metas.get(nome)
+        vazao = d["concl_8sem"] / 8 if d["concl_8sem"] else 0
+        cobertura = round(abertos_n / vazao, 1) if vazao else None
+
+        sev_lt = 0
+        if meta and lt_ref is not None:
+            sev_lt = 0 if lt_ref <= meta else (1 if lt_ref <= meta * 1.25 else 2)
+        share = d["atrasados"] / abertos_n if abertos_n else 0
+        sev_at = 0 if d["atrasados"] == 0 else (1 if share <= 0.15 else 2)
+        sev = max(sev_lt, sev_at)
+
+        linhas.append({
+            "nome": nome, "fila": d["fila"], "producao": d["producao"], "tratativa": d["tratativa"],
+            "abertos": abertos_n, "atrasados": d["atrasados"], "concl_mes": d["concl_mes"],
+            "lt_mes": lt_mes, "lt_ano": lt_ano, "lt_ref": lt_ref, "lt_ref_e_mes": lt_mes is not None,
+            "meta": meta, "vazao": round(vazao, 1), "cobertura": cobertura,
+            "semaforo": ("ok", "atencao", "critico")[sev],
+            "url": url_for("estacao_kanban", nome=nome),
+        })
+    posicao = {n: k for k, n in enumerate(ordem)}
+    linhas.sort(key=lambda l: (posicao.get(l["nome"], 999), -l["abertos"]))
+    return linhas
+
+
+def _visao_360_desempenho(hoje=None):
+    """Tudo que o "Desempenho 360" do Painel mostra além do que o contexto já
+    tinha: comparativo de períodos (mês atual × mês anterior × ano) de OTD e
+    lead times, com o período de referência de cada indicador (quando o mês
+    atual ainda não tem entregas, usa o último período que tem dado — em vez
+    de card vazio), OTD por frete/região e o placar por estação."""
+    hoje = hoje or date.today()
+    ano_ant, mes_ant = _somar_meses(hoje.year, hoje.month, -1)
+    periodos = [
+        _periodo_desempenho("mes", hoje.year, hoje.month, f"{MESES_PT[hoje.month - 1]}/{str(hoje.year)[2:]}", "Mês atual"),
+        _periodo_desempenho("mes", ano_ant, mes_ant, f"{MESES_PT[mes_ant - 1]}/{str(ano_ant)[2:]}", "Mês anterior"),
+        _periodo_desempenho("ano", hoje.year, None, f"{hoje.year}", "Ano (acumulado)"),
+    ]
+
+    def ref(getter_valor, getter_n):
+        for k, p in enumerate(periodos):
+            v = getter_valor(p)
+            if v is not None:
+                return {"valor": v, "n": getter_n(p), "periodo": p["curto"], "atual": k == 0}
+        return None
+
+    refs = {
+        "otd": ref(lambda p: p["otd"]["percentual"], lambda p: p["otd"]["total"]),
+        "lt_operacao": ref(lambda p: p["lt"]["lt_operacao"]["media"], lambda p: p["lt"]["lt_operacao"]["n"]),
+        "lt_cif": ref(lambda p: p["lt"]["lt_operacao_cif"]["media"], lambda p: p["lt"]["lt_operacao_cif"]["n"]),
+        "lt_fob": ref(lambda p: p["lt"]["lt_operacao_fob"]["media"], lambda p: p["lt"]["lt_operacao_fob"]["n"]),
+        "lt_frete": ref(lambda p: p["lt"]["lt_frete"]["media"], lambda p: p["lt"]["lt_frete"]["n"]),
+        "lt_producao": ref(lambda p: p["lt"]["lt_producao"]["media"], lambda p: p["lt"]["lt_producao"]["n"]),
+    }
+    ano = periodos[2]["otd"]
+    return {
+        "periodos": periodos,
+        "refs": refs,
+        "otd_frete": ano.get("por_frete", []),
+        "otd_regiao": ano.get("por_regiao", []),
+        "otd_vendedor": ano.get("por_vendedor", [])[:5],
+        "estacoes": _scorecard_estacoes_painel(hoje),
+    }
 
 
 def _faturamento_mes(ano, mes, filtros=None):
