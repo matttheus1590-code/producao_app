@@ -226,6 +226,13 @@
               <a href="{{ url_for('detalhe_pedido', pedido_id=item.pedido_id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Ver pedido">
                 <i class="bi bi-eye"></i>
               </a>
+              {% if pode_editar and etapa != 'PENDENTE' %}
+              <form method="post" action="{{ url_for('estacao_kanban_voltar', nome=estacao.nome) }}"
+                    onsubmit="return confirm('Voltar este item para a etapa anterior ({{ 'Pendente' if etapa == 'EM_PRODUCAO' else 'Em produção' }})? As datas desta etapa serão apagadas (fica no histórico).');">
+                <input type="hidden" name="item_id" value="{{ item.id }}">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Desfazer o avanço — voltar para {{ 'Pendente' if etapa == 'EM_PRODUCAO' else 'Em produção' }}">◀ Voltar</button>
+              </form>
+              {% endif %}
               {% if pode_editar and etapa != 'FINALIZADO' %}
               <form method="post" action="{{ url_for('estacao_kanban_mover', nome=estacao.nome) }}">
                 <input type="hidden" name="item_id" value="{{ item.id }}">

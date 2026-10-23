@@ -22136,6 +22136,53 @@ def register_routes(app):
         )
         return redirect(url_for("estacao_kanban", nome=nome))
 
+    @app.route("/estacoes/<nome>/kanban/voltar", methods=["POST"])
+    @login_required
+    def estacao_kanban_voltar(nome):
+        """Desfaz o último avanço do item no Kanban (pedido do Bruno,
+        23/10/2026: "quero a possibilidade de reverter o avanço... às vezes
+        foi erro de digitação/click"). Em produção -> Pendente apaga o início
+        de produção (e de inspeção); Finalizado -> Em produção apaga o
+        término de inspeção e a liberação de faturamento. A liberação real
+        (vem da Gestão Operação) não é tocada. Tudo fica no histórico de
+        alterações do item, então o valor apagado nunca se perde."""
+        item_id = request.form.get("item_id", type=int)
+        item = db.session.get(ItemPedido, item_id) if item_id else None
+        if item is None:
+            flash("Item não encontrado.", "danger")
+            return redirect(url_for("estacao_kanban", nome=nome))
+
+        if not pode_editar_estacao(current_user, item.estacao or nome):
+            flash("Você não tem permissão para mover itens desta estação.", "danger")
+            return redirect(url_for("estacao_kanban", nome=nome))
+
+        antes = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+        etapa_atual = item.status_chao
+
+        if etapa_atual == "FINALIZADO":
+            item.termino_inspecao = None
+            item.liberacao_faturamento = None
+            item.status_manual = False
+            item.atualizar_status_automatico()
+        elif etapa_atual == "EM_PRODUCAO":
+            item.inicio_producao = None
+            item.inicio_inspecao = None
+            item.status_manual = False
+            item.atualizar_status_automatico()
+        else:
+            flash("Este item já está em Pendente — não há etapa anterior.", "info")
+            return redirect(url_for("estacao_kanban", nome=nome))
+
+        depois = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+        _registrar_alteracoes("item_pedido", item.id, item.pedido_id, antes, depois, CAMPOS_HISTORICO_ITEM)
+        db.session.commit()
+
+        flash(
+            f"\"{item.descricao_produto}\" voltou para {STATUS_CHAO_LABELS.get(item.status_chao, item.status_chao)}.",
+            "success",
+        )
+        return redirect(url_for("estacao_kanban", nome=nome))
+
     # ------------------------------------------------------------------
     # Cadastros > Estações — CRUD simples (ADMIN/PCP)
     # ------------------------------------------------------------------
