@@ -40,6 +40,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
   <div class="pcpq-top">
     <span class="pcpq-tit">{{ emoji }} {{ titulo }}</span>
     {% if q.atual %}<span class="pcpq-selo"><i></i>Atual</span>{% endif %}
+    {% if tom == 'mes' %}<span class="pcpq-selo pcpq-selo-mes">Mês atual</span>{% endif %}
   </div>
   <div class="pcpq-mid">
     <span class="pcpq-n">{{ q.total }}</span><span class="pcpq-un">pedido{{ '' if q.total == 1 else 's' }}</span>
@@ -59,17 +60,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
 </a>
 {% endmacro %}
 
-{# ---------- 1. Faixa de KPIs (resumo do recorte atual) ---------- #}
-<div class="kpi-s-faixa mb-4">
-  {{ kpi('📦', 'Pedidos', resumo.total, 'neutro', url_for('dashboard', **filtros_status_cards.total), (not filtros.status), (total_filtrado ~ ' itens listados')) }}
-  {{ kpi('🔴', 'Pendentes', resumo.pendente, 'danger', url_for('dashboard', **filtros_status_cards.pendente), (filtros.status == 'PENDENTE'), (((resumo.pendente * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
-  {{ kpi('🟡', 'Em tratativa', resumo.em_tratativa, 'warning', url_for('dashboard', **filtros_status_cards.em_tratativa), (filtros.status == 'EM TRATATIVA'), (((resumo.em_tratativa * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
-  {{ kpi('🔵', 'Em andamento', resumo.andamento, 'info', url_for('dashboard', **filtros_status_cards.andamento), (filtros.status == 'ANDAMENTO'), (((resumo.andamento * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
-  {{ kpi('✅', 'Finalizados', resumo.finalizado, 'success', url_for('dashboard', **filtros_status_cards.finalizado), (filtros.status == 'FINALIZADO'), (((resumo.finalizado * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
-  {{ kpi('💰', 'Valor total', brl(resumo.valor_total), 'valor', None, False, (('ticket médio ' ~ brl(resumo.valor_total / resumo.total)) if resumo.total else None)) }}
-</div>
-
-{# ---------- 2. Barra de filtros ---------- #}
+{# ---------- 1. Barra de filtros/busca — no topo de tudo (pedido 23/10/2026) ---------- #}
 <form id="formFiltrosListagem" class="filtros-barra mb-3" method="get">
   {# Quadrante "Sem planejamento PCP" não tem campo próprio no formulário
      (só é acionado pelo clique no quadrante) — precisa desse campo oculto
@@ -180,7 +171,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
 </div>
 {% endif %}
 
-{# ---------- 3. Linha do tempo do Planejamento PCP ---------- #}
+{# ---------- 2. Linha do tempo do Planejamento PCP — logo abaixo da busca ---------- #}
 <div class="pcpq-cab">
   <span class="pcpq-cab-tit">📅 Planejamento PCP — clique num período pra filtrar a listagem</span>
   <span class="pcpq-cab-leg">
@@ -223,6 +214,16 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
       <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.sem_planejamento, 'Sem planejamento', '⚠️', 'sem', None, True) }}</div>
     </div>
   </div>
+</div>
+
+{# ---------- 3. Faixa de KPIs (resumo do recorte atual) — agora abaixo do PCP (pedido 23/10/2026) ---------- #}
+<div class="kpi-s-faixa mb-4">
+  {{ kpi('📦', 'Pedidos', resumo.total, 'neutro', url_for('dashboard', **filtros_status_cards.total), (not filtros.status), (total_filtrado ~ ' itens listados')) }}
+  {{ kpi('🔴', 'Pendentes', resumo.pendente, 'danger', url_for('dashboard', **filtros_status_cards.pendente), (filtros.status == 'PENDENTE'), (((resumo.pendente * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
+  {{ kpi('🟡', 'Em tratativa', resumo.em_tratativa, 'warning', url_for('dashboard', **filtros_status_cards.em_tratativa), (filtros.status == 'EM TRATATIVA'), (((resumo.em_tratativa * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
+  {{ kpi('🔵', 'Em andamento', resumo.andamento, 'info', url_for('dashboard', **filtros_status_cards.andamento), (filtros.status == 'ANDAMENTO'), (((resumo.andamento * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
+  {{ kpi('✅', 'Finalizados', resumo.finalizado, 'success', url_for('dashboard', **filtros_status_cards.finalizado), (filtros.status == 'FINALIZADO'), (((resumo.finalizado * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
+  {{ kpi('💰', 'Valor total', brl(resumo.valor_total), 'valor', None, False, (('ticket médio ' ~ brl(resumo.valor_total / resumo.total)) if resumo.total else None)) }}
 </div>
 
 {# ---------- 4. Barra de ações da tabela ---------- #}

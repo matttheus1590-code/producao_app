@@ -3029,3 +3029,120 @@ a.pn-kpi:hover {
   .pcpq-st { font-size: 0.78rem; }
   .pcpq-larga .pcpq-n { font-size: 2.4rem; }
 }
+
+/* =====================================================================
+   Listagem Geral — v3 (Bruno, 23/10/2026): número de pedidos um pouco
+   menor, título do período em destaque, mês atual e Valor total em
+   evidência; ordem: busca → PCP → KPIs → tabela.
+   ===================================================================== */
+.pcpq-n {
+  font-size: 1.75rem;
+}
+.pcpq-larga .pcpq-n {
+  font-size: 2.2rem;
+}
+.pcpq-tit {
+  font-size: 1.02rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #1f2937;
+}
+.pcpq-semana .pcpq-tit {
+  color: #0a4fc4;
+}
+.pcpq-un {
+  font-size: 0.8rem;
+}
+.pcpq-pct {
+  font-size: 1.25rem;
+}
+
+/* Mês atual (Outubro): o card mais forte da linha */
+.pcpq-mes {
+  --pq-cor: #198754;
+  background: linear-gradient(180deg, #d4efdf 0%, #eefaf3 100%);
+  border: 2px solid #198754;
+  border-top-width: 5px;
+  box-shadow: 0 0.35rem 1rem rgba(25, 135, 84, 0.25);
+}
+.pcpq-mes .pcpq-tit {
+  font-size: 1.2rem;
+  color: #0a5c36;
+}
+.pcpq-mes .pcpq-n,
+.pcpq-mes .pcpq-pct {
+  color: #0a5c36;
+}
+.pcpq-mes .pcpq-bar {
+  background: rgba(25, 135, 84, 0.2);
+}
+.pcpq-selo-mes {
+  background: #198754;
+  border-color: #198754;
+  color: #fff;
+}
+.pcpq-mes.pcpq-ativo {
+  outline-color: #0a5c36;
+}
+
+/* Cards largos: contagem + % lado a lado (não estoura a altura) */
+.pcpq-larga .pcpq-mid {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.05rem 0.6rem;
+  min-width: 5.5rem;
+}
+.pcpq-larga .pcpq-n {
+  flex: 0 0 100%;
+}
+.pcpq-larga .pcpq-pct {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+/* Valor total: o KPI em destaque */
+.kpi-s-faixa {
+  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.9fr);
+}
+.kpi-s-valor {
+  --kpi-cor: #ffffff;
+  background: linear-gradient(135deg, #4a22a8 0%, #7c4dff 100%);
+  border: 0;
+  box-shadow: 0 0.5rem 1.4rem rgba(111, 66, 193, 0.45);
+  color: #fff;
+}
+.kpi-s-valor .kpi-s-lbl {
+  color: rgba(255, 255, 255, 0.85);
+}
+.kpi-s-valor .kpi-s-val {
+  font-size: 2.15rem;
+  color: #fff;
+}
+.kpi-s-valor .kpi-s-sub {
+  color: rgba(255, 255, 255, 0.85);
+}
+.kpi-s-valor .kpi-s-ico {
+  font-size: 2.6rem;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+@media (max-width: 1499.98px) {
+  .kpi-s-valor .kpi-s-val { font-size: 1.55rem; }
+  .pcpq-mes .pcpq-tit { font-size: 1.05rem; }
+}
+@media (max-width: 1199.98px) {
+  .kpi-s-faixa { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 575.98px) {
+  .kpi-s-faixa { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi-s-valor .kpi-s-val { font-size: 1.15rem; }
+}
+
+@media (min-width: 1200px) and (max-width: 1499.98px) {
+  .kpi-s-faixa { grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.5fr); }
+  .kpi-s { padding: 0.65rem 0.6rem; gap: 0.4rem; }
+  .kpi-s-ico { font-size: 1.5rem; }
+  .kpi-s-valor .kpi-s-ico { font-size: 2rem; }
+  .kpi-s-lbl { font-size: 0.62rem; letter-spacing: 0.02em; }
+  .kpi-s-valor .kpi-s-val { font-size: 1.4rem; }
+}
