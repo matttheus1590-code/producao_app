@@ -6532,6 +6532,459 @@ def _capacidade_estacoes_painel(hoje=None, semanas_hist=8, semanas_proj=4):
     }
 
 
+# ---------------------------------------------------------------------------
+# Detalhe do Pedido 360 (pedido do Bruno, 23/10/2026): "esse campo do pedido
+# está muito vago e simples — torne essa área totalmente intuitiva, dinâmica e
+# clara, reforçando todas as informações do pedido, bem distribuídas e
+# agrupadas". Tudo calculado ao vivo em cima do que já existe (Pedido/
+# ItemPedido de Gestão Produção + PedidoOperacao de Gestão Operação, casado
+# por pedido_venda) — nada novo é gravado.
+# ---------------------------------------------------------------------------
+
+_HIST_CAMPOS_LABEL = {
+    "cliente": "Cliente", "prioridade": "Prioridade", "vendedor": "Vendedor", "frete": "Frete",
+    "obs": "Observações", "cnpj": "CNPJ", "cidade": "Cidade", "estado": "Estado", "pais": "País",
+    "pedido_venda": "Pedido de venda", "data_cliente": "Data do cliente",
+    "data_inclusao_pedido": "Data de inclusão",
+    "estacao": "Estação", "status_producao": "Status de produção",
+    "inicio_producao": "Início de produção", "inicio_inspecao": "Início de inspeção",
+    "termino_inspecao": "Término de inspeção", "liberacao_faturamento": "Liberação p/ faturamento",
+    "liberacao_prevista": "Liberação prevista (PCP)", "liberacao_real": "Liberação real",
+    "planejamento_semanal": "Planejamento semanal PCP", "rnc": "RNC",
+    "numero_nota_fiscal": "Nota fiscal", "valor_faturado": "Valor faturado",
+    "transportadora_id": "Transportadora", "data_envio": "Data de envio",
+    "descricao_produto": "Produto", "quantidade": "Quantidade", "custo_unitario": "Custo unitário",
+}
+
+
+def _hist_fmt_valor(v):
+    """'2026-10-21' -> '21/10/2026' (o histórico guarda tudo como texto)."""
+    if v is None or v == "":
+        return "—"
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", str(v).strip())
+    return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else str(v)
+
+
+def _go_do_pedido(pedido):
+    """PedidoOperacao (Gestão Operação) correspondente ao pedido de produção —
+    mesmo casamento por pedido_venda (normalizado) usado no Espelho PDF."""
+    if not pedido.pedido_venda:
+        return None
+    chave = _normalizar_pedido_venda(pedido.pedido_venda)
+    return PedidoOperacao.query.filter(
+        _pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave
+    ).first()
+
+
+def _linha_atraso_pedido(p, hoje, mapa_prod, mapa_transp):
+    """Linha de "atrasado contextualizado" de UM pedido (ver
+    _atrasados_contextualizados) ou None quando nenhum item em aberto está
+    com a liberação prevista vencida."""
+    abertos = [i for i in p.itens if i.status_producao != "FINALIZADO"]
+    atrasados = [i for i in abertos if i.liberacao_prevista and i.liberacao_prevista < hoje]
+    if not atrasados:
+        return None
+    atrasados.sort(key=lambda i: i.liberacao_prevista)
+    pior = atrasados[0]
+    dias_atraso = (hoje - pior.liberacao_prevista).days
+
+    chave, detalhe, tags = _motivo_atraso_item(pior, p, hoje, mapa_prod)
+    todas_tags = []
+    for i in atrasados[1:]:
+        k2, _, t2 = _motivo_atraso_item(i, p, hoje, mapa_prod)
+        for t in [k2] + t2:
+            if t != chave and t not in todas_tags:
+                todas_tags.append(t)
+    for t in tags:
+        if t not in todas_tags and t != chave:
+            todas_tags.append(t)
+
+    estacoes = []
+    for i in atrasados:
+        if i.estacao and i.estacao not in estacoes:
+            estacoes.append(i.estacao)
+    estacoes_txt = ", ".join(estacoes) if estacoes else "—"
+
+    cen = _cenario_atraso_pedido(p, abertos, hoje, mapa_prod, mapa_transp)
+    uf = (p.estado or "").strip().upper()
+    sem_pcp = [i for i in abertos if not i.planejamento_semanal]
+    semanas = sorted({i.planejamento_semanal for i in atrasados if i.planejamento_semanal}, key=_chave_semana_pcp)
+
+    sev = "grave" if dias_atraso > 15 else ("medio" if dias_atraso > 7 else "leve")
+    return {
+        "id": p.id,
+        "pedido_venda": p.pedido_venda,
+        "cliente": p.cliente,
+        "vendedor": p.vendedor,
+        "valor": p.valor_total,
+        "status": p.status_producao,
+        "n_itens": len(p.itens),
+        "n_abertos": len(abertos),
+        "n_atrasados": len(atrasados),
+        "dias_atraso": dias_atraso,
+        "severidade": sev,
+        "motivo_chave": chave,
+        "motivo_emoji": _MOTIVOS_ATRASO[chave][0],
+        "motivo_titulo": _MOTIVOS_ATRASO[chave][1],
+        "motivo_detalhe": detalhe,
+        "tags": [{"emoji": _MOTIVOS_ATRASO[t][0], "titulo": _MOTIVOS_ATRASO[t][1]} for t in todas_tags],
+        "estacoes": estacoes_txt,
+        "inclusao": p.data_inclusao_pedido,
+        "prazo_cliente": p.data_cliente,
+        "prevista_pcp": pior.liberacao_prevista,
+        "semana_pcp": ", ".join(semanas) if semanas else None,
+        "itens_sem_plano": len(sem_pcp),
+        "frete": p.frete,
+        "uf": uf or None,
+        "regiao": REGIAO_POR_UF.get(uf),
+        "cidade": p.cidade,
+        "cenario": cen,
+        "acao": _acao_atraso(cen, estacoes_txt),
+        "itens": [
+            {
+                "produto": i.descricao_produto,
+                "estacao": i.estacao or "—",
+                "status": i.status_producao,
+                "prevista": i.liberacao_prevista,
+                "dias": (hoje - i.liberacao_prevista).days,
+            }
+            for i in atrasados[:5]
+        ],
+    }
+
+
+def _jornada_pedido(pedido, itens, go, hoje):
+    """Etapas do pedido, da inclusão à entrega: cada uma com estado (feito /
+    parcial / atual / pendente), data de referência e um subtítulo curto —
+    base do "stepper" do Detalhe do Pedido."""
+    n = len(itens)
+
+    def _cont(attr):
+        return [getattr(i, attr) for i in itens if getattr(i, attr)]
+
+    def _etapa(chave, emoji, titulo, feitos, data, sub=None, disponivel=True):
+        if not disponivel:
+            estado = "indisp"
+        elif n and feitos >= n:
+            estado = "feito"
+        elif feitos:
+            estado = "parcial"
+        else:
+            estado = "pendente"
+        return {"chave": chave, "emoji": emoji, "titulo": titulo, "estado": estado, "feitos": feitos,
+                "total": n, "data": data, "sub": sub}
+
+    planejados = [i for i in itens if i.planejamento_semanal]
+    semanas = sorted({i.planejamento_semanal for i in planejados}, key=_chave_semana_pcp)
+    ini = _cont("inicio_producao")
+    insp = _cont("inicio_inspecao")
+    term = _cont("termino_inspecao")
+    lib = _cont("liberacao_faturamento")
+    nfs = [i for i in itens if i.numero_nota_fiscal]
+
+    etapas = [
+        {"chave": "incluido", "emoji": "📝", "titulo": "Pedido incluído",
+         "estado": "feito" if pedido.data_inclusao_pedido else "pendente", "feitos": 1, "total": 1,
+         "data": pedido.data_inclusao_pedido, "sub": None},
+        _etapa("pcp", "🗓️", "Planejado no PCP", len(planejados), None,
+               (semanas[0] if len(semanas) == 1 else (f"{len(semanas)} semanas" if semanas else "sem planejamento"))),
+        _etapa("producao", "🏭", "Em produção", len(ini), min(ini) if ini else None),
+        _etapa("inspecao", "🔍", "Inspeção / término", len(term), max(term) if term else None,
+               ("em inspeção: " + str(len(insp) - len(term)) if len(insp) > len(term) else None)),
+        _etapa("liberacao", "✅", "Liberado p/ faturar", len(lib), max(lib) if lib else None),
+    ]
+    nf_data = go.go_data_emissao_nf if go else None
+    etapas.append(_etapa("nf", "🧾", "Faturado (NF)", n if (nf_data or (nfs and len(nfs) >= n)) else len(nfs), nf_data,
+                         (("NF " + go.go_numero_nf) if (go and go.go_numero_nf) else None)))
+    etapas.append(_etapa("expedido", "🚚", "Expedido", n if (go and go.go_data_pedido_expedido) else 0,
+                         go.go_data_pedido_expedido if go else None, None if go else "sem Gestão Operação",
+                         disponivel=bool(go)))
+    entrega = (go.go_data_entregue_cliente or go.go_data_real_entrega) if go else None
+    etapas.append(_etapa("entregue", "📬", "Entregue ao cliente", n if entrega else 0, entrega,
+                         None if go else "sem Gestão Operação", disponivel=bool(go)))
+
+    # Etapa ATUAL = onde o pedido está de fato: a mais avançada com algum
+    # progresso (se parcial, ela mesma; se completa, a próxima). Etapas
+    # anteriores ainda vazias (ex.: produção iniciada sem planejamento PCP)
+    # ficam marcadas como "pulada" — sinal de dado faltando.
+    idx_ultima = max((k for k, e in enumerate(etapas) if e["estado"] in ("feito", "parcial")), default=-1)
+    if idx_ultima >= 0 and etapas[idx_ultima]["estado"] == "parcial":
+        etapas[idx_ultima]["atual"] = True
+        idx_atual = idx_ultima
+    else:
+        idx_atual = next((k for k in range(idx_ultima + 1, len(etapas)) if etapas[k]["estado"] == "pendente"), None)
+        if idx_atual is not None:
+            etapas[idx_atual]["estado"] = "atual"
+            etapas[idx_atual]["atual"] = True
+    for k, e in enumerate(etapas):
+        if e["estado"] == "pendente" and k < idx_ultima:
+            e["estado"] = "pulada"
+    return etapas
+
+
+def _timeline_pedido(pedido, itens, go, hoje):
+    """Linha do tempo rica: marcos já realizados + previsões futuras (liberação
+    prevista, previsão de entrega, prazo do cliente), com a marca "hoje"."""
+    ev = []
+
+    def add(data, emoji, titulo, detalhe=None, tipo="marco", atrasado=False):
+        if data:
+            ev.append({"data": data, "emoji": emoji, "titulo": titulo, "detalhe": detalhe,
+                       "tipo": tipo, "futuro": data > hoje, "atrasado": atrasado})
+
+    final = pedido.status_producao == "FINALIZADO"
+    add(pedido.data_inclusao_pedido, "📝", "Pedido incluído no sistema")
+    if pedido.data_cliente:
+        add(pedido.data_cliente, "🎯", "Prazo solicitado pelo cliente", None, "prazo",
+            atrasado=(pedido.data_cliente < hoje and not final))
+    for i in itens:
+        nome = i.descricao_produto
+        add(i.inicio_producao, "🏭", "Início de produção", f"{nome} · {i.estacao or 'sem estação'}")
+        add(i.inicio_inspecao, "🔍", "Início de inspeção/embalagem", nome)
+        add(i.termino_inspecao, "✔️", "Término de inspeção/embalagem", nome)
+        add(i.liberacao_faturamento, "🧾", "Liberado para faturamento", nome)
+        if i.liberacao_real and i.liberacao_real != i.liberacao_faturamento:
+            add(i.liberacao_real, "📦", "Liberação real (PCP)", nome)
+        if i.status_producao != "FINALIZADO" and i.liberacao_prevista:
+            add(i.liberacao_prevista, "🗓️", "Liberação prevista (PCP)", nome, "previsto",
+                atrasado=i.liberacao_prevista < hoje)
+    if go:
+        add(go.go_data_emissao_nf, "🧾", "Nota fiscal emitida", go.go_numero_nf and f"NF {go.go_numero_nf}")
+        add(go.go_data_pedido_expedido, "🚚", "Pedido expedido", go.go_transportadora.nome if go.go_transportadora else None)
+        entregue = go.go_data_entregue_cliente or go.go_data_real_entrega
+        add(go.go_data_real_entrega, "🚛", "Chegada ao destino (transportadora)")
+        if go.go_data_entregue_cliente and go.go_data_entregue_cliente != go.go_data_real_entrega:
+            add(go.go_data_entregue_cliente, "🎉", "Entregue ao cliente")
+        if not entregue:
+            add(go.go_data_prevista_entrega, "🗓️", "Previsão de entrega", None, "previsto",
+                atrasado=bool(go.go_data_prevista_entrega and go.go_data_prevista_entrega < hoje))
+
+    ordem = {"marco": 0, "previsto": 1, "prazo": 2}
+    ev.sort(key=lambda e: (e["data"], ordem[e["tipo"]]))
+    # marca "hoje" entre o passado e o futuro
+    out, marcado = [], False
+    for e in ev:
+        if not marcado and e["data"] > hoje:
+            out.append({"hoje": True, "data": hoje})
+            marcado = True
+        out.append(e)
+    if not marcado:
+        out.append({"hoje": True, "data": hoje})
+    return out
+
+
+def _alertas_pedido(pedido, itens, go, hoje, linha_atraso, simulado_a, resumo_rdim):
+    """Situação & riscos do pedido, em linguagem de gestão: o que precisa de
+    atenção AGORA, com a ação sugerida. Ordenado por gravidade."""
+    al = []
+    final = pedido.status_producao == "FINALIZADO"
+    abertos = [i for i in itens if i.status_producao != "FINALIZADO"]
+
+    if linha_atraso:
+        l = linha_atraso
+        cen = l["cenario"]
+        al.append({"nivel": "bad", "emoji": "🔴", "titulo": f"Atrasado há {l['dias_atraso']} dia(s) no PCP",
+                   "texto": f"{l['motivo_emoji']} {l['motivo_titulo']} — {l['motivo_detalhe']}",
+                   "acao": l["acao"], "selo": cen["rotulo"]})
+
+    if pedido.data_cliente and not final:
+        dias = (pedido.data_cliente - hoje).days
+        if dias < 0:
+            al.append({"nivel": "bad", "emoji": "⏰", "titulo": f"Prazo do cliente vencido há {-dias} dia(s)",
+                       "texto": f"Data solicitada: {pedido.data_cliente.strftime('%d/%m/%Y')}. Ainda há {len(abertos)} item(ns) em aberto.",
+                       "acao": "Alinhar nova data de entrega com o cliente/comercial."})
+        elif dias <= 7:
+            al.append({"nivel": "warn", "emoji": "⏳", "titulo": f"Prazo do cliente em {dias} dia(s)",
+                       "texto": f"Data solicitada: {pedido.data_cliente.strftime('%d/%m/%Y')}. Itens em aberto: {len(abertos)}.",
+                       "acao": None})
+    elif not pedido.data_cliente:
+        al.append({"nivel": "info", "emoji": "ℹ️", "titulo": "Sem data solicitada pelo cliente",
+                   "texto": "Sem essa data não dá para medir prazo, folga nem OTD deste pedido.", "acao": None})
+
+    if simulado_a and simulado_a.get("indicador") == "vermelho" and simulado_a.get("data_prevista"):
+        fol = simulado_a["folga"]
+        al.append({"nivel": "warn", "emoji": "🧮", "titulo": "Simulado A indica risco no prazo comercial",
+                   "texto": f"Previsão pelo lead time parametrizado: {simulado_a['data_prevista'].strftime('%d/%m/%Y')} "
+                            + (f"({-fol}d depois do prazo do cliente)." if fol is not None and fol < 0 else f"(folga de só {fol}d)."),
+                   "acao": None})
+
+    trat = [i for i in abertos if i.status_producao == "EM TRATATIVA"]
+    if trat:
+        al.append({"nivel": "warn", "emoji": "🤝", "titulo": f"{len(trat)} item(ns) em tratativa",
+                   "texto": "; ".join(f"{i.descricao_produto} ({i.estacao or 'sem estação'})" for i in trat[:3]),
+                   "acao": "Resolver a pendência para o item voltar a andar."})
+    sem_plano = [i for i in abertos if not i.planejamento_semanal]
+    if sem_plano:
+        al.append({"nivel": "warn", "emoji": "🗓️", "titulo": f"{len(sem_plano)} item(ns) sem Planejamento Semanal PCP",
+                   "texto": "Itens ainda não encaixados em nenhuma semana do PCP.", "acao": "PCP: definir a semana de cada item."})
+    rncs = [i for i in itens if (i.rnc or "").strip().upper() not in _RNC_VAZIAS]
+    if rncs:
+        al.append({"nivel": "warn", "emoji": "🧪", "titulo": f"RNC registrada em {len(rncs)} item(ns)",
+                   "texto": "; ".join(f"{i.descricao_produto}: {i.rnc}" for i in rncs[:2]), "acao": None})
+    if resumo_rdim and resumo_rdim.get("reprovadas"):
+        al.append({"nivel": "bad", "emoji": "📐", "titulo": f"{resumo_rdim['reprovadas']} inspeção(ões) RDIM reprovada(s)",
+                   "texto": "Há itens reprovados na Inspeção Final.", "acao": "Qualidade: tratar o desvio antes de liberar."})
+
+    # incoerências de data (erro de digitação típico)
+    for i in itens:
+        if i.liberacao_prevista and pedido.data_inclusao_pedido and i.liberacao_prevista < pedido.data_inclusao_pedido:
+            al.append({"nivel": "info", "emoji": "🔎", "titulo": "Data possivelmente incorreta",
+                       "texto": f"{i.descricao_produto}: liberação prevista ({i.liberacao_prevista.strftime('%d/%m/%Y')}) "
+                                f"anterior à inclusão do pedido ({pedido.data_inclusao_pedido.strftime('%d/%m/%Y')}).",
+                       "acao": None})
+            break
+    for i in itens:
+        if i.termino_inspecao and i.inicio_producao and i.termino_inspecao < i.inicio_producao:
+            al.append({"nivel": "info", "emoji": "🔎", "titulo": "Data possivelmente incorreta",
+                       "texto": f"{i.descricao_produto}: término de inspeção anterior ao início de produção.", "acao": None})
+            break
+
+    if go is None:
+        al.append({"nivel": "info", "emoji": "🔗", "titulo": "Sem registro na Gestão Operação",
+                   "texto": "Este pedido ainda não tem linha em Gestão Operação (logística, NF, entrega e OTD).", "acao": None})
+
+    if final:
+        entrega = (go.go_data_entregue_cliente or go.go_data_real_entrega) if go else None
+        txt = "Todos os itens finalizados."
+        if go and go.go_data_entregue_cliente and pedido.data_cliente:
+            d = (go.go_data_entregue_cliente - (go.go_data_solicitada_cliente_final or pedido.data_cliente)).days
+            txt += f" Entregue ao cliente {'no prazo' if d <= 0 else f'com {d}d de atraso'}."
+        al.insert(0, {"nivel": "ok", "emoji": "✅", "titulo": "Pedido concluído", "texto": txt, "acao": None})
+    elif not any(a["nivel"] in ("bad", "warn") for a in al):
+        al.insert(0, {"nivel": "ok", "emoji": "🟢", "titulo": "No prazo, sem alertas",
+                      "texto": "Nenhum atraso, tratativa ou pendência de planejamento identificados.", "acao": None})
+
+    ordem = {"bad": 0, "warn": 1, "info": 2, "ok": 3}
+    al.sort(key=lambda a: ordem[a["nivel"]] if a["nivel"] != "ok" or final else -1)
+    return al
+
+
+def _visao_pedido_detalhe(pedido, simulado_a=None, resumo_rdim=None, historico=None, hoje=None):
+    """Tudo que a tela "Detalhe do Pedido" mostra além dos campos crus:
+    KPIs, jornada, alertas, itens enriquecidos, bloco comercial/logística/
+    financeiro, linha do tempo e histórico legível."""
+    hoje = hoje or date.today()
+    itens = list(pedido.itens)
+    go = _go_do_pedido(pedido)
+    mapa_prod = _mapa_lead_time_producao()
+    mapa_transp = _mapa_lead_time_transportadora()
+    linha_atraso = _linha_atraso_pedido(pedido, hoje, mapa_prod, mapa_transp)
+
+    n = len(itens)
+    cont = {"FINALIZADO": 0, "PENDENTE": 0, "EM TRATATIVA": 0, "ANDAMENTO": 0}
+    for i in itens:
+        cont[i.status_producao] = cont.get(i.status_producao, 0) + 1
+    uf = (pedido.estado or "").strip().upper()
+    abertos = [i for i in itens if i.status_producao != "FINALIZADO"]
+
+    # ---- prazo do cliente ----
+    prazo = {"data": pedido.data_cliente, "dias": None, "tom": "neutro", "texto": "sem data solicitada"}
+    if pedido.data_cliente:
+        if pedido.status_producao == "FINALIZADO":
+            fim = max([i.liberacao_faturamento or i.termino_inspecao for i in itens
+                       if (i.liberacao_faturamento or i.termino_inspecao)], default=None)
+            if fim:
+                d = (fim - pedido.data_cliente).days
+                prazo.update(dias=d, tom="ok" if d <= 0 else "bad",
+                             texto=f"concluído em {fim.strftime('%d/%m')} ({'no prazo' if d <= 0 else f'{d}d depois'})")
+            else:
+                prazo.update(tom="ok", texto="pedido concluído")
+        else:
+            d = (pedido.data_cliente - hoje).days
+            prazo.update(dias=d, tom="bad" if d < 0 else ("warn" if d <= 7 else "ok"),
+                         texto=(f"venceu há {-d} dia(s)" if d < 0 else ("vence hoje" if d == 0 else f"faltam {d} dia(s)")))
+
+    # ---- previsão PCP ----
+    previstas = [i.liberacao_prevista for i in abertos if i.liberacao_prevista]
+    todas_prev = [i.liberacao_prevista for i in itens if i.liberacao_prevista]
+    semanas = sorted({i.planejamento_semanal for i in itens if i.planejamento_semanal}, key=_chave_semana_pcp)
+    pcp = {
+        "proxima": min(previstas) if previstas else None,
+        "ultima": max(todas_prev) if todas_prev else None,
+        "semanas": semanas,
+        "sem_plano": sum(1 for i in abertos if not i.planejamento_semanal),
+    }
+
+    # ---- lead times do pedido ----
+    def _media(vals):
+        vals = [v for v in vals if v is not None]
+        return round(sum(vals) / len(vals), 1) if vals else None
+    fila = _media(i.tempo_espera_dias for i in itens)
+    chao = _media(i.lt_producao_dias for i in itens)
+    lts = {"fila": fila, "chao": chao, "total": round(fila + chao, 1) if (fila is not None and chao is not None) else None,
+           "comercial": (pedido.data_cliente - pedido.data_inclusao_pedido).days
+           if (pedido.data_cliente and pedido.data_inclusao_pedido) else None}
+
+    # ---- itens enriquecidos ----
+    itens_view = []
+    for i in itens:
+        etapas_ok = sum(1 for v in (i.inicio_producao, i.inicio_inspecao, i.termino_inspecao, i.liberacao_faturamento) if v)
+        cor, dias = i.semaforo
+        itens_view.append({
+            "obj": i, "pct": round(100 * etapas_ok / 4) if i.status_producao != "FINALIZADO" else 100,
+            "sem_cor": cor, "sem_dias": dias, "valor": i.valor_total,
+            "lt_padrao": _lt_producao_parametrizado_item(i, mapa_prod),
+        })
+
+    # ---- financeiro ----
+    faturado = [i.valor_faturado for i in itens if i.valor_faturado is not None]
+    fin = {
+        "valor_total": pedido.valor_total,
+        "n_itens": n,
+        "qtd_total": pedido.quantidade_total,
+        "ticket": round(pedido.valor_total / n, 2) if n else None,
+        "faturado": round(sum(faturado), 2) if faturado else None,
+        "valor_operacao": go.go_valor_pedido_operacao if go else None,
+        "valor_nf": go.go_valor_nf_emitida if go else None,
+        "custo_producao": go.go_custo_producao_real if go else None,
+        "frete_previsto": go.go_custo_frete_previsto if go else None,
+        "frete_final": go.go_custo_frete_final if go else None,
+        "frete_sobre_nota": go.go_custo_frete_sobre_nota if go else None,
+        "custo_total": go.go_custo_total if go else None,
+    }
+
+    # ---- logística / OTD ----
+    logi = None
+    if go:
+        comprometida = _comprometida_otd(go, pedido.data_cliente)
+        otd = _calcular_otd(comprometida, go.go_data_entregue_cliente)
+        transporte = None
+        if pedido.frete == "CIF" and uf:
+            transporte = _lead_time_transporte_dias(mapa_transp.get((uf, "Rodoviário")))
+        logi = {
+            "go": go, "otd": otd, "comprometida": comprometida, "transporte_param": transporte,
+            "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
+        }
+
+    return {
+        "go": go, "logi": logi, "linha_atraso": linha_atraso,
+        "uf": uf or None, "regiao": REGIAO_POR_UF.get(uf),
+        "cont": cont, "n_itens": n, "pct_final": round(100 * cont.get("FINALIZADO", 0) / n) if n else 0,
+        "prazo": prazo, "pcp": pcp, "lts": lts, "fin": fin,
+        "itens": itens_view,
+        "jornada": _jornada_pedido(pedido, itens, go, hoje),
+        "alertas": _alertas_pedido(pedido, itens, go, hoje, linha_atraso, simulado_a, resumo_rdim),
+        "timeline": _timeline_pedido(pedido, itens, go, hoje),
+        "historico": _historico_legivel(historico or [], itens),
+        "hoje": hoje,
+    }
+
+
+def _historico_legivel(historico, itens):
+    nomes = {i.id: i.descricao_produto for i in itens}
+    out = []
+    for h in historico:
+        campo = h.campo or ""
+        out.append({
+            "quando": h.criado_em, "quem": h.usuario_nome or "sistema",
+            "campo": _HIST_CAMPOS_LABEL.get(campo, campo.replace("_", " ").capitalize()),
+            "antes": _hist_fmt_valor(h.valor_anterior), "depois": _hist_fmt_valor(h.valor_novo),
+            "escopo": nomes.get(h.entidade_id, "Item") if h.entidade_tipo == "item_pedido" else "Pedido",
+            "item": h.entidade_tipo == "item_pedido",
+        })
+    return out
+
+
 def _fim_semana_pcp(rotulo):
     """Data em que a semana de planejamento PCP ("SEMANA NN / MÊS / ANO")
     termina — a mesma janela de calendário dos quadrantes da Listagem Geral
@@ -6732,77 +7185,9 @@ def _atrasados_contextualizados(hoje=None, limite=20):
 
     linhas = []
     for p in pedidos:
-        abertos = [i for i in p.itens if i.status_producao != "FINALIZADO"]
-        atrasados = [i for i in abertos if i.liberacao_prevista and i.liberacao_prevista < hoje]
-        if not atrasados:
-            continue
-        atrasados.sort(key=lambda i: i.liberacao_prevista)
-        pior = atrasados[0]
-        dias_atraso = (hoje - pior.liberacao_prevista).days
-
-        chave, detalhe, tags = _motivo_atraso_item(pior, p, hoje, mapa_prod)
-        todas_tags = []
-        for i in atrasados[1:]:
-            k2, _, t2 = _motivo_atraso_item(i, p, hoje, mapa_prod)
-            for t in [k2] + t2:
-                if t != chave and t not in todas_tags:
-                    todas_tags.append(t)
-        for t in tags:
-            if t not in todas_tags and t != chave:
-                todas_tags.append(t)
-
-        estacoes = []
-        for i in atrasados:
-            if i.estacao and i.estacao not in estacoes:
-                estacoes.append(i.estacao)
-        estacoes_txt = ", ".join(estacoes) if estacoes else "—"
-
-        cen = _cenario_atraso_pedido(p, abertos, hoje, mapa_prod, mapa_transp)
-        uf = (p.estado or "").strip().upper()
-        sem_pcp = [i for i in abertos if not i.planejamento_semanal]
-        semanas = sorted({i.planejamento_semanal for i in atrasados if i.planejamento_semanal}, key=_chave_semana_pcp)
-
-        sev = "grave" if dias_atraso > 15 else ("medio" if dias_atraso > 7 else "leve")
-        linhas.append({
-            "id": p.id,
-            "pedido_venda": p.pedido_venda,
-            "cliente": p.cliente,
-            "vendedor": p.vendedor,
-            "valor": p.valor_total,
-            "status": p.status_producao,
-            "n_itens": len(p.itens),
-            "n_abertos": len(abertos),
-            "n_atrasados": len(atrasados),
-            "dias_atraso": dias_atraso,
-            "severidade": sev,
-            "motivo_chave": chave,
-            "motivo_emoji": _MOTIVOS_ATRASO[chave][0],
-            "motivo_titulo": _MOTIVOS_ATRASO[chave][1],
-            "motivo_detalhe": detalhe,
-            "tags": [{"emoji": _MOTIVOS_ATRASO[t][0], "titulo": _MOTIVOS_ATRASO[t][1]} for t in todas_tags],
-            "estacoes": estacoes_txt,
-            "inclusao": p.data_inclusao_pedido,
-            "prazo_cliente": p.data_cliente,
-            "prevista_pcp": pior.liberacao_prevista,
-            "semana_pcp": ", ".join(semanas) if semanas else None,
-            "itens_sem_plano": len(sem_pcp),
-            "frete": p.frete,
-            "uf": uf or None,
-            "regiao": REGIAO_POR_UF.get(uf),
-            "cidade": p.cidade,
-            "cenario": cen,
-            "acao": _acao_atraso(cen, estacoes_txt),
-            "itens": [
-                {
-                    "produto": i.descricao_produto,
-                    "estacao": i.estacao or "—",
-                    "status": i.status_producao,
-                    "prevista": i.liberacao_prevista,
-                    "dias": (hoje - i.liberacao_prevista).days,
-                }
-                for i in atrasados[:5]
-            ],
-        })
+        linha = _linha_atraso_pedido(p, hoje, mapa_prod, mapa_transp)
+        if linha:
+            linhas.append(linha)
 
     linhas.sort(key=lambda l: (-l["dias_atraso"], -(l["valor"] or 0)))
 
@@ -20859,10 +21244,12 @@ def register_routes(app):
         timeline = _construir_timeline(pedido)
         inspecoes_rdim = _inspecoes_rdim_por_item([i.id for i in pedido.itens])
         resumo_rdim = _resumo_rdim_pedido(inspecoes_rdim.values())
+        simulado_a = _simulado_a_pedido(pedido)
         return render_template(
             "detalhe_pedido.html", pedido=pedido, historico=historico, timeline=timeline,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
-            simulado_a=_simulado_a_pedido(pedido),
+            simulado_a=simulado_a,
+            v=_visao_pedido_detalhe(pedido, simulado_a, resumo_rdim, historico),
         )
 
     @app.route("/pedidos/<int:pedido_id>/espelho.pdf")
