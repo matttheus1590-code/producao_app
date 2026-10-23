@@ -32,9 +32,9 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
 {# Quadrante PCP compacto: título, nº de pedidos, % concluído, barra e
    ✔ concluídos / ⏳ em aberto (ou ⚠️ quando o período já passou e ainda
    tem pedido em aberto). #}
-{% macro pcpq(q, titulo, emoji, tom, datas=None) %}
+{% macro pcpq(q, titulo, emoji, tom, datas=None, larga=False) %}
 {% set alerta = q.passado and q.em_aberto %}
-<a class="pcpq pcpq-{{ tom }} {% if q.ativo %}pcpq-ativo{% endif %} {% if q.atual %}pcpq-atual{% endif %} {% if alerta %}pcpq-alerta{% endif %}"
+<a class="pcpq pcpq-{{ tom }} {% if larga %}pcpq-larga{% endif %} {% if q.ativo %}pcpq-ativo{% endif %} {% if q.atual %}pcpq-atual{% endif %} {% if alerta %}pcpq-alerta{% endif %}"
    href="{{ url_for('dashboard', **q.filtros_link) }}"
    title="{{ titulo }}{% if datas %} ({{ datas }}){% endif %} — {{ q.total }} pedido(s){% if q.pct is not none %}, {{ q.concluidos }} concluído(s), {{ q.em_aberto }} em aberto ({{ q.pct }}%){% endif %}.{% if alerta %} ⚠️ Período encerrado com pedidos ainda em aberto.{% endif %} Clique pra filtrar a listagem.">
   <div class="pcpq-top">
@@ -60,7 +60,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
 {% endmacro %}
 
 {# ---------- 1. Faixa de KPIs (resumo do recorte atual) ---------- #}
-<div class="kpi-s-faixa mb-3">
+<div class="kpi-s-faixa mb-4">
   {{ kpi('📦', 'Pedidos', resumo.total, 'neutro', url_for('dashboard', **filtros_status_cards.total), (not filtros.status), (total_filtrado ~ ' itens listados')) }}
   {{ kpi('🔴', 'Pendentes', resumo.pendente, 'danger', url_for('dashboard', **filtros_status_cards.pendente), (filtros.status == 'PENDENTE'), (((resumo.pendente * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
   {{ kpi('🟡', 'Em tratativa', resumo.em_tratativa, 'warning', url_for('dashboard', **filtros_status_cards.em_tratativa), (filtros.status == 'EM TRATATIVA'), (((resumo.em_tratativa * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
@@ -70,7 +70,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
 </div>
 
 {# ---------- 2. Barra de filtros ---------- #}
-<form id="formFiltrosListagem" class="filtros-barra mb-2" method="get">
+<form id="formFiltrosListagem" class="filtros-barra mb-3" method="get">
   {# Quadrante "Sem planejamento PCP" não tem campo próprio no formulário
      (só é acionado pelo clique no quadrante) — precisa desse campo oculto
      pra não se perder quando o usuário mexe em outro filtro e reenvia o
@@ -171,7 +171,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
 
 {# Chips dos filtros ativos — clique no ✕ remove só aquele filtro #}
 {% if chips_filtros %}
-<div class="filtros-chips mb-2">
+<div class="filtros-chips mb-3">
   <span class="filtros-chips-tit"><i class="bi bi-funnel-fill"></i> Filtros ativos:</span>
   {% for c in chips_filtros %}
   <a class="filtro-chip" href="{{ c.link }}" title="Remover este filtro">{{ c.rotulo }}{% if c.valor %}: <b>{{ c.valor }}</b>{% endif %} <span class="filtro-chip-x">✕</span></a>
@@ -192,34 +192,41 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
   <a class="btn btn-outline-secondary btn-sm py-0 ms-auto" href="{{ url_for('dashboard', **quadrantes_pcp.limpar_link) }}"><i class="bi bi-x-circle"></i> Limpar período</a>
   {% endif %}
 </div>
-<div class="pcpq-wrap row-quadrantes-pcp mb-3">
-  <div class="pcpq-grupo" style="flex: 1 1 110px;">
-    <div class="pcpq-grupo-tit">Mês anterior</div>
-    <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.mes_anterior, quadrantes_pcp.mes_anterior.titulo, '⏪', 'passado') }}</div>
-  </div>
-  <div class="pcpq-grupo" style="flex: 4 1 400px;">
-    <div class="pcpq-grupo-tit">Semanas de {{ quadrantes_pcp.mes_atual.titulo|title }}</div>
-    <div class="pcpq-cards">
-      {% for semana in quadrantes_pcp.semanas %}
-      {{ pcpq(semana, semana.titulo, '', 'semana', semana.subtitulo|replace(' a ', ' – ')) }}
-      {% endfor %}
+<div class="row-quadrantes-pcp pcpq-bloco mb-4">
+  {# Linha 1: as 4 semanas do mês + fechamento do mês atual #}
+  <div class="pcpq-wrap pcpq-linha-1">
+    <div class="pcpq-grupo" style="flex: 4 1 0;">
+      <div class="pcpq-grupo-tit">Semanas de {{ quadrantes_pcp.mes_atual.titulo|title }}</div>
+      <div class="pcpq-cards">
+        {% for semana in quadrantes_pcp.semanas %}
+        {{ pcpq(semana, semana.titulo, '', 'semana', semana.subtitulo|replace(' a ', ' – ')) }}
+        {% endfor %}
+      </div>
+    </div>
+    <div class="pcpq-grupo" style="flex: 1 1 0;">
+      <div class="pcpq-grupo-tit">Fechamento do mês</div>
+      <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.mes_atual, quadrantes_pcp.mes_atual.titulo, '📅', 'mes') }}</div>
     </div>
   </div>
-  <div class="pcpq-grupo" style="flex: 2 1 210px;">
-    <div class="pcpq-grupo-tit">Visão mensal</div>
-    <div class="pcpq-cards">
-      {{ pcpq(quadrantes_pcp.mes_atual, quadrantes_pcp.mes_atual.titulo, '📅', 'mes') }}
-      {{ pcpq(quadrantes_pcp.mes_seguinte, quadrantes_pcp.mes_seguinte.titulo, '⏩', 'seguinte') }}
+  {# Linha 2: mês anterior (somente o mês), backlog (mês seguinte) e pendência #}
+  <div class="pcpq-wrap pcpq-linha-2">
+    <div class="pcpq-grupo" style="flex: 1 1 0;">
+      <div class="pcpq-grupo-tit">Mês anterior</div>
+      <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.mes_anterior, quadrantes_pcp.mes_anterior.titulo, '⏪', 'passado', None, True) }}</div>
     </div>
-  </div>
-  <div class="pcpq-grupo" style="flex: 1 1 110px;">
-    <div class="pcpq-grupo-tit">Pendência</div>
-    <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.sem_planejamento, 'Sem planejamento', '⚠️', 'sem') }}</div>
+    <div class="pcpq-grupo" style="flex: 1 1 0;">
+      <div class="pcpq-grupo-tit">Backlog · mês seguinte</div>
+      <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.mes_seguinte, quadrantes_pcp.mes_seguinte.titulo, '⏩', 'seguinte', None, True) }}</div>
+    </div>
+    <div class="pcpq-grupo" style="flex: 1 1 0;">
+      <div class="pcpq-grupo-tit">Pendência</div>
+      <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.sem_planejamento, 'Sem planejamento', '⚠️', 'sem', None, True) }}</div>
+    </div>
   </div>
 </div>
 
 {# ---------- 4. Barra de ações da tabela ---------- #}
-<div class="listagem-acoes mb-2">
+<div class="listagem-acoes mb-2 pt-1">
   <div class="listagem-acoes-info">
     📋 <strong>Listagem Geral</strong>
     <span class="text-muted">· {{ total_filtrado }} iten{{ '' if total_filtrado == 1 else 's' }} em {{ resumo.total }} pedido{{ '' if resumo.total == 1 else 's' }}</span>

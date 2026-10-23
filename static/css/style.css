@@ -2890,3 +2890,142 @@ a.pn-kpi:hover {
     white-space: nowrap;
   }
 }
+
+/* =====================================================================
+   Listagem Geral — v2 (Bruno, 23/10/2026): mais respiro e números em
+   destaque. KPIs maiores; PCP em 2 linhas (semanas + mês atual / mês
+   anterior + backlog + pendência).
+   ===================================================================== */
+.kpi-s {
+  gap: 0.9rem;
+  padding: 0.85rem 1.1rem;
+  border-left-width: 5px;
+  background: linear-gradient(135deg, var(--kpi-bg) 0%, #fff 78%);
+  box-shadow: 0 2px 6px rgba(16, 24, 40, 0.08);
+}
+.kpi-s-ico {
+  font-size: 2.3rem;
+}
+.kpi-s-lbl {
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+}
+.kpi-s-val {
+  font-size: 2.4rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.kpi-s-valor .kpi-s-val {
+  font-size: 1.75rem;
+}
+.kpi-s-sub {
+  font-size: 0.8rem;
+}
+@media (max-width: 1499.98px) {
+  .kpi-s {
+    gap: 0.6rem;
+    padding: 0.7rem 0.8rem;
+  }
+  .kpi-s-ico { font-size: 1.8rem; }
+  .kpi-s-lbl { font-size: 0.68rem; }
+  .kpi-s-val { font-size: 2rem; }
+  .kpi-s-valor .kpi-s-val { font-size: 1.4rem; }
+  .kpi-s-sub { font-size: 0.72rem; }
+}
+@media (max-width: 767.98px) {
+  .kpi-s-val { font-size: 1.7rem; }
+  .kpi-s-valor .kpi-s-val { font-size: 1.05rem; }
+}
+
+.pcpq-cab {
+  margin-bottom: 0.7rem;
+}
+.pcpq-cab-tit {
+  font-size: 0.95rem;
+}
+.pcpq-cab-leg {
+  font-size: 0.74rem;
+}
+.pcpq-wrap + .pcpq-wrap {
+  margin-top: 1rem;
+}
+.pcpq-grupo-tit {
+  margin-bottom: 0.3rem;
+  font-size: 0.68rem;
+}
+.pcpq {
+  gap: 0.3rem;
+  padding: 0.75rem 0.9rem 0.7rem;
+  border-top-width: 4px;
+  border-radius: 0.65rem;
+}
+.pcpq-tit {
+  font-size: 0.78rem;
+}
+.pcpq-selo {
+  font-size: 0.64rem;
+}
+.pcpq-n {
+  font-size: 2.3rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.pcpq-un {
+  font-size: 0.78rem;
+}
+.pcpq-pct {
+  font-size: 1.2rem;
+}
+.pcpq-bar {
+  height: 8px;
+}
+.pcpq-st {
+  font-size: 0.85rem;
+  gap: 0.2rem 0.7rem;
+}
+.pcpq-dt {
+  font-size: 0.74rem;
+}
+
+/* Cards largos (linha 2): número à esquerda, detalhes à direita */
+.pcpq-larga {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "top top"
+    "mid bar"
+    "mid st"
+    "mid dt";
+  align-items: center;
+  column-gap: 1.2rem;
+  row-gap: 0.3rem;
+}
+.pcpq-larga .pcpq-top { grid-area: top; }
+.pcpq-larga .pcpq-mid {
+  grid-area: mid;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 5.5rem;
+}
+.pcpq-larga .pcpq-bar { grid-area: bar; }
+.pcpq-larga .pcpq-st { grid-area: st; }
+.pcpq-larga .pcpq-dt { grid-area: dt; }
+.pcpq-larga .pcpq-n {
+  font-size: 3rem;
+  line-height: 1;
+}
+.pcpq-larga .pcpq-pct {
+  margin-left: 0;
+  margin-top: 0.15rem;
+  font-size: 1.3rem;
+}
+
+@media (max-width: 1499.98px) {
+  .pcpq { padding: 0.6rem 0.65rem; }
+  .pcpq-n { font-size: 1.9rem; }
+  .pcpq-pct { font-size: 1rem; }
+  .pcpq-tit { font-size: 0.72rem; }
+  .pcpq-st { font-size: 0.78rem; }
+  .pcpq-larga .pcpq-n { font-size: 2.4rem; }
+}
