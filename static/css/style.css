@@ -2507,3 +2507,386 @@ a.pn-kpi:hover {
   .pn-grupo-sub { display: none; }
   .pn-sec .table-responsive, .pn-sec table { max-width: 100%; }
 }
+
+/* =====================================================================
+   Listagem Geral — topo redesenhado (pedido do Bruno, 23/10/2026)
+   KPIs compactos, barra de filtros, chips, linha do tempo PCP e ações.
+   ===================================================================== */
+.tabela-listagem-geral-wrap {
+  max-height: 78vh;
+}
+
+/* ---- Faixa de KPIs ---- */
+.kpi-s-faixa {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.5fr);
+  gap: 0.6rem;
+}
+.kpi-s-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+.kpi-s {
+  --kpi-cor: #6c757d;
+  --kpi-bg: #f1f3f5;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  height: 100%;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  border: 1px solid #e3e8ee;
+  border-left: 4px solid var(--kpi-cor);
+  border-radius: 0.6rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.kpi-s-link:hover .kpi-s {
+  transform: translateY(-2px);
+  box-shadow: 0 0.4rem 0.9rem rgba(16, 24, 40, 0.12);
+}
+.kpi-s-ativo {
+  background: var(--kpi-bg);
+  box-shadow: 0 0 0 2px var(--kpi-cor);
+}
+.kpi-s-danger  { --kpi-cor: #dc3545; --kpi-bg: #fdecee; }
+.kpi-s-warning { --kpi-cor: #e0a800; --kpi-bg: #fff8e1; }
+.kpi-s-info    { --kpi-cor: #0dcaf0; --kpi-bg: #e6f9fd; }
+.kpi-s-success { --kpi-cor: #198754; --kpi-bg: #e8f5ee; }
+.kpi-s-valor   { --kpi-cor: #6f42c1; --kpi-bg: #f3edfb; }
+.kpi-s-neutro  { --kpi-cor: #343a40; --kpi-bg: #eef0f2; }
+.kpi-s-ico {
+  flex: 0 0 auto;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+.kpi-s-txt {
+  min-width: 0;
+}
+.kpi-s-lbl {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #6c757d;
+}
+.kpi-s-val {
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--kpi-cor);
+  white-space: nowrap;
+}
+.kpi-s-neutro .kpi-s-val { color: #212529; }
+.kpi-s-valor .kpi-s-val { font-size: 1.15rem; }
+.kpi-s-sub {
+  font-size: 0.68rem;
+  color: #6c757d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1199.98px) {
+  .kpi-s-faixa { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 575.98px) {
+  .kpi-s-faixa { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ---- Barra de filtros + chips ---- */
+.filtros-barra {
+  padding: 0.6rem 0.75rem 0.7rem;
+  background: #fff;
+  border: 1px solid #e3e8ee;
+  border-radius: 0.6rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.filtros-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.filtros-chips-tit {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #495057;
+}
+.filtro-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  background: #e7f1ff;
+  color: #0a58ca;
+  border: 1px solid #b6d4fe;
+  font-size: 0.75rem;
+  text-decoration: none;
+  transition: background 0.12s ease;
+}
+.filtro-chip:hover {
+  background: #cfe2ff;
+  color: #084298;
+}
+.filtro-chip-x {
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+.filtro-chip-limpar {
+  background: #f8f9fa;
+  color: #6c757d;
+  border-color: #dee2e6;
+}
+
+/* ---- Linha do tempo PCP compacta ---- */
+.pcpq-cab {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.9rem;
+  margin-bottom: 0.35rem;
+}
+.pcpq-cab-tit {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #343a40;
+}
+.pcpq-cab-leg {
+  font-size: 0.68rem;
+  color: #6c757d;
+}
+.pcpq-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.9rem;
+  align-items: stretch;
+}
+.pcpq-grupo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pcpq-grupo-tit {
+  margin-bottom: 0.15rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a94a0;
+}
+.pcpq-cards {
+  display: flex;
+  gap: 0.4rem;
+  flex: 1;
+}
+.pcpq {
+  --pq-cor: #adb5bd;
+  --pq-bg: #fff;
+  position: relative;
+  flex: 1 1 0;
+  min-width: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.4rem 0.55rem 0.4rem;
+  background: var(--pq-bg);
+  border: 1px solid #e3e8ee;
+  border-top: 3px solid var(--pq-cor);
+  border-radius: 0.5rem;
+  text-decoration: none;
+  color: #212529;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.pcpq:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.4rem 0.9rem rgba(16, 24, 40, 0.14);
+  color: #212529;
+}
+.pcpq-passado  { --pq-cor: #868e96; --pq-bg: #f4f5f7; }
+.pcpq-semana   { --pq-cor: #0d6efd; }
+.pcpq-mes      { --pq-cor: #198754; --pq-bg: #eef8f2; }
+.pcpq-seguinte { --pq-cor: #6ea8fe; --pq-bg: #eef4ff; }
+.pcpq-sem      { --pq-cor: #ffc107; --pq-bg: #fff8e1; }
+.pcpq-alerta   { box-shadow: 0 0 0 1px #f1aeb5, 0 1px 2px rgba(16, 24, 40, 0.04); }
+.pcpq-atual {
+  box-shadow: 0 0 0 2px #0d6efd33, 0 0.3rem 0.8rem rgba(13, 110, 253, 0.18);
+  border-color: #9ec5fe;
+}
+.pcpq-ativo {
+  outline: 2px solid #0d6efd;
+  outline-offset: 1px;
+  background: #e7f1ff;
+}
+.pcpq-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+.pcpq-tit {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #495057;
+  white-space: nowrap;
+}
+.pcpq-selo {
+  position: absolute;
+  top: -9px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: #fff3cd;
+  border: 1px solid #ffe69c;
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.5;
+  text-transform: uppercase;
+  color: #b45309;
+}
+.pcpq-selo i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffc107;
+  animation: stat-card-dot-pulsar 1.6s infinite;
+}
+.pcpq-mid {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+.pcpq-n {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.05;
+}
+.pcpq-un {
+  font-size: 0.65rem;
+  color: #6c757d;
+}
+.pcpq-pct {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #0a58ca;
+}
+.pcpq-pct-ok { color: #198754; }
+.pcpq-pct-zero { color: #8a94a0; }
+.pcpq-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.09);
+  overflow: hidden;
+}
+.pcpq-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #198754;
+  transition: width 0.4s ease;
+}
+.pcpq-bar-ok > span {
+  background: linear-gradient(90deg, #198754, #20c997);
+}
+.pcpq-st {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.pcpq-ok, .pcpq-cab-leg .pcpq-ok { color: #0a7a46; }
+.pcpq-ab, .pcpq-cab-leg .pcpq-ab { color: #8a5a00; }
+.pcpq-risco, .pcpq-cab-leg .pcpq-risco { color: #c02a3a; }
+.pcpq-vazio {
+  color: #8a94a0;
+  font-weight: 500;
+}
+.pcpq-dt {
+  font-size: 0.62rem;
+  line-height: 1.25;
+  color: #6c757d;
+}
+
+/* ---- Barra de ações da tabela ---- */
+.listagem-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+}
+.listagem-acoes-info {
+  font-size: 0.85rem;
+}
+.listagem-dica {
+  margin-left: 0.4rem;
+  font-size: 0.72rem;
+  color: #6c757d;
+  cursor: help;
+  border-bottom: 1px dotted #adb5bd;
+}
+.listagem-acoes-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* Listagem Geral — ajustes de telas menores */
+@media (max-width: 767.98px) {
+  .pcpq-grupo {
+    flex: 1 1 100% !important;
+  }
+  .pcpq-cards {
+    flex-wrap: wrap;
+  }
+  .pcpq {
+    flex: 1 1 calc(50% - 0.4rem);
+    min-width: 0;
+  }
+  .kpi-s-valor .kpi-s-val {
+    font-size: 0.95rem;
+  }
+  .kpi-s-val {
+    white-space: normal;
+  }
+}
+
+/* Listagem Geral — telas de notebook (≥1100px): linha do tempo PCP sempre
+   numa linha só (os cards encolhem em vez de quebrar de linha). */
+@media (min-width: 1100px) {
+  .pcpq-wrap {
+    flex-wrap: nowrap;
+  }
+  .pcpq {
+    min-width: 0;
+  }
+  .pcpq-top {
+    min-width: 0;
+  }
+  .pcpq-tit {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+@media (max-width: 1499.98px) {
+  .kpi-s {
+    gap: 0.45rem;
+    padding: 0.45rem 0.6rem;
+  }
+  .kpi-s-ico {
+    font-size: 1.25rem;
+  }
+  .kpi-s-lbl {
+    font-size: 0.64rem;
+    white-space: nowrap;
+  }
+}

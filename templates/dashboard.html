@@ -3,174 +3,245 @@
 {% block title %}Listagem · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Total de pedidos", resumo.total, link=url_for('dashboard', **filtros_status_cards.total), ativo=(not filtros.status)) }}
-  </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Pendentes", resumo.pendente, cor="danger", borda="danger", link=url_for('dashboard', **filtros_status_cards.pendente), ativo=(filtros.status == 'PENDENTE')) }}
-  </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Em tratativa", resumo.em_tratativa, cor="warning", borda="warning", link=url_for('dashboard', **filtros_status_cards.em_tratativa), ativo=(filtros.status == 'EM TRATATIVA')) }}
-  </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Em andamento", resumo.andamento, cor="info", borda="info", link=url_for('dashboard', **filtros_status_cards.andamento), ativo=(filtros.status == 'ANDAMENTO')) }}
-  </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Finalizados", resumo.finalizado, cor="success", borda="success", link=url_for('dashboard', **filtros_status_cards.finalizado), ativo=(filtros.status == 'FINALIZADO')) }}
-  </div>
-  <div class="col-6 col-lg-2">
-    {{ stat_card("Valor total", "R$ " + "{:,.2f}".format(resumo.valor_total).replace(",", "X").replace(".", ",").replace("X", ".")) }}
+{# =====================================================================
+   Redesenho do topo da Listagem Geral (pedido do Bruno, 23/10/2026):
+   "mais intuitivo, dinâmico, eficaz, padrão gerente de PCP/operação" —
+   mesmo raciocínio de antes (resumo por status → filtros → períodos PCP →
+   tabela), só que mais compacto pra a tabela subir na tela: faixa de KPIs,
+   barra de filtros com "Mais filtros" recolhível + chips dos filtros
+   ativos, linha do tempo PCP numa linha só e barra de ações da tabela.
+   O campo "Cliente" saiu do formulário (a Busca já procura por cliente).
+   ===================================================================== #}
+{% macro brl(v) -%}
+R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}
+{%- endmacro %}
+
+{% macro kpi(emoji, titulo, valor, tom, link=None, ativo=False, sub=None) %}
+{% if link %}<a class="kpi-s-link" href="{{ link }}">{% endif %}
+<div class="kpi-s kpi-s-{{ tom }} {% if ativo %}kpi-s-ativo{% endif %}">
+  <span class="kpi-s-ico">{{ emoji }}</span>
+  <div class="kpi-s-txt">
+    <div class="kpi-s-lbl">{{ titulo }}</div>
+    <div class="kpi-s-val">{{ valor }}</div>
+    {% if sub %}<div class="kpi-s-sub">{{ sub }}</div>{% endif %}
   </div>
 </div>
+{% if link %}</a>{% endif %}
+{% endmacro %}
 
-<form class="row g-2 align-items-end mb-3" method="get">
+{# Quadrante PCP compacto: título, nº de pedidos, % concluído, barra e
+   ✔ concluídos / ⏳ em aberto (ou ⚠️ quando o período já passou e ainda
+   tem pedido em aberto). #}
+{% macro pcpq(q, titulo, emoji, tom, datas=None) %}
+{% set alerta = q.passado and q.em_aberto %}
+<a class="pcpq pcpq-{{ tom }} {% if q.ativo %}pcpq-ativo{% endif %} {% if q.atual %}pcpq-atual{% endif %} {% if alerta %}pcpq-alerta{% endif %}"
+   href="{{ url_for('dashboard', **q.filtros_link) }}"
+   title="{{ titulo }}{% if datas %} ({{ datas }}){% endif %} — {{ q.total }} pedido(s){% if q.pct is not none %}, {{ q.concluidos }} concluído(s), {{ q.em_aberto }} em aberto ({{ q.pct }}%){% endif %}.{% if alerta %} ⚠️ Período encerrado com pedidos ainda em aberto.{% endif %} Clique pra filtrar a listagem.">
+  <div class="pcpq-top">
+    <span class="pcpq-tit">{{ emoji }} {{ titulo }}</span>
+    {% if q.atual %}<span class="pcpq-selo"><i></i>Atual</span>{% endif %}
+  </div>
+  <div class="pcpq-mid">
+    <span class="pcpq-n">{{ q.total }}</span><span class="pcpq-un">pedido{{ '' if q.total == 1 else 's' }}</span>
+    {% if q.pct is not none %}<span class="pcpq-pct {% if q.pct >= 100 %}pcpq-pct-ok{% elif q.pct == 0 %}pcpq-pct-zero{% endif %}">{{ q.pct }}%</span>{% endif %}
+  </div>
+  {% if q.pct is not none %}
+  <div class="pcpq-bar {% if q.pct >= 100 %}pcpq-bar-ok{% endif %}"><span style="width: {{ q.pct }}%"></span></div>
+  <div class="pcpq-st">
+    <span class="pcpq-ok">✔ {{ q.concluidos }}</span>
+    {% if q.em_aberto %}<span class="{{ 'pcpq-risco' if alerta else 'pcpq-ab' }}">{{ '⚠️' if alerta else '⏳' }} {{ q.em_aberto }}</span>{% endif %}
+    {% if q.pct >= 100 %}<span class="pcpq-ok">🎉 completo</span>{% endif %}
+  </div>
+  {% else %}
+  <div class="pcpq-st"><span class="pcpq-vazio">{{ 'sem pedidos' if q.total == 0 else 'a planejar' }}</span></div>
+  {% endif %}
+  {% if datas %}<div class="pcpq-dt">{{ datas }}{% if q.dias_restantes is not none %} · {{ 'último dia' if q.dias_restantes == 0 else ('falta 1 dia' if q.dias_restantes == 1 else 'faltam ' ~ q.dias_restantes ~ ' dias') }}{% endif %}</div>{% endif %}
+</a>
+{% endmacro %}
+
+{# ---------- 1. Faixa de KPIs (resumo do recorte atual) ---------- #}
+<div class="kpi-s-faixa mb-3">
+  {{ kpi('📦', 'Pedidos', resumo.total, 'neutro', url_for('dashboard', **filtros_status_cards.total), (not filtros.status), (total_filtrado ~ ' itens listados')) }}
+  {{ kpi('🔴', 'Pendentes', resumo.pendente, 'danger', url_for('dashboard', **filtros_status_cards.pendente), (filtros.status == 'PENDENTE'), (((resumo.pendente * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
+  {{ kpi('🟡', 'Em tratativa', resumo.em_tratativa, 'warning', url_for('dashboard', **filtros_status_cards.em_tratativa), (filtros.status == 'EM TRATATIVA'), (((resumo.em_tratativa * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
+  {{ kpi('🔵', 'Em andamento', resumo.andamento, 'info', url_for('dashboard', **filtros_status_cards.andamento), (filtros.status == 'ANDAMENTO'), (((resumo.andamento * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
+  {{ kpi('✅', 'Finalizados', resumo.finalizado, 'success', url_for('dashboard', **filtros_status_cards.finalizado), (filtros.status == 'FINALIZADO'), (((resumo.finalizado * 100 / resumo.total)|round|int ~ '% do total') if resumo.total else None)) }}
+  {{ kpi('💰', 'Valor total', brl(resumo.valor_total), 'valor', None, False, (('ticket médio ' ~ brl(resumo.valor_total / resumo.total)) if resumo.total else None)) }}
+</div>
+
+{# ---------- 2. Barra de filtros ---------- #}
+<form id="formFiltrosListagem" class="filtros-barra mb-2" method="get">
   {# Quadrante "Sem planejamento PCP" não tem campo próprio no formulário
      (só é acionado pelo clique no quadrante) — precisa desse campo oculto
      pra não se perder quando o usuário mexe em outro filtro e reenvia o
-     formulário (mesmo raciocínio que já vale, de forma visível, pros
-     campos de Planejamento semanal/mensal abaixo). #}
+     formulário. O mesmo vale pro Cliente (campo removido da tela em
+     23/10/2026, mas ainda aceito por link/relatório): se vier preenchido,
+     é preservado aqui e aparece como chip removível. #}
   <input type="hidden" name="sem_planejamento_semanal" value="{{ filtros.sem_planejamento_semanal }}">
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Buscar (pedido, produto, cliente)</label>
-    <input type="text" class="form-control" name="busca" value="{{ filtros.busca }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Cliente</label>
-    <input type="text" class="form-control" name="cliente" value="{{ filtros.cliente }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Vendedor</label>
-    <input type="text" class="form-control" name="vendedor" value="{{ filtros.vendedor }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Status</label>
-    <select class="form-select" name="status">
-      <option value="">Todos</option>
-      {% for s in STATUS_OPCOES %}
-        <option value="{{ s }}" {% if filtros.status == s %}selected{% endif %}>{{ s }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Estação</label>
-    <select class="form-select" name="estacao">
-      <option value="">Todas</option>
-      {% for e in ESTACOES %}
-        <option value="{{ e }}" {% if filtros.estacao == e %}selected{% endif %}>{{ e }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-md-1 d-grid">
-    <button class="btn btn-primary" type="submit" title="Buscar"><i class="bi bi-search"></i></button>
-  </div>
-  <div class="col-md-1 d-grid">
-    <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary" title="Limpar todos os filtros"><i class="bi bi-eraser"></i></a>
-  </div>
-
-  <div class="col-md-3">
-    <label class="form-label small text-muted mb-1">Produto</label>
-    <input type="text" class="form-control" name="produto" value="{{ filtros.produto }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Região</label>
-    <select class="form-select" name="regiao">
-      <option value="">Todas</option>
-      {% for r in REGIOES_OPCOES %}
-        <option value="{{ r }}" {% if filtros.regiao == r %}selected{% endif %}>{{ r }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Incluído de</label>
-    <input type="date" class="form-control" name="data_inicio" value="{{ filtros.data_inicio }}">
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Incluído até</label>
-    <input type="date" class="form-control" name="data_fim" value="{{ filtros.data_fim }}">
-  </div>
-  <div class="col-md-3 form-check ps-4">
-    <input type="checkbox" class="form-check-input" id="filtroAtrasados" name="atrasados" value="1" {% if filtros.atrasados %}checked{% endif %}>
-    <label class="form-check-label" for="filtroAtrasados">🔴 Só pedidos atrasados</label>
+  {% if filtros.cliente %}<input type="hidden" name="cliente" value="{{ filtros.cliente }}">{% endif %}
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-lg-4">
+      <label class="form-label small text-muted mb-1">🔎 Buscar</label>
+      <input type="search" class="form-control form-control-sm" name="busca" value="{{ filtros.busca }}" placeholder="Pedido, produto ou cliente…" autocomplete="off">
+    </div>
+    <div class="col-6 col-lg">
+      <label class="form-label small text-muted mb-1">🧑‍💼 Vendedor</label>
+      <input type="text" class="form-control form-control-sm" name="vendedor" value="{{ filtros.vendedor }}">
+    </div>
+    <div class="col-6 col-lg">
+      <label class="form-label small text-muted mb-1">📌 Status</label>
+      <select class="form-select form-select-sm" name="status">
+        <option value="">Todos</option>
+        {% for s in STATUS_OPCOES %}
+          <option value="{{ s }}" {% if filtros.status == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-lg">
+      <label class="form-label small text-muted mb-1">🏭 Estação</label>
+      <select class="form-select form-select-sm" name="estacao">
+        <option value="">Todas</option>
+        {% for e in ESTACOES %}
+          <option value="{{ e }}" {% if filtros.estacao == e %}selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 col-lg">
+      <label class="form-label small text-muted mb-1">🗺️ Região</label>
+      <select class="form-select form-select-sm" name="regiao">
+        <option value="">Todas</option>
+        {% for r in REGIOES_OPCOES %}
+          <option value="{{ r }}" {% if filtros.regiao == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-auto d-flex gap-1">
+      <button class="btn btn-primary btn-sm" type="submit" title="Aplicar filtros"><i class="bi bi-search"></i> Filtrar</button>
+      <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm" title="Limpar todos os filtros"><i class="bi bi-eraser"></i></a>
+      <button class="btn btn-outline-primary btn-sm position-relative" type="button" data-bs-toggle="collapse" data-bs-target="#filtrosAvancados" aria-expanded="{{ 'true' if n_filtros_avancados else 'false' }}" aria-controls="filtrosAvancados" title="Mais filtros: produto, datas, planejamento PCP, atrasados…">
+        <i class="bi bi-sliders"></i> Mais filtros{% if n_filtros_avancados %} <span class="badge text-bg-primary">{{ n_filtros_avancados }}</span>{% endif %}
+      </button>
+    </div>
   </div>
 
-  <div class="col-md-3">
-    <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
-    <select class="form-select" name="planejamento_semanal">
-      <option value="">Todas as semanas</option>
-      {% for semana in GO_SEMANAS_PCP %}
-        <option value="{{ semana }}" {% if filtros.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-md-2">
-    <label class="form-label small text-muted mb-1">Planejamento mensal (PCP)</label>
-    <input type="month" class="form-control" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
-  </div>
-
-  <div class="col-md-3">
-    <label class="form-label small text-muted mb-1">Pedidos incluídos no mês</label>
-    <input type="month" class="form-control" name="mes_inclusao" value="{{ filtros.mes_inclusao }}">
-  </div>
-  <div class="col-md-3">
-    <label class="form-label small text-muted mb-1">Entrega solicitada no mês</label>
-    <input type="month" class="form-control" name="mes_entrega_cliente" value="{{ filtros.mes_entrega_cliente }}">
+  <div class="collapse {% if n_filtros_avancados %}show{% endif %}" id="filtrosAvancados">
+    <div class="row g-2 align-items-end pt-2 mt-2 border-top">
+      <div class="col-6 col-lg-3">
+        <label class="form-label small text-muted mb-1">📦 Produto</label>
+        <input type="text" class="form-control form-control-sm" name="produto" value="{{ filtros.produto }}">
+      </div>
+      <div class="col-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">📅 Incluído de</label>
+        <input type="date" class="form-control form-control-sm" name="data_inicio" value="{{ filtros.data_inicio }}">
+      </div>
+      <div class="col-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">📅 Incluído até</label>
+        <input type="date" class="form-control form-control-sm" name="data_fim" value="{{ filtros.data_fim }}">
+      </div>
+      <div class="col-6 col-lg-3">
+        <label class="form-label small text-muted mb-1">🗓️ Planejamento semanal (PCP)</label>
+        <select class="form-select form-select-sm" name="planejamento_semanal">
+          <option value="">Todas as semanas</option>
+          {% for semana in GO_SEMANAS_PCP %}
+            <option value="{{ semana }}" {% if filtros.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">🗓️ Planejamento mensal (PCP)</label>
+        <input type="month" class="form-control form-control-sm" name="planejamento_mensal" value="{{ filtros.planejamento_mensal }}">
+      </div>
+      <div class="col-6 col-lg-3">
+        <label class="form-label small text-muted mb-1">🆕 Pedidos incluídos no mês</label>
+        <input type="month" class="form-control form-control-sm" name="mes_inclusao" value="{{ filtros.mes_inclusao }}">
+      </div>
+      <div class="col-6 col-lg-3">
+        <label class="form-label small text-muted mb-1">🚚 Entrega solicitada no mês</label>
+        <input type="month" class="form-control form-control-sm" name="mes_entrega_cliente" value="{{ filtros.mes_entrega_cliente }}">
+      </div>
+      <div class="col-12 col-lg-3">
+        <div class="form-check form-switch">
+          <input type="checkbox" class="form-check-input" role="switch" id="filtroAtrasados" name="atrasados" value="1" {% if filtros.atrasados %}checked{% endif %}>
+          <label class="form-check-label" for="filtroAtrasados">🔴 Só pedidos atrasados</label>
+        </div>
+      </div>
+    </div>
   </div>
 </form>
 
-<p class="text-muted small mb-2">
-  <i class="bi bi-calendar3"></i> Planejamento PCP do mês — clique num quadrante pra filtrar a listagem por aquele período.
-</p>
-<div class="row g-2 mb-3 row-quadrantes-pcp">
-  {# Pedido do Bruno (01/10/2026): card único do mês ANTERIOR (ex.: SETEMBRO)
-     em 1ª posição — cinza/neutro (bg-secondary-subtle) pra diferenciar do
-     verde (mês atual) e do azul (mês seguinte), já que é um período que já
-     passou. #}
-  <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(quadrantes_pcp.mes_anterior.titulo, quadrantes_pcp.mes_anterior.total, sufixo=quadrantes_pcp.mes_anterior.subtitulo, concluidos=quadrantes_pcp.mes_anterior.concluidos, em_aberto=quadrantes_pcp.mes_anterior.em_aberto, pct=quadrantes_pcp.mes_anterior.pct, unidade="pedidos", link=url_for('dashboard', **quadrantes_pcp.mes_anterior.filtros_link), ativo=quadrantes_pcp.mes_anterior.ativo, fundo="secondary-subtle") }}
-  </div>
-  {% for semana in quadrantes_pcp.semanas %}
-  <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(semana.titulo, semana.total, sufixo=semana.subtitulo, concluidos=semana.concluidos, em_aberto=semana.em_aberto, pct=semana.pct, unidade="pedidos", link=url_for('dashboard', **semana.filtros_link), ativo=semana.ativo, piscante=semana.atual) }}
-  </div>
+{# Chips dos filtros ativos — clique no ✕ remove só aquele filtro #}
+{% if chips_filtros %}
+<div class="filtros-chips mb-2">
+  <span class="filtros-chips-tit"><i class="bi bi-funnel-fill"></i> Filtros ativos:</span>
+  {% for c in chips_filtros %}
+  <a class="filtro-chip" href="{{ c.link }}" title="Remover este filtro">{{ c.rotulo }}{% if c.valor %}: <b>{{ c.valor }}</b>{% endif %} <span class="filtro-chip-x">✕</span></a>
   {% endfor %}
-  <div class="col-6 col-md-4 col-lg-2">
-    {# Verde (pedido do Bruno, 17/09/2026: "no quadrante SETEMBRO, inclua na
-       cor verde") — trocado de border-primary pra border-success +
-       bg-success-subtle, mesma técnica de fundo já usada no quadrante do mês
-       seguinte (bg-primary-subtle) logo abaixo, só que verde pro mês
-       ATUAL/corrente. Reposicionado (01/10/2026) pra depois das semanas, já
-       que agora o card único do mês passado abre a linha. #}
-    {{ stat_card(quadrantes_pcp.mes_atual.titulo, quadrantes_pcp.mes_atual.total, sufixo=quadrantes_pcp.mes_atual.subtitulo, concluidos=quadrantes_pcp.mes_atual.concluidos, em_aberto=quadrantes_pcp.mes_atual.em_aberto, pct=quadrantes_pcp.mes_atual.pct, unidade="pedidos", link=url_for('dashboard', **quadrantes_pcp.mes_atual.filtros_link), ativo=quadrantes_pcp.mes_atual.ativo, borda="success", fundo="success-subtle") }}
+  <a class="filtro-chip filtro-chip-limpar" href="{{ url_for('dashboard') }}">Limpar tudo</a>
+</div>
+{% endif %}
+
+{# ---------- 3. Linha do tempo do Planejamento PCP ---------- #}
+<div class="pcpq-cab">
+  <span class="pcpq-cab-tit">📅 Planejamento PCP — clique num período pra filtrar a listagem</span>
+  <span class="pcpq-cab-leg">
+    <span class="pcpq-ok">✔ concluído</span> = todos os itens do pedido já liberados ·
+    <span class="pcpq-ab">⏳ em aberto</span> ·
+    <span class="pcpq-risco">⚠️ período encerrado com pendência</span>
+  </span>
+  {% if quadrantes_pcp.algum_ativo %}
+  <a class="btn btn-outline-secondary btn-sm py-0 ms-auto" href="{{ url_for('dashboard', **quadrantes_pcp.limpar_link) }}"><i class="bi bi-x-circle"></i> Limpar período</a>
+  {% endif %}
+</div>
+<div class="pcpq-wrap row-quadrantes-pcp mb-3">
+  <div class="pcpq-grupo" style="flex: 1 1 110px;">
+    <div class="pcpq-grupo-tit">Mês anterior</div>
+    <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.mes_anterior, quadrantes_pcp.mes_anterior.titulo, '⏪', 'passado') }}</div>
   </div>
-  <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(quadrantes_pcp.mes_seguinte.titulo, quadrantes_pcp.mes_seguinte.total, sufixo=quadrantes_pcp.mes_seguinte.subtitulo, concluidos=quadrantes_pcp.mes_seguinte.concluidos, em_aberto=quadrantes_pcp.mes_seguinte.em_aberto, pct=quadrantes_pcp.mes_seguinte.pct, unidade="pedidos", link=url_for('dashboard', **quadrantes_pcp.mes_seguinte.filtros_link), ativo=quadrantes_pcp.mes_seguinte.ativo, fundo="primary-subtle") }}
+  <div class="pcpq-grupo" style="flex: 4 1 400px;">
+    <div class="pcpq-grupo-tit">Semanas de {{ quadrantes_pcp.mes_atual.titulo|title }}</div>
+    <div class="pcpq-cards">
+      {% for semana in quadrantes_pcp.semanas %}
+      {{ pcpq(semana, semana.titulo, '', 'semana', semana.subtitulo|replace(' a ', ' – ')) }}
+      {% endfor %}
+    </div>
   </div>
-  {# Pedido do Bruno (21/09/2026): quadrante ao lado de OUTUBRO pra achar
-     pedidos com item ainda sem Planejamento semanal (PCP) nenhum — cor de
-     alerta (âmbar) porque é uma pendência a resolver, diferente dos outros
-     que só mostram período. #}
-  <div class="col-6 col-md-4 col-lg-2">
-    {{ stat_card(quadrantes_pcp.sem_planejamento.titulo, quadrantes_pcp.sem_planejamento.total, sufixo=quadrantes_pcp.sem_planejamento.subtitulo, unidade="pedidos", link=url_for('dashboard', **quadrantes_pcp.sem_planejamento.filtros_link), ativo=quadrantes_pcp.sem_planejamento.ativo, borda="warning", fundo="warning-subtle") }}
+  <div class="pcpq-grupo" style="flex: 2 1 210px;">
+    <div class="pcpq-grupo-tit">Visão mensal</div>
+    <div class="pcpq-cards">
+      {{ pcpq(quadrantes_pcp.mes_atual, quadrantes_pcp.mes_atual.titulo, '📅', 'mes') }}
+      {{ pcpq(quadrantes_pcp.mes_seguinte, quadrantes_pcp.mes_seguinte.titulo, '⏩', 'seguinte') }}
+    </div>
+  </div>
+  <div class="pcpq-grupo" style="flex: 1 1 110px;">
+    <div class="pcpq-grupo-tit">Pendência</div>
+    <div class="pcpq-cards">{{ pcpq(quadrantes_pcp.sem_planejamento, 'Sem planejamento', '⚠️', 'sem') }}</div>
   </div>
 </div>
 
-<div class="d-flex justify-content-end align-items-center gap-2 mb-3">
-  <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#listagemGeralWrap" data-tela-cheia-titulo="Listagem Geral" title="Abre a listagem em tela cheia (Esc para sair)">
-    <i class="bi bi-arrows-fullscreen"></i> Tela cheia
-  </button>
-  <button type="button" id="btnResetLargurasColunas" class="btn btn-outline-secondary btn-sm" title="Redefinir a largura de todas as colunas para o padrão">
-    <i class="bi bi-arrows-angle-contract"></i> Redefinir colunas
-  </button>
-  <a href="{{ url_for('relatorio_listagem_csv', **filtros) }}" class="btn btn-outline-secondary btn-sm">
-    <i class="bi bi-filetype-csv"></i> Exportar CSV
-  </a>
-  <a href="{{ url_for('relatorio_listagem_xlsx', **filtros) }}" class="btn btn-outline-secondary btn-sm">
-    <i class="bi bi-file-earmark-excel"></i> Exportar Excel
-  </a>
-  <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalRelatorioSemanalPCP">
-    <i class="bi bi-file-earmark-pdf"></i> Emitir relatório
-  </button>
+{# ---------- 4. Barra de ações da tabela ---------- #}
+<div class="listagem-acoes mb-2">
+  <div class="listagem-acoes-info">
+    📋 <strong>Listagem Geral</strong>
+    <span class="text-muted">· {{ total_filtrado }} iten{{ '' if total_filtrado == 1 else 's' }} em {{ resumo.total }} pedido{{ '' if resumo.total == 1 else 's' }}</span>
+    <span class="listagem-dica" title="Dicas: arraste a borda direita de qualquer coluna pra ajustar a largura (o site lembra o ajuste). Passe o mouse em cima de um texto cortado (…) pra ver o conteúdo completo. Clique no título da coluna pra ordenar.">ⓘ dicas</span>
+  </div>
+  <div class="listagem-acoes-btns">
+    <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#listagemGeralWrap" data-tela-cheia-titulo="Listagem Geral" title="Abre a listagem em tela cheia (Esc para sair)">
+      <i class="bi bi-arrows-fullscreen"></i> Tela cheia
+    </button>
+    <button type="button" id="btnResetLargurasColunas" class="btn btn-outline-secondary btn-sm" title="Redefinir a largura de todas as colunas para o padrão">
+      <i class="bi bi-arrows-angle-contract"></i> Redefinir colunas
+    </button>
+    <a href="{{ url_for('relatorio_listagem_csv', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-filetype-csv"></i> CSV
+    </a>
+    <a href="{{ url_for('relatorio_listagem_xlsx', **filtros) }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-file-earmark-excel"></i> Excel
+    </a>
+    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalRelatorioSemanalPCP">
+      <i class="bi bi-file-earmark-pdf"></i> Emitir relatório
+    </button>
+  </div>
 </div>
 
 <!-- Modal "Emitir relatório" (pedido do Bruno, 14/09/2026): relatório PDF
@@ -244,10 +315,6 @@
     </div>
   </div>
 </div>
-
-<p class="text-muted small mb-2">
-  <i class="bi bi-arrows"></i> Dica: arraste a borda direita de qualquer coluna pra ajustar a largura — o site lembra do ajuste da próxima vez que você abrir esta tela. Passe o mouse em cima de um texto cortado (…) pra ver o conteúdo completo.
-</p>
 
 <div class="table-responsive tabela-listagem-geral-wrap" id="listagemGeralWrap">
   <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral" id="tabelaListagemGeral">
@@ -363,6 +430,18 @@
 
 {% endblock %}
 {% block scripts %}
+<script>
+// Filtros dinâmicos (23/10/2026): selects, datas/meses e o interruptor de
+// atrasados aplicam sozinhos ao mudar; campos de texto continuam por Enter/
+// botão Filtrar.
+(function() {
+  const f = document.getElementById("formFiltrosListagem");
+  if (!f) return;
+  f.querySelectorAll("select, input[type=date], input[type=month], input[type=checkbox]").forEach(function(el) {
+    el.addEventListener("change", function() { f.requestSubmit(); });
+  });
+})();
+</script>
 <script>
 (function() {
   // Larguras de coluna ajustáveis na Listagem Geral: arrasta a borda direita

@@ -9434,6 +9434,62 @@ def _filtrar_pedidos(args):
     return query, filtros
 
 
+def _chips_filtros_listagem(filtros):
+    """Chips dos filtros ativos da Listagem Geral (redesenho de 23/10/2026).
+
+    Retorna (lista de chips, nº de filtros "avançados" ativos). Cada chip tem
+    `rotulo`, `valor` (texto amigável) e `link` — a MESMA tela sem aquele
+    filtro, mantendo os demais. Os filtros "avançados" são os que ficam no
+    painel recolhível "Mais filtros"."""
+    def _data(v):
+        try:
+            return datetime.strptime(v, "%Y-%m-%d").strftime("%d/%m/%Y")
+        except ValueError:
+            return v
+
+    def _mes(v):
+        try:
+            return datetime.strptime(v, "%Y-%m").strftime("%m/%Y")
+        except ValueError:
+            return v
+
+    definicoes = [
+        # (chave, rótulo, formatador, avançado?)
+        ("busca", "🔎 Busca", None, False),
+        ("cliente", "🏢 Cliente", None, False),
+        ("vendedor", "🧑‍💼 Vendedor", None, False),
+        ("status", "📌 Status", None, False),
+        ("estacao", "🏭 Estação", None, False),
+        ("regiao", "🗺️ Região", None, False),
+        ("produto", "📦 Produto", None, True),
+        ("data_inicio", "📅 Incluído de", _data, True),
+        ("data_fim", "📅 Incluído até", _data, True),
+        ("planejamento_semanal", "🗓️ Semana PCP", None, True),
+        ("planejamento_mensal", "🗓️ Mês PCP", _mes, True),
+        ("mes_inclusao", "🆕 Incluídos em", _mes, True),
+        ("mes_entrega_cliente", "🚚 Entrega em", _mes, True),
+        ("atrasados", "🔴 Só atrasados", lambda v: "", True),
+        ("sem_planejamento_semanal", "⚠️ Sem planejamento PCP", lambda v: "", False),
+    ]
+    chips = []
+    n_avancados = 0
+    for chave, rotulo, fmt, avancado in definicoes:
+        valor = (filtros.get(chave) or "").strip()
+        if not valor:
+            continue
+        if avancado and chave not in ("planejamento_semanal", "planejamento_mensal"):
+            n_avancados += 1
+        chips.append(
+            {
+                "chave": chave,
+                "rotulo": rotulo,
+                "valor": fmt(valor) if fmt else valor,
+                "link": url_for("dashboard", **dict(filtros, **{chave: ""})),
+            }
+        )
+    return chips, n_avancados
+
+
 def _quadrantes_planejamento_semanal(filtros, hoje=None):
     """Quadrantes clicáveis no topo da Listagem Geral de Produção (pedido do
     Bruno, 10/09/2026): 1 quadrante pro mês corrente inteiro + 1 por semana
@@ -9589,6 +9645,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
         **montar(planejamento_mensal=valor_mes_anterior),
         "ativo": filtros.get("planejamento_mensal") == valor_mes_anterior,
         "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes_anterior),
+        "passado": True,
     }
 
     valor_mes = f"{ano}-{mes:02d}"
@@ -9598,6 +9655,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
         **montar(planejamento_mensal=valor_mes),
         "ativo": filtros.get("planejamento_mensal") == valor_mes,
         "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes),
+        "passado": False,
     }
 
     semanas = []
@@ -9619,6 +9677,12 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
                 "ativo": filtros.get("planejamento_semanal") == rotulo,
                 "filtros_link": dict(filtros_outros, planejamento_semanal=rotulo),
                 "atual": inicio_semana <= hoje <= fim_semana,
+                # Redesenho da Listagem Geral (23/10/2026): `passado` = a
+                # semana já terminou — se ainda tem pedido em aberto, o card
+                # sinaliza (⚠️) que o período fechou com pendência; `dias_
+                # restantes` alimenta o "termina em N dias" da semana atual.
+                "passado": fim_semana < hoje,
+                "dias_restantes": (fim_semana - hoje).days if inicio_semana <= hoje <= fim_semana else None,
             }
         )
 
@@ -9631,6 +9695,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
         **montar(planejamento_mensal=valor_mes_seguinte),
         "ativo": filtros.get("planejamento_mensal") == valor_mes_seguinte,
         "filtros_link": dict(filtros_outros, planejamento_mensal=valor_mes_seguinte),
+        "passado": False,
     }
 
     # Quadrante "Sem planejamento PCP" (pedido do Bruno, 21/09/2026, "ao lado
@@ -9644,16 +9709,26 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
         "titulo": "SEM PLANEJAMENTO PCP",
         "subtitulo": "ainda não planejados por semana",
         "total": resumir(sem_planejamento_semanal="1")[0],
+        "concluidos": None,
+        "pct": None,
+        "passado": False,
         "ativo": filtros.get("sem_planejamento_semanal") == "1",
         "filtros_link": dict(filtros_outros, sem_planejamento_semanal="1"),
     }
 
+    algum_ativo = any(
+        q["ativo"] for q in [mes_anterior, mes_atual, mes_seguinte, sem_planejamento, *semanas]
+    )
     return {
         "mes_anterior": mes_anterior,
         "mes_atual": mes_atual,
         "semanas": semanas,
         "mes_seguinte": mes_seguinte,
         "sem_planejamento": sem_planejamento,
+        # Botão "limpar período" do cabeçalho dos quadrantes: mantém os
+        # OUTROS filtros e só tira o recorte de período.
+        "algum_ativo": algum_ativo,
+        "limpar_link": dict(filtros_outros),
     }
 
 
@@ -19775,8 +19850,15 @@ def register_routes(app):
         # 10/09/2026) — ver _quadrantes_planejamento_semanal.
         quadrantes_pcp = _quadrantes_planejamento_semanal(filtros)
 
+        # Redesenho da Listagem Geral (23/10/2026): "chips" dos filtros ativos
+        # (cada um com link pra remover só aquele filtro) + quantos filtros
+        # avançados estão em uso (abre o painel "Mais filtros" sozinho).
+        chips_filtros, n_filtros_avancados = _chips_filtros_listagem(filtros)
+
         return render_template(
             "dashboard.html",
+            chips_filtros=chips_filtros,
+            n_filtros_avancados=n_filtros_avancados,
             linhas=linhas_pagina,
             resumo=resumo,
             page=page,
