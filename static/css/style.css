@@ -3244,3 +3244,41 @@ a.pn-kpi:hover {
 @media (max-width:1199px){.d360-pulso{grid-template-columns:repeat(2,minmax(0,1fr))}.atr-corpo{grid-template-columns:1fr 1fr}}
 @media (max-width:767px){.d360-pulso,.d360-tiles,.atr-resumo,.atr-corpo{grid-template-columns:1fr 1fr}.atr-corpo{grid-template-columns:1fr}.d360-barra-linha{grid-template-columns:70px 1fr 96px}.atr-faixa-t{min-width:100%}}
 @media (max-width:480px){.d360-pulso{grid-template-columns:1fr}}
+
+/* ===== Faixa do Painel: lead time 3 áreas + Risco por estação (23/10/2026) ===== */
+.pn-kpi-lt { grid-column: span 2; border-left-color: #6366f1; }
+.pn-kpi-lt .pn-kpi-corpo { flex: 1; }
+.pn-lt3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; margin-top: .15rem; }
+.pn-lt3-col { display: flex; flex-direction: column; min-width: 0; padding: .1rem .5rem; border-left: 2px solid #e5e7eb; }
+.pn-lt3-col:first-child { border-left: 0; padding-left: 0; }
+.pn-lt3-rot { font-size: .68rem; font-weight: 700; color: #64748b; white-space: nowrap; }
+.pn-lt3-val { font-size: 1.35rem; font-weight: 800; line-height: 1.15; color: var(--pn-ink); }
+.pn-lt3-val small { font-size: .72rem; font-weight: 600; color: #94a3b8; margin-left: 1px; }
+.pn-lt3-total .pn-lt3-val { color: #4338ca; }
+.pn-lt3-ref { font-size: .68rem; color: #94a3b8; white-space: nowrap; }
+@media (max-width: 767px) { .pn-kpi-lt { grid-column: span 2; } }
+@media (max-width: 420px) { .pn-kpi-lt { grid-column: auto; } }
+
+.pn-risco-est { margin-top: .75rem; }
+.pre-resumo { display: flex; flex-wrap: wrap; gap: .35rem; }
+.pre-chip { font-size: .74rem; background: #eef1f5; color: #343a40; border-radius: 12px; padding: 2px 10px; white-space: nowrap; }
+.pre-chip-bad { background: #f8d7da; color: #842029; }
+.pre-chip-warn { background: #fff3cd; color: #8a6d00; }
+.pre-tabela th { font-size: .7rem; white-space: nowrap; color: #495057; }
+.pre-tabela td { font-size: .82rem; padding-top: .22rem; padding-bottom: .22rem; }
+.pre-grp { background: #f8f9fa; border-bottom: 1px solid #dee2e6; text-transform: uppercase; letter-spacing: .03em; font-size: .64rem !important; }
+.pre-nome { font-weight: 600; white-space: nowrap; }
+.pre-nome a { text-decoration: none; }
+.pre-zero { color: #ced4da; }
+.pre-critico { background: #fff6f6; }
+.pre-atencao { background: #fffdf3; }
+.pre-total td { font-weight: 700; background: #f1f3f5; border-top: 2px solid #dee2e6; }
+.pre-barra { display: inline-block; vertical-align: middle; width: 42px; height: 6px; background: #e9ecef; border-radius: 4px; margin-right: 4px; overflow: hidden; }
+.pre-barra-f { display: block; height: 100%; border-radius: 4px; }
+.pre-barra-ok { background: #198754; } .pre-barra-atencao { background: #e0a800; } .pre-barra-critico { background: #dc3545; }
+@media (max-width: 767px) {
+  .pn-lt3 { gap: .2rem; }
+  .pn-lt3-col { padding: .1rem .3rem; }
+  .pn-lt3-val { font-size: 1.1rem; }
+  .pn-lt3-ref { white-space: normal; font-size: .62rem; line-height: 1.2; }
+}

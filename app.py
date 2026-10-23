@@ -408,6 +408,7 @@ def _contexto_painel(args, ultima_visita=None):
         backlog_estacao=_backlog_por_estacao(),
         pedidos_atrasados=pedidos_atrasados,
         atrasados_360=_atrasados_contextualizados(hoje),
+        risco_estacoes=_risco_por_estacao_painel(hoje),
         desempenho_360=_visao_360_desempenho(hoje),
         projecao_pcp=_projecao_pcp(),
         projecao_pcp_mensal=_projecao_pcp_mensal(pcp_de, pcp_ate),
@@ -6284,6 +6285,115 @@ _MOTIVOS_ATRASO = {
 }
 
 _RNC_VAZIAS = {"", "-", "—", "N/A", "NA", "NAO", "NÃO", "NENHUMA", "NENHUM", "0"}
+
+
+def _risco_por_estacao_painel(hoje=None):
+    """Gestão de risco POR ESTAÇÃO (Painel, pedido do Bruno, 23/10/2026): um
+    balanço compacto de todas as estações cruzando (1) o que está pendente e em
+    produção, (2) os prazos de entrega dos clientes e (3) a projeção do PCP
+    (liberação prevista dos itens em aberto: esta semana / resto do mês /
+    próximos meses / sem previsão).
+
+    Só itens em aberto (status != FINALIZADO). Um item está "em risco" quando:
+      - a liberação prevista pelo PCP já venceu (atrasado), ou
+      - o prazo do cliente já venceu, ou
+      - a liberação prevista cai DEPOIS do prazo do cliente (a projeção do PCP
+        estoura a entrega — o cenário que ninguém enxerga até o dia).
+    Semáforo da estação: 🔴 crítico = risco >= 30% da carga, ou atraso junto
+    com projeção estourando o cliente; 🟡 atenção = qualquer risco/tratativa;
+    🟢 ok. Linhas ordenadas do mais crítico para o mais tranquilo."""
+    hoje = hoje or date.today()
+    ignorar = {"OUTROS", "PROJETO ESPECIAL"}
+    itens = (
+        ItemPedido.query.options(selectinload(ItemPedido.pedido))
+        .filter(ItemPedido.status_producao != "FINALIZADO")
+        .all()
+    )
+    # fim da semana corrente (domingo a sábado — mesma convenção do PCP)
+    dias_ate_sabado = (5 - hoje.weekday()) % 7
+    fim_semana = hoje + timedelta(days=dias_ate_sabado)
+    fim_mes = date(hoje.year, hoje.month, monthrange(hoje.year, hoje.month)[1])
+    limite_cli = hoje + timedelta(days=7)
+
+    linhas = {}
+    for i in itens:
+        nome = (i.estacao or "").strip() or "Sem estação"
+        if nome.upper() in ignorar:
+            continue
+        d = linhas.setdefault(nome, {
+            "nome": nome, "pendente": 0, "producao": 0, "tratativa": 0, "abertos": 0,
+            "atrasados": 0, "cli_vencido": 0, "cli_7d": 0, "estoura": 0, "em_risco": 0, "valor_risco": 0.0,
+            "p_semana": 0, "p_mes": 0, "p_prox": 0, "p_sem": 0,
+        })
+        d["abertos"] += 1
+        if i.status_producao == "PENDENTE":
+            d["pendente"] += 1
+        elif i.status_producao == "EM TRATATIVA":
+            d["tratativa"] += 1
+            d["producao"] += 1
+        else:
+            d["producao"] += 1
+
+        prev = i.liberacao_prevista
+        cli = i.pedido.data_cliente if i.pedido else None
+        atrasado = bool(prev and prev < hoje)
+        cli_venc = bool(cli and cli < hoje)
+        estoura = bool(prev and cli and prev > cli and cli >= hoje)
+        if atrasado:
+            d["atrasados"] += 1
+        if cli_venc:
+            d["cli_vencido"] += 1
+        if cli and hoje <= cli <= limite_cli:
+            d["cli_7d"] += 1
+        if estoura:
+            d["estoura"] += 1
+        if atrasado or cli_venc or estoura:
+            d["em_risco"] += 1
+            d["valor_risco"] += i.valor_total or 0
+
+        if prev is None:
+            d["p_sem"] += 1
+        elif prev < hoje:
+            pass  # atrasado já contado acima — não é "projeção"
+        elif prev <= fim_semana:
+            d["p_semana"] += 1
+        elif prev <= fim_mes:
+            d["p_mes"] += 1
+        else:
+            d["p_prox"] += 1
+
+    resultado = []
+    for d in linhas.values():
+        share = d["em_risco"] / d["abertos"] if d["abertos"] else 0
+        if share >= 0.30 or (d["atrasados"] and d["estoura"]):
+            sem = "critico"
+        elif d["em_risco"] or d["tratativa"]:
+            sem = "atencao"
+        else:
+            sem = "ok"
+        d["risco_pct"] = round(100 * share)
+        d["valor_risco"] = round(d["valor_risco"], 2)
+        d["semaforo"] = sem
+        d["curto"] = _nome_curto_estacao_painel(d["nome"])
+        d["emoji"] = _emoji_estacao_painel(d["nome"])
+        d["url"] = url_for("estacao_kanban", nome=d["nome"]) if Estacao.query.filter_by(nome=d["nome"]).first() else None
+        resultado.append(d)
+    ordem = {"critico": 0, "atencao": 1, "ok": 2}
+    resultado.sort(key=lambda d: (ordem[d["semaforo"]], -d["em_risco"], -d["abertos"]))
+
+    chaves = ("pendente", "producao", "tratativa", "abertos", "atrasados", "cli_vencido", "cli_7d", "estoura",
+              "em_risco", "p_semana", "p_mes", "p_prox", "p_sem")
+    total = {k: sum(d[k] for d in resultado) for k in chaves}
+    total["valor_risco"] = round(sum(d["valor_risco"] for d in resultado), 2)
+    total["risco_pct"] = round(100 * total["em_risco"] / total["abertos"]) if total["abertos"] else 0
+    return {
+        "estacoes": resultado,
+        "total": total,
+        "n_criticas": sum(1 for d in resultado if d["semaforo"] == "critico"),
+        "n_atencao": sum(1 for d in resultado if d["semaforo"] == "atencao"),
+        "fim_semana": fim_semana,
+        "mes_curto": MESES_PT[hoje.month - 1],
+    }
 
 
 def _fim_semana_pcp(rotulo):

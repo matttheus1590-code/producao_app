@@ -47,13 +47,117 @@
   {{ pn_kpi('🧮', backlog, 'Backlog', 'pedidos não finalizados', 'neutro') }}
   {{ pn_kpi('🔴' if atrasados else '✅', atrasados, 'Atrasados', ('ver lista abaixo' if atrasados else 'nenhum atrasado'), 'bad' if atrasados else 'ok', '#sec-atrasados') }}
   {{ pn_kpi('🟡' if vencendo else '✅', vencendo, 'Vencendo', ('prazo nos próximos dias' if vencendo else 'nenhum vencendo'), 'warn' if vencendo else 'ok', '#sec-risco') }}
-  {{ pn_kpi('⚠️' if (otd is not none and otd < GO_OTD_META_PERCENTUAL) else '🎯', ((otd ~ '%') if otd is not none else '—'), 'OTD (itens)', ('meta ' ~ GO_OTD_META_PERCENTUAL ~ '%'), ('ok' if (otd is not none and otd >= GO_OTD_META_PERCENTUAL) else ('bad' if otd is not none else 'neutro')), '#sec-otd') }}
-  {{ pn_kpi('⏱️', ((lead_time_medio ~ 'd') if lead_time_medio is not none else '—'), 'Lead time médio', 'média geral dos itens', 'neutro', '#grp-lt') }}
+  {# OTD saiu desta faixa por enquanto (Bruno, 23/10/2026: "até estabilizar os números de OTD") — segue na seção Desempenho 360. #}
+  {# Lead time médio dividido em 3 áreas (fila / chão / total), com referência do mês anterior. #}
+  {% set ltp = lead_time_agrupado.producao %}
+  <a class="pn-kpi pn-kpi-lt" href="#grp-lt" title="Lead time de produção: fila de espera (inclusão → início), chão de fábrica (início → término) e total (fila + chão). Mês atual é parcial; a linha pequena é o mês anterior.">
+    <span class="pn-kpi-emoji">⏱️</span>
+    <span class="pn-kpi-corpo">
+      <span class="pn-kpi-rotulo">Lead time médio · {{ lead_time_agrupado.atual_curto }}</span>
+      <span class="pn-lt3">
+        {% for rot, m, tom in [('⏳ Fila', ltp.fila, 'fila'), ('🏭 Chão', ltp.chao, 'chao'), ('Σ Total', ltp.total, 'total')] %}
+        <span class="pn-lt3-col pn-lt3-{{ tom }}">
+          <span class="pn-lt3-rot">{{ rot }}</span>
+          <span class="pn-lt3-val">{% if m.atual_media is not none %}{{ m.atual_media }}<small>d</small>{% else %}—{% endif %}</span>
+          <span class="pn-lt3-ref" title="Mês anterior ({{ lead_time_agrupado.mes_curto }}){% if m.n %} · {{ m.mes_n }} itens{% endif %}">
+            {{ lead_time_agrupado.mes_curto }}: {% if m.mes_media is not none %}{{ m.mes_media }}d{% else %}—{% endif %}
+            {% if m.delta_atual_mes_sentido == 'sobe' %}<b class="text-danger">▲</b>{% elif m.delta_atual_mes_sentido == 'desce' %}<b class="text-success">▼</b>{% endif %}
+          </span>
+        </span>
+        {% endfor %}
+      </span>
+    </span>
+  </a>
   {{ pn_kpi('💰', ('R$ ' ~ "{:,.0f}".format(resumo_mes_atual_pcp.valor_total).replace(",", ".")), 'Faturamento previsto', (resumo_mes_atual_pcp.pedidos_total ~ ' pedido(s) · ' ~ mes_atual_label), 'ok', '#grp-fin') }}
   {{ pn_kpi('💼', ('R$ ' ~ "{:,.0f}".format(resumo.valor_total).replace(",", ".")), 'Carteira total', 'valor de todos os pedidos', 'neutro') }}
 </div>
 
 
+
+{# ===== Gestão de risco por estação (Bruno, 23/10/2026): balanço de todas as estações —
+   pendente e em produção x prazos de entrega dos clientes x projeção do PCP. ===== #}
+{% set RE = risco_estacoes %}
+{% set RT = RE.total %}
+<div class="card pn-sec pn-t-amber pn-risco-est" id="sec-risco-estacoes" data-sec="risco-estacoes">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">🏭 Risco por estação — pendente × produção × prazo do cliente × projeção PCP</h6>
+      <div class="pre-resumo">
+        <span class="pre-chip" title="Itens em aberto (todas as estações)">📦 <b>{{ RT.abertos }}</b> itens em aberto</span>
+        <span class="pre-chip pre-chip-bad" title="Itens atrasados, com prazo do cliente vencido ou cuja liberação prevista passa do prazo do cliente">⚠️ <b>{{ RT.em_risco }}</b> em risco ({{ RT.risco_pct }}%)</span>
+        {% if RE.n_criticas %}<span class="pre-chip pre-chip-bad">🔴 {{ RE.n_criticas }} estação(ões) crítica(s)</span>{% endif %}
+        {% if RE.n_atencao %}<span class="pre-chip pre-chip-warn">🟡 {{ RE.n_atencao }} em atenção</span>{% endif %}
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle pre-tabela mb-0">
+        <thead>
+          <tr>
+            <th rowspan="2">Estação</th>
+            <th colspan="2" class="text-center pre-grp">Carga em aberto</th>
+            <th colspan="3" class="text-center pre-grp">Prazo do cliente</th>
+            <th colspan="4" class="text-center pre-grp">Projeção PCP (liberação prevista)</th>
+            <th rowspan="2" class="text-center" title="Itens atrasados, com prazo do cliente vencido ou com liberação prevista depois do prazo do cliente">Em risco</th>
+            <th rowspan="2" class="text-center">Status</th>
+          </tr>
+          <tr>
+            <th class="text-center" title="Itens aguardando início">Pendente</th>
+            <th class="text-center" title="Itens em produção/inspeção (inclui os em tratativa)">Produção</th>
+            <th class="text-center" title="Liberação prevista pelo PCP já vencida">Atrasado</th>
+            <th class="text-center" title="Prazo do cliente vencido ou nos próximos 7 dias">Cliente ≤7d</th>
+            <th class="text-center" title="A liberação prevista pelo PCP cai DEPOIS do prazo do cliente">PCP estoura</th>
+            <th class="text-center" title="Até {{ RE.fim_semana.strftime('%d/%m') }}">Semana</th>
+            <th class="text-center" title="Resto de {{ RE.mes_curto }}">Mês</th>
+            <th class="text-center" title="Meses seguintes">Próx.</th>
+            <th class="text-center" title="Itens sem liberação prevista">Sem prev.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in RE.estacoes %}
+          <tr class="pre-linha pre-{{ e.semaforo }}">
+            <td class="pre-nome">{{ e.emoji }} {% if e.url %}<a href="{{ e.url }}">{{ e.curto }}</a>{% else %}{{ e.curto }}{% endif %}</td>
+            <td class="text-center">{{ e.pendente }}</td>
+            <td class="text-center">{{ e.producao }}{% if e.tratativa %}<small class="text-warning" title="{{ e.tratativa }} em tratativa"> ·{{ e.tratativa }}🤝</small>{% endif %}</td>
+            <td class="text-center">{% if e.atrasados %}<span class="badge bg-danger">{{ e.atrasados }}</span>{% else %}<span class="pre-zero">0</span>{% endif %}</td>
+            <td class="text-center">{% if e.cli_vencido or e.cli_7d %}<span class="badge bg-warning text-dark" title="{{ e.cli_vencido }} vencido(s) · {{ e.cli_7d }} nos próximos 7 dias">{{ e.cli_vencido + e.cli_7d }}</span>{% else %}<span class="pre-zero">0</span>{% endif %}</td>
+            <td class="text-center">{% if e.estoura %}<span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle">{{ e.estoura }}</span>{% else %}<span class="pre-zero">0</span>{% endif %}</td>
+            <td class="text-center">{{ e.p_semana }}</td>
+            <td class="text-center">{{ e.p_mes }}</td>
+            <td class="text-center">{{ e.p_prox }}</td>
+            <td class="text-center">{% if e.p_sem %}<span class="text-muted">{{ e.p_sem }}</span>{% else %}<span class="pre-zero">0</span>{% endif %}</td>
+            <td class="text-center" title="R$ {{ '{:,.0f}'.format(e.valor_risco).replace(',', '.') }} em itens em risco">
+              <span class="pre-barra"><span class="pre-barra-f pre-barra-{{ e.semaforo }}" style="width: {{ e.risco_pct }}%"></span></span>
+              <b>{{ e.em_risco }}</b> <small class="text-muted">({{ e.risco_pct }}%)</small>
+            </td>
+            <td class="text-center"><span class="d360-semaforo d360-semaforo-{{ e.semaforo }}">{{ {'ok': '🟢 OK', 'atencao': '🟡 Atenção', 'critico': '🔴 Crítico'}[e.semaforo] }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="12" class="text-center text-muted py-3">Nenhum item em aberto nas estações.</td></tr>
+          {% endfor %}
+        </tbody>
+        {% if RE.estacoes %}
+        <tfoot>
+          <tr class="pre-total">
+            <td>Total</td>
+            <td class="text-center">{{ RT.pendente }}</td>
+            <td class="text-center">{{ RT.producao }}</td>
+            <td class="text-center">{{ RT.atrasados }}</td>
+            <td class="text-center">{{ RT.cli_vencido + RT.cli_7d }}</td>
+            <td class="text-center">{{ RT.estoura }}</td>
+            <td class="text-center">{{ RT.p_semana }}</td>
+            <td class="text-center">{{ RT.p_mes }}</td>
+            <td class="text-center">{{ RT.p_prox }}</td>
+            <td class="text-center">{{ RT.p_sem }}</td>
+            <td class="text-center"><b>{{ RT.em_risco }}</b> <small class="text-muted">({{ RT.risco_pct }}%)</small></td>
+            <td class="text-center small text-muted">R$ {{ '{:,.0f}'.format(RT.valor_risco).replace(',', '.') }}</td>
+          </tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </div>
+    <p class="text-muted small mb-0 mt-2">Itens em aberto por estação. <b>Em risco</b> = atrasado no PCP, prazo do cliente vencido ou liberação prevista depois do prazo do cliente. Semana = até {{ RE.fim_semana.strftime('%d/%m') }}. Ordenado do mais crítico ao mais tranquilo; clique na estação para abrir o Kanban.</p>
+  </div>
+</div>
 
 <div class="pn-grupo" id="grp-fin">
   <span class="pn-grupo-emoji">💰</span>
