@@ -3282,3 +3282,17 @@ a.pn-kpi:hover {
   .pn-lt3-val { font-size: 1.1rem; }
   .pn-lt3-ref { white-space: normal; font-size: .62rem; line-height: 1.2; }
 }
+
+/* ===== Capacidade das estações (Painel, 23/10/2026) ===== */
+.pn-cap-est { margin-top: .75rem; }
+.pre-cel { display: inline-flex; align-items: baseline; gap: 3px; min-width: 38px; justify-content: center; border-radius: 8px; padding: 1px 7px; font-weight: 700; font-size: .8rem; }
+.pre-cel small { font-size: .62rem; font-weight: 600; opacity: .8; }
+.pre-cel-ok { background: #d1e7dd; color: #0f5132; }
+.pre-cel-apertado { background: #fff3cd; color: #7a5d00; }
+.pre-cel-sobrecarga { background: #f8d7da; color: #842029; }
+.pre-cel-sem_base { background: #e9ecef; color: #495057; }
+.pre-cap-sobrecarga { background: #fff6f6; }
+.pre-cap-apertado { background: #fffdf3; }
+.pre-spark { display: inline-flex; align-items: flex-end; gap: 1px; height: 14px; margin-left: 6px; vertical-align: middle; }
+.pre-spark i { display: block; width: 3px; background: #a5b4fc; border-radius: 1px; }
+.pre-spark i:last-child { background: #6366f1; }

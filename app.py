@@ -409,6 +409,7 @@ def _contexto_painel(args, ultima_visita=None):
         pedidos_atrasados=pedidos_atrasados,
         atrasados_360=_atrasados_contextualizados(hoje),
         risco_estacoes=_risco_por_estacao_painel(hoje),
+        capacidade_estacoes=_capacidade_estacoes_painel(hoje),
         desempenho_360=_visao_360_desempenho(hoje),
         projecao_pcp=_projecao_pcp(),
         projecao_pcp_mensal=_projecao_pcp_mensal(pcp_de, pcp_ate),
@@ -6393,6 +6394,141 @@ def _risco_por_estacao_painel(hoje=None):
         "n_atencao": sum(1 for d in resultado if d["semaforo"] == "atencao"),
         "fim_semana": fim_semana,
         "mes_curto": MESES_PT[hoje.month - 1],
+    }
+
+
+def _capacidade_estacoes_painel(hoje=None, semanas_hist=8, semanas_proj=4):
+    """Capacidade por estação (Painel, pedido do Bruno, 23/10/2026): quanto
+    cada estação costuma entregar por semana x o que o PCP projetou pra ela
+    nas próximas semanas.
+
+    A tabela de Estações não guarda uma "capacidade" cadastrada, então ela é
+    MEDIDA pelo histórico real: itens concluídos (término de inspeção / liberação)
+    nas últimas `semanas_hist` semanas.
+      - ritmo médio = concluídos / semanas (capacidade sustentável);
+      - pico = melhor semana da janela (o que dá pra espremer num esforço extra).
+    Carga projetada de cada semana = itens em aberto com liberação prevista
+    naquela semana (a 1ª semana também carrega os atrasados, que precisam ser
+    feitos agora). Leitura: carga <= ritmo médio = 🟢 folga; <= pico = 🟡
+    apertada; > pico = 🔴 sobrecarga. Estação sem histórico fica "sem base".
+    Cobertura = semanas de trabalho na fila ao ritmo médio."""
+    hoje = hoje or date.today()
+    ignorar = {"OUTROS", "PROJETO ESPECIAL"}
+    corte = hoje - timedelta(days=7 * semanas_hist)
+    fim_s0 = hoje + timedelta(days=(5 - hoje.weekday()) % 7)
+    janelas = []
+    ini = hoje
+    fim = fim_s0
+    for k in range(semanas_proj):
+        janelas.append((ini, fim))
+        ini = fim + timedelta(days=1)
+        fim = ini + timedelta(days=6)
+
+    abertos = ItemPedido.query.filter(ItemPedido.status_producao != "FINALIZADO").all()
+    feitos = ItemPedido.query.filter(
+        or_(ItemPedido.termino_inspecao >= corte, ItemPedido.liberacao_real >= corte)
+    ).all()
+
+    dados = {}
+
+    def _d(nome):
+        return dados.setdefault(nome, {
+            "nome": nome, "abertos": 0, "atrasados": 0, "sem_prev": 0, "alem": 0,
+            "sem": [0] * semanas_proj, "hist": [0] * semanas_hist,
+        })
+
+    for i in abertos:
+        nome = (i.estacao or "").strip() or "Sem estação"
+        if nome.upper() in ignorar:
+            continue
+        d = _d(nome)
+        d["abertos"] += 1
+        prev = i.liberacao_prevista
+        if prev is None:
+            d["sem_prev"] += 1
+        elif prev < hoje:
+            d["atrasados"] += 1
+        else:
+            for k, (a, b) in enumerate(janelas):
+                if a <= prev <= b:
+                    d["sem"][k] += 1
+                    break
+            else:
+                d["alem"] += 1
+
+    for i in feitos:
+        nome = (i.estacao or "").strip() or "Sem estação"
+        if nome.upper() in ignorar:
+            continue
+        fim_item = i.termino_inspecao or i.liberacao_real
+        if not fim_item or fim_item > hoje or fim_item < corte:
+            continue
+        k = (hoje - fim_item).days // 7
+        if 0 <= k < semanas_hist:
+            _d(nome)["hist"][k] += 1
+
+    linhas = []
+    for d in dados.values():
+        total_hist = sum(d["hist"])
+        ritmo = round(total_hist / semanas_hist, 1) if total_hist else 0.0
+        pico = max(d["hist"]) if total_hist else 0
+        cargas = list(d["sem"])
+        cargas[0] += d["atrasados"]  # atrasado entra na carga imediata
+        celulas = []
+        pior = 0
+        for k, carga in enumerate(cargas):
+            if not total_hist:
+                nivel = "sem_base" if carga else "vazio"
+            elif carga == 0:
+                nivel = "vazio"
+            elif carga <= ritmo:
+                nivel = "ok"
+            elif carga <= pico:
+                nivel = "apertado"
+            else:
+                nivel = "sobrecarga"
+            pior = max(pior, {"vazio": 0, "sem_base": 0, "ok": 0, "apertado": 1, "sobrecarga": 2}[nivel])
+            celulas.append({"carga": carga, "nivel": nivel,
+                            "pct": round(100 * carga / ritmo) if ritmo else None})
+        if not total_hist:
+            sem = "sem_base"
+        else:
+            sem = ("ok", "apertado", "sobrecarga")[pior]
+        linhas.append({
+            "nome": d["nome"], "curto": _nome_curto_estacao_painel(d["nome"]), "emoji": _emoji_estacao_painel(d["nome"]),
+            "url": url_for("estacao_kanban", nome=d["nome"]) if Estacao.query.filter_by(nome=d["nome"]).first() else None,
+            "ritmo": ritmo, "pico": pico, "abertos": d["abertos"], "atrasados": d["atrasados"],
+            "sem_prev": d["sem_prev"], "alem": d["alem"],
+            "cobertura": round(d["abertos"] / ritmo, 1) if ritmo else None,
+            "celulas": celulas, "semaforo": sem, "hist": list(reversed(d["hist"])),
+        })
+    ordem = {"sobrecarga": 0, "apertado": 1, "ok": 2, "sem_base": 3}
+    linhas.sort(key=lambda l: (ordem[l["semaforo"]], -l["abertos"]))
+
+    rotulos = []
+    for k, (a, b) in enumerate(janelas):
+        rotulos.append({
+            "titulo": "Esta semana" if k == 0 else f"+{k} sem",
+            "intervalo": f"{a:%d/%m}–{b:%d/%m}",
+        })
+    tot_ritmo = round(sum(l["ritmo"] for l in linhas), 1)
+    tot_cargas = [sum(l["celulas"][k]["carga"] for l in linhas) for k in range(semanas_proj)]
+    return {
+        "estacoes": linhas,
+        "rotulos": rotulos,
+        "semanas_hist": semanas_hist,
+        "total": {
+            "ritmo": tot_ritmo,
+            "pico": sum(l["pico"] for l in linhas),
+            "abertos": sum(l["abertos"] for l in linhas),
+            "atrasados": sum(l["atrasados"] for l in linhas),
+            "sem_prev": sum(l["sem_prev"] for l in linhas),
+            "cargas": tot_cargas,
+            "cobertura": round(sum(l["abertos"] for l in linhas) / tot_ritmo, 1) if tot_ritmo else None,
+        },
+        "n_sobrecarga": sum(1 for l in linhas if l["semaforo"] == "sobrecarga"),
+        "n_apertado": sum(1 for l in linhas if l["semaforo"] == "apertado"),
+        "n_sem_base": sum(1 for l in linhas if l["semaforo"] == "sem_base"),
     }
 
 
