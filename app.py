@@ -15239,6 +15239,380 @@ def _itens_relatorio_estacao(nome, status_filtro):
     return itens
 
 
+# ----------------------------------------------------------------------
+# Relatório PDF "Conclusões por Estação" (pedido do Bruno, 26/10/2026, na
+# tela de Estações: "quero um novo campo de geração de relatórios em PDF,
+# agora com opções voltadas para conclusões semanais ou mensais, e também
+# podendo selecionar as estações. ex.: todos os itens que temos como
+# conclusão na semana 04/outubro, de todas as estações ou só de algumas.
+# Relatório padrão gerencial. Incluir data/hora, logo, emotions.").
+#
+# "Conclusão" = a semana/mês de Planejamento PCP do item (mesmo campo
+# `planejamento_semanal` que a Listagem Geral e o Painel já usam), então
+# nunca diverge do que o PCP planejou. Mostra, pra cada item projetado pro
+# período, se já foi concluído, está em produção, na fila ou atrasado.
+# ----------------------------------------------------------------------
+def _opcoes_conclusao_estacoes(hoje=None):
+    """Meses/semanas de Planejamento PCP disponíveis pro modal do relatório
+    de conclusões: [{chave "AAAA-MM", label, padrao(bool), semanas:[{rotulo,
+    curta, n}]}] em ordem cronológica. Sempre inclui o mês atual e o seguinte
+    (mesmo sem item planejado ainda) — é o recorte que ele mais usa."""
+    hoje = hoje or date.today()
+    linhas = (
+        db.session.query(ItemPedido.planejamento_semanal, func.count(ItemPedido.id))
+        .filter(ItemPedido.planejamento_semanal.isnot(None), ItemPedido.planejamento_semanal != "")
+        .group_by(ItemPedido.planejamento_semanal)
+        .all()
+    )
+    meses = {}
+    for rot, n in linhas:
+        mes_ano = _mes_ano_da_semana_pcp(rot)
+        if mes_ano is None:
+            continue
+        chave = f"{mes_ano[0]:04d}-{mes_ano[1]:02d}"
+        m = meses.setdefault(chave, {"ano": mes_ano[0], "mes": mes_ano[1], "semanas": []})
+        m["semanas"].append({"rotulo": rot, "n": n, "ordem": _chave_semana_pcp(rot)})
+    atual = (hoje.year, hoje.month)
+    for ano, mes in (atual, _somar_meses(*atual, 1)):
+        meses.setdefault(f"{ano:04d}-{mes:02d}", {"ano": ano, "mes": mes, "semanas": []})
+    out = []
+    for chave in sorted(meses):
+        m = meses[chave]
+        sems = sorted(m["semanas"], key=lambda x: x["ordem"])
+        for sm in sems:
+            sm["curta"] = f"Semana {sm['ordem'][2]:02d}"
+        out.append({
+            "chave": chave, "label": f"{MESES_PT_EXTENSO[m['mes'] - 1]}/{m['ano']}",
+            "padrao": (m["ano"], m["mes"]) == atual, "semanas": sems,
+        })
+    return out
+
+
+def _ordenar_nomes_estacoes(nomes):
+    """Nomes de estação na MESMA ordem por processo da tela /estacoes
+    (ESTACOES_GRUPOS_MONITORAMENTO), extras em ordem alfabética no fim."""
+    nomes = set(nomes)
+    ordem = []
+    for grupo in ESTACOES_GRUPOS_MONITORAMENTO:
+        for n in grupo["estacoes"]:
+            if n in nomes and n not in ordem:
+                ordem.append(n)
+    ordem += sorted(n for n in nomes if n not in ordem)
+    return ordem
+
+
+def _itens_conclusao_estacoes(mes_chave, semana, nomes_estacoes, situacao="todos"):
+    """Itens com Planejamento PCP no mês (`mes_chave` "AAAA-MM") ou numa
+    semana exata (`semana`, rótulo "SEMANA 04 / OUTUBRO / 2026"), nas
+    estações pedidas. `situacao`: todos | abertos | concluidos. Devolve
+    {nome_estacao: [itens]} (todas as estações pedidas, mesmo vazias)."""
+    resultado = {n: [] for n in nomes_estacoes}
+    if not nomes_estacoes:
+        return resultado
+    query = ItemPedido.query.options(selectinload(ItemPedido.pedido)).filter(
+        ItemPedido.estacao.in_(list(nomes_estacoes)),
+        ItemPedido.planejamento_semanal.isnot(None),
+        ItemPedido.planejamento_semanal != "",
+    )
+    if semana:
+        query = query.filter(ItemPedido.planejamento_semanal == semana)
+    for item in query.all():
+        if not semana:
+            mes_ano = _mes_ano_da_semana_pcp(item.planejamento_semanal)
+            if mes_ano is None or f"{mes_ano[0]:04d}-{mes_ano[1]:02d}" != mes_chave:
+                continue
+        finalizado = item.status_producao == "FINALIZADO"
+        if situacao == "abertos" and finalizado:
+            continue
+        if situacao == "concluidos" and not finalizado:
+            continue
+        resultado[item.estacao].append(item)
+    for itens in resultado.values():
+        itens.sort(key=lambda i: (_chave_semana_pcp(i.planejamento_semanal) or (9999, 99, 0),
+                                  i.liberacao_prevista is None, i.liberacao_prevista or date.max, i.id))
+    return resultado
+
+
+def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_estacao, situacao="todos", todas_estacoes=False):
+    """PDF gerencial "Conclusões por Estação" — A4 retrato, logo 4PIPE, data/
+    hora de geração (cabeçalho e rodapé de TODAS as páginas, com "Página X de
+    Y"), emojis coloridos (mesmos PNGs do resto dos PDFs). Estrutura: KPIs de
+    topo → resumo por estação (com barra de % concluído) → [por semana, quando
+    o período é o mês inteiro] → detalhe item a item de cada estação."""
+    from reportlab.graphics.shapes import Drawing, Rect
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.platypus import CondPageBreak, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    AZUL = colors.HexColor("#1b2a4a")
+    VERDE = colors.HexColor("#198754")
+    LARANJA = colors.HexColor("#d08a1c")
+    VERMELHO = colors.HexColor("#dc3545")
+    CINZA = colors.HexColor("#6c757d")
+    BORDA = colors.HexColor("#dee2e6")
+    agora = _agora_brt()
+    hoje = date.today()
+    gerado_em = agora.strftime("%d/%m/%Y %H:%M")
+
+    class _CanvasNumerado(rl_canvas.Canvas):
+        """Canvas que sabe o total de páginas ("Página X de Y") e desenha o
+        rodapé em todas elas."""
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self._paginas = []
+
+        def showPage(self):
+            self._paginas.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._paginas)
+            for estado in self._paginas:
+                self.__dict__.update(estado)
+                self._rodape(total)
+                super().showPage()
+            super().save()
+
+        def _rodape(self, total):
+            self.setStrokeColor(BORDA)
+            self.setLineWidth(0.5)
+            self.line(8 * mm, 9 * mm, A4[0] - 8 * mm, 9 * mm)
+            self.setFont("Helvetica", 7)
+            self.setFillColor(CINZA)
+            self.drawString(8 * mm, 5.5 * mm, f"4PIPE Solutions · Conclusões por Estação · {titulo_periodo}")
+            self.drawCentredString(A4[0] / 2, 5.5 * mm, f"Gerado em {gerado_em}")
+            self.drawRightString(A4[0] - 8 * mm, 5.5 * mm, f"Página {self._pageNumber} de {total}")
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=8 * mm, rightMargin=8 * mm,
+                            topMargin=10 * mm, bottomMargin=14 * mm,
+                            title=f"Conclusões por Estação — {titulo_periodo}")
+    largura = A4[0] - doc.leftMargin - doc.rightMargin
+    est = getSampleStyleSheet()
+    base = ParagraphStyle("c_base", parent=est["Normal"], fontSize=8.2, leading=10)
+    base_b = ParagraphStyle("c_base_b", parent=base, fontName="Helvetica-Bold")
+    pequeno = ParagraphStyle("c_peq", parent=base, fontSize=7.2, leading=8.8, textColor=CINZA)
+    cab_tab = ParagraphStyle("c_cab", parent=base_b, fontSize=7.8, leading=9.4, textColor=AZUL)
+    centro = ParagraphStyle("c_centro", parent=base, alignment=1)
+    centro_b = ParagraphStyle("c_centro_b", parent=base_b, alignment=1)
+
+    def esc(t):
+        from xml.sax.saxutils import escape
+        return escape(str(t if t is not None else "—"))
+
+    def ic(nome, tam=9):
+        return _icone_pdf(nome, tam)
+
+    def pecas_txt(v):
+        v = v or 0
+        return str(int(v)) if v == int(v) else str(v)
+
+    def situacao_item(it):
+        """(chave, texto, ícone) do item, em relação a HOJE."""
+        if it.status_producao == "FINALIZADO":
+            return "concluido", "Concluído", "check"
+        if it.liberacao_prevista and it.liberacao_prevista < hoje:
+            return "atrasado", f"Atrasado {(hoje - it.liberacao_prevista).days}d", "red_circle"
+        if it.status_producao == "PENDENTE":
+            return "fila", "Na fila", "hourglass"
+        return "producao", "Em produção", "factory"
+
+    def semana_curta(rot):
+        ch = _chave_semana_pcp(rot) if rot else None
+        if not ch:
+            return "—"
+        return f"S{ch[2]:02d} · {MESES_PT[ch[1] - 1]}/{str(ch[0])[2:]}" if ch[0] != 9999 else f"S{ch[2]:02d}"
+
+    nomes = list(itens_por_estacao.keys())
+    todos = [it for n in nomes for it in itens_por_estacao[n]]
+    com_itens = [n for n in nomes if itens_por_estacao[n]]
+    sem_itens = [n for n in nomes if not itens_por_estacao[n]]
+
+    def contar(itens):
+        c = {"concluido": 0, "producao": 0, "fila": 0, "atrasado": 0}
+        for it in itens:
+            c[situacao_item(it)[0]] += 1
+        c["total"] = len(itens)
+        c["pct"] = round(100 * c["concluido"] / c["total"]) if c["total"] else 0
+        c["pecas"] = sum(i.quantidade or 0 for i in itens)
+        return c
+
+    tot = contar(todos)
+    sit_txt = {"todos": "Todos os itens (concluídos e em aberto)", "abertos": "Somente em aberto (ainda não concluídos)",
+               "concluidos": "Somente concluídos"}.get(situacao, "Todos os itens")
+    rotulos = [rotulo_estacao(n) for n in nomes]
+    txt_estacoes = f"Todas as estações ativas ({len(nomes)})" if todas_estacoes else ", ".join(rotulos)
+
+    # ---------------- cabeçalho: logo + título ----------------
+    if os.path.exists(_ESPELHO_LOGO_PATH):
+        logo = Image(_ESPELHO_LOGO_PATH, width=38 * mm, height=38 * mm * (63 / 261))
+    else:
+        logo = Paragraph("", base)
+    bloco_titulo = [
+        Paragraph(f'{ic("target", 15)} Conclusões por Estação', ParagraphStyle("c_tit", parent=est["Title"], fontSize=19, leading=23, alignment=0, spaceAfter=2)),
+        Paragraph(f'{ic("calendar", 10)} <b>Período:</b> {esc(titulo_periodo)} &nbsp;·&nbsp; {ic("clipboard", 10)} <b>Gerado em:</b> {gerado_em}', base),
+        Paragraph(f'{ic("factory", 10)} <b>Estações:</b> {esc(txt_estacoes or "—")}', base),
+        Paragraph(f'{ic("funnel", 10)} <b>Filtro:</b> {esc(sit_txt)} &nbsp;·&nbsp; base: Planejamento PCP (semana/mês de conclusão previsto)', pequeno),
+    ]
+    cab = Table([[logo, bloco_titulo]], colWidths=[42 * mm, largura - 42 * mm])
+    cab.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    elementos = [cab, Spacer(1, 4 * mm)]
+
+    # ---------------- KPIs ----------------
+    def kpi(valor, rotulo, icone, cor, sub=None):
+        v = Paragraph(str(valor), ParagraphStyle("c_kv", parent=est["Normal"], fontSize=21, leading=25, fontName="Helvetica-Bold", alignment=1))
+        r = Paragraph(f'{ic(icone, 9)} {rotulo}', ParagraphStyle("c_kr", parent=base_b, alignment=1, fontSize=7.6, leading=9.2))
+        s = Paragraph(sub or "&nbsp;", ParagraphStyle("c_ks", parent=pequeno, alignment=1))
+        return [v, r, s], cor
+
+    kp = [
+        kpi(tot["total"], "Itens previstos", "target", colors.HexColor("#8fa8cc"), f'{pecas_txt(tot["pecas"])} peça(s)'),
+        kpi(tot["concluido"], "Concluídos", "check", VERDE, f'{tot["pct"]}% do previsto'),
+        kpi(tot["producao"], "Em produção", "factory", colors.HexColor("#0d6efd")),
+        kpi(tot["fila"], "Na fila", "hourglass", CINZA),
+        kpi(tot["atrasado"], "Atrasados", "red_circle", VERMELHO if tot["atrasado"] else BORDA, "prazo PCP vencido"),
+    ]
+    lk = largura / len(kp)
+    t_k = Table([[k[0][0] for k in kp], [k[0][1] for k in kp], [k[0][2] for k in kp]], colWidths=[lk] * len(kp))
+    estilo_k = [("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDA),
+                ("TOPPADDING", (0, 0), (-1, 0), 5), ("BOTTOMPADDING", (0, 0), (-1, 0), 0),
+                ("TOPPADDING", (0, 1), (-1, -1), 1), ("BOTTOMPADDING", (0, 2), (-1, 2), 5), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]
+    for i, k in enumerate(kp):
+        estilo_k.append(("LINEABOVE", (i, 0), (i, 0), 2.5, k[1]))
+    if tot["atrasado"]:
+        estilo_k.append(("BACKGROUND", (4, 0), (4, -1), colors.HexColor("#fdecee")))
+    t_k.setStyle(TableStyle(estilo_k))
+    elementos += [t_k, Spacer(1, 5 * mm)]
+
+    def barra(pct, w_mm=34):
+        d = Drawing(w_mm * mm, 3.4 * mm)
+        d.add(Rect(0, 0, w_mm * mm, 3.4 * mm, fillColor=colors.HexColor("#e9ecef"), strokeColor=None))
+        if pct > 0:
+            d.add(Rect(0, 0, w_mm * mm * min(pct, 100) / 100, 3.4 * mm,
+                       fillColor=VERDE if pct >= 100 else (colors.HexColor("#3f8f5f") if pct >= 50 else LARANJA), strokeColor=None))
+        return d
+
+    def secao(texto, icone):
+        t = Table([[Paragraph(f'{ic(icone, 10)} <b>{texto}</b>', ParagraphStyle("c_sec", parent=base, fontSize=10.5, leading=13, textColor=colors.white))]], colWidths=[largura])
+        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), AZUL), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+        return t
+
+    # ---------------- resumo por estação ----------------
+    elementos.append(secao("RESUMO POR ESTAÇÃO", "bar_chart"))
+    cab_res = [Paragraph(x, cab_tab) for x in ("Estação", "Previstos", f'{ic("check", 8)} Concl.', f'{ic("factory", 8)} Em prod.', f'{ic("hourglass", 8)} Fila', f'{ic("red_circle", 8)} Atras.', "% concluído")]
+    linhas_res = [cab_res]
+    for n in com_itens:
+        c = contar(itens_por_estacao[n])
+        linhas_res.append([
+            Paragraph(f"<b>{esc(rotulo_estacao(n))}</b>", base),
+            Paragraph(str(c["total"]), centro_b), Paragraph(str(c["concluido"]), centro), Paragraph(str(c["producao"]), centro),
+            Paragraph(str(c["fila"]), centro), Paragraph(f'<font color="#dc3545"><b>{c["atrasado"]}</b></font>' if c["atrasado"] else "0", centro),
+            [barra(c["pct"]), Paragraph(f'<b>{c["pct"]}%</b>' if c["total"] else "—", ParagraphStyle("c_pc", parent=pequeno, fontSize=7.4))] if c["total"] else Paragraph("—", centro),
+        ])
+    linhas_res.append([Paragraph("<b>TOTAL</b>", base), Paragraph(f'<b>{tot["total"]}</b>', centro), Paragraph(f'<b>{tot["concluido"]}</b>', centro),
+                       Paragraph(f'<b>{tot["producao"]}</b>', centro), Paragraph(f'<b>{tot["fila"]}</b>', centro),
+                       Paragraph(f'<b>{tot["atrasado"]}</b>', centro), Paragraph(f'<b>{tot["pct"]}%</b>', base)])
+    cols_res = [largura - 5 * 17 * mm - 40 * mm] + [17 * mm] * 5 + [40 * mm]
+    t_res = Table(linhas_res, colWidths=cols_res, repeatRows=1)
+    t_res.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d3e0f2")), ("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.4, BORDA),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f1f3f5")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f8f9fb")]),
+    ]))
+    elementos.append(t_res)
+    if sem_itens:
+        elementos.append(Paragraph(f'Sem itens previstos no período: {esc(", ".join(rotulo_estacao(n) for n in sem_itens))}.', ParagraphStyle("c_semit", parent=pequeno, spaceBefore=3)))
+    elementos.append(Spacer(1, 5 * mm))
+
+    # ---------------- por semana (período = mês inteiro) ----------------
+    if not semana:
+        por_sem = {}
+        for it in todos:
+            por_sem.setdefault(it.planejamento_semanal, []).append(it)
+        if por_sem:
+            elementos.append(secao("EVOLUÇÃO POR SEMANA DO PCP", "calendar"))
+            linhas_s = [[Paragraph(x, cab_tab) for x in ("Semana", "Previstos", "Concl.", "Em aberto", "Atras.", "% concluído")]]
+            for rot in sorted(por_sem, key=_chave_semana_pcp):
+                c = contar(por_sem[rot])
+                fim = _fim_semana_pcp(rot)
+                linhas_s.append([
+                    Paragraph(f"<b>{esc(rot.replace('SEMANA ', 'Semana '))}</b>" + (f' <font color="#6c757d">· até {fim.strftime("%d/%m")}</font>' if fim else ""), base),
+                    Paragraph(f'<b>{c["total"]}</b>', centro), Paragraph(str(c["concluido"]), centro),
+                    Paragraph(str(c["total"] - c["concluido"]), centro),
+                    Paragraph(f'<font color="#dc3545"><b>{c["atrasado"]}</b></font>' if c["atrasado"] else "0", centro),
+                    [barra(c["pct"]), Paragraph(f'<b>{c["pct"]}%</b>', ParagraphStyle("c_pc2", parent=pequeno, fontSize=7.4))],
+                ])
+            t_s = Table(linhas_s, colWidths=[largura - 4 * 17 * mm - 40 * mm] + [17 * mm] * 4 + [40 * mm], repeatRows=1)
+            t_s.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d3e0f2")), ("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.4, BORDA),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fb")]),
+            ]))
+            elementos += [t_s, Spacer(1, 5 * mm)]
+
+    # ---------------- detalhe por estação ----------------
+    if not todos:
+        elementos.append(Paragraph(f'{ic("magnifier", 10)} <b>Nenhum item com conclusão prevista neste período</b> para as estações e a situação escolhidas.',
+                                   ParagraphStyle("c_nada", parent=base, fontSize=10, leading=13, spaceBefore=8)))
+    elementos.append(CondPageBreak(40 * mm))
+    if todos:
+        elementos.append(secao("DETALHE POR ESTAÇÃO", "clipboard"))
+        elementos.append(Spacer(1, 2 * mm))
+    cores_sit = {"concluido": colors.HexColor("#e8f5ec"), "atrasado": colors.HexColor("#fdecee"), "fila": colors.white, "producao": colors.HexColor("#eef4ff")}
+    larg_cols = [15 * mm, 33 * mm, 52 * mm, 11 * mm, 17 * mm, 17 * mm, 17 * mm]
+    larg_cols.append(largura - sum(larg_cols))
+    cab_det = [Paragraph(x, cab_tab) for x in ("Pedido", "Cliente", "Produto", "Qtd", "Semana PCP", "Prev. lib.", "Concluído em", "Situação")]
+    for n in com_itens:
+        itens = itens_por_estacao[n]
+        c = contar(itens)
+        elementos.append(CondPageBreak(32 * mm))
+        banner = Table([[Paragraph(
+            f'{ic("factory", 11)} <b>{esc(rotulo_estacao(n)).upper()}</b> &nbsp;—&nbsp; {c["total"]} item(ns) · {c["concluido"]} concluído(s) ({c["pct"]}%) · '
+            f'{c["producao"] + c["fila"] + c["atrasado"]} em aberto' + (f' · <font color="#ffb3ba"><b>{c["atrasado"]} atrasado(s)</b></font>' if c["atrasado"] else ""),
+            ParagraphStyle("c_ban", parent=base, fontSize=9.6, leading=12, textColor=colors.white))]], colWidths=[largura])
+        banner.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#2f5fb3")), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+        elementos.append(banner)
+        linhas = [cab_det]
+        fundos = []
+        for idx, it in enumerate(itens, start=1):
+            chave, texto, icone = situacao_item(it)
+            ped = it.pedido
+            fim = (it.termino_inspecao or it.liberacao_faturamento) if chave == "concluido" else None
+            linhas.append([
+                Paragraph(f"<b>{esc(ped.pedido_venda or ('#' + str(ped.id)))}</b>", base),
+                Paragraph(esc(ped.cliente), base),
+                Paragraph(esc(it.descricao_produto), base),
+                Paragraph(pecas_txt(it.quantidade), centro),
+                Paragraph(esc(semana_curta(it.planejamento_semanal)), ParagraphStyle("c_sm", parent=base, fontSize=7.4, leading=8.8)),
+                Paragraph(it.liberacao_prevista.strftime("%d/%m/%Y") if it.liberacao_prevista else "—", base),
+                Paragraph(fim.strftime("%d/%m/%Y") if fim else "—", base),
+                Paragraph(f'{ic(icone, 9)} <b>{texto}</b>', base),
+            ])
+            fundos.append(("BACKGROUND", (0, idx), (-1, idx), cores_sit[chave]))
+        t = Table(linhas, colWidths=larg_cols, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d3e0f2")), ("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ] + fundos))
+        elementos += [t, Spacer(1, 5 * mm)]
+
+    # legenda
+    elementos.append(Paragraph(
+        f'{ic("check", 8)} Concluído &nbsp; {ic("factory", 8)} Em produção &nbsp; {ic("hourglass", 8)} Na fila &nbsp; {ic("red_circle", 8)} Atrasado '
+        f'(liberação prevista vencida e item ainda não concluído) &nbsp;·&nbsp; "Previstos" = itens com Planejamento PCP no período.', pequeno))
+
+    doc.build(elementos, canvasmaker=_CanvasNumerado)
+    resposta = Response(buffer.getvalue(), mimetype="application/pdf")
+    sufixo = (semana or mes_chave).replace(" / ", "_").replace(" ", "_").replace("/", "_")
+    resposta.headers["Content-Disposition"] = f"attachment; filename=conclusoes_estacoes_{sufixo}_{date.today().isoformat()}.pdf"
+    return resposta
+
+
 def _dividir_grupos_pedido(grupos, maximo=3):
     """Divide cada grupo de itens do mesmo pedido em pedaços de NO MÁXIMO
     `maximo` itens, com tamanhos equilibrados (7 itens -> 3+2+2, não 3+3+1).
@@ -22576,7 +22950,7 @@ def register_routes(app):
         if extras:
             grupos.append({"titulo": "Outras estações", "linhas": extras})
 
-        return render_template("estacoes_lista.html", grupos=grupos)
+        return render_template("estacoes_lista.html", grupos=grupos, conclusoes_opcoes=_opcoes_conclusao_estacoes(hoje))
 
     @app.route("/estacoes/<nome>")
     @login_required
@@ -22794,6 +23168,41 @@ def register_routes(app):
             for nome_ord in ordem
         ]
         return _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=incluir_mp)
+
+    @app.route("/estacoes/relatorio-conclusoes.pdf")
+    @login_required
+    def estacoes_relatorio_conclusoes_pdf():
+        """PDF "Conclusões por Estação" (ver _gerar_pdf_conclusoes_estacoes):
+        `mes` (AAAA-MM, padrão = mês atual), `semana` (rótulo exato do PCP;
+        vazio = mês inteiro), `estacao` (várias; nenhuma = todas as ativas) e
+        `situacao` (todos | abertos | concluidos). Caminho fixo, prioridade
+        sobre "/estacoes/<nome>"."""
+        hoje = date.today()
+        mes_chave = (request.args.get("mes") or "").strip() or hoje.strftime("%Y-%m")
+        if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", mes_chave):
+            mes_chave = hoje.strftime("%Y-%m")
+        semana = (request.args.get("semana") or "").strip()
+        if semana:
+            mes_da_semana = _mes_ano_da_semana_pcp(semana)
+            if mes_da_semana is not None:
+                mes_chave = f"{mes_da_semana[0]:04d}-{mes_da_semana[1]:02d}"
+        situacao = request.args.get("situacao", "todos")
+        if situacao not in ("todos", "abertos", "concluidos"):
+            situacao = "todos"
+
+        ativas = {e.nome for e in Estacao.query.filter_by(ativo=True).all()}
+        pedidas = {v for v in request.args.getlist("estacao") if v}
+        nomes = _ordenar_nomes_estacoes((pedidas & ativas) if pedidas else ativas)
+        if not nomes:
+            flash("Nenhuma estação disponível para gerar o relatório.", "warning")
+            return redirect(url_for("estacoes_lista"))
+
+        ano, mes = int(mes_chave[:4]), int(mes_chave[5:7])
+        titulo_periodo = (" / ".join(parte.strip().title() for parte in semana.split("/")) if semana
+                          else f"{MESES_PT_EXTENSO[mes - 1]} / {ano} (mês inteiro)")
+        itens_por_estacao = _itens_conclusao_estacoes(mes_chave, semana, nomes, situacao)
+        return _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_estacao, situacao,
+                                              todas_estacoes=(not pedidas or ativas <= pedidas))
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
     @login_required

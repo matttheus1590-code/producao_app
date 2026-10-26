@@ -11,6 +11,9 @@
     <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalRelatorioEstacoes">
       <i class="bi bi-file-earmark-pdf"></i> Gerar relatório de estações
     </button>
+    <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalRelatorioConclusoes">
+      <i class="bi bi-calendar-check"></i> Relatório de conclusões
+    </button>
     {% if current_user.role in ('ADMIN', 'PCP') %}
     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('cadastros_estacoes') }}">
       <i class="bi bi-gear"></i> Gerenciar estações
@@ -103,6 +106,97 @@
             {% endfor %}
           </div>
           <div class="small text-danger mt-2 d-none" id="avisoNenhumaEstacaoRel">
+            <i class="bi bi-exclamation-triangle"></i> Selecione ao menos uma estação.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-file-earmark-pdf"></i> Gerar PDF</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Modal "Relatório de conclusões" (pedido do Bruno, 26/10/2026: "um novo
+     campo de geração de relatórios em PDF... voltadas para conclusões
+     semanais ou mensais, e também podendo selecionar as estações. ex.: todos
+     os itens que temos como conclusão na semana 04/outubro, de todas as
+     estações ou só de algumas"). "Conclusão" = Planejamento PCP do item
+     (mês/semana). Mês + Semana (vazio = mês inteiro) + situação + estações
+     (todas marcadas por padrão). GET simples, mesmo padrão do modal acima. -->
+<div class="modal fade" id="modalRelatorioConclusoes" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <form method="get" action="{{ url_for('estacoes_relatorio_conclusoes_pdf') }}" id="formRelatorioConclusoes">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-calendar-check"></i> Relatório de conclusões por estação</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small">
+            Itens que estão <b>previstos para concluir</b> numa semana ou num mês (Planejamento PCP), com o que já foi concluído, está em produção, na fila ou atrasado — em PDF gerencial, com data/hora e logo.
+          </p>
+
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small text-muted mb-1" for="conclMes">Mês</label>
+              <select class="form-select form-select-sm" name="mes" id="conclMes">
+                {% for m in conclusoes_opcoes %}
+                <option value="{{ m.chave }}" {% if m.padrao %}selected{% endif %}>{{ m.label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-muted mb-1" for="conclSemana">Semana do PCP</label>
+              <select class="form-select form-select-sm" name="semana" id="conclSemana">
+                <option value="">Mês inteiro</option>
+              </select>
+            </div>
+          </div>
+
+          <label class="form-label small text-muted mb-1">Situação dos itens</label>
+          <div class="d-flex flex-wrap gap-3 mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="situacao" id="conclSitTodos" value="todos" checked>
+              <label class="form-check-label small" for="conclSitTodos">Todos (concluídos e em aberto)</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="situacao" id="conclSitAbertos" value="abertos">
+              <label class="form-check-label small" for="conclSitAbertos">Só em aberto (ainda a concluir)</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="situacao" id="conclSitConcluidos" value="concluidos">
+              <label class="form-check-label small" for="conclSitConcluidos">Só concluídos</label>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label class="form-label small text-muted mb-0">Estações</label>
+            <div>
+              <button type="button" class="btn btn-link btn-sm p-0 me-3" id="btnConclMarcarTodas">Marcar todas</button>
+              <button type="button" class="btn btn-link btn-sm p-0" id="btnConclLimpar">Limpar</button>
+            </div>
+          </div>
+          <div class="row g-2">
+            {% for grupo in grupos %}
+            <div class="col-md-4">
+              <div class="border rounded p-2 h-100">
+                <div class="text-uppercase text-muted small fw-semibold mb-2">{{ grupo.titulo }}</div>
+                {% for l in grupo.linhas %}
+                <div class="form-check">
+                  <input class="form-check-input estacao-concl-check" type="checkbox" name="estacao"
+                         value="{{ l.estacao.nome }}" id="checkEstacaoConcl{{ l.estacao.id }}" checked>
+                  <label class="form-check-label small" for="checkEstacaoConcl{{ l.estacao.id }}">{{ l.rotulo }}</label>
+                </div>
+                {% else %}
+                <div class="text-muted small">Nenhuma estação ativa.</div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="small text-danger mt-2 d-none" id="avisoNenhumaEstacaoConcl">
             <i class="bi bi-exclamation-triangle"></i> Selecione ao menos uma estação.
           </div>
         </div>
@@ -277,6 +371,46 @@
       }
     });
   }
+})();
+
+(function () {
+  // Relatório de conclusões: semanas dependem do mês escolhido.
+  var opcoes = {{ conclusoes_opcoes | tojson }};
+  var selMes = document.getElementById("conclMes");
+  var selSem = document.getElementById("conclSemana");
+  var form = document.getElementById("formRelatorioConclusoes");
+  var checks = document.querySelectorAll(".estacao-concl-check");
+  var aviso = document.getElementById("avisoNenhumaEstacaoConcl");
+  if (!selMes || !selSem) return;
+
+  function preencherSemanas() {
+    var m = opcoes.filter(function (x) { return x.chave === selMes.value; })[0];
+    selSem.innerHTML = "";
+    var o = document.createElement("option");
+    o.value = ""; o.textContent = "Mês inteiro";
+    selSem.appendChild(o);
+    ((m && m.semanas) || []).forEach(function (sm) {
+      var op = document.createElement("option");
+      op.value = sm.rotulo;
+      op.textContent = sm.curta + " (" + sm.n + " item(ns) no PCP)";
+      selSem.appendChild(op);
+    });
+  }
+  selMes.addEventListener("change", preencherSemanas);
+  preencherSemanas();
+
+  document.getElementById("btnConclMarcarTodas").addEventListener("click", function () {
+    checks.forEach(function (c) { c.checked = true; });
+    if (aviso) aviso.classList.add("d-none");
+  });
+  document.getElementById("btnConclLimpar").addEventListener("click", function () {
+    checks.forEach(function (c) { c.checked = false; });
+  });
+  form.addEventListener("submit", function (ev) {
+    var alguma = Array.prototype.some.call(checks, function (c) { return c.checked; });
+    if (!alguma) { ev.preventDefault(); if (aviso) aviso.classList.remove("d-none"); }
+    else if (aviso) aviso.classList.add("d-none");
+  });
 })();
 </script>
 {% endblock %}
