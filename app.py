@@ -15338,7 +15338,7 @@ def _itens_conclusao_estacoes(meses, semanas, nomes_estacoes, status_sel=("pende
     return resultado
 
 
-def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estacao, status_sel=("pendente", "em_producao", "concluido"), todas_estacoes=False, agrupar="semana"):
+def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estacao, status_sel=("pendente", "em_producao", "concluido"), todas_estacoes=False, agrupar="semana", incluir_risco=True):
     """PDF gerencial "Conclusões por Estação" — A4 retrato, logo 4PIPE, data/
     hora de geração (cabeçalho e rodapé de TODAS as páginas, com "Página X de
     Y"), emojis coloridos (mesmos PNGs do resto dos PDFs). Estrutura: KPIs de
@@ -15549,6 +15549,185 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estaca
     if sem_itens:
         elementos.append(Paragraph(f'Sem itens previstos no período: {esc(", ".join(rotulo_estacao(n) for n in sem_itens))}.', ParagraphStyle("c_semit", parent=pequeno, spaceBefore=3)))
     elementos.append(Spacer(1, 5 * mm))
+
+    # ---------------- gestão de risco de prazos (por estação) ----------------
+    # Pedido do Bruno (26/10/2026): "gestão de risco através de texto ou
+    # ilustrando, demonstrando na prática as criticidades em relação a
+    # prazos, para cada estação — totalmente objetivo". Só itens EM ABERTO.
+    # Critérios (iguais pra todas as estações, explicados no próprio PDF):
+    #   CRÍTICO — prazo do cliente vencido, OU liberação prevista (PCP)
+    #             vencida, OU PCP libera DEPOIS do prazo do cliente.
+    #   ALTO    — prazo do cliente em até 7 dias, OU semana do PCP já
+    #             encerrada com o item ainda aberto, OU liberação em até 3 dias.
+    #   MÉDIO   — pendente (não iniciou) com a semana do PCP acabando em até
+    #             3 dias, OU prazo do cliente em 8–15 dias.
+    #   NO PRAZO— o resto.
+    NIVEL_TXT = {3: "Crítico", 2: "Alto", 1: "Médio", 0: "No prazo"}
+    NIVEL_COR = {3: "#dc3545", 2: "#fd7e14", 1: "#ffc107", 0: "#198754"}
+    NIVEL_ICONE = {3: "red_circle", 2: "warning", 1: "yellow_circle", 0: "green_circle"}
+
+    def risco_item(it):
+        """(nível 0-3, motivo curto, dias de exposição p/ ordenar)."""
+        ped = it.pedido
+        d_cli = (ped.data_cliente - hoje).days if ped.data_cliente else None
+        d_prev = (it.liberacao_prevista - hoje).days if it.liberacao_prevista else None
+        fim_sem = _fim_semana_pcp(it.planejamento_semanal) if it.planejamento_semanal else None
+        d_sem = (fim_sem - hoje).days if fim_sem else None
+        crit = []
+        if d_cli is not None and d_cli < 0:
+            crit.append((-d_cli, f"Prazo do cliente venceu há {-d_cli}d"))
+        if d_prev is not None and d_prev < 0:
+            crit.append((-d_prev, f"Liberação prevista venceu há {-d_prev}d"))
+        if ped.data_cliente and it.liberacao_prevista and it.liberacao_prevista > ped.data_cliente and (d_cli is None or d_cli >= 0):
+            crit.append(((it.liberacao_prevista - ped.data_cliente).days, f"PCP libera {it.liberacao_prevista.strftime('%d/%m')}, após o prazo do cliente ({ped.data_cliente.strftime('%d/%m')})"))
+        if crit:
+            crit.sort(reverse=True)
+            return 3, crit[0][1], crit[0][0]
+        alto = []
+        if d_cli is not None and 0 <= d_cli <= 7:
+            alto.append(f"Prazo do cliente em {d_cli}d" if d_cli else "Prazo do cliente é hoje")
+        if d_sem is not None and d_sem < 0:
+            alto.append(f"Semana do PCP encerrou em {fim_sem.strftime('%d/%m')} e o item segue aberto")
+        if d_prev is not None and 0 <= d_prev <= 3:
+            alto.append(f"Liberação prevista em {d_prev}d" if d_prev else "Liberação prevista é hoje")
+        if alto:
+            return 2, alto[0], 0
+        medio = []
+        if status_item(it) == "fila" and d_sem is not None and 0 <= d_sem <= 3:
+            medio.append(f"Semana do PCP encerra em {d_sem}d e ainda não iniciou")
+        if d_cli is not None and 7 < d_cli <= 15:
+            medio.append(f"Prazo do cliente em {d_cli}d")
+        if medio:
+            return 1, medio[0], 0
+        return 0, "Dentro do prazo", 0
+
+    risco_por_estacao = {}
+    for n in com_itens:
+        abertos = [i for i in itens_por_estacao[n] if i.status_producao != "FINALIZADO"]
+        avaliados = [(i,) + risco_item(i) for i in abertos]
+        cont = {k: sum(1 for a in avaliados if a[1] == k) for k in (3, 2, 1, 0)}
+        maior = max([a[3] for a in avaliados if a[1] == 3] or [0])
+        n_ab = len(abertos)
+        if n_ab and (cont[3] >= 5 or cont[3] / n_ab >= 0.3):
+            veredito = ("CRÍTICA", "#dc3545", 3)
+        elif cont[3] or cont[2]:
+            veredito = ("ATENÇÃO", "#fd7e14", 2)
+        elif cont[1]:
+            veredito = ("MONITORAR", "#d4a017", 1)
+        else:
+            veredito = ("CONTROLADA", "#198754", 0)
+        pecas_risco = sum(a[0].quantidade or 0 for a in avaliados if a[1] >= 2)
+        risco_por_estacao[n] = {"avaliados": avaliados, "cont": cont, "abertos": n_ab, "maior": maior, "veredito": veredito, "pecas_risco": pecas_risco}
+
+    if incluir_risco and com_itens:
+        elementos.append(CondPageBreak(60 * mm))
+        elementos.append(secao("GESTÃO DE RISCO DE PRAZOS — POR ESTAÇÃO", "warning"))
+        elementos.append(Spacer(1, 1.5 * mm))
+        elementos.append(Paragraph(
+            f'{ic("red_circle", 8)} <b>Crítico:</b> prazo do cliente vencido, liberação prevista vencida ou PCP liberando depois do prazo do cliente &nbsp;·&nbsp; '
+            f'{ic("warning", 8)} <b>Alto:</b> prazo do cliente em até 7d, semana do PCP encerrada com item aberto ou liberação em até 3d &nbsp;·&nbsp; '
+            f'{ic("yellow_circle", 8)} <b>Médio:</b> pendente com a semana do PCP acabando em até 3d ou prazo do cliente em 8–15d &nbsp;·&nbsp; '
+            f'{ic("green_circle", 8)} <b>No prazo:</b> demais. Só itens em aberto. Referência: hoje, {hoje.strftime("%d/%m/%Y")}.', pequeno))
+        elementos.append(Spacer(1, 2 * mm))
+
+        def barra_risco(cont, total, w_mm=44):
+            d = Drawing(w_mm * mm, 3.6 * mm)
+            if not total:
+                d.add(Rect(0, 0, w_mm * mm, 3.6 * mm, fillColor=colors.HexColor("#e9ecef"), strokeColor=None))
+                return d
+            x = 0
+            for k in (3, 2, 1, 0):
+                if cont[k]:
+                    w = w_mm * mm * cont[k] / total
+                    d.add(Rect(x, 0, w, 3.6 * mm, fillColor=colors.HexColor(NIVEL_COR[k]), strokeColor=None))
+                    x += w
+            return d
+
+        # painel (ordenado: mais crítica primeiro)
+        ordem_risco = sorted(com_itens, key=lambda n: (-risco_por_estacao[n]["veredito"][2], -risco_por_estacao[n]["cont"][3], -risco_por_estacao[n]["cont"][2]))
+        cab_r = [Paragraph(x, cab_tab) for x in ("Estação", "Risco", "Abertos", f'{ic("red_circle", 8)} Crít.', f'{ic("warning", 8)} Alto', f'{ic("yellow_circle", 8)} Méd.', f'{ic("green_circle", 8)} Ok', "Distribuição", "Maior atraso")]
+        linhas_r = [cab_r]
+        estilo_r = []
+        for idx, n in enumerate(ordem_risco, start=1):
+            r = risco_por_estacao[n]
+            nome_v, cor_v, _ = r["veredito"]
+            linhas_r.append([
+                Paragraph(f"<b>{esc(rotulo_estacao(n))}</b>", base),
+                Paragraph(f'<font color="#ffffff"><b>{nome_v}</b></font>' if r["abertos"] else '<font color="#6c757d">sem abertos</font>',
+                          ParagraphStyle("c_vr", parent=base, alignment=1, fontSize=7.6, leading=9)),
+                Paragraph(str(r["abertos"]), centro),
+                Paragraph(f'<font color="#dc3545"><b>{r["cont"][3]}</b></font>' if r["cont"][3] else "0", centro),
+                Paragraph(f'<font color="#d9650a"><b>{r["cont"][2]}</b></font>' if r["cont"][2] else "0", centro),
+                Paragraph(str(r["cont"][1]), centro), Paragraph(str(r["cont"][0]), centro),
+                barra_risco(r["cont"], r["abertos"]),
+                Paragraph(f'<font color="#dc3545"><b>{r["maior"]}d</b></font>' if r["maior"] else "—", centro),
+            ])
+            if r["abertos"]:
+                estilo_r.append(("BACKGROUND", (1, idx), (1, idx), colors.HexColor(cor_v)))
+        t_r = Table(linhas_r, colWidths=[largura - (22 + 15 + 12 * 4 + 48 + 20) * mm, 22 * mm, 15 * mm] + [12 * mm] * 4 + [48 * mm, 20 * mm], repeatRows=1)
+        t_r.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d3e0f2")), ("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.4, BORDA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+            ("LEFTPADDING", (7, 1), (7, -1), 2),
+        ] + estilo_r))
+        elementos += [t_r, Spacer(1, 4 * mm)]
+
+        # leitura objetiva + itens em risco, estação por estação
+        cab_ri = [Paragraph(x, cab_tab) for x in ("", "Pedido", "Cliente", "Produto", "Qtd", "Motivo do risco", "Prazo cliente")]
+        larg_ri = [6 * mm, 14 * mm, 28 * mm, 40 * mm, 9 * mm]
+        larg_ri += [largura - sum(larg_ri) - 19 * mm, 19 * mm]
+        for n in ordem_risco:
+            r = risco_por_estacao[n]
+            nome_v, cor_v, _ = r["veredito"]
+            if not r["abertos"]:
+                continue
+            em_risco = sorted([a for a in r["avaliados"] if a[1] >= 2], key=lambda a: (-a[1], -a[3], a[0].id))
+            if r["cont"][3]:
+                leitura = (f'<b>{r["cont"][3]} de {r["abertos"]}</b> itens abertos com prazo estourado ou estourando · maior atraso <b>{r["maior"]}d</b> · '
+                           f'<b>{pecas_txt(r["pecas_risco"])}</b> peça(s) em risco alto/crítico')
+            elif r["cont"][2]:
+                leitura = f'<b>{r["cont"][2]} de {r["abertos"]}</b> itens abertos com prazo próximo (risco alto) · <b>{pecas_txt(r["pecas_risco"])}</b> peça(s)'
+            elif r["cont"][1]:
+                leitura = f'Sem itens vencidos · <b>{r["cont"][1]}</b> item(ns) pedem acompanhamento (risco médio) de {r["abertos"]} em aberto'
+            else:
+                leitura = f'Nenhum risco de prazo: {r["abertos"]} item(ns) em aberto, todos dentro do prazo'
+            elementos.append(CondPageBreak(30 * mm))
+            tit = Table([[Paragraph(f'{ic("factory", 9)} <b>{esc(rotulo_estacao(n)).upper()}</b>', ParagraphStyle("c_rt", parent=base, fontSize=9, leading=11, textColor=colors.white)),
+                          Paragraph(f'<b>{nome_v}</b>', ParagraphStyle("c_rv", parent=base, fontSize=8.6, leading=10.5, textColor=colors.white, alignment=1)),
+                          Paragraph(leitura, ParagraphStyle("c_rl", parent=base, fontSize=7.8, leading=9.6, textColor=colors.HexColor("#212529")))]],
+                        colWidths=[48 * mm, 24 * mm, largura - 72 * mm])
+            tit.setStyle(TableStyle([("BACKGROUND", (0, 0), (0, 0), AZUL), ("BACKGROUND", (1, 0), (1, 0), colors.HexColor(cor_v)),
+                                     ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#f8f9fb")), ("BOX", (0, 0), (-1, -1), 0.5, BORDA),
+                                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                                     ("LEFTPADDING", (0, 0), (-1, -1), 5)]))
+            elementos.append(tit)
+            if em_risco:
+                lim = 6
+                linhas_ri = [cab_ri]
+                fundos_ri = []
+                for idx, a in enumerate(em_risco[:lim], start=1):
+                    it, nivel, motivo, _ = a
+                    ped = it.pedido
+                    linhas_ri.append([
+                        Paragraph(ic(NIVEL_ICONE[nivel], 8), centro),
+                        Paragraph(f"<b>{esc(ped.pedido_venda or ('#' + str(ped.id)))}</b>", base),
+                        Paragraph(esc(ped.cliente), base), Paragraph(esc(it.descricao_produto), base),
+                        Paragraph(pecas_txt(it.quantidade), centro),
+                        Paragraph(f'<b>{esc(motivo)}</b>', ParagraphStyle("c_mot", parent=base, textColor=colors.HexColor(NIVEL_COR[nivel] if nivel == 3 else "#b45309"))),
+                        Paragraph(ped.data_cliente.strftime("%d/%m/%Y") if ped.data_cliente else "—", ParagraphStyle("c_dtr", parent=base, fontSize=7.8, leading=9.4)),
+                    ])
+                    fundos_ri.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#fdecee") if nivel == 3 else colors.HexColor("#fff4e6")))
+                t_ri = Table(linhas_ri, colWidths=larg_ri, repeatRows=1)
+                t_ri.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef2f9")), ("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDA),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 2.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ] + fundos_ri))
+                elementos.append(t_ri)
+                if len(em_risco) > lim:
+                    elementos.append(Paragraph(f'+ {len(em_risco) - lim} item(ns) em risco alto/crítico nesta estação — ver o detalhe abaixo.', ParagraphStyle("c_mais", parent=pequeno, spaceBefore=2)))
+            elementos.append(Spacer(1, 3.5 * mm))
+        elementos.append(Spacer(1, 2 * mm))
 
     # ---------------- por semana (quando o recorte tem mais de uma semana) ----------------
     por_sem = {}
@@ -23329,8 +23508,10 @@ def register_routes(app):
         tag = "_".join(sorted(meses) + [("S%02d_%04d-%02d" % ((_chave_semana_pcp(x)[2],) + _chave_semana_pcp(x)[:2])) for x in sorted(semanas, key=_chave_semana_pcp)])
         itens_por_estacao = _itens_conclusao_estacoes(meses, semanas, nomes, status_sel)
         agrupar = "estacao" if request.args.get("agrupar") == "estacao" else "semana"
+        riscos = request.args.getlist("risco")
+        incluir_risco = (not riscos) or ("1" in riscos)
         return _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag, itens_por_estacao, status_sel,
-                                              todas_estacoes=(not pedidas or ativas <= pedidas), agrupar=agrupar)
+                                              todas_estacoes=(not pedidas or ativas <= pedidas), agrupar=agrupar, incluir_risco=incluir_risco)
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
     @login_required
