@@ -15338,7 +15338,7 @@ def _itens_conclusao_estacoes(meses, semanas, nomes_estacoes, status_sel=("pende
     return resultado
 
 
-def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estacao, status_sel=("pendente", "em_producao", "concluido"), todas_estacoes=False):
+def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estacao, status_sel=("pendente", "em_producao", "concluido"), todas_estacoes=False, agrupar="semana"):
     """PDF gerencial "Conclusões por Estação" — A4 retrato, logo 4PIPE, data/
     hora de geração (cabeçalho e rodapé de TODAS as páginas, com "Página X de
     Y"), emojis coloridos (mesmos PNGs do resto dos PDFs). Estrutura: KPIs de
@@ -15576,31 +15576,84 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estaca
             ]))
             elementos += [t_s, Spacer(1, 5 * mm)]
 
-    # ---------------- detalhe por estação ----------------
+    # ---------------- matriz Estação x Semana (visão cruzada) ----------------
+    # Quando o recorte tem várias semanas E várias estações, uma grade deixa
+    # visível de relance "quanto cada estação concentra em cada semana"
+    # (pedido do Bruno, 26/10/2026: semanas misturadas → agrupar de forma
+    # visual e intuitiva). Célula = previstos, com os concluídos ao lado.
+    semanas_ord = sorted(por_sem, key=_chave_semana_pcp)
+    if 2 <= len(semanas_ord) <= 6 and len(com_itens) >= 2:
+        elementos.append(secao("ESTAÇÃO x SEMANA (previstos · concluídos)", "target"))
+        cab_m = [Paragraph("Estação", cab_tab)] + [Paragraph(esc(semana_curta(r)), ParagraphStyle("c_cabm", parent=cab_tab, alignment=1)) for r in semanas_ord] + [Paragraph("Total", ParagraphStyle("c_cabm2", parent=cab_tab, alignment=1))]
+        linhas_m = [cab_m]
+        for n in com_itens:
+            linha = [Paragraph(f"<b>{esc(rotulo_estacao(n))}</b>", base)]
+            for r in semanas_ord:
+                its = [i for i in itens_por_estacao[n] if i.planejamento_semanal == r]
+                cc = contar(its)
+                if not its:
+                    linha.append(Paragraph('<font color="#adb5bd">—</font>', centro))
+                else:
+                    cor_n = "#198754" if cc["concluido"] == cc["total"] else "#212529"
+                    linha.append(Paragraph(f'<b><font color="{cor_n}">{cc["total"]}</font></b> <font color="#6c757d">· {cc["concluido"]} concl.</font>', centro))
+            ct = contar(itens_por_estacao[n])
+            linha.append(Paragraph(f'<b>{ct["total"]}</b> <font color="#6c757d">· {ct["concluido"]} concl.</font>', centro))
+            linhas_m.append(linha)
+        larg_m = [largura - 22 * mm * (len(semanas_ord) + 1)] + [22 * mm] * (len(semanas_ord) + 1)
+        if larg_m[0] < 40 * mm:
+            larg_m = [40 * mm] + [(largura - 40 * mm) / (len(semanas_ord) + 1)] * (len(semanas_ord) + 1)
+        t_m = Table(linhas_m, colWidths=larg_m, repeatRows=1)
+        t_m.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d3e0f2")), ("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.4, BORDA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fb")]),
+        ]))
+        elementos += [t_m, Spacer(1, 5 * mm)]
+
+    # ---------------- detalhe agrupado ----------------
+    # Dois jeitos de agrupar (escolha no modal): "semana" = Semana > Estação
+    # (padrão, resolve "semanas misturadas") ou "estacao" = Estação > Semana.
+    # Cada grupo tem faixa própria (nível 1 azul-marinho, nível 2 azul médio)
+    # com contagens e barra de % concluído, e a tabela embaixo SEM repetir a
+    # coluna que já é o título do grupo.
     if not todos:
-        elementos.append(Paragraph(f'{ic("magnifier", 10)} <b>Nenhum item com conclusão prevista neste período</b> para as estações e a situação escolhidas.',
+        elementos.append(Paragraph(f'{ic("magnifier", 10)} <b>Nenhum item com conclusão prevista neste período</b> para as estações e os status escolhidos.',
                                    ParagraphStyle("c_nada", parent=base, fontSize=10, leading=13, spaceBefore=8)))
     elementos.append(CondPageBreak(40 * mm))
     if todos:
-        elementos.append(secao("DETALHE POR ESTAÇÃO", "clipboard"))
+        elementos.append(secao("DETALHE POR SEMANA, DEPOIS POR ESTAÇÃO" if agrupar == "semana" else "DETALHE POR ESTAÇÃO, DEPOIS POR SEMANA", "clipboard"))
         elementos.append(Spacer(1, 2 * mm))
     cores_sit = {"concluido": colors.HexColor("#e8f5ec"), "atrasado": colors.HexColor("#fdecee"), "fila": colors.white, "producao": colors.HexColor("#eef4ff")}
-    larg_cols = [14 * mm, 27 * mm, 40 * mm, 9 * mm, 16 * mm, 17 * mm, 17 * mm, 17 * mm]
+    larg_cols = [14 * mm, 30 * mm, 50 * mm, 9 * mm, 17 * mm, 17 * mm, 17 * mm]
     larg_cols.append(largura - sum(larg_cols))
-    cab_det = [Paragraph(x, cab_tab) for x in ("Pedido", "Cliente", "Produto", "Qtd", "Semana PCP", "Solicit. cliente", "Prev. lib.", "Concluído em", "Situação")]
-    for n in com_itens:
-        itens = itens_por_estacao[n]
-        c = contar(itens)
-        elementos.append(CondPageBreak(32 * mm))
-        banner = Table([[Paragraph(
-            f'{ic("factory", 11)} <b>{esc(rotulo_estacao(n)).upper()}</b> &nbsp;—&nbsp; {c["total"]} item(ns) · {c["concluido"]} concluído(s) ({c["pct"]}%) · '
-            f'{c["producao"]} em produção · {c["fila"]} pendente(s)' + (f' · <font color="#ffb3ba"><b>{c["atrasado"]} atrasado(s)</b></font>' if c["atrasado"] else ""),
-            ParagraphStyle("c_ban", parent=base, fontSize=9.6, leading=12, textColor=colors.white))]], colWidths=[largura])
-        banner.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#2f5fb3")), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
-        elementos.append(banner)
+    cab_det = [Paragraph(x, cab_tab) for x in ("Pedido", "Cliente", "Produto", "Qtd", "Solicit. cliente", "Prev. lib.", "Concluído em", "Situação")]
+    estilo_dt = ParagraphStyle("c_dt", parent=base, fontSize=7.8, leading=9.4)
+
+    def faixa(nivel, icone, titulo, itens_grupo, extra=""):
+        """Faixa de grupo: título + contagens à esquerda, barra de % à direita."""
+        c = contar(itens_grupo)
+        cor_fundo = AZUL if nivel == 1 else colors.HexColor("#2f5fb3")
+        fonte = 10.2 if nivel == 1 else 9
+        txt = (f'{ic(icone, 11 if nivel == 1 else 9)} <b>{titulo}</b>{extra} &nbsp;—&nbsp; {c["total"]} item(ns) · {c["concluido"]} concluído(s) · '
+               f'{c["producao"]} em produção · {c["fila"]} pendente(s)'
+               + (f' · <font color="#ffb3ba"><b>{c["atrasado"]} atrasado(s)</b></font>' if c["atrasado"] else ""))
+        bw = 26 * mm
+        d = Drawing(bw, 3.2 * mm)
+        d.add(Rect(0, 0, bw, 3.2 * mm, fillColor=colors.HexColor("#ffffff55") if False else colors.HexColor("#5b7bb5") if nivel == 2 else colors.HexColor("#3d4f78"), strokeColor=None))
+        if c["pct"] > 0:
+            d.add(Rect(0, 0, bw * min(c["pct"], 100) / 100, 3.2 * mm, fillColor=colors.HexColor("#5ee08a"), strokeColor=None))
+        pct_p = Paragraph(f'<b>{c["pct"]}%</b> concl.', ParagraphStyle("c_pct", parent=base, fontSize=7.6, leading=9, textColor=colors.white, alignment=1))
+        t = Table([[Paragraph(txt, ParagraphStyle("c_ban", parent=base, fontSize=fonte, leading=fonte + 2.4, textColor=colors.white)), [d, pct_p]]],
+                  colWidths=[largura - 30 * mm, 30 * mm])
+        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), cor_fundo), ("TOPPADDING", (0, 0), (-1, -1), 4 if nivel == 1 else 3),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 4 if nivel == 1 else 3), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                               ("ALIGN", (1, 0), (1, 0), "CENTER")]))
+        return t
+
+    def tabela_itens(itens_grupo):
         linhas = [cab_det]
         fundos = []
-        for idx, it in enumerate(itens, start=1):
+        for idx, it in enumerate(itens_grupo, start=1):
             chave, texto, icone = situacao_item(it)
             ped = it.pedido
             fim = (it.termino_inspecao or it.liberacao_faturamento) if chave == "concluido" else None
@@ -15609,14 +15662,12 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estaca
                 Paragraph(esc(ped.cliente), base),
                 Paragraph(esc(it.descricao_produto), base),
                 Paragraph(pecas_txt(it.quantidade), centro),
-                Paragraph(esc(semana_curta(it.planejamento_semanal)), ParagraphStyle("c_sm", parent=base, fontSize=7.4, leading=8.8)),
                 Paragraph(
                     (f'<font color="#dc3545"><b>{ped.data_cliente.strftime("%d/%m/%Y")}</b></font>'
-                     if (ped.data_cliente and ped.data_cliente < hoje and chave != "concluido")
-                     else (ped.data_cliente.strftime("%d/%m/%Y") if ped.data_cliente else "—")),
-                    ParagraphStyle("c_dt", parent=base, fontSize=7.8, leading=9.4)),
-                Paragraph(it.liberacao_prevista.strftime("%d/%m/%Y") if it.liberacao_prevista else "—", ParagraphStyle("c_dt2", parent=base, fontSize=7.8, leading=9.4)),
-                Paragraph(fim.strftime("%d/%m/%Y") if fim else "—", ParagraphStyle("c_dt3", parent=base, fontSize=7.8, leading=9.4)),
+                     if (ped.data_cliente and ped.data_cliente < hoje and status_item(it) != "concluido")
+                     else (ped.data_cliente.strftime("%d/%m/%Y") if ped.data_cliente else "—")), estilo_dt),
+                Paragraph(it.liberacao_prevista.strftime("%d/%m/%Y") if it.liberacao_prevista else "—", estilo_dt),
+                Paragraph(fim.strftime("%d/%m/%Y") if fim else "—", estilo_dt),
                 Paragraph(f'{ic(icone, 9)} <b>{texto}</b>', base),
             ])
             fundos.append(("BACKGROUND", (0, idx), (-1, idx), cores_sit[chave]))
@@ -15626,7 +15677,42 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estaca
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
             ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ] + fundos))
-        elementos += [t, Spacer(1, 5 * mm)]
+        return t
+
+    def titulo_semana(rot):
+        fim = _fim_semana_pcp(rot)
+        return esc(rot.replace("SEMANA ", "Semana ")), (f' <font color="#c7d2ea">· até {fim.strftime("%d/%m")}</font>' if fim else "")
+
+    if agrupar == "semana":
+        for rot in sorted(por_sem, key=_chave_semana_pcp):
+            its_sem = por_sem[rot]
+            nome_sem, extra = titulo_semana(rot)
+            elementos.append(CondPageBreak(40 * mm))
+            elementos.append(faixa(1, "calendar", nome_sem.upper(), its_sem, extra))
+            elementos.append(Spacer(1, 1.5 * mm))
+            for n in com_itens:
+                its = [i for i in itens_por_estacao[n] if i.planejamento_semanal == rot]
+                if not its:
+                    continue
+                elementos.append(CondPageBreak(28 * mm))
+                elementos.append(faixa(2, "factory", esc(rotulo_estacao(n)), its))
+                elementos.append(tabela_itens(its))
+                elementos.append(Spacer(1, 3.5 * mm))
+            elementos.append(Spacer(1, 4 * mm))
+    else:
+        for n in com_itens:
+            itens = itens_por_estacao[n]
+            elementos.append(CondPageBreak(40 * mm))
+            elementos.append(faixa(1, "factory", esc(rotulo_estacao(n)).upper(), itens))
+            elementos.append(Spacer(1, 1.5 * mm))
+            for rot in sorted({i.planejamento_semanal for i in itens}, key=_chave_semana_pcp):
+                its = [i for i in itens if i.planejamento_semanal == rot]
+                nome_sem, extra = titulo_semana(rot)
+                elementos.append(CondPageBreak(28 * mm))
+                elementos.append(faixa(2, "calendar", nome_sem, its, extra))
+                elementos.append(tabela_itens(its))
+                elementos.append(Spacer(1, 3.5 * mm))
+            elementos.append(Spacer(1, 4 * mm))
 
     # legenda
     elementos.append(Paragraph(
@@ -23242,8 +23328,9 @@ def register_routes(app):
         titulo_periodo = " + ".join(partes)
         tag = "_".join(sorted(meses) + [("S%02d_%04d-%02d" % ((_chave_semana_pcp(x)[2],) + _chave_semana_pcp(x)[:2])) for x in sorted(semanas, key=_chave_semana_pcp)])
         itens_por_estacao = _itens_conclusao_estacoes(meses, semanas, nomes, status_sel)
+        agrupar = "estacao" if request.args.get("agrupar") == "estacao" else "semana"
         return _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag, itens_por_estacao, status_sel,
-                                              todas_estacoes=(not pedidas or ativas <= pedidas))
+                                              todas_estacoes=(not pedidas or ativas <= pedidas), agrupar=agrupar)
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
     @login_required
