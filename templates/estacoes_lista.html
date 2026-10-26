@@ -138,21 +138,27 @@
             Itens que estão <b>previstos para concluir</b> numa semana ou num mês (Planejamento PCP), com o que já foi concluído, está em produção, na fila ou atrasado — em PDF gerencial, com data/hora e logo.
           </p>
 
-          <div class="row g-3 mb-3">
-            <div class="col-md-6">
-              <label class="form-label small text-muted mb-1" for="conclMes">Mês</label>
-              <select class="form-select form-select-sm" name="mes" id="conclMes">
-                {% for m in conclusoes_opcoes %}
-                <option value="{{ m.chave }}" {% if m.padrao %}selected{% endif %}>{{ m.label }}</option>
-                {% endfor %}
-              </select>
+          <!-- Períodos combináveis (pedido do Bruno, 26/10/2026: "selecionar mais
+               de uma semana... semanas diferentes, e meses diferentes, ex.:
+               semana 04 out + semana 01 nov"). Marcar "Mês inteiro" cobre todas
+               as semanas daquele mês (as semanas dele ficam desabilitadas). -->
+          <label class="form-label small text-muted mb-1">Período (marque um ou mais)</label>
+          <div class="border rounded p-2 mb-3" id="conclPeriodos">
+            {% for m in conclusoes_opcoes %}
+            <div class="concl-mes-linha d-flex flex-wrap align-items-center gap-2 {% if not loop.last %}mb-2 pb-2 border-bottom{% endif %}" data-mes="{{ m.chave }}">
+              <span class="small fw-semibold text-body" style="min-width: 7.5rem;">{{ m.label }}</span>
+              <input type="checkbox" class="btn-check concl-mes-check" name="periodo" value="mes:{{ m.chave }}" id="conclPerMes{{ m.chave }}" autocomplete="off" {% if m.padrao %}checked{% endif %}>
+              <label class="btn btn-outline-primary btn-sm py-0" for="conclPerMes{{ m.chave }}">Mês inteiro</label>
+              {% for sm in m.semanas %}
+              <input type="checkbox" class="btn-check concl-sem-check" name="periodo" value="sem:{{ sm.rotulo }}" id="conclPerSem{{ m.chave }}{{ loop.index }}" autocomplete="off">
+              <label class="btn btn-outline-secondary btn-sm py-0" for="conclPerSem{{ m.chave }}{{ loop.index }}" title="{{ sm.rotulo }}">{{ sm.curta | replace('Semana ', 'Sem ') }} <span class="text-muted">· {{ sm.n }}</span></label>
+              {% endfor %}
+              {% if not m.semanas %}<span class="text-muted small">sem itens planejados ainda</span>{% endif %}
             </div>
-            <div class="col-md-6">
-              <label class="form-label small text-muted mb-1" for="conclSemana">Semana do PCP</label>
-              <select class="form-select form-select-sm" name="semana" id="conclSemana">
-                <option value="">Mês inteiro</option>
-              </select>
-            </div>
+            {% endfor %}
+          </div>
+          <div class="small text-danger mb-2 d-none" id="avisoNenhumPeriodoConcl">
+            <i class="bi bi-exclamation-triangle"></i> Marque ao menos um período (mês inteiro ou semana).
           </div>
 
           <label class="form-label small text-muted mb-1">Status dos itens</label>
@@ -375,30 +381,27 @@
 })();
 
 (function () {
-  // Relatório de conclusões: semanas dependem do mês escolhido.
-  var opcoes = {{ conclusoes_opcoes | tojson }};
-  var selMes = document.getElementById("conclMes");
-  var selSem = document.getElementById("conclSemana");
+  // Relatório de conclusões: períodos combináveis (mês inteiro e/ou semanas).
   var form = document.getElementById("formRelatorioConclusoes");
   var checks = document.querySelectorAll(".estacao-concl-check");
   var aviso = document.getElementById("avisoNenhumaEstacaoConcl");
-  if (!selMes || !selSem) return;
+  var avisoPer = document.getElementById("avisoNenhumPeriodoConcl");
+  if (!form) return;
 
-  function preencherSemanas() {
-    var m = opcoes.filter(function (x) { return x.chave === selMes.value; })[0];
-    selSem.innerHTML = "";
-    var o = document.createElement("option");
-    o.value = ""; o.textContent = "Mês inteiro";
-    selSem.appendChild(o);
-    ((m && m.semanas) || []).forEach(function (sm) {
-      var op = document.createElement("option");
-      op.value = sm.rotulo;
-      op.textContent = sm.curta + " (" + sm.n + " item(ns) no PCP)";
-      selSem.appendChild(op);
+  function sincronizarSemanas(linha) {
+    var mesChk = linha.querySelector(".concl-mes-check");
+    linha.querySelectorAll(".concl-sem-check").forEach(function (c) {
+      if (mesChk && mesChk.checked) c.checked = false;
+      c.disabled = !!(mesChk && mesChk.checked);
+      var lab = linha.querySelector('label[for="' + c.id + '"]');
+      if (lab) lab.style.opacity = c.disabled ? "0.45" : "";
     });
   }
-  selMes.addEventListener("change", preencherSemanas);
-  preencherSemanas();
+  document.querySelectorAll(".concl-mes-linha").forEach(function (linha) {
+    sincronizarSemanas(linha);
+    var mesChk = linha.querySelector(".concl-mes-check");
+    if (mesChk) mesChk.addEventListener("change", function () { sincronizarSemanas(linha); });
+  });
 
   document.getElementById("btnConclMarcarTodas").addEventListener("click", function () {
     checks.forEach(function (c) { c.checked = true; });
@@ -409,6 +412,9 @@
   });
   form.addEventListener("submit", function (ev) {
     var alguma = Array.prototype.some.call(checks, function (c) { return c.checked; });
+    var algumPeriodo = Array.prototype.some.call(document.querySelectorAll("#conclPeriodos input[name=periodo]"), function (c) { return c.checked; });
+    if (!algumPeriodo) { ev.preventDefault(); if (avisoPer) avisoPer.classList.remove("d-none"); return; }
+    if (avisoPer) avisoPer.classList.add("d-none");
     var algumStatus = Array.prototype.some.call(document.querySelectorAll(".concl-status-check"), function (c) { return c.checked; });
     if (!algumStatus) {
       ev.preventDefault();

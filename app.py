@@ -15301,26 +15301,27 @@ def _ordenar_nomes_estacoes(nomes):
     return ordem
 
 
-def _itens_conclusao_estacoes(mes_chave, semana, nomes_estacoes, status_sel=("pendente", "em_producao", "concluido")):
-    """Itens com Planejamento PCP no mês (`mes_chave` "AAAA-MM") ou numa
-    semana exata (`semana`, rótulo "SEMANA 04 / OUTUBRO / 2026"), nas
-    estações pedidas. `status_sel`: subconjunto de pendente | em_producao |
-    concluido (o que o Bruno marca no modal). Devolve
-    {nome_estacao: [itens]} (todas as estações pedidas, mesmo vazias)."""
+def _itens_conclusao_estacoes(meses, semanas, nomes_estacoes, status_sel=("pendente", "em_producao", "concluido")):
+    """Itens com Planejamento PCP em QUALQUER dos meses (`meses`: conjunto de
+    "AAAA-MM" = mês inteiro) ou das semanas (`semanas`: conjunto de rótulos
+    exatos "SEMANA 04 / OUTUBRO / 2026") pedidos — dá pra combinar períodos
+    diferentes (ex.: semana 04 de out + semana 01 de nov; pedido do Bruno,
+    26/10/2026) — nas estações pedidas. `status_sel`: subconjunto de pendente
+    | em_producao | concluido. Devolve {nome_estacao: [itens]} (todas as
+    estações pedidas, mesmo vazias)."""
     resultado = {n: [] for n in nomes_estacoes}
-    if not nomes_estacoes:
+    if not nomes_estacoes or not (meses or semanas):
         return resultado
     query = ItemPedido.query.options(selectinload(ItemPedido.pedido)).filter(
         ItemPedido.estacao.in_(list(nomes_estacoes)),
         ItemPedido.planejamento_semanal.isnot(None),
         ItemPedido.planejamento_semanal != "",
     )
-    if semana:
-        query = query.filter(ItemPedido.planejamento_semanal == semana)
     for item in query.all():
-        if not semana:
-            mes_ano = _mes_ano_da_semana_pcp(item.planejamento_semanal)
-            if mes_ano is None or f"{mes_ano[0]:04d}-{mes_ano[1]:02d}" != mes_chave:
+        rot = item.planejamento_semanal
+        if rot not in semanas:
+            mes_ano = _mes_ano_da_semana_pcp(rot)
+            if mes_ano is None or f"{mes_ano[0]:04d}-{mes_ano[1]:02d}" not in meses:
                 continue
         if item.status_producao == "FINALIZADO":
             chave_status = "concluido"
@@ -15337,7 +15338,7 @@ def _itens_conclusao_estacoes(mes_chave, semana, nomes_estacoes, status_sel=("pe
     return resultado
 
 
-def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_estacao, status_sel=("pendente", "em_producao", "concluido"), todas_estacoes=False):
+def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estacao, status_sel=("pendente", "em_producao", "concluido"), todas_estacoes=False):
     """PDF gerencial "Conclusões por Estação" — A4 retrato, logo 4PIPE, data/
     hora de geração (cabeçalho e rodapé de TODAS as páginas, com "Página X de
     Y"), emojis coloridos (mesmos PNGs do resto dos PDFs). Estrutura: KPIs de
@@ -15386,7 +15387,7 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
             self.line(8 * mm, 9 * mm, A4[0] - 8 * mm, 9 * mm)
             self.setFont("Helvetica", 7)
             self.setFillColor(CINZA)
-            self.drawString(8 * mm, 5.5 * mm, f"4PIPE Solutions · Conclusões por Estação · {titulo_periodo}")
+            self.drawString(8 * mm, 5.5 * mm, "4PIPE Solutions · Conclusões por Estação")
             self.drawCentredString(A4[0] / 2, 5.5 * mm, f"Gerado em {gerado_em}")
             self.drawRightString(A4[0] - 8 * mm, 5.5 * mm, f"Página {self._pageNumber} de {total}")
 
@@ -15549,11 +15550,11 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
         elementos.append(Paragraph(f'Sem itens previstos no período: {esc(", ".join(rotulo_estacao(n) for n in sem_itens))}.', ParagraphStyle("c_semit", parent=pequeno, spaceBefore=3)))
     elementos.append(Spacer(1, 5 * mm))
 
-    # ---------------- por semana (período = mês inteiro) ----------------
-    if not semana:
-        por_sem = {}
-        for it in todos:
-            por_sem.setdefault(it.planejamento_semanal, []).append(it)
+    # ---------------- por semana (quando o recorte tem mais de uma semana) ----------------
+    por_sem = {}
+    for it in todos:
+        por_sem.setdefault(it.planejamento_semanal, []).append(it)
+    if len(por_sem) > 1:
         if por_sem:
             elementos.append(secao("EVOLUÇÃO POR SEMANA DO PCP", "calendar"))
             linhas_s = [[Paragraph(x, cab_tab) for x in ("Semana", "Previstos", "Concl.", "Em prod.", "Pend.", "Atras.", "% concluído")]]
@@ -15584,9 +15585,9 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
         elementos.append(secao("DETALHE POR ESTAÇÃO", "clipboard"))
         elementos.append(Spacer(1, 2 * mm))
     cores_sit = {"concluido": colors.HexColor("#e8f5ec"), "atrasado": colors.HexColor("#fdecee"), "fila": colors.white, "producao": colors.HexColor("#eef4ff")}
-    larg_cols = [15 * mm, 33 * mm, 52 * mm, 11 * mm, 17 * mm, 17 * mm, 17 * mm]
+    larg_cols = [14 * mm, 27 * mm, 40 * mm, 9 * mm, 16 * mm, 17 * mm, 17 * mm, 17 * mm]
     larg_cols.append(largura - sum(larg_cols))
-    cab_det = [Paragraph(x, cab_tab) for x in ("Pedido", "Cliente", "Produto", "Qtd", "Semana PCP", "Prev. lib.", "Concluído em", "Situação")]
+    cab_det = [Paragraph(x, cab_tab) for x in ("Pedido", "Cliente", "Produto", "Qtd", "Semana PCP", "Solicit. cliente", "Prev. lib.", "Concluído em", "Situação")]
     for n in com_itens:
         itens = itens_por_estacao[n]
         c = contar(itens)
@@ -15609,8 +15610,13 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
                 Paragraph(esc(it.descricao_produto), base),
                 Paragraph(pecas_txt(it.quantidade), centro),
                 Paragraph(esc(semana_curta(it.planejamento_semanal)), ParagraphStyle("c_sm", parent=base, fontSize=7.4, leading=8.8)),
-                Paragraph(it.liberacao_prevista.strftime("%d/%m/%Y") if it.liberacao_prevista else "—", base),
-                Paragraph(fim.strftime("%d/%m/%Y") if fim else "—", base),
+                Paragraph(
+                    (f'<font color="#dc3545"><b>{ped.data_cliente.strftime("%d/%m/%Y")}</b></font>'
+                     if (ped.data_cliente and ped.data_cliente < hoje and chave != "concluido")
+                     else (ped.data_cliente.strftime("%d/%m/%Y") if ped.data_cliente else "—")),
+                    ParagraphStyle("c_dt", parent=base, fontSize=7.8, leading=9.4)),
+                Paragraph(it.liberacao_prevista.strftime("%d/%m/%Y") if it.liberacao_prevista else "—", ParagraphStyle("c_dt2", parent=base, fontSize=7.8, leading=9.4)),
+                Paragraph(fim.strftime("%d/%m/%Y") if fim else "—", ParagraphStyle("c_dt3", parent=base, fontSize=7.8, leading=9.4)),
                 Paragraph(f'{ic(icone, 9)} <b>{texto}</b>', base),
             ])
             fundos.append(("BACKGROUND", (0, idx), (-1, idx), cores_sit[chave]))
@@ -15629,7 +15635,7 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
 
     doc.build(elementos, canvasmaker=_CanvasNumerado)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
-    sufixo = (semana or mes_chave).replace(" / ", "_").replace(" ", "_").replace("/", "_")
+    sufixo = tag_arquivo
     resposta.headers["Content-Disposition"] = f"attachment; filename=conclusoes_estacoes_{sufixo}_{date.today().isoformat()}.pdf"
     return resposta
 
@@ -23200,14 +23206,27 @@ def register_routes(app):
         Caminho fixo, prioridade
         sobre "/estacoes/<nome>"."""
         hoje = date.today()
-        mes_chave = (request.args.get("mes") or "").strip() or hoje.strftime("%Y-%m")
-        if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", mes_chave):
-            mes_chave = hoje.strftime("%Y-%m")
-        semana = (request.args.get("semana") or "").strip()
-        if semana:
-            mes_da_semana = _mes_ano_da_semana_pcp(semana)
-            if mes_da_semana is not None:
-                mes_chave = f"{mes_da_semana[0]:04d}-{mes_da_semana[1]:02d}"
+        # Períodos (vários, combináveis — pedido do Bruno, 26/10/2026: "semana
+        # 04 out + semana 01 nov"): `periodo` = "mes:AAAA-MM" (mês inteiro) ou
+        # "sem:SEMANA 04 / OUTUBRO / 2026". Sem nenhum → mês atual inteiro.
+        # (`mes`/`semana` antigos continuam aceitos.)
+        meses, semanas = set(), set()
+        brutos = list(request.args.getlist("periodo"))
+        if request.args.get("semana"):
+            brutos.append("sem:" + request.args["semana"].strip())
+        elif request.args.get("mes"):
+            brutos.append("mes:" + request.args["mes"].strip())
+        for bruto in brutos:
+            tipo, _, valor = bruto.partition(":")
+            valor = valor.strip()
+            if tipo == "mes" and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", valor):
+                meses.add(valor)
+            elif tipo == "sem" and _mes_ano_da_semana_pcp(valor) is not None:
+                semanas.add(valor)
+        if not (meses or semanas):
+            meses.add(hoje.strftime("%Y-%m"))
+        # semana cujo mês inteiro já foi pedido é redundante
+        semanas = {x for x in semanas if "%04d-%02d" % _mes_ano_da_semana_pcp(x) not in meses}
         validos = ("pendente", "em_producao", "concluido")
         status_sel = tuple(v for v in validos if v in request.args.getlist("status")) or validos
 
@@ -23218,11 +23237,12 @@ def register_routes(app):
             flash("Nenhuma estação disponível para gerar o relatório.", "warning")
             return redirect(url_for("estacoes_lista"))
 
-        ano, mes = int(mes_chave[:4]), int(mes_chave[5:7])
-        titulo_periodo = (" / ".join(parte.strip().title() for parte in semana.split("/")) if semana
-                          else f"{MESES_PT_EXTENSO[mes - 1]} / {ano} (mês inteiro)")
-        itens_por_estacao = _itens_conclusao_estacoes(mes_chave, semana, nomes, status_sel)
-        return _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_estacao, status_sel,
+        partes = [f"{MESES_PT_EXTENSO[int(m[5:7]) - 1]}/{m[:4]} (mês inteiro)" for m in sorted(meses)]
+        partes += [" / ".join(p.strip().title() for p in x.split("/")) for x in sorted(semanas, key=_chave_semana_pcp)]
+        titulo_periodo = " + ".join(partes)
+        tag = "_".join(sorted(meses) + [("S%02d_%04d-%02d" % ((_chave_semana_pcp(x)[2],) + _chave_semana_pcp(x)[:2])) for x in sorted(semanas, key=_chave_semana_pcp)])
+        itens_por_estacao = _itens_conclusao_estacoes(meses, semanas, nomes, status_sel)
+        return _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag, itens_por_estacao, status_sel,
                                               todas_estacoes=(not pedidas or ativas <= pedidas))
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
