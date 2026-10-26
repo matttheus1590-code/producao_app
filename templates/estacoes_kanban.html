@@ -67,7 +67,8 @@
   </div>
 </div>
 
-<div class="mb-3" id="kanbanBuscaWrap">
+<div class="mb-3 kb-barra" id="kanbanBuscaWrap">
+  <div class="kb-barra-busca">
   <div class="input-group input-group-sm kanban-busca-input" style="max-width: 440px;">
     <span class="input-group-text"><i class="bi bi-search"></i></span>
     <input type="text" id="buscaEstacao" class="form-control" placeholder="Buscar por produto ou nº do pedido...">
@@ -76,6 +77,42 @@
     </button>
   </div>
   <div class="form-text small" id="buscaEstacaoResultado"></div>
+  </div>
+
+  {# Filtro "Planejamento PCP" (pedido do Bruno, 26/10/2026): ver, dentro da
+     estação, o que está projetado pelo PCP pra cada mês/semana. 100%
+     client-side (data-mes/data-sem nos cards). Contagens = itens em aberto. #}
+  {% if pcp_filtro.meses or pcp_filtro.sem_plano or pcp_filtro.outros %}
+  <div class="kb-pcp" id="kbPcp">
+    <div class="kb-pcp-linha">
+      <span class="kb-pcp-rot"><i class="bi bi-calendar-week"></i> Planejamento PCP</span>
+      <button type="button" class="kb-pcp-chip ativo" data-mes="">Todos</button>
+      {% for m in pcp_filtro.meses %}
+      <button type="button" class="kb-pcp-chip" data-mes="{{ m.chave }}" title="Itens projetados pelo PCP para {{ m.label }}">
+        {{ m.label }} <span class="kb-pcp-n">{{ m.abertos }}</span>
+      </button>
+      {% endfor %}
+      {% if pcp_filtro.sem_plano %}
+      <button type="button" class="kb-pcp-chip kb-pcp-chip-alerta" data-mes="sem" title="Itens em aberto que ainda não foram encaixados em nenhuma semana do PCP">
+        Sem planejamento <span class="kb-pcp-n">{{ pcp_filtro.sem_plano }}</span>
+      </button>
+      {% endif %}
+      {% if pcp_filtro.outros %}
+      <button type="button" class="kb-pcp-chip" data-mes="outros" title="Semana com rótulo fora do padrão">Outros <span class="kb-pcp-n">{{ pcp_filtro.outros }}</span></button>
+      {% endif %}
+    </div>
+    {% for m in pcp_filtro.meses %}
+    <div class="kb-pcp-linha kb-pcp-semanas" data-semanas-de="{{ m.chave }}" hidden>
+      <span class="kb-pcp-rot kb-pcp-rot-sub">Semanas de {{ m.label }}</span>
+      <button type="button" class="kb-pcp-chip kb-pcp-chip-sem ativo" data-sem="">Todas</button>
+      {% for sm in m.semanas %}
+      <button type="button" class="kb-pcp-chip kb-pcp-chip-sem" data-sem="{{ sm.rotulo }}" title="{{ sm.rotulo }}">{{ sm.curta }} <span class="kb-pcp-n">{{ sm.abertos }}</span></button>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    <div class="form-text small" id="kbPcpResumo"></div>
+  </div>
+  {% endif %}
 </div>
 
 <div class="kanban-board" id="kanbanBoardEstacao">
@@ -185,7 +222,8 @@
         {% for item in itens_pedido %}
         {% set cor, dias = item.semaforo %}
         {% set mat = materiais_por_item[item.id] %}
-        <div class="kanban-item border-start border-3 border-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">
+        {% set pcp_i = pcp_por_item.get(item.id, {"mes": "sem", "sem": ""}) %}
+        <div class="kanban-item border-start border-3 border-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" data-mes="{{ pcp_i.mes }}" data-sem="{{ pcp_i.sem }}">
           <div class="kanban-item-titulo">{{ item.descricao_produto }}</div>
           <div class="kanban-item-meta">
             <span><i class="bi bi-box-seam"></i>{{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s)</span>
@@ -194,6 +232,7 @@
             <span class="{% if cor == 'vermelho' %}text-danger fw-semibold{% elif cor == 'amarelo' %}text-warning fw-semibold{% endif %}">
               <i class="bi bi-flag"></i>Previsto {{ item.liberacao_prevista.strftime("%d/%m/%Y") if item.liberacao_prevista else "—" }}
             </span>
+            <span class="{{ 'text-warning' if not pcp_i.sem else '' }}" title="Planejamento semanal PCP"><i class="bi bi-calendar-week"></i>{% if pcp_i.sem %}{{ pcp_i.sem | replace('SEMANA ', 'Sem ') | title }}{% else %}Sem planejamento PCP{% endif %}</span>
             {% if etapa in ("EM_PRODUCAO", "FINALIZADO") %}
             <span><i class="bi bi-play-circle"></i>Início {{ item.inicio_producao.strftime("%d/%m/%Y") if item.inicio_producao else "—" }}</span>
             {% endif %}
@@ -340,7 +379,7 @@
       <div class="text-muted small text-center py-3">Vazio</div>
       {% endfor %}
       <div class="text-muted small text-center py-3 kanban-sem-resultado-busca" hidden>
-        <i class="bi bi-search"></i> Nenhum resultado para essa busca
+        <i class="bi bi-search"></i> Nenhum item para esse filtro/busca
       </div>
     </div>
   </div>
@@ -373,40 +412,95 @@
       .trim();
   }
 
+  // Filtro Planejamento PCP (mês/semana) — combina com a busca de texto.
+  var filtroMes = "", filtroSem = "";
+  var barraPcp = document.getElementById("kbPcp");
+  var resumoPcp = document.getElementById("kbPcpResumo");
+  var nomeMes = {};
+  if (barraPcp) {
+    barraPcp.querySelectorAll(".kb-pcp-chip[data-mes]").forEach(function (b) {
+      nomeMes[b.getAttribute("data-mes")] = b.childNodes[0].textContent.trim();
+    });
+  }
+
   function aplicarBusca() {
     var termo = normalizar(input.value);
-    var totalVisivel = 0;
+    var filtrando = !!(termo || filtroMes || filtroSem);
+    var totalVisivel = 0, abertosVisiveis = 0;
 
     etapas.forEach(function (etapa) {
       var corpo = document.getElementById("coluna-corpo-" + etapa);
       if (!corpo) return;
       var grupos = corpo.querySelectorAll(".kanban-grupo-pedido");
-      var visiveisNaColuna = 0;
+      var gruposVisiveis = 0, itensVisiveis = 0, itensTotal = 0;
 
       grupos.forEach(function (grupo) {
         var texto = normalizar(grupo.getAttribute("data-busca"));
-        var bate = !termo || texto.indexOf(termo) !== -1;
+        var bateTexto = !termo || texto.indexOf(termo) !== -1;
+        var itens = grupo.querySelectorAll(".kanban-item");
+        var algum = 0;
+        itens.forEach(function (it) {
+          itensTotal++;
+          var okMes = !filtroMes || it.getAttribute("data-mes") === filtroMes;
+          var okSem = !filtroSem || it.getAttribute("data-sem") === filtroSem;
+          var ok = okMes && okSem;
+          it.hidden = !ok;
+          if (ok) algum++;
+        });
+        var bate = bateTexto && algum > 0;
         grupo.hidden = !bate;
-        if (bate) visiveisNaColuna++;
+        if (bate) { gruposVisiveis++; itensVisiveis += algum; }
       });
 
-      totalVisivel += visiveisNaColuna;
+      totalVisivel += gruposVisiveis;
+      if (etapa !== "FINALIZADO") abertosVisiveis += itensVisiveis;
 
       var semResultado = corpo.querySelector(".kanban-sem-resultado-busca");
       if (semResultado) {
-        semResultado.hidden = !(termo && grupos.length > 0 && visiveisNaColuna === 0);
+        semResultado.hidden = !(filtrando && grupos.length > 0 && gruposVisiveis === 0);
       }
 
       var badge = document.getElementById("badge-" + etapa);
       if (badge) {
         var totalOriginal = badge.getAttribute("data-total");
-        badge.textContent = termo ? visiveisNaColuna + " / " + totalOriginal : totalOriginal;
+        badge.textContent = filtrando ? itensVisiveis + " / " + totalOriginal : totalOriginal;
       }
     });
 
     if (resultadoInfo) {
       resultadoInfo.textContent = termo ? totalVisivel + " pedido(s) encontrado(s)" : "";
     }
+    if (resumoPcp) {
+      if (!filtroMes) {
+        resumoPcp.textContent = "";
+      } else {
+        var alvo = filtroSem ? filtroSem : (nomeMes[filtroMes] || filtroMes);
+        resumoPcp.textContent = filtroMes === "sem"
+          ? abertosVisiveis + " item(ns) em aberto sem planejamento PCP"
+          : abertosVisiveis + " item(ns) em aberto projetado(s) para " + alvo;
+      }
+    }
+  }
+
+  if (barraPcp) {
+    barraPcp.addEventListener("click", function (e) {
+      var b = e.target.closest(".kb-pcp-chip");
+      if (!b) return;
+      if (b.hasAttribute("data-sem")) {
+        filtroSem = b.getAttribute("data-sem");
+        b.parentNode.querySelectorAll(".kb-pcp-chip-sem").forEach(function (x) { x.classList.toggle("ativo", x === b); });
+      } else {
+        filtroMes = b.getAttribute("data-mes");
+        filtroSem = "";
+        barraPcp.querySelectorAll(".kb-pcp-linha:first-child .kb-pcp-chip").forEach(function (x) { x.classList.toggle("ativo", x === b); });
+        barraPcp.querySelectorAll(".kb-pcp-semanas").forEach(function (linha) {
+          var mostrar = linha.getAttribute("data-semanas-de") === filtroMes;
+          linha.hidden = !mostrar;
+          linha.querySelectorAll(".kb-pcp-chip-sem").forEach(function (x) { x.classList.toggle("ativo", x.getAttribute("data-sem") === ""); });
+        });
+      }
+      aplicarBusca();
+    });
   }
 
   input.addEventListener("input", aplicarBusca);

@@ -5562,6 +5562,58 @@ def _chave_semana_pcp(semana):
     return (ano, mes, semana_num)
 
 
+def _filtro_pcp_estacao(itens):
+    """Projeção PCP de cada item da estação, pro filtro "Planejamento PCP"
+    do Kanban (pedido do Bruno, 26/10/2026: "dentro de cada estação, eu
+    consiga visualizar/filtrar a projeção vinculada ao planejamento semanal
+    e mensal PCP... ex.: na espumagem, o que eu tenho de itens casando com
+    outubro / o que está projetado para novembro").
+
+    Devolve (por_item, meses): `por_item` = {item.id: {"mes": "AAAA-MM" |
+    "sem" | "outros", "sem": rótulo da semana | ""}} — vira data-attributes
+    nos cards; `meses` = lista cronológica {chave, label, abertos,
+    semanas:[{rotulo, curta, abertos}]} + contagem de itens sem plano. As
+    contagens são dos itens EM ABERTO (Pendente + Em produção) — é o que ele
+    quer "ver na estação"; o filtro em si vale pras 3 colunas."""
+    por_item = {}
+    meses = {}
+    sem_plano = outros = 0
+    for it in itens:
+        aberto = it.status_chao != "FINALIZADO"
+        rot = (it.planejamento_semanal or "").strip()
+        if not rot:
+            por_item[it.id] = {"mes": "sem", "sem": ""}
+            sem_plano += 1 if aberto else 0
+            continue
+        mes_ano = _mes_ano_da_semana_pcp(rot)
+        if mes_ano is None:
+            por_item[it.id] = {"mes": "outros", "sem": rot}
+            outros += 1 if aberto else 0
+            continue
+        ano, mes = mes_ano
+        chave = f"{ano:04d}-{mes:02d}"
+        por_item[it.id] = {"mes": chave, "sem": rot}
+        m = meses.setdefault(chave, {"chave": chave, "ano": ano, "mes": mes, "abertos": 0, "semanas": {}})
+        sm = m["semanas"].setdefault(rot, {"rotulo": rot, "abertos": 0, "ordem": _chave_semana_pcp(rot)})
+        if aberto:
+            m["abertos"] += 1
+            sm["abertos"] += 1
+    lista = []
+    for chave in sorted(meses):
+        m = meses[chave]
+        sems = sorted(m["semanas"].values(), key=lambda x: x["ordem"])
+        for sm in sems:
+            num = sm["ordem"][2]
+            sm["curta"] = f"Sem {num:02d}"
+        lista.append({
+            "chave": chave, "abertos": m["abertos"],
+            "label": f"{MESES_PT_EXTENSO[m['mes'] - 1]}/{m['ano']}",
+            "curto": f"{MESES_PT[m['mes'] - 1]}/{str(m['ano'])[2:]}",
+            "semanas": sems,
+        })
+    return por_item, {"meses": lista, "sem_plano": sem_plano, "outros": outros}
+
+
 def _somar_meses(ano, mes, delta):
     total = (ano * 12 + (mes - 1)) + delta
     return (total // 12, total % 12 + 1)
@@ -22582,6 +22634,7 @@ def register_routes(app):
             return [(grupos[pid][0].pedido, grupos[pid]) for pid in ordem_pedidos]
 
         colunas_agrupadas = {chave: _agrupar_por_pedido(colunas[chave]) for chave in STATUS_CHAO_OPCOES}
+        pcp_por_item, pcp_filtro = _filtro_pcp_estacao(itens)
 
         # Total de matéria-prima (kg) por item e por coluna — pedido do
         # Bruno (22/09/2026): "quero enxergar o total de materia prima" nas
@@ -22668,6 +22721,8 @@ def register_routes(app):
             nao_identificados_por_coluna=nao_identificados_por_coluna,
             materiais_agrupados_por_coluna=materiais_agrupados_por_coluna,
             materiais_principais_por_coluna=materiais_principais_por_coluna,
+            pcp_por_item=pcp_por_item,
+            pcp_filtro=pcp_filtro,
         )
 
     @app.route("/estacoes/<nome>/relatorio.pdf")

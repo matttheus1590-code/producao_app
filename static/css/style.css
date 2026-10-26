@@ -3644,3 +3644,21 @@ a.pn-kpi:hover {
   .dp-hist-linha { grid-template-columns:1fr; gap:.15rem; } .dp-hist-quem { text-align:left; }
   .dp-alertas { grid-template-columns:1fr; }
 }
+
+/* Kanban das Estações — filtro Planejamento PCP (mês/semana) */
+.kb-pcp { margin-top: .6rem; }
+.kb-pcp-linha { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin-bottom: .35rem; }
+.kb-pcp-linha[hidden] { display: none; }
+.kb-pcp-rot { font-size: .78rem; font-weight: 600; color: #4a5568; margin-right: .3rem; }
+.kb-pcp-rot-sub { font-weight: 500; color: #7a8499; }
+.kb-pcp-chip { border: 1px solid #d9e0ea; background: #fff; color: #3b475c; border-radius: 999px; padding: .12rem .7rem; font-size: .78rem; cursor: pointer; line-height: 1.5; }
+.kb-pcp-chip:hover { background: #f1f5fb; }
+.kb-pcp-chip.ativo { background: #2f5fb3; border-color: #2f5fb3; color: #fff; }
+.kb-pcp-chip-sem.ativo { background: #3f8f5f; border-color: #3f8f5f; }
+.kb-pcp-chip-alerta { border-color: #f0d9a8; background: #fffaf0; color: #8a5a12; }
+.kb-pcp-chip-alerta.ativo { background: #d08a1c; border-color: #d08a1c; color: #fff; }
+.kb-pcp-n { display: inline-block; min-width: 1.3em; text-align: center; background: rgba(0,0,0,.08); border-radius: 999px; font-size: .7rem; padding: 0 .3rem; margin-left: .15rem; }
+.kb-pcp-chip.ativo .kb-pcp-n { background: rgba(255,255,255,.25); }
+.kb-barra { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .6rem 1.4rem; }
+.kb-barra-busca { flex: 0 0 auto; width: 440px; max-width: 100%; }
+.kb-barra .kb-pcp { flex: 1 1 420px; margin-top: 0; min-width: 0; }
