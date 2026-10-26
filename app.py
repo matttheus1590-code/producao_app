@@ -685,7 +685,7 @@ def _gerar_pdf_painel_diario(ctx):
                         "Base: Planejamento PCP da Listagem Geral — fechamento do mês anterior, previsto do mês atual e backlog do mês seguinte.")
     blocos = [
         (ctx["resumo_mes_anterior_pcp"], f'Fechamento do mês anterior ({ctx["resumo_mes_anterior_pcp"]["mes_label"]})', "bar_chart", "#e9ecef", "#6c757d"),
-        (ctx["resumo_mes_atual_pcp"], "Faturamento previsto (mês atual)", "moneybag", "#d1e7dd", VERDE),
+        (ctx["resumo_mes_atual_pcp"], f'Faturamento previsto — mês atual ({ctx["resumo_mes_atual_pcp"]["mes_label"]})', "moneybag", "#d1e7dd", VERDE),
         (ctx["resumo_mes_seguinte_pcp"], f'Backlog mês seguinte ({ctx["resumo_mes_seguinte_pcp"]["mes_label"]})', "package", "#cfe2ff", AZUL),
     ]
     celulas = []
@@ -16630,11 +16630,23 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
     # dinamico... como gestao" ----
     if len(blocos) > 1:
         linha_rotulo, linha_kpi, linha_valor = [], [], []
+        cor_idx_cmp = 0
         for b in blocos:
             linhas_b = b["linhas"]
             pedidos_b = {l.pedido_id for l in linhas_b}
             faturamento_b = sum(l.venda_total or 0 for l in linhas_b)
-            linha_rotulo.append(Paragraph(b["rotulo"], ParagraphStyle("cmp_rotulo", parent=estilos["Normal"], fontSize=13, leading=15, textColor=colors.white, fontName="Helvetica-Bold", alignment=1)))
+            # Rótulo do card COM o mês (pedido do Bruno, 26/10/2026: "referencie
+            # o mês atual (outubro) e cite o mês seguinte (também inclua
+            # novembro)") — sempre derivado do mês real do bloco, nunca texto
+            # genérico, então troca sozinho a cada mês.
+            ano_c, mes_c = b["mes_ano"]
+            mes_c_txt = f"{MESES_PT_EXTENSO[mes_c - 1].upper()} / {ano_c}"
+            if cor_idx_cmp == 0:
+                rotulo_card = f"MÊS DO RELATÓRIO<br/>{mes_c_txt}"
+            else:
+                rotulo_card = f"BACKLOG — MÊS SEGUINTE<br/>{mes_c_txt} (PROJEÇÃO PCP)"
+            cor_idx_cmp += 1
+            linha_rotulo.append(Paragraph(rotulo_card, ParagraphStyle("cmp_rotulo", parent=estilos["Normal"], fontSize=13, leading=15, textColor=colors.white, fontName="Helvetica-Bold", alignment=1)))
             linha_kpi.append(Paragraph(f"{len(pedidos_b)} pedido(s) · {len(linhas_b)} item(ns)", ParagraphStyle("cmp_kpi", parent=estilos["Normal"], fontSize=11, leading=13, textColor=colors.white, alignment=1)))
             linha_valor.append(Paragraph(_fmt_moeda(faturamento_b), ParagraphStyle("cmp_valor", parent=estilos["Normal"], fontSize=28, leading=32, textColor=colors.white, fontName="Helvetica-Bold", alignment=1)))
         largura_col = largura_disponivel / len(blocos)
@@ -16659,7 +16671,8 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
         for i in range(len(blocos)):
             estilo_comparativo.append(("BACKGROUND", (i, 0), (i, -1), cores_bloco[i % len(cores_bloco)]))
         tabela_comparativo.setStyle(TableStyle(estilo_comparativo))
-        elementos.append(Paragraph("Visão geral — mês do relatório x backlog PCP", estilos["Heading4"]))
+        _t_mes = lambda b: f"{MESES_PT_EXTENSO[b['mes_ano'][1] - 1]}/{b['mes_ano'][0]}"
+        elementos.append(Paragraph(f"Visão geral — {_t_mes(blocos[0])} (mês do relatório) x backlog PCP de {_t_mes(blocos[1])}", estilos["Heading4"]))
         elementos.append(tabela_comparativo)
         elementos.append(Spacer(1, 7 * mm))
 
