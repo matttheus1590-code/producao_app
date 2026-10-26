@@ -15301,10 +15301,11 @@ def _ordenar_nomes_estacoes(nomes):
     return ordem
 
 
-def _itens_conclusao_estacoes(mes_chave, semana, nomes_estacoes, situacao="todos"):
+def _itens_conclusao_estacoes(mes_chave, semana, nomes_estacoes, status_sel=("pendente", "em_producao", "concluido")):
     """Itens com Planejamento PCP no mês (`mes_chave` "AAAA-MM") ou numa
     semana exata (`semana`, rótulo "SEMANA 04 / OUTUBRO / 2026"), nas
-    estações pedidas. `situacao`: todos | abertos | concluidos. Devolve
+    estações pedidas. `status_sel`: subconjunto de pendente | em_producao |
+    concluido (o que o Bruno marca no modal). Devolve
     {nome_estacao: [itens]} (todas as estações pedidas, mesmo vazias)."""
     resultado = {n: [] for n in nomes_estacoes}
     if not nomes_estacoes:
@@ -15321,10 +15322,13 @@ def _itens_conclusao_estacoes(mes_chave, semana, nomes_estacoes, situacao="todos
             mes_ano = _mes_ano_da_semana_pcp(item.planejamento_semanal)
             if mes_ano is None or f"{mes_ano[0]:04d}-{mes_ano[1]:02d}" != mes_chave:
                 continue
-        finalizado = item.status_producao == "FINALIZADO"
-        if situacao == "abertos" and finalizado:
-            continue
-        if situacao == "concluidos" and not finalizado:
+        if item.status_producao == "FINALIZADO":
+            chave_status = "concluido"
+        elif item.status_producao == "PENDENTE":
+            chave_status = "pendente"
+        else:
+            chave_status = "em_producao"
+        if chave_status not in status_sel:
             continue
         resultado[item.estacao].append(item)
     for itens in resultado.values():
@@ -15333,7 +15337,7 @@ def _itens_conclusao_estacoes(mes_chave, semana, nomes_estacoes, situacao="todos
     return resultado
 
 
-def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_estacao, situacao="todos", todas_estacoes=False):
+def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_estacao, status_sel=("pendente", "em_producao", "concluido"), todas_estacoes=False):
     """PDF gerencial "Conclusões por Estação" — A4 retrato, logo 4PIPE, data/
     hora de geração (cabeçalho e rodapé de TODAS as páginas, com "Página X de
     Y"), emojis coloridos (mesmos PNGs do resto dos PDFs). Estrutura: KPIs de
@@ -15410,15 +15414,29 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
         v = v or 0
         return str(int(v)) if v == int(v) else str(v)
 
-    def situacao_item(it):
-        """(chave, texto, ícone) do item, em relação a HOJE."""
+    def status_item(it):
+        """Status do item: concluido | fila (PENDENTE) | producao."""
         if it.status_producao == "FINALIZADO":
-            return "concluido", "Concluído", "check"
-        if it.liberacao_prevista and it.liberacao_prevista < hoje:
-            return "atrasado", f"Atrasado {(hoje - it.liberacao_prevista).days}d", "red_circle"
-        if it.status_producao == "PENDENTE":
-            return "fila", "Na fila", "hourglass"
-        return "producao", "Em produção", "factory"
+            return "concluido"
+        return "fila" if it.status_producao == "PENDENTE" else "producao"
+
+    def dias_atraso(it):
+        """Dias de atraso (liberação prevista vencida e item ainda aberto) ou 0 —
+        é um ALERTA sobreposto ao status (um item pendente/em produção pode
+        estar atrasado), nunca substitui "Pendente"/"Em produção"."""
+        if it.status_producao != "FINALIZADO" and it.liberacao_prevista and it.liberacao_prevista < hoje:
+            return (hoje - it.liberacao_prevista).days
+        return 0
+
+    def situacao_item(it):
+        """(chave de cor da linha, texto, ícone): o status SEMPRE aparece;
+        o atraso vem junto, em vermelho, e pinta a linha."""
+        st = status_item(it)
+        texto, icone = {"concluido": ("Concluído", "check"), "fila": ("Pendente", "hourglass"), "producao": ("Em produção", "factory")}[st]
+        d = dias_atraso(it)
+        if d:
+            return "atrasado", f'{texto} <font color="#dc3545">· {d}d de atraso</font>', icone
+        return st, texto, icone
 
     def semana_curta(rot):
         ch = _chave_semana_pcp(rot) if rot else None
@@ -15434,15 +15452,18 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
     def contar(itens):
         c = {"concluido": 0, "producao": 0, "fila": 0, "atrasado": 0}
         for it in itens:
-            c[situacao_item(it)[0]] += 1
+            c[status_item(it)] += 1
+            if dias_atraso(it):
+                c["atrasado"] += 1
         c["total"] = len(itens)
         c["pct"] = round(100 * c["concluido"] / c["total"]) if c["total"] else 0
         c["pecas"] = sum(i.quantidade or 0 for i in itens)
         return c
 
     tot = contar(todos)
-    sit_txt = {"todos": "Todos os itens (concluídos e em aberto)", "abertos": "Somente em aberto (ainda não concluídos)",
-               "concluidos": "Somente concluídos"}.get(situacao, "Todos os itens")
+    nomes_status = {"pendente": "Pendente (fila)", "em_producao": "Em produção", "concluido": "Concluído"}
+    sel = [k for k in ("pendente", "em_producao", "concluido") if k in status_sel]
+    sit_txt = "Todos os status (pendente, em produção e concluído)" if len(sel) == 3 else "Somente " + " + ".join(nomes_status[k] for k in sel)
     rotulos = [rotulo_estacao(n) for n in nomes]
     txt_estacoes = f"Todas as estações ativas ({len(nomes)})" if todas_estacoes else ", ".join(rotulos)
 
@@ -15472,8 +15493,8 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
         kpi(tot["total"], "Itens previstos", "target", colors.HexColor("#8fa8cc"), f'{pecas_txt(tot["pecas"])} peça(s)'),
         kpi(tot["concluido"], "Concluídos", "check", VERDE, f'{tot["pct"]}% do previsto'),
         kpi(tot["producao"], "Em produção", "factory", colors.HexColor("#0d6efd")),
-        kpi(tot["fila"], "Na fila", "hourglass", CINZA),
-        kpi(tot["atrasado"], "Atrasados", "red_circle", VERMELHO if tot["atrasado"] else BORDA, "prazo PCP vencido"),
+        kpi(tot["fila"], "Pendentes", "hourglass", CINZA, "na fila"),
+        kpi(tot["atrasado"], "Atrasados", "red_circle", VERMELHO if tot["atrasado"] else BORDA, "pendentes/em produção c/ prazo vencido"),
     ]
     lk = largura / len(kp)
     t_k = Table([[k[0][0] for k in kp], [k[0][1] for k in kp], [k[0][2] for k in kp]], colWidths=[lk] * len(kp))
@@ -15502,7 +15523,7 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
 
     # ---------------- resumo por estação ----------------
     elementos.append(secao("RESUMO POR ESTAÇÃO", "bar_chart"))
-    cab_res = [Paragraph(x, cab_tab) for x in ("Estação", "Previstos", f'{ic("check", 8)} Concl.', f'{ic("factory", 8)} Em prod.', f'{ic("hourglass", 8)} Fila', f'{ic("red_circle", 8)} Atras.', "% concluído")]
+    cab_res = [Paragraph(x, cab_tab) for x in ("Estação", "Previstos", f'{ic("check", 8)} Concl.', f'{ic("factory", 8)} Em prod.', f'{ic("hourglass", 8)} Pend.', f'{ic("red_circle", 8)} Atras.', "% concluído")]
     linhas_res = [cab_res]
     for n in com_itens:
         c = contar(itens_por_estacao[n])
@@ -15535,18 +15556,18 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
             por_sem.setdefault(it.planejamento_semanal, []).append(it)
         if por_sem:
             elementos.append(secao("EVOLUÇÃO POR SEMANA DO PCP", "calendar"))
-            linhas_s = [[Paragraph(x, cab_tab) for x in ("Semana", "Previstos", "Concl.", "Em aberto", "Atras.", "% concluído")]]
+            linhas_s = [[Paragraph(x, cab_tab) for x in ("Semana", "Previstos", "Concl.", "Em prod.", "Pend.", "Atras.", "% concluído")]]
             for rot in sorted(por_sem, key=_chave_semana_pcp):
                 c = contar(por_sem[rot])
                 fim = _fim_semana_pcp(rot)
                 linhas_s.append([
                     Paragraph(f"<b>{esc(rot.replace('SEMANA ', 'Semana '))}</b>" + (f' <font color="#6c757d">· até {fim.strftime("%d/%m")}</font>' if fim else ""), base),
                     Paragraph(f'<b>{c["total"]}</b>', centro), Paragraph(str(c["concluido"]), centro),
-                    Paragraph(str(c["total"] - c["concluido"]), centro),
+                    Paragraph(str(c["producao"]), centro), Paragraph(str(c["fila"]), centro),
                     Paragraph(f'<font color="#dc3545"><b>{c["atrasado"]}</b></font>' if c["atrasado"] else "0", centro),
                     [barra(c["pct"]), Paragraph(f'<b>{c["pct"]}%</b>', ParagraphStyle("c_pc2", parent=pequeno, fontSize=7.4))],
                 ])
-            t_s = Table(linhas_s, colWidths=[largura - 4 * 17 * mm - 40 * mm] + [17 * mm] * 4 + [40 * mm], repeatRows=1)
+            t_s = Table(linhas_s, colWidths=[largura - 5 * 17 * mm - 40 * mm] + [17 * mm] * 5 + [40 * mm], repeatRows=1)
             t_s.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d3e0f2")), ("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.4, BORDA),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
@@ -15572,7 +15593,7 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
         elementos.append(CondPageBreak(32 * mm))
         banner = Table([[Paragraph(
             f'{ic("factory", 11)} <b>{esc(rotulo_estacao(n)).upper()}</b> &nbsp;—&nbsp; {c["total"]} item(ns) · {c["concluido"]} concluído(s) ({c["pct"]}%) · '
-            f'{c["producao"] + c["fila"] + c["atrasado"]} em aberto' + (f' · <font color="#ffb3ba"><b>{c["atrasado"]} atrasado(s)</b></font>' if c["atrasado"] else ""),
+            f'{c["producao"]} em produção · {c["fila"]} pendente(s)' + (f' · <font color="#ffb3ba"><b>{c["atrasado"]} atrasado(s)</b></font>' if c["atrasado"] else ""),
             ParagraphStyle("c_ban", parent=base, fontSize=9.6, leading=12, textColor=colors.white))]], colWidths=[largura])
         banner.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#2f5fb3")), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
         elementos.append(banner)
@@ -15603,8 +15624,8 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_
 
     # legenda
     elementos.append(Paragraph(
-        f'{ic("check", 8)} Concluído &nbsp; {ic("factory", 8)} Em produção &nbsp; {ic("hourglass", 8)} Na fila &nbsp; {ic("red_circle", 8)} Atrasado '
-        f'(liberação prevista vencida e item ainda não concluído) &nbsp;·&nbsp; "Previstos" = itens com Planejamento PCP no período.', pequeno))
+        f'{ic("check", 8)} Concluído &nbsp; {ic("factory", 8)} Em produção &nbsp; {ic("hourglass", 8)} Pendente (fila) &nbsp; {ic("red_circle", 8)} Atrasado '
+        f'(liberação prevista vencida e item ainda não concluído — pinta a linha de vermelho) &nbsp;·&nbsp; "Previstos" = itens com Planejamento PCP no período.', pequeno))
 
     doc.build(elementos, canvasmaker=_CanvasNumerado)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
@@ -23175,7 +23196,8 @@ def register_routes(app):
         """PDF "Conclusões por Estação" (ver _gerar_pdf_conclusoes_estacoes):
         `mes` (AAAA-MM, padrão = mês atual), `semana` (rótulo exato do PCP;
         vazio = mês inteiro), `estacao` (várias; nenhuma = todas as ativas) e
-        `situacao` (todos | abertos | concluidos). Caminho fixo, prioridade
+        `status` (vários: pendente | em_producao | concluido; nenhum = todos).
+        Caminho fixo, prioridade
         sobre "/estacoes/<nome>"."""
         hoje = date.today()
         mes_chave = (request.args.get("mes") or "").strip() or hoje.strftime("%Y-%m")
@@ -23186,9 +23208,8 @@ def register_routes(app):
             mes_da_semana = _mes_ano_da_semana_pcp(semana)
             if mes_da_semana is not None:
                 mes_chave = f"{mes_da_semana[0]:04d}-{mes_da_semana[1]:02d}"
-        situacao = request.args.get("situacao", "todos")
-        if situacao not in ("todos", "abertos", "concluidos"):
-            situacao = "todos"
+        validos = ("pendente", "em_producao", "concluido")
+        status_sel = tuple(v for v in validos if v in request.args.getlist("status")) or validos
 
         ativas = {e.nome for e in Estacao.query.filter_by(ativo=True).all()}
         pedidas = {v for v in request.args.getlist("estacao") if v}
@@ -23200,8 +23221,8 @@ def register_routes(app):
         ano, mes = int(mes_chave[:4]), int(mes_chave[5:7])
         titulo_periodo = (" / ".join(parte.strip().title() for parte in semana.split("/")) if semana
                           else f"{MESES_PT_EXTENSO[mes - 1]} / {ano} (mês inteiro)")
-        itens_por_estacao = _itens_conclusao_estacoes(mes_chave, semana, nomes, situacao)
-        return _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_estacao, situacao,
+        itens_por_estacao = _itens_conclusao_estacoes(mes_chave, semana, nomes, status_sel)
+        return _gerar_pdf_conclusoes_estacoes(titulo_periodo, mes_chave, semana, itens_por_estacao, status_sel,
                                               todas_estacoes=(not pedidas or ativas <= pedidas))
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])

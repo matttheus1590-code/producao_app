@@ -155,21 +155,22 @@
             </div>
           </div>
 
-          <label class="form-label small text-muted mb-1">Situação dos itens</label>
-          <div class="d-flex flex-wrap gap-3 mb-3">
+          <label class="form-label small text-muted mb-1">Status dos itens</label>
+          <div class="d-flex flex-wrap gap-3 mb-1">
             <div class="form-check">
-              <input class="form-check-input" type="radio" name="situacao" id="conclSitTodos" value="todos" checked>
-              <label class="form-check-label small" for="conclSitTodos">Todos (concluídos e em aberto)</label>
+              <input class="form-check-input concl-status-check" type="checkbox" name="status" id="conclStPendente" value="pendente" checked>
+              <label class="form-check-label small" for="conclStPendente">⏳ Pendente (fila)</label>
             </div>
             <div class="form-check">
-              <input class="form-check-input" type="radio" name="situacao" id="conclSitAbertos" value="abertos">
-              <label class="form-check-label small" for="conclSitAbertos">Só em aberto (ainda a concluir)</label>
+              <input class="form-check-input concl-status-check" type="checkbox" name="status" id="conclStProducao" value="em_producao" checked>
+              <label class="form-check-label small" for="conclStProducao">🏭 Em produção</label>
             </div>
             <div class="form-check">
-              <input class="form-check-input" type="radio" name="situacao" id="conclSitConcluidos" value="concluidos">
-              <label class="form-check-label small" for="conclSitConcluidos">Só concluídos</label>
+              <input class="form-check-input concl-status-check" type="checkbox" name="status" id="conclStConcluido" value="concluido" checked>
+              <label class="form-check-label small" for="conclStConcluido">✅ Concluído</label>
             </div>
           </div>
+          <div class="small text-muted mb-3">Marque só o que quiser ver. Ex.: Pendente + Em produção = o que ainda falta concluir no período.</div>
 
           <div class="d-flex justify-content-between align-items-center mb-1">
             <label class="form-label small text-muted mb-0">Estações</label>
@@ -408,6 +409,14 @@
   });
   form.addEventListener("submit", function (ev) {
     var alguma = Array.prototype.some.call(checks, function (c) { return c.checked; });
+    var algumStatus = Array.prototype.some.call(document.querySelectorAll(".concl-status-check"), function (c) { return c.checked; });
+    if (!algumStatus) {
+      ev.preventDefault();
+      document.getElementById("conclStPendente").checked = true;
+      document.getElementById("conclStProducao").checked = true;
+      document.getElementById("conclStConcluido").checked = true;
+      return;
+    }
     if (!alguma) { ev.preventDefault(); if (aviso) aviso.classList.remove("d-none"); }
     else if (aviso) aviso.classList.add("d-none");
   });
