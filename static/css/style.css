@@ -1897,6 +1897,16 @@ body.col-resizing-ativo {
   border-color: #6ea8fe;
   background-color: rgba(13, 110, 253, 0.05);
 }
+/* Revisão de prazo já solicitada ao comercial (controle PCP → comercial,
+   Bruno 27/10/2026) — card "assentado": fundo suave verde. */
+.risco-prazo-card-ok {
+  border-color: #b7e0c5;
+  background-color: rgba(25, 135, 84, 0.05);
+}
+.risco-revisao-faixa {
+  border-top: 1px dashed #dde1e5;
+  padding-top: 0.4rem;
+}
 
 /* Kanban Expedição — Gestão Operação › Logística (pedido do Bruno,
    16/09/2026) — mesmo visual de cartão/borda do .risco-prazo-card acima,

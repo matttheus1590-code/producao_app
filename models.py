@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask_login import UserMixin
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -2236,3 +2236,35 @@ class CorrespondenciaManualCusto(db.Model):
     atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     produto = db.relationship("Produto", foreign_keys=[produto_id])
+
+
+class SolicitacaoRevisaoPrazo(db.Model):
+    """Controle de "revisão de prazo solicitada ao comercial" (pedido do
+    Bruno, 27/10/2026): a partir da Mini gestão de risco do Painel, o PCP
+    "aponta" os pedidos em risco (atrasados/vencendo) para os quais JÁ pediu
+    ao comercial a revisão do prazo com o cliente — mantendo o alinhamento
+    produção x PCP x comercial. Ciclo simples (só "já solicitei"): 1 linha por
+    pedido (unique); desfazer apaga a linha (o histórico fica em
+    HistoricoAlteracao, campo "revisao_prazo_solicitada").
+
+    Tabela NOVA — criada sozinha pelo db.create_all() no startup, sem ALTER."""
+
+    __tablename__ = "solicitacoes_revisao_prazo"
+
+    id = db.Column(db.Integer, primary_key=True)
+    pedido_id = db.Column(db.Integer, db.ForeignKey("pedidos.id"), nullable=False, unique=True, index=True)
+    solicitado_em = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    solicitado_por = db.Column(db.String(120), nullable=True)
+    # Snapshot do prazo do cliente / previsão PCP no momento do apontamento,
+    # pra comparar depois mesmo que o pedido mude.
+    prazo_cliente_na_epoca = db.Column(db.Date, nullable=True)
+    previsao_pcp_na_epoca = db.Column(db.Date, nullable=True)
+    novo_prazo_sugerido = db.Column(db.Date, nullable=True)
+    motivo = db.Column(db.Text, nullable=True)
+
+    pedido = db.relationship("Pedido", backref=db.backref("solicitacao_revisao_prazo", uselist=False, cascade="all, delete-orphan"))
+
+    @property
+    def solicitado_em_brt(self):
+        """solicitado_em (gravado em UTC) no horário de Brasília (UTC-3)."""
+        return self.solicitado_em - timedelta(hours=3) if self.solicitado_em else None

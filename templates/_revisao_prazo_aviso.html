@@ -1,0 +1,17 @@
+{# Aviso "revisão de prazo solicitada ao comercial" (controle PCP → comercial,
+   pedido do Bruno, 27/10/2026) — aparece pra TODOS os papéis no Detalhe do
+   Pedido 360 e na Consulta Pedido (o comercial não acessa o Painel). Usa
+   `pedido.solicitacao_revisao_prazo` (None = ainda não solicitada). #}
+{% set _rev = pedido.solicitacao_revisao_prazo if pedido else None %}
+{% if _rev %}
+<div class="alert alert-success d-flex align-items-start gap-2 py-2 mb-3" role="status">
+  <i class="bi bi-send-check fs-5"></i>
+  <div class="small">
+    <strong>Revisão de prazo já solicitada pelo PCP ao comercial</strong>
+    — em {{ _rev.solicitado_em_brt.strftime("%d/%m/%Y %H:%M") }} por {{ _rev.solicitado_por or "—" }}.
+    {% if _rev.novo_prazo_sugerido %}<br>Novo prazo sugerido pelo PCP: <strong>{{ _rev.novo_prazo_sugerido.strftime("%d/%m/%Y") }}</strong>
+      {% if _rev.prazo_cliente_na_epoca %}(prazo do cliente na época: {{ _rev.prazo_cliente_na_epoca.strftime("%d/%m/%Y") }}){% endif %}{% endif %}
+    {% if _rev.motivo %}<br><span class="fst-italic">Motivo: {{ _rev.motivo }}</span>{% endif %}
+  </div>
+</div>
+{% endif %}

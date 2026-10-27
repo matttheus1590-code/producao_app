@@ -177,6 +177,60 @@
   <span class="pn-grupo-linha"></span>
 </div>
 
+{% set pode_apontar_revisao = current_user.role in ("ADMIN", "PCP") %}
+{% macro risco_card(p, tipo) %}
+<div class="risco-prazo-card{{ ' risco-prazo-card-ok' if p.revisao else '' }}">
+  <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="text-decoration-none text-reset d-block">
+    <div class="d-flex justify-content-between align-items-start gap-2">
+      <span class="fw-semibold">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
+      {% if tipo == 'atrasado' %}<span class="badge bg-danger">Atrasado</span>{% else %}<span class="badge bg-warning text-dark">Vencendo</span>{% endif %}
+    </div>
+    <div class="small text-muted">
+      Solicitado cliente: {{ p.data_solicitada_cliente.strftime("%d/%m/%Y") if p.data_solicitada_cliente else "—" }}
+      · Estado: {{ p.estado or "—" }}
+      · Previsto PCP: {{ p.data_prevista_pcp.strftime("%d/%m/%Y") if p.data_prevista_pcp else "—" }}
+    </div>
+    <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ p.sugestao }}</div>
+  </a>
+  <div class="risco-revisao-faixa mt-2">
+    {% if p.revisao %}
+    {% set r = p.revisao %}
+    <div class="small">
+      <span class="badge bg-success"><i class="bi bi-check2-circle"></i> Revisão solicitada ao comercial</span>
+      <span class="text-muted">em {{ p.revisao_quando }} por {{ r.solicitado_por or "—" }}</span>
+      {% if r.novo_prazo_sugerido %}<div class="mt-1"><i class="bi bi-calendar-check"></i> Novo prazo sugerido pelo PCP: <strong>{{ r.novo_prazo_sugerido.strftime("%d/%m/%Y") }}</strong></div>{% endif %}
+      {% if r.motivo %}<div class="text-muted fst-italic mt-1">“{{ r.motivo }}”</div>{% endif %}
+    </div>
+    {% if pode_apontar_revisao %}
+    <div class="d-flex gap-2 mt-1">
+      <button type="button" class="btn btn-sm btn-link p-0 js-apontar-revisao"
+              data-bs-toggle="modal" data-bs-target="#modalRevisaoPrazo"
+              data-action="{{ url_for('painel_revisao_prazo_solicitar', pedido_id=p.id) }}"
+              data-titulo="{{ p.pedido_venda or p.id }} · {{ p.cliente }}"
+              data-novo="{{ r.novo_prazo_sugerido.strftime('%Y-%m-%d') if r.novo_prazo_sugerido else '' }}"
+              data-motivo="{{ r.motivo or '' }}">editar</button>
+      <form method="post" action="{{ url_for('painel_revisao_prazo_desfazer', pedido_id=p.id) }}" class="d-inline" onsubmit="return confirm('Desfazer o apontamento de revisão solicitada deste pedido?');">
+        <button type="submit" class="btn btn-sm btn-link text-danger p-0">desfazer</button>
+      </form>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="d-flex justify-content-between align-items-center gap-2">
+      <span class="small text-muted"><i class="bi bi-hourglass-split"></i> Revisão de prazo ainda não solicitada ao comercial</span>
+      {% if pode_apontar_revisao %}
+      <button type="button" class="btn btn-sm btn-outline-primary js-apontar-revisao"
+              data-bs-toggle="modal" data-bs-target="#modalRevisaoPrazo"
+              data-action="{{ url_for('painel_revisao_prazo_solicitar', pedido_id=p.id) }}"
+              data-titulo="{{ p.pedido_venda or p.id }} · {{ p.cliente }}"
+              data-novo=""
+              data-motivo=""><i class="bi bi-send-check"></i> Já solicitei revisão</button>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
 <div class="card pn-sec pn-t-amber" id="sec-risco" data-sec="risco">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
@@ -197,36 +251,17 @@
               <span class="badge bg-warning text-dark">🟡 {{ dados.vencendo_total if dados else 0 }} vencendo</span>
             </div>
           </div>
+          {% if dados and (dados.atrasados_total or dados.vencendo_total) %}
+          <div class="small mb-2 risco-revisao-resumo">
+            <span class="text-success" title="Pedidos em risco para os quais o PCP já pediu revisão de prazo ao comercial"><i class="bi bi-check2-circle"></i> {{ dados.revisao_solicitada_total }} revisão solicitada ao comercial</span>
+            <span class="text-muted">·</span>
+            <span class="{{ 'text-danger fw-semibold' if dados.revisao_pendente_total else 'text-muted' }}" title="Pedidos em risco ainda sem solicitação de revisão de prazo ao comercial"><i class="bi bi-hourglass-split"></i> {{ dados.revisao_pendente_total }} a solicitar</span>
+          </div>
+          {% endif %}
           {% if dados and (dados.atrasados or dados.vencendo) %}
           <div class="d-flex flex-column gap-2">
-            {% for p in dados.atrasados %}
-            <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="risco-prazo-card text-decoration-none">
-              <div class="d-flex justify-content-between align-items-start gap-2">
-                <span class="fw-semibold">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
-                <span class="badge bg-danger">Atrasado</span>
-              </div>
-              <div class="small text-muted">
-                Solicitado cliente: {{ p.data_solicitada_cliente.strftime("%d/%m/%Y") if p.data_solicitada_cliente else "—" }}
-                · Estado: {{ p.estado or "—" }}
-                · Previsto PCP: {{ p.data_prevista_pcp.strftime("%d/%m/%Y") if p.data_prevista_pcp else "—" }}
-              </div>
-              <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ p.sugestao }}</div>
-            </a>
-            {% endfor %}
-            {% for p in dados.vencendo %}
-            <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="risco-prazo-card text-decoration-none">
-              <div class="d-flex justify-content-between align-items-start gap-2">
-                <span class="fw-semibold">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
-                <span class="badge bg-warning text-dark">Vencendo</span>
-              </div>
-              <div class="small text-muted">
-                Solicitado cliente: {{ p.data_solicitada_cliente.strftime("%d/%m/%Y") if p.data_solicitada_cliente else "—" }}
-                · Estado: {{ p.estado or "—" }}
-                · Previsto PCP: {{ p.data_prevista_pcp.strftime("%d/%m/%Y") if p.data_prevista_pcp else "—" }}
-              </div>
-              <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ p.sugestao }}</div>
-            </a>
-            {% endfor %}
+            {% for p in dados.atrasados %}{{ risco_card(p, 'atrasado') }}{% endfor %}
+            {% for p in dados.vencendo %}{{ risco_card(p, 'vencendo') }}{% endfor %}
           </div>
           {% else %}
           <p class="text-muted small mb-0">Nenhum pedido {{ frete }} em risco no momento 🎉</p>
@@ -237,6 +272,46 @@
     </div>
   </div>
 </div>
+
+
+{% if pode_apontar_revisao %}
+<div class="modal fade" id="modalRevisaoPrazo" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" id="formRevisaoPrazo" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-send-check"></i> Revisão de prazo solicitada ao comercial</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">Pedido: <strong id="revisaoPrazoTitulo">—</strong></p>
+        <p class="small text-muted">Data/hora e seu nome são registrados automaticamente. Todos (inclusive o comercial) passam a ver que a revisão já foi solicitada.</p>
+        <div class="mb-3">
+          <label class="form-label" for="revisaoNovoPrazo">Novo prazo sugerido pelo PCP</label>
+          <input type="date" class="form-control" name="novo_prazo_sugerido" id="revisaoNovoPrazo">
+        </div>
+        <div class="mb-0">
+          <label class="form-label" for="revisaoMotivo">Motivo / observação</label>
+          <textarea class="form-control" name="motivo" id="revisaoMotivo" rows="3" maxlength="1000" placeholder="Ex.: falta de matéria-prima, replanejamento da fila, retrabalho..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle"></i> Apontar como solicitada</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+document.addEventListener("click", function (ev) {
+  var b = ev.target.closest(".js-apontar-revisao");
+  if (!b) return;
+  document.getElementById("formRevisaoPrazo").action = b.dataset.action;
+  document.getElementById("revisaoPrazoTitulo").textContent = b.dataset.titulo || "—";
+  document.getElementById("revisaoNovoPrazo").value = b.dataset.novo || "";
+  document.getElementById("revisaoMotivo").value = b.dataset.motivo || "";
+});
+</script>
+{% endif %}
 
 <div class="card pn-sec pn-t-green" id="sec-pedidos" data-sec="pedidos">
   <div class="card-body">

@@ -88,6 +88,7 @@ from models import (
     LeadTimeProducao,
     LeadTimeProducaoHistorico,
     LeadTimeTransportadora,
+    SolicitacaoRevisaoPrazo,
     MateriaPrima,
     MateriaPrimaHistorico,
     ParametroHoraHomem,
@@ -974,10 +975,11 @@ def _gerar_pdf_painel_diario(ctx):
                     P(f'{_icone_pdf(icone, 8)} {situacao}', base), T(p["pedido_venda"] or "—"), T(p["cliente"]), T(p.get("estado") or "—", centro),
                     T(p["data_solicitada_cliente"].strftime("%d/%m/%Y") if p.get("data_solicitada_cliente") else "—", centro),
                     T(p["data_prevista_pcp"].strftime("%d/%m/%Y") if p.get("data_prevista_pcp") else "—", centro),
-                    T((p.get("sugestao") or "")[:140]),
+                    T(("Já solicitada" if p.get("revisao") else "Revisão a solicitar"), centro),
+                    T((p.get("sugestao") or "")[:110]),
                 ])
         if linhas_r:
-            elementos.append(tabela(["Situação", "PV", "Cliente", "UF", "Solicitado", "Prev. PCP", "Sugestão"], linhas_r, [11, 7, 24, 5, 10, 10, 50]))
+            elementos.append(tabela(["Situação", "PV", "Cliente", "UF", "Solicitado", "Prev. PCP", "Revisão prazo (comercial)", "Sugestão"], linhas_r, [10, 7, 19, 5, 9, 9, 14, 38]))
             mostrados = len(linhas_r)
             if mostrados < rf["atrasados_total"] + rf["vencendo_total"]:
                 elementos.append(P(f'Mostrando os {mostrados} mais críticos de {rf["atrasados_total"] + rf["vencendo_total"]}.', nota))
@@ -6259,7 +6261,7 @@ def _sugestao_risco_prazo(pedido, data_prevista_pcp, mapa_lead_time):
     )
 
 
-def _linha_risco_prazo(pedido, mapa_lead_time):
+def _linha_risco_prazo(pedido, mapa_lead_time, solicitacoes=None):
     """Monta 1 card do mini risco (pedido do Bruno, 16/09/2026) com o
     contexto que ele pediu: data solicitada cliente, estado, data prevista
     PCP (a mais urgente entre os itens do pedido ainda não finalizados — a
@@ -6268,7 +6270,7 @@ def _linha_risco_prazo(pedido, mapa_lead_time):
         i for i in pedido.itens if i.status_producao != "FINALIZADO" and i.liberacao_prevista
     ]
     data_prevista_pcp = min((i.liberacao_prevista for i in itens_abertos), default=None)
-    return {
+    linha = {
         "id": pedido.id,
         "pedido_venda": pedido.pedido_venda,
         "cliente": pedido.cliente,
@@ -6277,7 +6279,15 @@ def _linha_risco_prazo(pedido, mapa_lead_time):
         "data_solicitada_cliente": pedido.data_cliente,
         "data_prevista_pcp": data_prevista_pcp,
         "sugestao": _sugestao_risco_prazo(pedido, data_prevista_pcp, mapa_lead_time),
+        # Revisão de prazo já solicitada ao comercial (None = ainda não
+        # solicitada) — controle do Bruno, 27/10/2026.
+        "revisao": (solicitacoes or {}).get(pedido.id),
     }
+    sol = linha["revisao"]
+    linha["revisao_quando"] = (
+        (sol.solicitado_em - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M") if sol and sol.solicitado_em else None
+    )
+    return linha
 
 
 def _mini_risco_prazos_painel(limite=5):
@@ -6295,6 +6305,7 @@ def _mini_risco_prazos_painel(limite=5):
     e uma sugestão de ação (_linha_risco_prazo/_sugestao_risco_prazo) —
     ajuste do Bruno (16/09/2026) depois de ver a 1ª versão ao vivo."""
     mapa_lead_time = _mapa_lead_time_transportadora()
+    solicitacoes = {s_.pedido_id: s_ for s_ in SolicitacaoRevisaoPrazo.query.all()}
     resultado = {}
     for frete in ("FOB", "CIF"):
         base = Pedido.query.options(selectinload(Pedido.itens)).filter(Pedido.frete == frete)
@@ -6308,13 +6319,33 @@ def _mini_risco_prazos_painel(limite=5):
             .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
             .all()
         )
+        # Os que AINDA não tiveram revisão solicitada vêm primeiro (sort
+        # estável preserva a ordem original dentro de cada grupo) — assim,
+        # ao apontar um pedido, ele desce e o próximo pendente aparece.
+        def _pendentes_primeiro(lista):
+            return sorted(lista, key=lambda p: p.id in solicitacoes)
+
+        atrasados = _pendentes_primeiro(atrasados)
+        vencendo = _pendentes_primeiro(vencendo)
+        em_risco_ids = {p.id for p in atrasados} | {p.id for p in vencendo}
+        solicitadas = len(em_risco_ids & set(solicitacoes))
         resultado[frete] = {
             "atrasados_total": len(atrasados),
             "vencendo_total": len(vencendo),
-            "atrasados": [_linha_risco_prazo(p, mapa_lead_time) for p in atrasados[:limite]],
-            "vencendo": [_linha_risco_prazo(p, mapa_lead_time) for p in vencendo[:limite]],
+            "revisao_solicitada_total": solicitadas,
+            "revisao_pendente_total": len(em_risco_ids) - solicitadas,
+            "atrasados": [_linha_risco_prazo(p, mapa_lead_time, solicitacoes) for p in atrasados[:limite]],
+            "vencendo": [_linha_risco_prazo(p, mapa_lead_time, solicitacoes) for p in vencendo[:limite]],
         }
     return resultado
+
+
+def _parse_data_iso(valor):
+    """'YYYY-MM-DD' (input type=date) -> date, ou None se vazio/inválido."""
+    try:
+        return datetime.strptime((valor or "").strip(), "%Y-%m-%d").date() if (valor or "").strip() else None
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -6594,6 +6625,7 @@ def _capacidade_estacoes_painel(hoje=None, semanas_hist=8, semanas_proj=4):
 # ---------------------------------------------------------------------------
 
 _HIST_CAMPOS_LABEL = {
+    "revisao_prazo_solicitada": "Revisão de prazo (PCP → comercial)",
     "cliente": "Cliente", "prioridade": "Prioridade", "vendedor": "Vendedor", "frete": "Frete",
     "obs": "Observações", "cnpj": "CNPJ", "cidade": "Cidade", "estado": "Estado", "pais": "País",
     "pedido_venda": "Pedido de venda", "data_cliente": "Data do cliente",
@@ -20411,6 +20443,81 @@ def register_routes(app):
         # carregamento ainda mostrar o que entrou desde a visita anterior.
         session["ultima_visita_painel"] = datetime.utcnow().isoformat()
         return render_template("painel.html", agora_painel=_agora_brt(), **contexto)
+
+    @app.route("/painel/revisao-prazo/<int:pedido_id>/solicitar", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def painel_revisao_prazo_solicitar(pedido_id):
+        """Apontamento "já solicitei ao comercial a revisão do prazo deste
+        pedido" (pedido do Bruno, 27/10/2026) — Mini gestão de risco do
+        Painel. Grava data/hora + quem solicitou (automáticos), novo prazo
+        sugerido pelo PCP e motivo. Reapontar um pedido já marcado atualiza
+        os dados (ex.: PCP ajustou a sugestão)."""
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(url_for("painel") + "#sec-risco")
+
+        novo_prazo = _parse_data_iso(request.form.get("novo_prazo_sugerido"))
+        motivo = (request.form.get("motivo") or "").strip()[:1000] or None
+        itens_abertos = [
+            i.liberacao_prevista for i in pedido.itens
+            if i.status_producao != "FINALIZADO" and i.liberacao_prevista
+        ]
+        previsao = min(itens_abertos, default=None)
+
+        sol = SolicitacaoRevisaoPrazo.query.filter_by(pedido_id=pedido.id).first()
+        nova = sol is None
+        antes = {} if nova else {
+            "novo_prazo_sugerido": sol.novo_prazo_sugerido, "motivo": sol.motivo,
+        }
+        if nova:
+            sol = SolicitacaoRevisaoPrazo(
+                pedido_id=pedido.id,
+                prazo_cliente_na_epoca=pedido.data_cliente,
+                previsao_pcp_na_epoca=previsao,
+            )
+            db.session.add(sol)
+        sol.solicitado_em = datetime.utcnow()
+        sol.solicitado_por = current_user.nome
+        sol.novo_prazo_sugerido = novo_prazo
+        sol.motivo = motivo
+        db.session.flush()
+
+        db.session.add(HistoricoAlteracao(
+            entidade_tipo="pedido", entidade_id=pedido.id, pedido_id=pedido.id,
+            usuario_id=current_user.id, usuario_nome=current_user.nome,
+            campo="revisao_prazo_solicitada",
+            valor_anterior=None if nova else "Solicitada (atualizada)",
+            valor_novo="Solicitada ao comercial"
+            + (f" · novo prazo sugerido {novo_prazo.strftime('%d/%m/%Y')}" if novo_prazo else "")
+            + (f" · {motivo}" if motivo else ""),
+        ))
+        db.session.commit()
+        flash(
+            f"Revisão de prazo do pedido {pedido.pedido_venda or pedido.id} apontada como "
+            "solicitada ao comercial.", "success")
+        return redirect(url_for("painel") + "#sec-risco")
+
+    @app.route("/painel/revisao-prazo/<int:pedido_id>/desfazer", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def painel_revisao_prazo_desfazer(pedido_id):
+        """Desfaz o apontamento (marcou errado / vai refazer o pedido ao
+        comercial). O histórico do pedido registra a remoção."""
+        sol = SolicitacaoRevisaoPrazo.query.filter_by(pedido_id=pedido_id).first()
+        if sol is not None:
+            pedido = db.session.get(Pedido, pedido_id)
+            db.session.add(HistoricoAlteracao(
+                entidade_tipo="pedido", entidade_id=pedido_id, pedido_id=pedido_id,
+                usuario_id=current_user.id, usuario_nome=current_user.nome,
+                campo="revisao_prazo_solicitada",
+                valor_anterior="Solicitada ao comercial", valor_novo="Apontamento desfeito",
+            ))
+            db.session.delete(sol)
+            db.session.commit()
+            flash(
+                f"Apontamento de revisão do pedido {(pedido.pedido_venda if pedido else None) or pedido_id} desfeito.",
+                "info")
+        return redirect(url_for("painel") + "#sec-risco")
 
     @app.route("/painel/relatorio.pdf")
     @login_required

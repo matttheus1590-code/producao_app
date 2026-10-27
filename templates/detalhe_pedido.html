@@ -62,6 +62,7 @@
     </div>
 
     {# ============ SITUAÇÃO & RISCOS ============ #}
+    {% include "_revisao_prazo_aviso.html" %}
     <div class="dp-alertas">
       {% for a in v.alertas %}
       <div class="dp-alerta dp-alerta-{{ a.nivel }}">
