@@ -10240,6 +10240,51 @@ def _icone_pdf(nome, tamanho=9):
     return f'<img src="{caminho}" width="{tamanho}" height="{tamanho}" valign="-1.5"/>'
 
 
+# ---------------------------------------------------------------------------
+# Apresentações PowerPoint (.pptx) gerenciais — pedido do Bruno, 27/10/2026:
+# "dentro das áreas incluir um gerador de apresentação automático em power
+# point, já projetando números e resultados". 4 áreas (Painel Diário,
+# Planejamento Mensal PCP/Operação, Estações — conclusões e risco, Detalhe do
+# Pedido 360) em 2 modos escolhidos no botão: "executiva" (enxuta) e
+# "completa" (detalhada). Toda a montagem dos slides vive em pptx_gerencial.py
+# (sem import do app); aqui ficam só os dados e as rotas. O import da
+# biblioteca (python-pptx) é PREGUIÇOSO: se faltar no servidor, só a geração
+# do .pptx avisa — o resto do site nunca é afetado.
+# ---------------------------------------------------------------------------
+_PPTX_MIMETYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def _modo_apresentacao(args):
+    return "completa" if (args.get("modo") or "").strip().lower() == "completa" else "executiva"
+
+
+def _aux_pptx():
+    return {
+        "chave_semana": _chave_semana_pcp, "fim_semana": _fim_semana_pcp,
+        "meses_pt": MESES_PT_EXTENSO, "rotulo_estacao": rotulo_estacao,
+    }
+
+
+def _gerar_pptx_seguro(construir, nome_arquivo, voltar_para):
+    """Roda `construir(pptx_gerencial)` -> bytes e devolve o download. Qualquer
+    falha vira aviso na tela (e log), nunca um erro 500 em branco."""
+    try:
+        import pptx_gerencial
+        pptx_gerencial.set_rotulo_estacao(rotulo_estacao)
+        dados = construir(pptx_gerencial)
+    except ImportError:
+        flash("O gerador de PowerPoint ainda não está disponível neste servidor (biblioteca python-pptx não instalada).", "warning")
+        return redirect(voltar_para)
+    except Exception:  # noqa: BLE001 — nunca derrubar a tela por causa de uma apresentação
+        import logging
+        logging.getLogger(__name__).exception("Falha ao gerar apresentação PowerPoint (%s)", nome_arquivo)
+        flash("Não foi possível gerar a apresentação PowerPoint agora. Tente novamente; se persistir, avise o suporte.", "danger")
+        return redirect(voltar_para)
+    resposta = Response(dados, mimetype=_PPTX_MIMETYPE)
+    resposta.headers["Content-Disposition"] = f'attachment; filename="{nome_arquivo}"'
+    return resposta
+
+
 def _gerar_pdf_espelho_pedido(pedido):
     """PDF "Espelho Pedido de Venda" (pedido do Bruno, 23/09/2026) — impressão
     VERTICAL (A4 retrato) de UMA página só, com TODAS as informações do
@@ -20379,6 +20424,18 @@ def register_routes(app):
         contexto = _contexto_painel(request.args, None)
         return _gerar_pdf_painel_diario(contexto)
 
+    @app.route("/painel/apresentacao.pptx")
+    @login_required
+    def painel_apresentacao_pptx():
+        """Apresentação PowerPoint do Painel Diário (modo=executiva|completa).
+        Usa o MESMO _contexto_painel da tela e do PDF (mesmos filtros)."""
+        modo = _modo_apresentacao(request.args)
+        agora = _agora_brt()
+        return _gerar_pptx_seguro(
+            lambda g: g.montar_painel_diario(
+                _contexto_painel(request.args, None), modo, agora.strftime("%d/%m/%Y %H:%M"), _ESPELHO_LOGO_PATH),
+            f"painel_diario_{modo}_{agora.strftime('%Y-%m-%d_%H%M')}.pptx", url_for("painel"))
+
     @app.route("/painel/lead-time/relatorio.pdf")
     @login_required
     def painel_lead_time_pdf():
@@ -21618,6 +21675,32 @@ def register_routes(app):
         incluir_simulado_a = args.get("incluir_simulado_a", "").strip() == "1"
         return _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo_relatorio, incluir_simulado_a=incluir_simulado_a)
 
+    @app.route("/relatorios/planejamento-mensal.pptx")
+    @login_required
+    def relatorio_listagem_geral_semanal_pptx():
+        """Apresentação PowerPoint do Planejamento Mensal PCP/Operação — mesmos
+        filtros do PDF "Emitir relatório" (mês obrigatório: cai no mês atual;
+        `incluir_backlog=1` soma o mês seguinte) + `modo=executiva|completa`."""
+        args = request.args.to_dict()
+        if not args.get("planejamento_mensal", "").strip():
+            args["planejamento_mensal"] = date.today().strftime("%Y-%m")
+        query, filtros = _filtrar_pedidos(args)
+        linhas = _linhas_listagem_geral(query.all(), args)
+        mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
+        blocos = [{"mes_ano": mes_ano, "linhas": linhas, "rotulo": "MÊS DO RELATÓRIO"}]
+        if args.get("incluir_backlog", "").strip() == "1":
+            ano_bl, mes_bl = _somar_meses(mes_ano[0], mes_ano[1], 1)
+            args_bl = dict(args)
+            args_bl["planejamento_mensal"] = f"{ano_bl:04d}-{mes_bl:02d}"
+            query_bl, _ = _filtrar_pedidos(args_bl)
+            blocos.append({"mes_ano": (ano_bl, mes_bl), "linhas": _linhas_listagem_geral(query_bl.all(), args_bl), "rotulo": "BACKLOG — MÊS SEGUINTE (PROJEÇÃO PCP)", "consolidado": True})
+        modo = _modo_apresentacao(request.args)
+        agora = _agora_brt()
+        texto_filtros = _texto_filtros_listagem_geral_semanal(filtros) or ""
+        return _gerar_pptx_seguro(
+            lambda g: g.montar_planejamento_mensal(blocos, texto_filtros, modo, agora.strftime("%d/%m/%Y %H:%M"), _aux_pptx(), _ESPELHO_LOGO_PATH),
+            f"planejamento_mensal_pcp_{modo}_{mes_ano[0]:04d}-{mes_ano[1]:02d}.pptx", url_for("dashboard"))
+
     @app.route("/relatorios/faturamento.csv")
     @login_required
     def relatorio_faturamento_csv():
@@ -21982,6 +22065,30 @@ def register_routes(app):
             simulado_a=simulado_a,
             v=_visao_pedido_detalhe(pedido, simulado_a, resumo_rdim, historico),
         )
+
+    @app.route("/pedidos/<int:pedido_id>/apresentacao.pptx")
+    @login_required
+    def pedido_apresentacao_pptx(pedido_id):
+        """Apresentação PowerPoint do Detalhe do Pedido 360 (modo=executiva|completa)."""
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(url_for("dashboard"))
+        historico = (
+            HistoricoAlteracao.query.filter_by(pedido_id=pedido.id)
+            .order_by(HistoricoAlteracao.criado_em.desc())
+            .all()
+        )
+        inspecoes_rdim = _inspecoes_rdim_por_item([i.id for i in pedido.itens])
+        resumo_rdim = _resumo_rdim_pedido(inspecoes_rdim.values())
+        simulado_a = _simulado_a_pedido(pedido)
+        v = _visao_pedido_detalhe(pedido, simulado_a, resumo_rdim, historico)
+        modo = _modo_apresentacao(request.args)
+        agora = _agora_brt()
+        pv_arq = re.sub(r"[^A-Za-z0-9_-]+", "_", str(pedido.pedido_venda or pedido.id)).strip("_") or str(pedido.id)
+        return _gerar_pptx_seguro(
+            lambda g: g.montar_pedido_360(pedido, v, modo, agora.strftime("%d/%m/%Y %H:%M"), _ESPELHO_LOGO_PATH),
+            f"pedido_{pv_arq}_{modo}.pptx", url_for("detalhe_pedido", pedido_id=pedido.id))
 
     @app.route("/pedidos/<int:pedido_id>/espelho.pdf")
     @login_required
@@ -23512,6 +23619,48 @@ def register_routes(app):
         incluir_risco = (not riscos) or ("1" in riscos)
         return _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag, itens_por_estacao, status_sel,
                                               todas_estacoes=(not pedidas or ativas <= pedidas), agrupar=agrupar, incluir_risco=incluir_risco)
+
+    @app.route("/estacoes/relatorio-conclusoes.pptx")
+    @login_required
+    def estacoes_relatorio_conclusoes_pptx():
+        """Apresentação PowerPoint "Conclusões por Estação" + gestão de risco —
+        mesmos parâmetros do PDF (`periodo`, `status`, `estacao`) +
+        `modo=executiva|completa`. Sem período → mês atual inteiro."""
+        hoje = date.today()
+        meses, semanas = set(), set()
+        brutos = list(request.args.getlist("periodo"))
+        if request.args.get("semana"):
+            brutos.append("sem:" + request.args["semana"].strip())
+        elif request.args.get("mes"):
+            brutos.append("mes:" + request.args["mes"].strip())
+        for bruto in brutos:
+            tipo, _, valor = bruto.partition(":")
+            valor = valor.strip()
+            if tipo == "mes" and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", valor):
+                meses.add(valor)
+            elif tipo == "sem" and _mes_ano_da_semana_pcp(valor) is not None:
+                semanas.add(valor)
+        if not (meses or semanas):
+            meses.add(hoje.strftime("%Y-%m"))
+        semanas = {x for x in semanas if "%04d-%02d" % _mes_ano_da_semana_pcp(x) not in meses}
+        validos = ("pendente", "em_producao", "concluido")
+        status_sel = tuple(v for v in validos if v in request.args.getlist("status")) or validos
+        ativas = {e.nome for e in Estacao.query.filter_by(ativo=True).all()}
+        pedidas = {v for v in request.args.getlist("estacao") if v}
+        nomes = _ordenar_nomes_estacoes((pedidas & ativas) if pedidas else ativas)
+        if not nomes:
+            flash("Nenhuma estação disponível para gerar a apresentação.", "warning")
+            return redirect(url_for("estacoes_lista"))
+        partes = [f"{MESES_PT_EXTENSO[int(m[5:7]) - 1]}/{m[:4]} (mês inteiro)" for m in sorted(meses)]
+        partes += [" / ".join(p.strip().title() for p in x.split("/")) for x in sorted(semanas, key=_chave_semana_pcp)]
+        titulo_periodo = " + ".join(partes)
+        tag = "_".join(sorted(meses) + [("S%02d_%04d-%02d" % ((_chave_semana_pcp(x)[2],) + _chave_semana_pcp(x)[:2])) for x in sorted(semanas, key=_chave_semana_pcp)])
+        itens_por_estacao = _itens_conclusao_estacoes(meses, semanas, nomes, status_sel)
+        modo = _modo_apresentacao(request.args)
+        agora = _agora_brt()
+        return _gerar_pptx_seguro(
+            lambda g: g.montar_conclusoes_estacoes(titulo_periodo, itens_por_estacao, modo, agora.strftime("%d/%m/%Y %H:%M"), _aux_pptx(), _ESPELHO_LOGO_PATH),
+            f"conclusoes_estacoes_{modo}_{tag}.pptx", url_for("estacoes_lista"))
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
     @login_required

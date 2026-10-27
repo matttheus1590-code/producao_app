@@ -73,6 +73,13 @@
            href="{{ url_for('relatorio_listagem_geral_semanal_pdf', planejamento_mensal=mes_valor, incluir_backlog=1, busca=busca) }}">
           <i class="bi bi-file-earmark-pdf"></i> Baixar PDF
         </a>
+        <div class="btn-group pptx-botao">
+      <button type="button" class="btn btn-warning btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Gera uma apresentação PowerPoint já com números, projeções e riscos">📊 Apresentação (PowerPoint)</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{{ url_for('relatorio_listagem_geral_semanal_pptx', modo='executiva', planejamento_mensal=mes_valor, incluir_backlog=1, busca=busca) }}">🎯 Executiva <small class="text-muted d-block">enxuta · alta direção</small></a></li>
+        <li><a class="dropdown-item" href="{{ url_for('relatorio_listagem_geral_semanal_pptx', modo='completa', planejamento_mensal=mes_valor, incluir_backlog=1, busca=busca) }}">📚 Completa <small class="text-muted d-block">detalhada · gerencial</small></a></li>
+      </ul>
+    </div>
       </div>
     </div>
   </div>

@@ -45,6 +45,13 @@
       <div class="dp-acoes">
         <a href="{{ url_for('dashboard', busca=pedido.pedido_venda) if pedido.pedido_venda else url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Voltar</a>
         <a href="{{ url_for('espelho_pedido_pdf', pedido_id=pedido.id) }}" class="btn btn-outline-danger btn-sm" target="_blank"><i class="bi bi-file-earmark-pdf"></i> 🖨️ Espelho PDF</a>
+        <div class="btn-group pptx-botao">
+      <button type="button" class="btn btn-warning btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Gera uma apresentação PowerPoint já com números, projeções e riscos">📊 Apresentação (PowerPoint)</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{{ url_for('pedido_apresentacao_pptx', modo='executiva', pedido_id=pedido.id) }}">🎯 Executiva <small class="text-muted d-block">enxuta · alta direção</small></a></li>
+        <li><a class="dropdown-item" href="{{ url_for('pedido_apresentacao_pptx', modo='completa', pedido_id=pedido.id) }}">📚 Completa <small class="text-muted d-block">detalhada · gerencial</small></a></li>
+      </ul>
+    </div>
         {% if GO and current_user.role in ('ADMIN', 'PCP') %}
         <a href="{{ url_for('gestao_operacao_editar', pedido_id=GO.id) }}" class="btn btn-outline-primary btn-sm" title="Abrir este pedido na Gestão Operação"><i class="bi bi-box-arrow-up-right"></i> Gestão Operação</a>
         {% endif %}

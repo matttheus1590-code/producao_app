@@ -27,6 +27,13 @@
     <a href="{{ url_for('consulta_pedido') }}" class="btn btn-outline-secondary btn-sm" title="Procurar o status de um pedido específico">🔍 Consulta Pedido</a>
     <a href="{{ url_for('painel_relatorio_pdf', pcp_de=pcp_de_str, pcp_ate=pcp_ate_str, ano_graficos=ano_graficos) }}"
        class="btn btn-danger btn-sm" title="Gera o PDF 'Painel Diário Operação' com todas as áreas deste painel">📄 Emitir relatório (PDF)</a>
+    <div class="btn-group pptx-botao">
+      <button type="button" class="btn btn-warning btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Gera uma apresentação PowerPoint já com números, projeções e riscos">📊 Apresentação (PowerPoint)</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{{ url_for('painel_apresentacao_pptx', modo='executiva', pcp_de=pcp_de_str, pcp_ate=pcp_ate_str, ano_graficos=ano_graficos) }}">🎯 Executiva <small class="text-muted d-block">enxuta · alta direção</small></a></li>
+        <li><a class="dropdown-item" href="{{ url_for('painel_apresentacao_pptx', modo='completa', pcp_de=pcp_de_str, pcp_ate=pcp_ate_str, ano_graficos=ano_graficos) }}">📚 Completa <small class="text-muted d-block">detalhada · gerencial</small></a></li>
+      </ul>
+    </div>
   </div>
 </div>
 

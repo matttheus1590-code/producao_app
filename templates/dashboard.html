@@ -318,6 +318,14 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
           <button type="submit" class="btn btn-primary"><i class="bi bi-file-earmark-pdf"></i> Gerar PDF</button>
+          <div class="btn-group dropup pptx-botao">
+            <button type="button" class="btn btn-warning dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-file-earmark-slides"></i> PowerPoint</button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><button type="submit" class="dropdown-item" formaction="{{ url_for('relatorio_listagem_geral_semanal_pptx') }}" name="modo" value="executiva">🎯 Executiva <small class="text-muted d-block">enxuta · alta direção</small></button></li>
+              <li><button type="submit" class="dropdown-item" formaction="{{ url_for('relatorio_listagem_geral_semanal_pptx') }}" name="modo" value="completa">📚 Completa <small class="text-muted d-block">detalhada · gerencial</small></button></li>
+            </ul>
+          </div>
+          
         </div>
       </form>
     </div>

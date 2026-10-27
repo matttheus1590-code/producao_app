@@ -75,7 +75,7 @@ ENDPOINTS_PERMITIDOS_PD = {
 # mensal que sai da aba de Planejamento).
 ENDPOINTS_PERMITIDOS_COMERCIAL = {
     "consulta_pedido", "consulta_pedido_busca_sugestoes", "consulta_pedido_busca_detalhe",
-    "consulta_planejamento_pcp", "relatorio_listagem_geral_semanal_pdf",
+    "consulta_planejamento_pcp", "relatorio_listagem_geral_semanal_pdf", "relatorio_listagem_geral_semanal_pptx",
 }
 
 # Endpoints (nomes de rota Flask) que o COMERCIAL_GERAL pode acessar, além de
@@ -85,7 +85,8 @@ PREFIXO_GESTAO_OPERACAO = "gestao_operacao_"
 ENDPOINTS_PERMITIDOS_COMERCIAL_GERAL = {
     # Gestão Produção > Listagem Geral (+ exportações, detalhe/espelho do pedido)
     "dashboard", "relatorio_listagem_csv", "relatorio_listagem_xlsx", "relatorio_listagem_geral_semanal_pdf",
-    "detalhe_pedido", "espelho_pedido_pdf",
+    "relatorio_listagem_geral_semanal_pptx",
+    "detalhe_pedido", "espelho_pedido_pdf", "pedido_apresentacao_pptx",
     # Gestão Produção > Programação
     "programacao_semana",
     # Gestão Produção > Faturamento (+ exportações)
