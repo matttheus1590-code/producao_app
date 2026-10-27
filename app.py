@@ -961,30 +961,35 @@ def _gerar_pdf_painel_diario(ctx):
 
     # ================= 10. RISCO DE PRAZOS =================
     elementos += banner("warning", "10. MINI GESTÃO DE RISCO — PRAZOS DE ENTREGA (FOB x CIF)", "#b8860b",
-                        "Pedidos atrasados e vencendo, por modalidade de frete, com a sugestão de ação.")
-    risco = ctx["mini_risco_prazos"]
+                        "Projeção PCP + frete contra o prazo do cliente (horizontes de 5, 10 e 20 dias), por modalidade de frete.")
+    risco = _mini_risco_prazos_painel(limite=15)
+    _rot_classe = {"atraso": ("red_circle", "Atraso projetado"), "risco": ("yellow_circle", "Em risco"), "sem_plano": ("hourglass", "Sem plano PCP")}
     for frete, cor in (("FOB", AMARELO), ("CIF", AZUL)):
-        rf = risco[frete]
-        elementos.append(P(
-            f'{cor_txt(frete, cor)} — {_icone_pdf("red_circle", 8)} <b>{rf["atrasados_total"]}</b> atrasado(s) · {_icone_pdf("yellow_circle", 8)} <b>{rf["vencendo_total"]}</b> vencendo', base))
+        rf = risco[frete]["horizontes"]
+        resumo = " · ".join(
+            f'<b>{h}d</b>: {rf[h]["atraso_total"]} atraso(s), {rf[h]["risco_total"]} em risco, {rf[h]["sem_plano_total"]} sem plano'
+            for h in RISCO_HORIZONTES)
+        elementos.append(P(f'{cor_txt(frete, cor)} — prazo do cliente em até {resumo}', base))
         elementos.append(Spacer(1, 1 * mm))
         linhas_r = []
-        for situacao, lista, icone in (("Atrasado", rf["atrasados"], "red_circle"), ("Vencendo", rf["vencendo"], "yellow_circle")):
-            for p in lista:
-                linhas_r.append([
-                    P(f'{_icone_pdf(icone, 8)} {situacao}', base), T(p["pedido_venda"] or "—"), T(p["cliente"]), T(p.get("estado") or "—", centro),
-                    T(p["data_solicitada_cliente"].strftime("%d/%m/%Y") if p.get("data_solicitada_cliente") else "—", centro),
-                    T(p["data_prevista_pcp"].strftime("%d/%m/%Y") if p.get("data_prevista_pcp") else "—", centro),
-                    T(("Já solicitada" if p.get("revisao") else "Revisão a solicitar"), centro),
-                    T((p.get("sugestao") or "")[:110]),
-                ])
+        for p in rf[max(RISCO_HORIZONTES)]["linhas"]:
+            icone, rotulo = _rot_classe[p["classe"]]
+            folga = p.get("folga_dias")
+            linhas_r.append([
+                P(f'{_icone_pdf(icone, 8)} {rotulo}', base), T(p["pedido_venda"] or "—"), T(p["cliente"]), T(p.get("uf") or "—", centro),
+                T(p["data_solicitada_cliente"].strftime("%d/%m/%Y") if p.get("data_solicitada_cliente") else "—", centro),
+                T(p["data_prevista_pcp"].strftime("%d/%m/%Y") if p.get("data_prevista_pcp") else "—", centro),
+                T(p["entrega_projetada"].strftime("%d/%m/%Y") if p.get("entrega_projetada") else "—", centro),
+                T(f"{folga:+d}d" if folga is not None else "—", centro),
+                T(("Já solicitada" if p.get("revisao") else ("A solicitar" if p["classe"] != "risco" else "—")), centro),
+            ])
         if linhas_r:
-            elementos.append(tabela(["Situação", "PV", "Cliente", "UF", "Solicitado", "Prev. PCP", "Revisão prazo (comercial)", "Sugestão"], linhas_r, [10, 7, 19, 5, 9, 9, 14, 38]))
-            mostrados = len(linhas_r)
-            if mostrados < rf["atrasados_total"] + rf["vencendo_total"]:
-                elementos.append(P(f'Mostrando os {mostrados} mais críticos de {rf["atrasados_total"] + rf["vencendo_total"]}.', nota))
+            elementos.append(tabela(["Situação", "PV", "Cliente", "UF", "Prazo cliente", "Prev. PCP", "Entrega proj.", "Folga", "Revisão comercial"], linhas_r, [14, 7, 25, 5, 10, 10, 10, 6, 13]))
+            total_20 = rf[max(RISCO_HORIZONTES)]["total"]
+            if len(linhas_r) < total_20:
+                elementos.append(P(f'Mostrando os {len(linhas_r)} mais críticos de {total_20}.', nota))
         else:
-            elementos.append(vazio(f"Nenhum pedido {frete} atrasado ou vencendo."))
+            elementos.append(vazio(f"Nenhum pedido {frete} com risco de prazo nos próximos {max(RISCO_HORIZONTES)} dias."))
         elementos.append(Spacer(1, 2.5 * mm))
     elementos.append(Spacer(1, 1.5 * mm))
 
@@ -6261,82 +6266,178 @@ def _sugestao_risco_prazo(pedido, data_prevista_pcp, mapa_lead_time):
     )
 
 
-def _linha_risco_prazo(pedido, mapa_lead_time, solicitacoes=None):
-    """Monta 1 card do mini risco (pedido do Bruno, 16/09/2026) com o
-    contexto que ele pediu: data solicitada cliente, estado, data prevista
-    PCP (a mais urgente entre os itens do pedido ainda não finalizados — a
-    mesma que está causando o atraso/vencimento) e a sugestão de ação."""
-    itens_abertos = [
-        i for i in pedido.itens if i.status_producao != "FINALIZADO" and i.liberacao_prevista
-    ]
-    data_prevista_pcp = min((i.liberacao_prevista for i in itens_abertos), default=None)
-    linha = {
+# Horizontes (dias corridos a partir de hoje, pelo PRAZO DO CLIENTE) e folga
+# mínima de segurança da gestão de risco de prazos — pedido do Bruno,
+# 27/10/2026: "quero que a gestão de risco se baseie na projeção PCP e
+# principalmente nos prazos de entrega dos clientes, CIF e FOB, projetando
+# pedidos para 5, 10 e 20 dias (projeções + projeções de frete, por região)".
+RISCO_HORIZONTES = (5, 10, 20)
+RISCO_FOLGA_ALERTA_DIAS = 3
+
+
+def _fmt_dm(d):
+    return d.strftime("%d/%m/%Y") if d else "—"
+
+
+def _avaliar_risco_entrega(pedido, mapa_lead_time, hoje):
+    """Avalia UM pedido em aberto contra o prazo do cliente (Bruno, 27/10/2026).
+
+    Entrega projetada = liberação prevista pelo PCP (a do ÚLTIMO item ainda
+    não finalizado — o pedido só fecha quando o último item sai; nunca no
+    passado: se a previsão já venceu, a liberação mais cedo possível é hoje)
+    + frete rodoviário da UF no CIF (mesmo cadastro Lead time Transportadora
+    da Torre de Controle; no FOB o frete é do cliente, então a entrega
+    projetada é a própria liberação). Folga = prazo do cliente - entrega
+    projetada. Classes: "atraso" (folga < 0), "risco" (folga até
+    RISCO_FOLGA_ALERTA_DIAS) e "sem_plano" (sem previsão do PCP em todos ou
+    em parte dos itens abertos). None = pedido sem risco (ou sem o que
+    avaliar: sem item aberto / sem prazo do cliente)."""
+    itens_abertos = [i for i in pedido.itens if i.status_producao != "FINALIZADO"]
+    prazo = pedido.data_cliente
+    if not itens_abertos or not prazo:
+        return None
+
+    datas = [i.liberacao_prevista for i in itens_abertos if i.liberacao_prevista]
+    sem_prev = len(itens_abertos) - len(datas)
+    uf = (pedido.estado or "").strip().upper()
+
+    frete_dias = None
+    frete_sem_cadastro = False
+    if pedido.frete == "CIF":
+        linha_lt = mapa_lead_time.get((uf, "Rodoviário"))
+        if linha_lt:
+            frete_dias = _lead_time_transporte_dias(linha_lt)
+        else:
+            frete_sem_cadastro = True
+    dias_frete = frete_dias or 0
+    limite_liberacao = prazo - timedelta(days=dias_frete)
+
+    prev = max(datas) if datas else None
+    liberacao = max(prev, hoje) if prev else None
+    entrega = (liberacao + timedelta(days=dias_frete)) if liberacao else None
+    folga = (prazo - entrega).days if entrega else None
+
+    if folga is not None and folga < 0:
+        classe = "atraso"
+    elif folga is not None and folga <= RISCO_FOLGA_ALERTA_DIAS and sem_prev == 0:
+        classe = "risco"
+    elif prev is None or sem_prev > 0:
+        classe = "sem_plano"
+    else:
+        return None  # folga confortável e tudo planejado
+
+    if frete_dias is not None:
+        trecho = f"liberação {_fmt_dm(liberacao)} + frete {frete_dias}d até {uf}"
+    elif pedido.frete == "CIF":
+        trecho = f"liberação {_fmt_dm(liberacao)} — sem lead time cadastrado pra {uf or 'UF'}, frete não somado"
+    else:
+        trecho = f"liberação {_fmt_dm(liberacao)}, frete por conta do cliente"
+
+    if classe == "atraso":
+        sugestao = (
+            f"Entrega projetada {_fmt_dm(entrega)} ({trecho}) — {-folga} dia(s) depois do prazo do cliente. "
+            f"Pra cumprir: liberar até {_fmt_dm(limite_liberacao)} (antecipar {-folga}d) ou pedir revisão de prazo ao comercial."
+        )
+    elif classe == "risco":
+        sugestao = (
+            f"Folga de apenas {folga} dia(s): entrega projetada {_fmt_dm(entrega)} ({trecho}). "
+            f"Qualquer deslize estoura o prazo — liberar até {_fmt_dm(limite_liberacao)}."
+        )
+    else:
+        sugestao = (
+            ("Nenhum item com previsão de liberação do PCP." if prev is None
+             else f"{sem_prev} item(ns) em aberto sem previsão do PCP.")
+            + f" Pra cumprir o prazo do cliente é preciso liberar até {_fmt_dm(limite_liberacao)}."
+        )
+
+    return {
         "id": pedido.id,
         "pedido_venda": pedido.pedido_venda,
         "cliente": pedido.cliente,
         "frete": pedido.frete,
         "estado": pedido.estado,
-        "data_solicitada_cliente": pedido.data_cliente,
-        "data_prevista_pcp": data_prevista_pcp,
-        "sugestao": _sugestao_risco_prazo(pedido, data_prevista_pcp, mapa_lead_time),
-        # Revisão de prazo já solicitada ao comercial (None = ainda não
-        # solicitada) — controle do Bruno, 27/10/2026.
-        "revisao": (solicitacoes or {}).get(pedido.id),
+        "uf": uf,
+        "classe": classe,
+        "data_solicitada_cliente": prazo,
+        "dias_ate_prazo": (prazo - hoje).days,
+        "data_prevista_pcp": prev,
+        "frete_dias": frete_dias,
+        "entrega_projetada": entrega,
+        "folga_dias": folga,
+        "itens_sem_previsao": sem_prev,
+        "sugestao": sugestao,
     }
-    sol = linha["revisao"]
-    linha["revisao_quando"] = (
-        (sol.solicitado_em - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M") if sol and sol.solicitado_em else None
-    )
-    return linha
 
 
-def _mini_risco_prazos_painel(limite=5):
-    """Mini gestão de risco de prazos pro Painel, separada por frete FOB x
-    CIF (pedido do Bruno, 16/09/2026) — reaproveita a MESMA regra já usada e
-    confiável dos cards Atrasados/Vencendo (_predicado_atrasado /
-    _predicado_vencendo), só filtrada por Pedido.frete e organizada em 2
-    colunas. Recalculado ao vivo a cada carregamento da tela — nada fica
-    gravado, então já sai "atualizando diariamente" sem precisar de job
-    nenhum (mesma filosofia da Gestão de Risco/Torre de Controle de OTD já
-    existente em Gestão Operação, só que aqui, "mini", puxando Gestão
-    Produção/Listagem Geral).
+_RISCO_ORDEM_CLASSE = {"atraso": 0, "sem_plano": 1, "risco": 2}
 
-    Cada card também traz data solicitada cliente, estado, data prevista PCP
-    e uma sugestão de ação (_linha_risco_prazo/_sugestao_risco_prazo) —
-    ajuste do Bruno (16/09/2026) depois de ver a 1ª versão ao vivo."""
+
+def _mini_risco_prazos_painel(limite=6):
+    """Mini gestão de risco de prazos do Painel, FOB x CIF, com horizontes
+    de 5/10/20 dias pelo PRAZO DO CLIENTE (Bruno, 27/10/2026 — refeita: a
+    1ª versão, de 16/09, só olhava a liberação do PCP já vencida/vencendo e
+    por isso não enxergava, por exemplo, o pedido que o PCP só libera em
+    1º/11 com prazo do cliente no fim de outubro).
+
+    Recalculado ao vivo a cada acesso. Cada horizonte X lista os pedidos em
+    aberto cujo prazo do cliente cai em até X dias (inclusive os já vencidos)
+    e que têm risco de entrega — ver _avaliar_risco_entrega. Os que o PCP
+    ainda NÃO apontou como "revisão solicitada ao comercial" vêm primeiro
+    dentro de cada gravidade, pra o apontamento fazer o próximo pendente
+    subir."""
+    hoje = date.today()
     mapa_lead_time = _mapa_lead_time_transportadora()
     solicitacoes = {s_.pedido_id: s_ for s_ in SolicitacaoRevisaoPrazo.query.all()}
+    horizonte_max = max(RISCO_HORIZONTES)
+    abertos = Pedido.itens.any(ItemPedido.status_producao != "FINALIZADO")
     resultado = {}
     for frete in ("FOB", "CIF"):
-        base = Pedido.query.options(selectinload(Pedido.itens)).filter(Pedido.frete == frete)
-        atrasados = (
-            base.filter(_predicado_atrasado())
-            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
+        pedidos = (
+            Pedido.query.options(selectinload(Pedido.itens))
+            .filter(
+                Pedido.frete == frete, abertos,
+                Pedido.data_cliente.isnot(None),
+                Pedido.data_cliente <= hoje + timedelta(days=horizonte_max),
+            )
             .all()
         )
-        vencendo = (
-            base.filter(_predicado_vencendo())
-            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
-            .all()
-        )
-        # Os que AINDA não tiveram revisão solicitada vêm primeiro (sort
-        # estável preserva a ordem original dentro de cada grupo) — assim,
-        # ao apontar um pedido, ele desce e o próximo pendente aparece.
-        def _pendentes_primeiro(lista):
-            return sorted(lista, key=lambda p: p.id in solicitacoes)
+        linhas = []
+        for p in pedidos:
+            linha = _avaliar_risco_entrega(p, mapa_lead_time, hoje)
+            if linha is None:
+                continue
+            sol = solicitacoes.get(p.id)
+            linha["revisao"] = sol
+            linha["revisao_quando"] = (
+                (sol.solicitado_em - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M") if sol and sol.solicitado_em else None
+            )
+            linhas.append(linha)
+        linhas.sort(key=lambda l: (
+            l["revisao"] is not None,
+            _RISCO_ORDEM_CLASSE[l["classe"]],
+            l["folga_dias"] if l["folga_dias"] is not None else 9999,
+            l["dias_ate_prazo"],
+        ))
 
-        atrasados = _pendentes_primeiro(atrasados)
-        vencendo = _pendentes_primeiro(vencendo)
-        em_risco_ids = {p.id for p in atrasados} | {p.id for p in vencendo}
-        solicitadas = len(em_risco_ids & set(solicitacoes))
-        resultado[frete] = {
-            "atrasados_total": len(atrasados),
-            "vencendo_total": len(vencendo),
-            "revisao_solicitada_total": solicitadas,
-            "revisao_pendente_total": len(em_risco_ids) - solicitadas,
-            "atrasados": [_linha_risco_prazo(p, mapa_lead_time, solicitacoes) for p in atrasados[:limite]],
-            "vencendo": [_linha_risco_prazo(p, mapa_lead_time, solicitacoes) for p in vencendo[:limite]],
-        }
+        horizontes = {}
+        for h in RISCO_HORIZONTES:
+            do_h = [l for l in linhas if l["dias_ate_prazo"] <= h]
+            conta = lambda c: sum(1 for l in do_h if l["classe"] == c)  # noqa: E731
+            solicitadas = sum(1 for l in do_h if l["revisao"] is not None)
+            a_solicitar = sum(1 for l in do_h if l["revisao"] is None and l["classe"] in ("atraso", "sem_plano"))
+            horizontes[h] = {
+                "total": len(do_h),
+                "atraso_total": conta("atraso"),
+                "risco_total": conta("risco"),
+                "sem_plano_total": conta("sem_plano"),
+                "revisao_solicitada_total": solicitadas,
+                "revisao_pendente_total": a_solicitar,
+                "linhas": do_h[:limite],
+            }
+        sem_prazo_total = (
+            Pedido.query.filter(Pedido.frete == frete, abertos, Pedido.data_cliente.is_(None)).count()
+        )
+        resultado[frete] = {"horizontes": horizontes, "sem_prazo_total": sem_prazo_total}
     return resultado
 
 

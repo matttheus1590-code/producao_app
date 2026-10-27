@@ -178,20 +178,29 @@
 </div>
 
 {% set pode_apontar_revisao = current_user.role in ("ADMIN", "PCP") %}
-{% macro risco_card(p, tipo) %}
+{% macro risco_card(p) %}
+{% set cls = p.classe %}
 <div class="risco-prazo-card{{ ' risco-prazo-card-ok' if p.revisao else '' }}">
   <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="text-decoration-none text-reset d-block">
     <div class="d-flex justify-content-between align-items-start gap-2">
       <span class="fw-semibold">{{ p.pedido_venda or "—" }} · {{ p.cliente }}</span>
-      {% if tipo == 'atrasado' %}<span class="badge bg-danger">Atrasado</span>{% else %}<span class="badge bg-warning text-dark">Vencendo</span>{% endif %}
+      {% if cls == 'atraso' %}<span class="badge bg-danger">Atraso projetado{% if p.folga_dias is not none %} · {{ -p.folga_dias }}d{% endif %}</span>
+      {% elif cls == 'risco' %}<span class="badge bg-warning text-dark">Em risco · folga {{ p.folga_dias }}d</span>
+      {% else %}<span class="badge bg-secondary">Sem planejamento PCP</span>{% endif %}
     </div>
     <div class="small text-muted">
-      Solicitado cliente: {{ p.data_solicitada_cliente.strftime("%d/%m/%Y") if p.data_solicitada_cliente else "—" }}
-      · Estado: {{ p.estado or "—" }}
-      · Previsto PCP: {{ p.data_prevista_pcp.strftime("%d/%m/%Y") if p.data_prevista_pcp else "—" }}
+      Prazo cliente: <strong>{{ p.data_solicitada_cliente.strftime("%d/%m/%Y") }}</strong>
+      ({% if p.dias_ate_prazo < 0 %}venceu há {{ -p.dias_ate_prazo }}d{% elif p.dias_ate_prazo == 0 %}vence hoje{% else %}em {{ p.dias_ate_prazo }}d{% endif %})
+      · {{ p.uf or "—" }}
+    </div>
+    <div class="small text-muted">
+      Previsto PCP: {{ p.data_prevista_pcp.strftime("%d/%m/%Y") if p.data_prevista_pcp else "—" }}
+      {% if p.frete == 'CIF' and p.frete_dias is not none and p.data_prevista_pcp %}· + frete {{ p.frete_dias }}d{% endif %}
+      {% if p.entrega_projetada %}→ <strong>entrega projetada {{ p.entrega_projetada.strftime("%d/%m/%Y") }}</strong>{% endif %}
     </div>
     <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ p.sugestao }}</div>
   </a>
+  {% if cls != 'risco' or p.revisao %}
   <div class="risco-revisao-faixa mt-2">
     {% if p.revisao %}
     {% set r = p.revisao %}
@@ -228,6 +237,7 @@
     </div>
     {% endif %}
   </div>
+  {% endif %}
 </div>
 {% endmacro %}
 
@@ -237,34 +247,50 @@
       <h6 class="text-uppercase text-muted small mb-0">
         🛡️ <i class="bi bi-shield-exclamation"></i> Mini gestão de risco — prazos de entrega
       </h6>
-      <span class="text-muted small">Recalculado a cada acesso · mesmo critério de Atrasados/Vencendo</span>
+      <span class="text-muted small">Projeção PCP + frete da região × prazo do cliente · recalculado a cada acesso</span>
+    </div>
+    <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+      <span class="small text-muted">Prazo do cliente em até:</span>
+      <div class="btn-group btn-group-sm" role="group" id="riscoHorizontes">
+        {% for h in (5, 10, 20) %}
+        <button type="button" class="btn btn-outline-secondary{{ ' active' if h == 10 else '' }}" data-hz="{{ h }}">{{ h }} dias</button>
+        {% endfor %}
+      </div>
+      <span class="small text-muted">inclui os prazos já vencidos · atraso = entrega projetada (liberação PCP + frete CIF) depois do prazo · em risco = folga de até 3 dias</span>
     </div>
     <div class="row g-3">
       {% for frete in ["FOB", "CIF"] %}
       {% set dados = mini_risco_prazos.get(frete) %}
       <div class="col-md-6">
         <div class="border rounded p-2 h-100">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <span class="fw-semibold">{{ frete }}</span>
-            <div class="d-flex gap-1">
-              <span class="badge bg-danger">🔴 {{ dados.atrasados_total if dados else 0 }} atrasado(s)</span>
-              <span class="badge bg-warning text-dark">🟡 {{ dados.vencendo_total if dados else 0 }} vencendo</span>
+          <div class="fw-semibold mb-1">{{ frete }}{% if frete == "FOB" %} <span class="text-muted small fw-normal">· frete por conta do cliente (entrega = liberação)</span>{% else %} <span class="text-muted small fw-normal">· liberação + frete rodoviário da UF</span>{% endif %}</div>
+          {% for h in (5, 10, 20) %}
+          {% set d = dados.horizontes[h] if dados else None %}
+          <div class="risco-hz" data-hz="{{ h }}"{% if h != 10 %} style="display:none"{% endif %}>
+            <div class="d-flex flex-wrap gap-1 mb-1">
+              <span class="badge bg-danger">🔴 {{ d.atraso_total if d else 0 }} atraso projetado</span>
+              <span class="badge bg-warning text-dark">🟡 {{ d.risco_total if d else 0 }} em risco</span>
+              <span class="badge bg-secondary">⚪ {{ d.sem_plano_total if d else 0 }} sem plano PCP</span>
             </div>
+            {% if d and d.total %}
+            <div class="small mb-2 risco-revisao-resumo">
+              <span class="text-success" title="Pedidos em risco para os quais o PCP já pediu revisão de prazo ao comercial"><i class="bi bi-check2-circle"></i> {{ d.revisao_solicitada_total }} revisão solicitada ao comercial</span>
+              <span class="text-muted">·</span>
+              <span class="{{ 'text-danger fw-semibold' if d.revisao_pendente_total else 'text-muted' }}" title="Atrasos projetados / sem plano ainda sem solicitação de revisão de prazo ao comercial"><i class="bi bi-hourglass-split"></i> {{ d.revisao_pendente_total }} a solicitar</span>
+            </div>
+            <div class="d-flex flex-column gap-2">
+              {% for p in d.linhas %}{{ risco_card(p) }}{% endfor %}
+            </div>
+            {% if d.total > d.linhas|length %}
+            <p class="text-muted small mt-2 mb-0">Mostrando os {{ d.linhas|length }} mais críticos de {{ d.total }}.</p>
+            {% endif %}
+            {% else %}
+            <p class="text-muted small mb-0">Nenhum pedido {{ frete }} com risco de prazo nos próximos {{ h }} dias 🎉</p>
+            {% endif %}
           </div>
-          {% if dados and (dados.atrasados_total or dados.vencendo_total) %}
-          <div class="small mb-2 risco-revisao-resumo">
-            <span class="text-success" title="Pedidos em risco para os quais o PCP já pediu revisão de prazo ao comercial"><i class="bi bi-check2-circle"></i> {{ dados.revisao_solicitada_total }} revisão solicitada ao comercial</span>
-            <span class="text-muted">·</span>
-            <span class="{{ 'text-danger fw-semibold' if dados.revisao_pendente_total else 'text-muted' }}" title="Pedidos em risco ainda sem solicitação de revisão de prazo ao comercial"><i class="bi bi-hourglass-split"></i> {{ dados.revisao_pendente_total }} a solicitar</span>
-          </div>
-          {% endif %}
-          {% if dados and (dados.atrasados or dados.vencendo) %}
-          <div class="d-flex flex-column gap-2">
-            {% for p in dados.atrasados %}{{ risco_card(p, 'atrasado') }}{% endfor %}
-            {% for p in dados.vencendo %}{{ risco_card(p, 'vencendo') }}{% endfor %}
-          </div>
-          {% else %}
-          <p class="text-muted small mb-0">Nenhum pedido {{ frete }} em risco no momento 🎉</p>
+          {% endfor %}
+          {% if dados and dados.sem_prazo_total %}
+          <p class="text-muted small mt-2 mb-0"><i class="bi bi-info-circle"></i> {{ dados.sem_prazo_total }} pedido(s) {{ frete }} em aberto sem prazo do cliente cadastrado — não entram na projeção.</p>
           {% endif %}
         </div>
       </div>
@@ -272,7 +298,23 @@
     </div>
   </div>
 </div>
-
+<script>
+(function () {
+  var grp = document.getElementById("riscoHorizontes");
+  if (!grp) return;
+  function aplicar(h) {
+    document.querySelectorAll("#sec-risco .risco-hz").forEach(function (el) {
+      el.style.display = el.dataset.hz === String(h) ? "" : "none";
+    });
+    grp.querySelectorAll("button").forEach(function (b) { b.classList.toggle("active", b.dataset.hz === String(h)); });
+    try { localStorage.setItem("painel_risco_hz", String(h)); } catch (e) {}
+  }
+  grp.addEventListener("click", function (ev) {
+    var b = ev.target.closest("button[data-hz]"); if (b) aplicar(b.dataset.hz);
+  });
+  try { var s = localStorage.getItem("painel_risco_hz"); if (s) aplicar(s); } catch (e) {}
+})();
+</script>
 
 {% if pode_apontar_revisao %}
 <div class="modal fade" id="modalRevisaoPrazo" tabindex="-1" aria-hidden="true">
