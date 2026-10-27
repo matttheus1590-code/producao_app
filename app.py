@@ -6367,6 +6367,13 @@ def _avaliar_risco_entrega(pedido, mapa_lead_time, hoje):
         "folga_dias": folga,
         "itens_sem_previsao": sem_prev,
         "sugestao": sugestao,
+        # Contexto extra pro relatório executivo (PDF) de gestão de risco.
+        "cidade": pedido.cidade,
+        "vendedor": pedido.vendedor,
+        "limite_liberacao": limite_liberacao,
+        "valor_aberto": round(sum(i.valor_total for i in itens_abertos), 2),
+        "itens_abertos": len(itens_abertos),
+        "itens_total": len(pedido.itens),
     }
 
 
@@ -6455,6 +6462,24 @@ def _mini_risco_prazos_painel(limite=6):
         })
     resultado["ocultos"] = lista_ocultos
     return resultado
+
+
+def _dados_gestao_risco_completa():
+    """Dados do relatório executivo "Gestão de risco de prazos" (PDF, Bruno,
+    27/10/2026): MESMA base da Mini gestão de risco do Painel (horizonte de
+    20 dias, que contém os de 5 e 10), só que SEM o limite de cards."""
+    risco = _mini_risco_prazos_painel(limite=100000)
+    linhas = []
+    for frete in ("FOB", "CIF"):
+        linhas += risco[frete]["horizontes"][max(RISCO_HORIZONTES)]["linhas"]
+    return {
+        "hoje": date.today(),
+        "horizontes": RISCO_HORIZONTES,
+        "folga_alerta": RISCO_FOLGA_ALERTA_DIAS,
+        "linhas": linhas,
+        "ocultos": risco.get("ocultos") or [],
+        "sem_prazo": {f: risco[f]["sem_prazo_total"] for f in ("FOB", "CIF")},
+    }
 
 
 def _parse_data_iso(valor):
@@ -20678,6 +20703,21 @@ def register_routes(app):
             db.session.commit()
             flash(f"Pedido {(pedido.pedido_venda if pedido else None) or pedido_id} voltou à gestão de risco.", "success")
         return redirect(url_for("painel") + "#sec-risco")
+
+    @app.route("/painel/risco-prazos/relatorio.pdf")
+    @login_required
+    def painel_risco_prazos_relatorio_pdf():
+        """Relatório executivo (PDF) da Mini gestão de risco de prazos —
+        FOB x CIF, horizontes de 5/10/20 dias, regiões e decisões
+        recomendadas à alta direção (Bruno, 27/10/2026)."""
+        import pdf_risco_prazos
+        agora = _agora_brt()
+        pdf = pdf_risco_prazos.gerar(
+            _dados_gestao_risco_completa(), agora, _ESPELHO_LOGO_PATH, _icone_pdf, _formatar_moeda_br)
+        resposta = Response(pdf, mimetype="application/pdf")
+        resposta.headers["Content-Disposition"] = (
+            f"attachment; filename=gestao_risco_prazos_{agora.strftime('%Y-%m-%d_%H%M')}.pdf")
+        return resposta
 
     @app.route("/painel/relatorio.pdf")
     @login_required
