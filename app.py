@@ -88,6 +88,7 @@ from models import (
     LeadTimeProducao,
     LeadTimeProducaoHistorico,
     LeadTimeTransportadora,
+    RiscoPedidoOculto,
     SolicitacaoRevisaoPrazo,
     MateriaPrima,
     MateriaPrimaHistorico,
@@ -6390,6 +6391,7 @@ def _mini_risco_prazos_painel(limite=6):
     solicitacoes = {s_.pedido_id: s_ for s_ in SolicitacaoRevisaoPrazo.query.all()}
     horizonte_max = max(RISCO_HORIZONTES)
     abertos = Pedido.itens.any(ItemPedido.status_producao != "FINALIZADO")
+    ocultos = {o.pedido_id: o for o in RiscoPedidoOculto.query.all()}
     resultado = {}
     for frete in ("FOB", "CIF"):
         pedidos = (
@@ -6403,6 +6405,8 @@ def _mini_risco_prazos_painel(limite=6):
         )
         linhas = []
         for p in pedidos:
+            if p.id in ocultos:
+                continue  # oculto pelo PCP (fora da curva da carteira)
             linha = _avaliar_risco_entrega(p, mapa_lead_time, hoje)
             if linha is None:
                 continue
@@ -6434,10 +6438,22 @@ def _mini_risco_prazos_painel(limite=6):
                 "revisao_pendente_total": a_solicitar,
                 "linhas": do_h[:limite],
             }
-        sem_prazo_total = (
-            Pedido.query.filter(Pedido.frete == frete, abertos, Pedido.data_cliente.is_(None)).count()
-        )
-        resultado[frete] = {"horizontes": horizontes, "sem_prazo_total": sem_prazo_total}
+        sem_prazo_q = Pedido.query.filter(Pedido.frete == frete, abertos, Pedido.data_cliente.is_(None))
+        if ocultos:
+            sem_prazo_q = sem_prazo_q.filter(Pedido.id.notin_(list(ocultos)))
+        resultado[frete] = {"horizontes": horizontes, "sem_prazo_total": sem_prazo_q.count()}
+
+    lista_ocultos = []
+    for o in sorted(ocultos.values(), key=lambda o: o.oculto_em or datetime.min, reverse=True):
+        ped = o.pedido
+        if ped is None:
+            continue
+        lista_ocultos.append({
+            "pedido_id": ped.id, "pedido_venda": ped.pedido_venda, "cliente": ped.cliente, "frete": ped.frete,
+            "prazo_cliente": ped.data_cliente, "motivo": o.motivo, "oculto_por": o.oculto_por,
+            "quando": (o.oculto_em - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M") if o.oculto_em else None,
+        })
+    resultado["ocultos"] = lista_ocultos
     return resultado
 
 
@@ -6726,6 +6742,7 @@ def _capacidade_estacoes_painel(hoje=None, semanas_hist=8, semanas_proj=4):
 # ---------------------------------------------------------------------------
 
 _HIST_CAMPOS_LABEL = {
+    "risco_prazo_oculto": "Gestão de risco de prazos (ocultar/reexibir)",
     "revisao_prazo_solicitada": "Revisão de prazo (PCP → comercial)",
     "cliente": "Cliente", "prioridade": "Prioridade", "vendedor": "Vendedor", "frete": "Frete",
     "obs": "Observações", "cnpj": "CNPJ", "cidade": "Cidade", "estado": "Estado", "pais": "País",
@@ -20618,6 +20635,48 @@ def register_routes(app):
             flash(
                 f"Apontamento de revisão do pedido {(pedido.pedido_venda if pedido else None) or pedido_id} desfeito.",
                 "info")
+        return redirect(url_for("painel") + "#sec-risco")
+
+    @app.route("/painel/risco/<int:pedido_id>/ocultar", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def painel_risco_ocultar(pedido_id):
+        """Oculta um pedido da Mini gestão de risco de prazos (Bruno,
+        27/10/2026) — pedido fora da curva da carteira, que o PCP não quer
+        ver nos alertas/totais. Reversível (Pedidos ocultos > Reexibir)."""
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(url_for("painel") + "#sec-risco")
+        motivo = (request.form.get("motivo") or "").strip()[:500] or None
+        ja = RiscoPedidoOculto.query.filter_by(pedido_id=pedido.id).first()
+        if ja is None:
+            db.session.add(RiscoPedidoOculto(pedido_id=pedido.id, oculto_por=current_user.nome, motivo=motivo))
+            db.session.add(HistoricoAlteracao(
+                entidade_tipo="pedido", entidade_id=pedido.id, pedido_id=pedido.id,
+                usuario_id=current_user.id, usuario_nome=current_user.nome,
+                campo="risco_prazo_oculto", valor_anterior="Visível", valor_novo="Oculto" + (f" · {motivo}" if motivo else ""),
+            ))
+            db.session.commit()
+        flash(
+            f"Pedido {pedido.pedido_venda or pedido.id} ocultado da gestão de risco. "
+            "Dá pra reexibir em “Pedidos ocultos”, logo abaixo.", "info")
+        return redirect(url_for("painel") + "#sec-risco")
+
+    @app.route("/painel/risco/<int:pedido_id>/reexibir", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def painel_risco_reexibir(pedido_id):
+        """Volta a mostrar na Mini gestão de risco um pedido antes ocultado."""
+        oculto = RiscoPedidoOculto.query.filter_by(pedido_id=pedido_id).first()
+        if oculto is not None:
+            pedido = db.session.get(Pedido, pedido_id)
+            db.session.add(HistoricoAlteracao(
+                entidade_tipo="pedido", entidade_id=pedido_id, pedido_id=pedido_id,
+                usuario_id=current_user.id, usuario_nome=current_user.nome,
+                campo="risco_prazo_oculto", valor_anterior="Oculto", valor_novo="Visível",
+            ))
+            db.session.delete(oculto)
+            db.session.commit()
+            flash(f"Pedido {(pedido.pedido_venda if pedido else None) or pedido_id} voltou à gestão de risco.", "success")
         return redirect(url_for("painel") + "#sec-risco")
 
     @app.route("/painel/relatorio.pdf")

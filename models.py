@@ -2268,3 +2268,23 @@ class SolicitacaoRevisaoPrazo(db.Model):
     def solicitado_em_brt(self):
         """solicitado_em (gravado em UTC) no horário de Brasília (UTC-3)."""
         return self.solicitado_em - timedelta(hours=3) if self.solicitado_em else None
+
+
+class RiscoPedidoOculto(db.Model):
+    """Pedido OCULTO da Mini gestão de risco de prazos (pedido do Bruno,
+    27/10/2026): pedidos cujo contexto é muito fora da curva da carteira
+    (ex.: atraso/antecipação gigantesco, caso do pedido 845) e que o PCP não
+    quer ver nos alertas nem nos totais. 1 linha por pedido (unique); reexibir
+    apaga a linha. Histórico fica em HistoricoAlteracao ("risco_prazo_oculto").
+
+    Tabela NOVA — criada sozinha pelo db.create_all() no startup."""
+
+    __tablename__ = "risco_pedidos_ocultos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    pedido_id = db.Column(db.Integer, db.ForeignKey("pedidos.id"), nullable=False, unique=True, index=True)
+    oculto_em = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    oculto_por = db.Column(db.String(120), nullable=True)
+    motivo = db.Column(db.Text, nullable=True)
+
+    pedido = db.relationship("Pedido", backref=db.backref("risco_oculto", uselist=False, cascade="all, delete-orphan"))
