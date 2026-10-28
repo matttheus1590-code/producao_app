@@ -17355,12 +17355,49 @@ def _agrupar_linhas_por_quadrantes_pcp(linhas, mes_ano):
     return grupos
 
 
+def _numero_semana_linha(l):
+    """Nº do quadrante (1-4; a SEMANA 05 soma na 04, igual ao relatório) ou 0
+    quando a linha não tem semana de planejamento definida."""
+    m = re.search(r"SEMANA\s*(\d+)", (l.planejamento_semanal or "").upper())
+    return min(max(int(m.group(1)), 1), 4) if m else 0
+
+
+def _semanas_selecionadas(valores):
+    """Semanas marcadas no modal "Emitir relatório" (pedido do Bruno,
+    28/10/2026: "incluir só o semanal, ex.: somente semana 04 outubro").
+    `valores` = request.args.getlist("semana"). Devolve um set de nºs
+    (0 = sem semana definida) ou None quando NÃO há recorte (nada marcado ou
+    todas marcadas) — nesse caso o relatório sai completo, como sempre."""
+    sel = set()
+    for v in valores:
+        v = (v or "").strip()
+        if v in ("0", "1", "2", "3", "4"):
+            sel.add(int(v))
+        elif v == "5":
+            sel.add(4)
+    if not sel or sel >= {0, 1, 2, 3, 4}:
+        return None
+    return sel
+
+
+def _texto_semanas_selecionadas(sel, mes_ano):
+    nomes = []
+    for n in sorted(x for x in sel if x):
+        inicio, fim = _intervalo_calendario_semana_pcp(mes_ano, f"SEMANA {n:02d}")
+        nomes.append(f"SEMANA {n:02d} ({inicio.strftime('%d/%m')} a {fim.strftime('%d/%m')})")
+    if 0 in sel:
+        nomes.append("sem semana definida")
+    return "Somente " + " + ".join(nomes)
+
+
 def _texto_filtros_listagem_geral_semanal(filtros):
     """Descrição legível dos filtros extras (além do mês, que já vira o
     título do relatório) ativos ao gerar o PDF — mesmo espírito de
     _texto_filtros_risco_otd, pra deixar claro que o relatório reflete só o
     recorte que estava na tela, quando houver algum filtro a mais."""
     partes = []
+    if filtros.get("semanas_txt"):
+        partes.append(filtros["semanas_txt"])
     if filtros.get("busca"):
         partes.append(f'Busca: "{filtros["busca"]}"')
     if filtros.get("cliente"):
@@ -17382,7 +17419,7 @@ def _texto_filtros_listagem_geral_semanal(filtros):
     return " · ".join(partes)
 
 
-def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", incluir_simulado_a=False):
+def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", incluir_simulado_a=False, semanas_sel=None):
     """PDF "Emitir relatório" — Planejamento Mensal PCP/Operação (pedido
     original do Bruno, 14/09/2026, então chamado de "Listagem Geral —
     Relatório Semanal"; aprimorado a pedido dele em 21/09/2026: "quero que
@@ -17459,6 +17496,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
     # do texto por falta de espaço (defeito visual encontrado e corrigido
     # antes de virar padrão — 22/09/2026).
     estilo_celula = ParagraphStyle("celula", parent=estilos["Normal"], fontSize=7.3, leading=8.6)
+    estilo_celula_pv = ParagraphStyle("celula_pv", parent=estilo_celula, splitLongWords=0)
     COR_CABECALHO_BG = colors.HexColor("#d3e0f2")
     COR_CABECALHO_TEXTO = colors.HexColor("#1b2a4a")
     COR_SEMANA_BG = colors.HexColor("#eaf1fd")
@@ -17662,6 +17700,31 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
         pesos = pesos[:-1] + [46] + pesos[-1:]
     soma_pesos = sum(pesos)
     larguras_colunas = [p / soma_pesos * largura_disponivel for p in pesos]
+    # Larguras mínimas (pedido do Bruno, 28/10/2026: "números dos pedidos
+    # quebrando linha — quero em uma linha, principalmente com 7 dígitos"):
+    # PV = o maior entre 7 dígitos e o maior PV real do relatório (em negrito,
+    # como é impresso); datas e Status também nunca quebram no meio (isso
+    # acontecia com o "Simulado A" ligado, que dá +1 coluna). O que essas
+    # colunas ganham sai de Cliente/Produto/Cidade/UF, que quebram linha sem
+    # problema.
+    from reportlab.pdfbase.pdfmetrics import stringWidth as _sw
+    _pvs = {str(l.pedido_venda) for b_ in blocos for l in b_["linhas"] if l.pedido_venda}
+    _minimos = {
+        0: max([_sw("0000000", "Helvetica-Bold", 7.3)] + [_sw(pv, "Helvetica-Bold", 7.3) for pv in _pvs]) + 9,
+        11: max(_sw(t, "Helvetica", 7.3) for t in ("FINALIZADO", "ANDAMENTO", "PENDENTE")) + 7.5,
+    }
+    for _i in (7, 8, 9, 10):
+        _minimos[_i] = _sw("00/00/0000", "Helvetica", 7.3) + 7.5
+    _deficit = 0.0
+    for _i, _m in _minimos.items():
+        if larguras_colunas[_i] < _m:
+            _deficit += _m - larguras_colunas[_i]
+            larguras_colunas[_i] = _m
+    if _deficit:
+        _doadoras = (1, 2, 6, 5)
+        _soma_doadoras = sum(larguras_colunas[_i] for _i in _doadoras)
+        for _i in _doadoras:
+            larguras_colunas[_i] -= _deficit * larguras_colunas[_i] / _soma_doadoras
 
     # Mapas de lead time pré-buscados 1x só (fora de _construir_bloco, que
     # roda 1x por mês/backlog) pra _simulado_a_pedido não repetir a mesma
@@ -17727,6 +17790,13 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
             )
         else:
             grupos_semana = _agrupar_linhas_por_quadrantes_pcp(linhas_b, mes_ano_b) if linhas_b else []
+            if semanas_sel is not None:
+                # Recorte por semana (modal "Emitir relatório"): some até o
+                # quadrante vazio das semanas não escolhidas.
+                grupos_semana = [
+                    g for g in grupos_semana
+                    if (int(g[0].split()[-1]) in semanas_sel if g[0].startswith("SEMANA") else 0 in semanas_sel)
+                ]
         pedidos_mes = {l.pedido_id for l in linhas_b}
         faturamento_mes = sum(l.venda_total or 0 for l in linhas_b)
 
@@ -18020,7 +18090,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                     status_txt = status_unicos[0] if len(status_unicos) == 1 else f"MISTO ({len(status_unicos)} status)"
 
                     linha_compacto = [
-                        Paragraph(f"<b>{primeiro.pedido_venda or '—'}</b>", estilo_celula),
+                        Paragraph(f"<b>{primeiro.pedido_venda or '—'}</b>", estilo_celula_pv),
                         Paragraph(_quebravel(primeiro.cliente) or "—", estilo_celula),
                         Paragraph(_quebravel(produtos_txt), estilo_celula),
                         Paragraph(str(len(itens_pedido)), estilo_celula),
@@ -18059,7 +18129,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                         qtd_txt = int(qtd) if qtd == int(qtd) else qtd
                         regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
                         linha_item = [
-                            Paragraph(f"<b>{l.pedido_venda or '—'}</b>", estilo_celula),
+                            Paragraph(f"<b>{l.pedido_venda or '—'}</b>", estilo_celula_pv),
                             Paragraph(_quebravel(l.cliente) or "—", estilo_celula),
                             Paragraph(_quebravel(l.descricao_produto) or "—", estilo_celula),
                             Paragraph(str(qtd_txt), estilo_celula),
@@ -21995,6 +22065,13 @@ def register_routes(app):
         pedidos = query.all()
         linhas = _linhas_listagem_geral(pedidos, args)
         mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
+        # Recorte por semana (Bruno, 28/10/2026): só as semanas marcadas do
+        # mês do relatório — totais, gráficos e cabeçalho refletem o recorte.
+        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"))
+        if semanas_sel is not None:
+            linhas = [l for l in linhas if _numero_semana_linha(l) in semanas_sel]
+            filtros = dict(filtros)
+            filtros["semanas_txt"] = _texto_semanas_selecionadas(semanas_sel, mes_ano)
 
         incluir_backlog = args.get("incluir_backlog", "").strip() == "1"
         if incluir_backlog:
@@ -22021,7 +22098,7 @@ def register_routes(app):
         # Pedido (_simulado_a_pedido), só OPCIONAL: desmarcado, o relatório
         # sai idêntico a antes.
         incluir_simulado_a = args.get("incluir_simulado_a", "").strip() == "1"
-        return _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo_relatorio, incluir_simulado_a=incluir_simulado_a)
+        return _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo_relatorio, incluir_simulado_a=incluir_simulado_a, semanas_sel=semanas_sel)
 
     @app.route("/relatorios/planejamento-mensal.pptx")
     @login_required
@@ -22035,6 +22112,11 @@ def register_routes(app):
         query, filtros = _filtrar_pedidos(args)
         linhas = _linhas_listagem_geral(query.all(), args)
         mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
+        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"))
+        if semanas_sel is not None:
+            linhas = [l for l in linhas if _numero_semana_linha(l) in semanas_sel]
+            filtros = dict(filtros)
+            filtros["semanas_txt"] = _texto_semanas_selecionadas(semanas_sel, mes_ano)
         blocos = [{"mes_ano": mes_ano, "linhas": linhas, "rotulo": "MÊS DO RELATÓRIO"}]
         if args.get("incluir_backlog", "").strip() == "1":
             ano_bl, mes_bl = _somar_meses(mes_ano[0], mes_ano[1], 1)

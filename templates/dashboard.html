@@ -278,6 +278,28 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
           <input type="month" class="form-control" name="planejamento_mensal"
                  value="{{ mes_atual_input }}" required>
 
+          <label class="form-label small text-muted mb-1 mt-3">Semanas do mês incluídas</label>
+          <div class="d-flex flex-wrap align-items-center gap-3" id="semanasPCPWrap">
+            {% for n in (1, 2, 3, 4) %}
+            <div class="form-check mb-0">
+              <input class="form-check-input js-semana-pcp" type="checkbox" name="semana" value="{{ n }}" id="semanaPCP{{ n }}" checked>
+              <label class="form-check-label small" for="semanaPCP{{ n }}">Semana 0{{ n }}</label>
+            </div>
+            {% endfor %}
+            <div class="form-check mb-0">
+              <input class="form-check-input js-semana-pcp" type="checkbox" name="semana" value="0" id="semanaPCP0" checked>
+              <label class="form-check-label small" for="semanaPCP0">Sem semana</label>
+            </div>
+          </div>
+          <div class="d-flex flex-wrap gap-1 mt-2 align-items-center">
+            <span class="small text-muted me-1">Atalho:</span>
+            {% for n in (1, 2, 3, 4) %}
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0 js-so-semana-pcp" data-semana="{{ n }}">Só 0{{ n }}</button>
+            {% endfor %}
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0 js-so-semana-pcp" data-semana="todas">Todas</button>
+          </div>
+          <div class="form-text">Com só algumas semanas marcadas, os totais e gráficos do mês passam a refletir apenas elas. Desmarque o backlog abaixo se quiser <strong>somente</strong> a(s) semana(s).</div>
+
           <label class="form-label small text-muted mb-1 mt-3">Modelo do relatório</label>
           <select class="form-select" name="modelo_relatorio">
             <option value="completo">Completo — 1 linha por item (padrão)</option>
@@ -331,6 +353,17 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
     </div>
   </div>
 </div>
+
+<script>
+document.addEventListener("click", function (ev) {
+  var b = ev.target.closest(".js-so-semana-pcp");
+  if (!b) return;
+  var alvo = b.dataset.semana;
+  document.querySelectorAll("#semanasPCPWrap .js-semana-pcp").forEach(function (c) {
+    c.checked = (alvo === "todas") || (c.value === alvo);
+  });
+});
+</script>
 
 <div class="table-responsive tabela-listagem-geral-wrap" id="listagemGeralWrap">
   <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral" id="tabelaListagemGeral">
