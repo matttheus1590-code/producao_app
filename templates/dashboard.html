@@ -424,7 +424,12 @@ document.addEventListener("click", function (ev) {
         {% set ns.cor_par = not ns.cor_par %}
         {% set ns.pedido_anterior = l.pedido_id %}
       {% endif %}
-      <tr class="linha-clicavel {% if l.liberacao_real %}linha-pedido-finalizado{% else %}{{ 'linha-pedido-a' if ns.cor_par else 'linha-pedido-b' }}{% endif %}"
+      {# Contorno forte por pedido (pedido do Bruno, 28/10/2026): marca a 1ª e a
+         última linha de cada pedido pra CSS desenhar a moldura em volta do grupo,
+         inclusive quando vários pedidos seguidos estão verdes (finalizados). #}
+      {% set eh_ini = (loop.first or linhas[loop.index0 - 1].pedido_id != l.pedido_id) %}
+      {% set eh_fim = (loop.last or linhas[loop.index0 + 1].pedido_id != l.pedido_id) %}
+      <tr class="linha-clicavel {% if l.liberacao_real %}linha-pedido-finalizado{% else %}{{ 'linha-pedido-a' if ns.cor_par else 'linha-pedido-b' }}{% endif %}{% if eh_ini %} pedido-ini{% endif %}{% if eh_fim %} pedido-fim{% endif %}"
           data-href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" title="Clique na linha para ver o pedido (somente visualização)">
         <td class="text-nowrap">
           <a href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-secondary" title="Ver detalhe">

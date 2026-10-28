@@ -170,6 +170,32 @@ body.col-resizing-ativo {
   background-color: #4cc773;
 }
 
+/* Contorno forte por pedido na Listagem Geral (pedido do Bruno, 28/10/2026):
+   "os pedidos finalizados em verde ficam confusos, não tem separação entre
+   eles... crie um contorno forte agrupando". Cada pedido (todos os seus itens)
+   ganha uma moldura escura: borda em cima na 1ª linha (.pedido-ini), embaixo
+   na última (.pedido-fim) e nas laterais em todas as linhas. A tabela usa
+   border-collapse, então a borda mais grossa vence a linha fina padrão. */
+.tabela-listagem-geral {
+  --pedido-moldura: #2b3f63;
+}
+
+.tabela-listagem-geral > tbody > tr.linha-clicavel > td:first-child {
+  border-left: 2.5px solid var(--pedido-moldura);
+}
+
+.tabela-listagem-geral > tbody > tr.linha-clicavel > td:last-child {
+  border-right: 2.5px solid var(--pedido-moldura);
+}
+
+.tabela-listagem-geral > tbody > tr.pedido-ini > td {
+  border-top: 2.5px solid var(--pedido-moldura);
+}
+
+.tabela-listagem-geral > tbody > tr.pedido-fim > td {
+  border-bottom: 2.5px solid var(--pedido-moldura);
+}
+
 /* Operação 360 (pedido do Bruno, 10/09/2026, ampliado 10/09/2026 — "pedidos
    com status pendente: quero toda a linha na cor vermelha; entrega
    realizada: linha inteira verde"): a cor agora acompanha o "Status pedido"
