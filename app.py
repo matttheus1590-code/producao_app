@@ -17464,6 +17464,16 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
     COR_SEMANA_BG = colors.HexColor("#eaf1fd")
     COR_TOTAL_BG = colors.HexColor("#1b2a4a")
     COR_FINALIZADO_BG = colors.HexColor("#d9f4e0")
+    # Cada PEDIDO ganha uma cor própria, alternando azul fraco / amarelo fraco
+    # ("cor sim, cor não" — pedido do Bruno, 28/10/2026: pedidos sequenciais,
+    # mesmo linha por linha, estavam confusos e misturados). O verde de
+    # "finalizado" passou a valer só na célula do Status, pra não competir
+    # com a cor do grupo. Linha de subtotal = tom um pouco mais forte da
+    # mesma cor, fechando o grupo.
+    CORES_PEDIDO = (colors.HexColor("#e6f0fb"), colors.HexColor("#fff6d1"))
+    CORES_PEDIDO_TOTAL = (colors.HexColor("#cfe0f5"), colors.HexColor("#ffe9a3"))
+    COR_STATUS_FINALIZADO = colors.HexColor("#b7e4c3")
+    COR_MOLDURA_PEDIDO = colors.HexColor("#3f5f8f")
     COR_ATUAL_BG = colors.HexColor("#198754")     # verde — mesmo tom do quadrante "success" do dashboard
     COR_BACKLOG_BG = colors.HexColor("#0d6efd")   # azul — mesmo tom do quadrante "primary" (OUTUBRO) do dashboard
     estilo_cabecalho_tabela = ParagraphStyle(
@@ -17658,6 +17668,12 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
     # consulta a cada pedido do relatório — só quando a coluna está ligada.
     mapa_transporte_simulado_a = _mapa_lead_time_transportadora() if incluir_simulado_a else None
     mapa_producao_simulado_a = _mapa_lead_time_producao() if incluir_simulado_a else None
+
+    legenda_cores = Paragraph(
+        "<b>Como ler a listagem:</b> cada pedido tem uma cor própria (azul fraco / amarelo fraco, alternando) e uma moldura — "
+        "todos os itens do mesmo pedido ficam juntos, com o <b>Total do pedido</b> fechando o grupo. "
+        "Status em <font backColor='#b7e4c3'>&nbsp;verde&nbsp;</font> = liberado (liberação real preenchida).",
+        ParagraphStyle("legenda_cores", parent=estilos["Normal"], fontSize=7.6, leading=9.6, textColor=colors.HexColor("#555555")))
 
     def _construir_bloco(b, cor_banner):
         mes_ano_b = b["mes_ano"]
@@ -17897,6 +17913,9 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                 elems.append(Spacer(1, 6 * mm))
 
         # ---- 1 seção por semana PCP ----
+        elems.append(CondPageBreak(55 * mm))
+        elems.append(legenda_cores)
+        elems.append(Spacer(1, 3 * mm))
         for rotulo, periodo_txt, linhas_semana in grupos_semana:
             pedidos_semana = {l.pedido_id for l in linhas_semana}
             faturamento_semana = sum(l.venda_total or 0 for l in linhas_semana)
@@ -17933,9 +17952,14 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
             dados_tabela = [[Paragraph(c, estilo_cabecalho_tabela) for c in cabecalho_tabela]]
             cores_linhas = [COR_CABECALHO_BG]
             linhas_subtotal = set()
+            faixas_pedido = []        # (linha_ini, linha_fim, 0|1) — 1 grupo por pedido
+            status_finalizados = []   # linhas cujo Status ganha o verde de "finalizado"
+            # pedido_id no desempate: garante que os itens de um mesmo pedido
+            # fiquem sempre contíguos (mesmo se 2 pedidos tiverem a mesma
+            # data de inclusão e o mesmo número de pedido de venda).
             linhas_ordenadas = sorted(
                 linhas_semana,
-                key=lambda l: (l.data_inclusao_pedido or date.max, l.pedido_venda or "", l.item_id),
+                key=lambda l: (l.data_inclusao_pedido or date.max, l.pedido_venda or "", l.pedido_id, l.item_id),
             )
             # Agrupa por pedido (pedido do Bruno, 21/09/2026: "agrupe os
             # pedidos e totalize o valor total do pedido... tenho um pedido
@@ -17959,7 +17983,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                 # campos que variam por item (produto, liberação, status)
                 # são resumidos/agregados pra continuar "totalmente
                 # completo" sem listar item a item.
-                for pedido_id, itens_pedido in grupos_pedido:
+                for n_ped, (pedido_id, itens_pedido) in enumerate(grupos_pedido):
                     primeiro = itens_pedido[0]
                     total_pedido = sum(l.venda_total or 0 for l in itens_pedido)
                     regiao_txt = REGIAO_POR_UF.get(primeiro.estado, "—")
@@ -17996,7 +18020,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                     status_txt = status_unicos[0] if len(status_unicos) == 1 else f"MISTO ({len(status_unicos)} status)"
 
                     linha_compacto = [
-                        Paragraph(primeiro.pedido_venda or "—", estilo_celula),
+                        Paragraph(f"<b>{primeiro.pedido_venda or '—'}</b>", estilo_celula),
                         Paragraph(_quebravel(primeiro.cliente) or "—", estilo_celula),
                         Paragraph(_quebravel(produtos_txt), estilo_celula),
                         Paragraph(str(len(itens_pedido)), estilo_celula),
@@ -18012,13 +18036,18 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                     if incluir_simulado_a:
                         linha_compacto.append(Paragraph(_texto_simulado_a(mapa_simulado_a.get(pedido_id)), estilo_celula))
                     linha_compacto.append(Paragraph(_fmt_moeda(total_pedido), estilo_celula))
+                    idx_linha_ped = len(dados_tabela)
                     dados_tabela.append(linha_compacto)
-                    cores_linhas.append(COR_FINALIZADO_BG if qtd_com_real == len(itens_pedido) else colors.white)
+                    cores_linhas.append(CORES_PEDIDO[n_ped % 2])
+                    faixas_pedido.append((idx_linha_ped, idx_linha_ped, n_ped % 2))
+                    if qtd_com_real == len(itens_pedido):
+                        status_finalizados.append(idx_linha_ped)
             else:
                 estilo_subtotal_rotulo = ParagraphStyle("subtotal_rotulo", parent=estilo_celula, fontName="Helvetica-Bold", textColor=COR_CABECALHO_TEXTO)
                 estilo_subtotal_valor = ParagraphStyle("subtotal_valor", parent=estilo_celula, fontName="Helvetica-Bold", alignment=2)
                 estilo_subtotal_simulado_a = ParagraphStyle("subtotal_simulado_a", parent=estilo_celula, fontName="Helvetica-Bold", textColor=COR_CABECALHO_TEXTO, alignment=1)
-                for pedido_id, itens_pedido in grupos_pedido:
+                for n_ped, (pedido_id, itens_pedido) in enumerate(grupos_pedido):
+                    idx_ini_ped = len(dados_tabela)
                     # Simulado A é por PEDIDO, não por item: com 1 item só, a
                     # própria linha do item já é "a linha do pedido" e recebe
                     # o valor; com 2+ itens, as linhas de item ficam em
@@ -18030,7 +18059,7 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                         qtd_txt = int(qtd) if qtd == int(qtd) else qtd
                         regiao_txt = REGIAO_POR_UF.get(l.estado, "—")
                         linha_item = [
-                            Paragraph(l.pedido_venda or "—", estilo_celula),
+                            Paragraph(f"<b>{l.pedido_venda or '—'}</b>", estilo_celula),
                             Paragraph(_quebravel(l.cliente) or "—", estilo_celula),
                             Paragraph(_quebravel(l.descricao_produto) or "—", estilo_celula),
                             Paragraph(str(qtd_txt), estilo_celula),
@@ -18047,8 +18076,10 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                             texto_nesta_linha = texto_simulado_a_pedido if len(itens_pedido) == 1 else ""
                             linha_item.append(Paragraph(texto_nesta_linha, estilo_celula))
                         linha_item.append(Paragraph(_fmt_moeda(l.venda_total), estilo_celula))
+                        if l.liberacao_real:
+                            status_finalizados.append(len(dados_tabela))
                         dados_tabela.append(linha_item)
-                        cores_linhas.append(COR_FINALIZADO_BG if l.liberacao_real else colors.white)
+                        cores_linhas.append(CORES_PEDIDO[n_ped % 2])
 
                     # Subtotal do pedido — só quando há mais de 1 item (com 1 só
                     # item, a própria linha já mostra o total, repetir seria
@@ -18065,8 +18096,9 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                             linha_subtotal.append(Paragraph(texto_simulado_a_pedido, estilo_subtotal_simulado_a))
                         linha_subtotal.append(Paragraph(_fmt_moeda(total_pedido), estilo_subtotal_valor))
                         dados_tabela.append(linha_subtotal)
-                        cores_linhas.append(colors.HexColor("#e9edf5"))
+                        cores_linhas.append(CORES_PEDIDO_TOTAL[n_ped % 2])
                         linhas_subtotal.add(idx_linha)
+                    faixas_pedido.append((idx_ini_ped, len(dados_tabela) - 1, n_ped % 2))
 
             tabela_semana = Table(dados_tabela, colWidths=larguras_colunas, repeatRows=1)
             estilo_tabela = [
@@ -18084,6 +18116,15 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                 if i == 0:
                     continue
                 estilo_tabela.append(("BACKGROUND", (0, i), (-1, i), cor))
+            # Status "liberado" em verde só na própria célula (coluna 11).
+            for i in status_finalizados:
+                estilo_tabela.append(("BACKGROUND", (11, i), (11, i), COR_STATUS_FINALIZADO))
+            # Moldura grossa em volta de CADA pedido + número do pedido em
+            # negrito; grupos de até 10 linhas não quebram entre páginas.
+            for ini, fim, _k in faixas_pedido:
+                estilo_tabela.append(("BOX", (0, ini), (-1, fim), 1.5, COR_MOLDURA_PEDIDO))
+                if fim - ini + 1 <= 10:
+                    estilo_tabela.append(("NOSPLIT", (0, ini), (-1, fim)))
             # Coluna final "spanada" junto do rótulo "Total do pedido...":
             # normalmente até a penúltima coluna (-2), deixando só o Valor
             # (-1) separado; com a coluna "Simulado A" ligada, ela entra
