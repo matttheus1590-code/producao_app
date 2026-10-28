@@ -177,23 +177,23 @@ body.col-resizing-ativo {
    na última (.pedido-fim) e nas laterais em todas as linhas. A tabela usa
    border-collapse, então a borda mais grossa vence a linha fina padrão. */
 .tabela-listagem-geral {
-  --pedido-moldura: #2b3f63;
+  --pedido-moldura: #8ea2c4;
 }
 
 .tabela-listagem-geral > tbody > tr.linha-clicavel > td:first-child {
-  border-left: 2.5px solid var(--pedido-moldura);
+  border-left: 2px solid var(--pedido-moldura);
 }
 
 .tabela-listagem-geral > tbody > tr.linha-clicavel > td:last-child {
-  border-right: 2.5px solid var(--pedido-moldura);
+  border-right: 2px solid var(--pedido-moldura);
 }
 
 .tabela-listagem-geral > tbody > tr.pedido-ini > td {
-  border-top: 2.5px solid var(--pedido-moldura);
+  border-top: 2px solid var(--pedido-moldura);
 }
 
 .tabela-listagem-geral > tbody > tr.pedido-fim > td {
-  border-bottom: 2.5px solid var(--pedido-moldura);
+  border-bottom: 2px solid var(--pedido-moldura);
 }
 
 /* Operação 360 (pedido do Bruno, 10/09/2026, ampliado 10/09/2026 — "pedidos
