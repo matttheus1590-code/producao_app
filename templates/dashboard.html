@@ -340,6 +340,11 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
           <button type="submit" class="btn btn-primary"><i class="bi bi-file-earmark-pdf"></i> Gerar PDF</button>
+          {# Painel semanal (Bruno, 29/10/2026): 1 folha A4 horizontal por semana marcada, 1 linha por pedido #}
+          <button type="submit" class="btn btn-success" formaction="{{ url_for('relatorio_painel_semanal_visual_pdf') }}" formtarget="_blank"
+                  title="Folha única na horizontal por semana: 1 linha por pedido, com datas, liberação efetiva do PCP (verde), valor, frete e região. Usa o mês e as semanas marcadas acima.">
+            <i class="bi bi-layout-text-window-reverse"></i> Painel semanal (1 folha)
+          </button>
           <div class="btn-group dropup pptx-botao">
             <button type="button" class="btn btn-warning dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-file-earmark-slides"></i> PowerPoint</button>
             <ul class="dropdown-menu dropdown-menu-end">

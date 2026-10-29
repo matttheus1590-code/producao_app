@@ -85,7 +85,7 @@ PREFIXO_GESTAO_OPERACAO = "gestao_operacao_"
 ENDPOINTS_PERMITIDOS_COMERCIAL_GERAL = {
     # Gestão Produção > Listagem Geral (+ exportações, detalhe/espelho do pedido)
     "dashboard", "relatorio_listagem_csv", "relatorio_listagem_xlsx", "relatorio_listagem_geral_semanal_pdf",
-    "relatorio_listagem_geral_semanal_pptx",
+    "relatorio_listagem_geral_semanal_pptx", "relatorio_painel_semanal_visual_pdf",
     "detalhe_pedido", "espelho_pedido_pdf", "pedido_apresentacao_pptx",
     # Gestão Produção > Programação
     "programacao_semana",

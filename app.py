@@ -17380,6 +17380,94 @@ def _semanas_selecionadas(valores):
     return sel
 
 
+_DIAS_SEMANA_ABREV_PT = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+_MESES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro",
+             "outubro", "novembro", "dezembro"]
+
+
+def _dados_painel_semanal_visual(linhas, mes_ano, semanas_sel, hoje):
+    """Agrega as linhas da Listagem Geral (1 por item) em 1 linha por PEDIDO
+    dentro de cada semana do Planejamento PCP — base do "Painel semanal"
+    (pedido do Bruno, 29/10/2026: 1 folha A4 horizontal por semana, uma linha
+    por pedido, com datas e o status da liberação efetiva). Devolve a lista
+    de semanas pra pdf_semana_visual.gerar.
+
+    Situação do pedido na semana (considera só os itens que caem NA semana):
+    liberado = todos com liberação real; parcial = só parte; atrasado = sem
+    liberação real e a liberação prevista (de algum item aberto) já passou;
+    sem_previsao = nada liberado e nenhuma data prevista; pendente = o resto.
+    Folga = prazo do cliente − liberação (real quando liberado, senão a
+    prevista PCP; positiva = sobra, negativa = estoura o prazo)."""
+    import pdf_risco_prazos
+    ano, mes = mes_ano
+    mes_txt = f"{_MESES_PT[mes - 1].capitalize()}/{ano}"
+    semanas = []
+    for titulo, _periodo, linhas_grupo in _agrupar_linhas_por_quadrantes_pcp(linhas, mes_ano):
+        m = re.search(r"SEMANA\s*(\d+)", titulo.upper())
+        num = int(m.group(1)) if m else 0
+        if not linhas_grupo and not (semanas_sel is not None and num in semanas_sel):
+            continue  # semana vazia só aparece se o Bruno a marcou de propósito
+        if num:
+            ini, fim = _intervalo_calendario_semana_pcp(mes_ano, titulo)
+            periodo_txt = (f"{_DIAS_SEMANA_ABREV_PT[ini.weekday()]} {ini.strftime('%d/%m')} a "
+                           f"{_DIAS_SEMANA_ABREV_PT[fim.weekday()]} {fim.strftime('%d/%m/%Y')}")
+            tit = titulo
+        else:
+            periodo_txt = "Pedidos sem Planejamento semanal (PCP) definido"
+            tit = "SEM SEMANA DEFINIDA"
+        por_pedido = {}
+        for l in linhas_grupo:
+            por_pedido.setdefault(l.pedido_id, []).append(l)
+        pedidos = []
+        for itens in por_pedido.values():
+            p0 = itens[0].pedido
+            reais = [l.liberacao_real for l in itens if l.liberacao_real]
+            abertos_prev = [l.liberacao_prevista for l in itens if not l.liberacao_real and l.liberacao_prevista]
+            todas_prev = [l.liberacao_prevista for l in itens if l.liberacao_prevista]
+            lib_prevista = max(todas_prev) if todas_prev else None
+            lib_real = max(reais) if reais else None
+            if len(reais) == len(itens):
+                situacao = "liberado"
+            elif reais:
+                situacao = "parcial"
+            elif not todas_prev:
+                situacao = "sem_previsao"
+            elif min(abertos_prev) < hoje:
+                situacao = "atrasado"
+            else:
+                situacao = "pendente"
+            ref = lib_real if situacao == "liberado" else lib_prevista
+            folga = (p0.data_cliente - ref).days if (p0.data_cliente and ref) else None
+            valor = float(sum((l.venda_total or 0) for l in itens))
+            total_pedido = float(p0.valor_total or 0)
+            pais = (p0.pais or "").strip()
+            exterior = bool(pais) and pais.upper() not in ("BRASIL", "BR")
+            uf = (p0.estado or "").strip().upper()
+            pedidos.append({
+                "pedido_venda": p0.pedido_venda or "—",
+                "cliente": p0.cliente or "—",
+                "frete": p0.frete or "—",
+                "regiao": "Exterior" if exterior else pdf_risco_prazos._regiao(uf),
+                "uf": (pais.title() if exterior else (uf or "—")),
+                "data_inclusao": p0.data_inclusao_pedido,
+                "prazo_cliente": p0.data_cliente,
+                "lib_prevista": lib_prevista,
+                "lib_real": lib_real,
+                "situacao": situacao,
+                "itens_total": len(itens),
+                "itens_liberados": len(reais),
+                "valor": valor,
+                "parcial_semana": abs(valor - total_pedido) > 0.01,
+                "folga_dias": folga,
+                "_id": p0.id,
+            })
+        pedidos.sort(key=lambda p: (p["prazo_cliente"] or date.max, p["lib_prevista"] or date.max,
+                                    str(p["pedido_venda"]), p["_id"]))
+        semanas.append({"titulo": tit, "periodo_txt": periodo_txt, "mes_txt": mes_txt if num else "",
+                        "ano": ano, "pedidos": pedidos})
+    return semanas
+
+
 def _texto_semanas_selecionadas(sel, mes_ano):
     nomes = []
     for n in sorted(x for x in sel if x):
@@ -22099,6 +22187,40 @@ def register_routes(app):
         # sai idêntico a antes.
         incluir_simulado_a = args.get("incluir_simulado_a", "").strip() == "1"
         return _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo_relatorio, incluir_simulado_a=incluir_simulado_a, semanas_sel=semanas_sel)
+
+    @app.route("/relatorios/painel-semanal.pdf")
+    @login_required
+    def relatorio_painel_semanal_visual_pdf():
+        """Painel semanal ilustrativo (PDF, A4 horizontal) — pedido do Bruno,
+        29/10/2026: UMA folha por semana do Planejamento PCP, 1 linha por
+        pedido, com datas, liberação efetiva (verde quando o PCP liberou),
+        valor total do pedido, frete e região; várias semanas = 1 folha cada.
+        Mesmos filtros/seletor de semanas do "Emitir relatório" (mês +
+        semana=1..4/0; sem nada marcado = todas as semanas do mês). Não inclui
+        o backlog do mês seguinte (cada folha é uma semana do mês escolhido)."""
+        import pdf_semana_visual
+        args = request.args.to_dict()
+        if not args.get("planejamento_mensal", "").strip():
+            args["planejamento_mensal"] = date.today().strftime("%Y-%m")
+        query, filtros = _filtrar_pedidos(args)
+        linhas = _linhas_listagem_geral(query.all(), args)
+        mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
+        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"))
+        if semanas_sel is not None:
+            linhas = [l for l in linhas if _numero_semana_linha(l) in semanas_sel]
+        filtros = dict(filtros)
+        filtros["semanas_txt"] = _texto_semanas_selecionadas(semanas_sel, mes_ano) if semanas_sel is not None else ""
+        agora = _agora_brt()
+        semanas = _dados_painel_semanal_visual(linhas, mes_ano, semanas_sel, agora.date())
+        if not semanas:
+            semanas = [{"titulo": "SEM PEDIDOS", "periodo_txt": f"{_MESES_PT[mes_ano[1] - 1].capitalize()}/{mes_ano[0]}",
+                        "mes_txt": "", "ano": mes_ano[0], "pedidos": []}]
+        pdf = pdf_semana_visual.gerar(semanas, agora, _ESPELHO_LOGO_PATH, _formatar_moeda_br,
+                                      filtros_txt=_texto_filtros_listagem_geral_semanal(filtros), hoje=agora.date())
+        resposta = Response(pdf, mimetype="application/pdf")
+        resposta.headers["Content-Disposition"] = (
+            f"inline; filename=painel_semanal_{mes_ano[0]}-{mes_ano[1]:02d}_{agora.strftime('%H%M')}.pdf")
+        return resposta
 
     @app.route("/relatorios/planejamento-mensal.pptx")
     @login_required
