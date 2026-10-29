@@ -58,6 +58,13 @@ def _d(d, ano_ref):
     return f"{base} {_DIAS[d.weekday()]}"
 
 
+def _frete_curto(frete):
+    """CIF/FOB como estão; outros valores (ex.: EXPORTAÇÃO) abreviados pra
+    não invadirem a coluna ao lado."""
+    f = (frete or "—").strip().upper() or "—"
+    return f if len(f) <= 4 else f[:3] + "."
+
+
 def _cortar(txt, fonte, tam, largura):
     """Corta com reticências para caber em UMA linha (sem quebra)."""
     txt = (txt or "—").strip() or "—"
@@ -145,14 +152,13 @@ def gerar(semanas, agora, logo_path, moeda, filtros_txt="", hoje=None):
         # ---------------- agregados da semana ----------------
         n = len(peds)
         valor = sum(p["valor"] for p in peds)
+        # Bruno, 29/10/2026: "não quero que cite atraso, somente liberado e a
+        # liberar" — só 2 situações; qualquer pedido sem liberação efetiva
+        # completa conta como "a liberar".
         lib = [p for p in peds if p["situacao"] == "liberado"]
-        parc = [p for p in peds if p["situacao"] == "parcial"]
-        atr = [p for p in peds if p["situacao"] == "atrasado"]
-        pend = [p for p in peds if p["situacao"] in ("pendente", "sem_previsao")]
+        pend = [p for p in peds if p["situacao"] != "liberado"]
         v_lib = sum(p["valor"] for p in lib)
-        v_parc = sum(p["valor"] for p in parc)
-        v_atr = sum(p["valor"] for p in atr)
-        v_pend = valor - v_lib - v_parc - v_atr
+        v_pend = valor - v_lib
         v_cif = sum(p["valor"] for p in peds if (p["frete"] or "").upper() == "CIF")
         v_fob = sum(p["valor"] for p in peds if (p["frete"] or "").upper() == "FOB")
         pct_lib = (v_lib / valor * 100) if valor else 0
@@ -183,9 +189,7 @@ def gerar(semanas, agora, logo_path, moeda, filtros_txt="", hoje=None):
             kpi(str(n), "PEDIDOS NA SEMANA", NAVY, f"{len(set((p['cliente'] or '').strip().upper() for p in peds))} cliente(s)"),
             kpi(moeda(valor), "VALOR TOTAL", NAVY, f"CIF {moeda(v_cif)} · FOB {moeda(v_fob)}"),
             kpi(f"{len(lib)}", "LIBERADOS (PCP)", VERDE, f"{moeda(v_lib)} · {pct_lib:.0f}% do valor"),
-            kpi(f"{len(parc)}", "LIBERAÇÃO PARCIAL", "#2f8f3a", moeda(v_parc)),
-            kpi(f"{len(pend)}", "A LIBERAR", NAVY, moeda(v_pend)),
-            kpi(f"{len(atr)}", "ATRASADOS (prev. vencida)", VERMELHO if atr else CINZA, moeda(v_atr)),
+            kpi(f"{len(pend)}", "A LIBERAR", NAVY, f"{moeda(v_pend)} · {100 - pct_lib:.0f}% do valor" if valor else moeda(v_pend)),
         ]
         larg_card = largura / len(cards)
         kp = Table([[c for c in cards]], colWidths=[larg_card] * len(cards))
@@ -193,16 +197,13 @@ def gerar(semanas, agora, logo_path, moeda, filtros_txt="", hoje=None):
               ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f6f8fb")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
               ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]
         ks.append(("BACKGROUND", (2, 0), (2, 0), colors.HexColor(VERDE_CLARO)))
-        if atr:
-            ks.append(("BACKGROUND", (5, 0), (5, 0), colors.HexColor("#fbe3e0")))
         kp.setStyle(TableStyle(ks))
         flow_topo.append(kp)
         flow_topo.append(Spacer(1, 1.6 * mm))
 
         # ---------------- barra de progresso (por valor) ----------------
         if valor > 0:
-            segs = [(v_lib, VERDE, "Liberado"), (v_parc, "#7bc47f", "Parcial"), (v_pend, "#b9c8e3", "A liberar"),
-                    (v_atr, VERMELHO, "Atrasado")]
+            segs = [(v_lib, VERDE, "Liberado"), (v_pend, "#b9c8e3", "A liberar")]
             segs = [s for s in segs if s[0] > 0]
             larg_barra = largura - 62 * mm
             ws = [max(s[0] / valor * larg_barra, 0.1) for s in segs]
@@ -267,10 +268,8 @@ def gerar(semanas, agora, logo_path, moeda, filtros_txt="", hoje=None):
         ]
         tem_parcial_semana = False
         for i, p in enumerate(peds, start=1):
-            sit = p["situacao"]
+            sit = "liberado" if p["situacao"] == "liberado" else "pendente"
             bg, fg, rotulo = _SIT[sit]
-            if sit == "parcial":
-                rotulo = f'PARCIAL {p["itens_liberados"]}/{p["itens_total"]}'
             val_txt = moeda(p["valor"]) + ("*" if p["parcial_semana"] else "")
             tem_parcial_semana = tem_parcial_semana or p["parcial_semana"]
             folga = p["folga_dias"]
@@ -285,22 +284,17 @@ def gerar(semanas, agora, logo_path, moeda, filtros_txt="", hoje=None):
             dados.append([
                 _cortar(p["pedido_venda"], fb, fs, cw[0] - 6),
                 _cortar(p["cliente"], fn, fs, cw[1] - 6),
-                (p["frete"] or "—").upper(),
+                _frete_curto(p["frete"]),
                 _cortar(f'{p["regiao"]} · {p["uf"]}' if p["uf"] and p["uf"] != "—" else p["regiao"], fn, fs, cw[3] - 6),
                 _d(p["data_inclusao"], ano), _d(p["prazo_cliente"], ano), _d(p["lib_prevista"], ano),
-                _d(p["lib_real"], ano) if p["lib_real"] else "—",
+                _d(p["lib_real"], ano) if (p["lib_real"] and sit == "liberado") else "—",
                 folga_txt, rotulo, val_txt,
             ])
-            if sit in ("liberado", "parcial"):
+            if sit == "liberado":
                 estilo.append(("BACKGROUND", (0, i), (8, i), colors.HexColor(VERDE_CLARO)))
                 estilo.append(("BACKGROUND", (10, i), (10, i), colors.HexColor(VERDE_CLARO)))
                 estilo.append(("FONTNAME", (7, i), (7, i), fb))
                 estilo.append(("TEXTCOLOR", (7, i), (7, i), colors.HexColor("#0f5a2d")))
-            elif sit == "atrasado":
-                estilo.append(("BACKGROUND", (0, i), (8, i), colors.HexColor("#fdecea")))
-                estilo.append(("BACKGROUND", (10, i), (10, i), colors.HexColor("#fdecea")))
-                estilo.append(("TEXTCOLOR", (6, i), (6, i), colors.HexColor(VERMELHO)))
-                estilo.append(("FONTNAME", (6, i), (6, i), fb))
             elif i % 2 == 0:
                 estilo.append(("BACKGROUND", (0, i), (8, i), colors.HexColor("#f6f8fb")))
                 estilo.append(("BACKGROUND", (10, i), (10, i), colors.HexColor("#f6f8fb")))
@@ -317,18 +311,13 @@ def gerar(semanas, agora, logo_path, moeda, filtros_txt="", hoje=None):
             elif frete == "FOB":
                 estilo.append(("TEXTCOLOR", (2, i), (2, i), colors.HexColor("#b35c00")))
                 estilo.append(("FONTNAME", (2, i), (2, i), fb))
-            # destaque do prazo do cliente já vencido sem liberação efetiva
-            pc = p["prazo_cliente"]
-            if pc and pc < hoje and sit != "liberado":
-                estilo.append(("TEXTCOLOR", (5, i), (5, i), colors.HexColor(VERMELHO)))
-                estilo.append(("FONTNAME", (5, i), (5, i), fb))
         if not peds:
             dados.append(["Nenhum pedido planejado nesta semana"] + [""] * 10)
             estilo.append(("SPAN", (0, 1), (-1, 1)))
             estilo.append(("ALIGN", (0, 1), (-1, 1), "CENTER"))
 
         # linha de total
-        dados.append(["TOTAL DA SEMANA", "", f"{n} pedido(s)", "", "", "", "", f"{len(lib)} lib. / {len(parc)} parc.", "", "", moeda(valor)])
+        dados.append(["TOTAL DA SEMANA", "", f"{n} pedido(s)", "", "", "", "", f"{len(lib)} liberados / {len(pend)} a liberar", "", "", moeda(valor)])
         it = len(dados) - 1
         estilo += [
             ("BACKGROUND", (0, it), (-1, it), colors.HexColor("#dbe5f4")), ("FONTNAME", (0, it), (-1, it), fb),
@@ -344,10 +333,8 @@ def gerar(semanas, agora, logo_path, moeda, filtros_txt="", hoje=None):
         # ---------------- legenda ----------------
         story.append(Spacer(1, 1.6 * mm))
         leg = (f'<font color="{VERDE}"><b>LIBERADO</b></font> = PCP já lançou a liberação efetiva (linha verde) · '
-               f'<b>PARCIAL x/y</b> = só parte dos itens liberada · <b>A LIBERAR</b> = dentro do previsto · '
-               f'<font color="{VERMELHO}"><b>ATRASADO</b></font> = liberação prevista já vencida e sem liberação efetiva · '
-               f'<b>SEM PREVISÃO</b> = sem data prevista do PCP · <b>FOLGA</b> = prazo do cliente menos a liberação (efetiva, ou a prevista '
-               f'enquanto não liberou); vermelho = negativa, amarelo = até 3 dias.'
+               f'<b>A LIBERAR</b> = ainda sem liberação efetiva · <b>FOLGA</b> = prazo do cliente menos a liberação '
+               f'(efetiva, ou a prevista enquanto não liberou); vermelho = negativa, amarelo = até 3 dias.'
                + (' · <b>*</b> pedido com itens também em outras semanas: valor = parte planejada nesta semana.' if tem_parcial_semana else ""))
         story.append(P(leg, nota))
 

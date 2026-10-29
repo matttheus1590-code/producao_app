@@ -17426,16 +17426,9 @@ def _dados_painel_semanal_visual(linhas, mes_ano, semanas_sel, hoje):
             todas_prev = [l.liberacao_prevista for l in itens if l.liberacao_prevista]
             lib_prevista = max(todas_prev) if todas_prev else None
             lib_real = max(reais) if reais else None
-            if len(reais) == len(itens):
-                situacao = "liberado"
-            elif reais:
-                situacao = "parcial"
-            elif not todas_prev:
-                situacao = "sem_previsao"
-            elif min(abertos_prev) < hoje:
-                situacao = "atrasado"
-            else:
-                situacao = "pendente"
+            # Bruno, 29/10/2026: só "liberado" (todos os itens da semana com
+            # liberação real) ou "a liberar" — nada de atrasado/parcial na folha.
+            situacao = "liberado" if len(reais) == len(itens) else "pendente"
             ref = lib_real if situacao == "liberado" else lib_prevista
             folga = (p0.data_cliente - ref).days if (p0.data_cliente and ref) else None
             valor = float(sum((l.venda_total or 0) for l in itens))
