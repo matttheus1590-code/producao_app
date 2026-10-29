@@ -1,0 +1,240 @@
+{# =====================================================================
+   Painel semanal da Listagem Geral (pedido do Bruno, 29/10/2026): "quero a
+   Listagem Geral da forma que já tenho + esse painel semanal dinâmico,
+   totalmente intuitivo". Mesma visão do PDF "Painel semanal (1 folha)":
+   uma semana por vez (abas), 1 linha por pedido, datas, liberação efetiva do
+   PCP (verde), folga, valor total, frete e região. Dinâmico: abas de semana,
+   cards clicáveis (Liberados / A liberar), chips de região, ordenação por
+   coluna e total que recalcula com o recorte. Clique na linha abre o pedido.
+   Recebe `painel_semanal` (ver _contexto_painel_semanal_tela) e `filtros`.
+   ===================================================================== #}
+{% macro pw_brl(v) -%}
+R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}
+{%- endmacro %}
+{% macro pw_data(d, ano) -%}
+{%- if d -%}<span title="{{ d.strftime('%d/%m/%Y') }}">{{ d.strftime('%d/%m') }}{% if ano and d.year != ano %}/{{ d.strftime('%y') }}{% endif %}</span> <span class="pw-dia">{{ ['seg','ter','qua','qui','sex','sáb','dom'][d.weekday()] }}</span>{%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+{% set pw = painel_semanal %}
+<div class="pw" id="painelSemanal">
+  <div class="pw-topo">
+    <div class="pw-mes">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('dashboard', **dict(filtros, visao='painel', painel_mes=pw.mes_anterior)) }}" title="Mês anterior"><i class="bi bi-chevron-left"></i></a>
+      <span class="pw-mes-tit">📅 {{ pw.mes_txt }}</span>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('dashboard', **dict(filtros, visao='painel', painel_mes=pw.mes_seguinte)) }}" title="Próximo mês"><i class="bi bi-chevron-right"></i></a>
+      <span class="pw-mes-info text-muted small">{{ pw.total.n }} pedido{{ '' if pw.total.n == 1 else 's' }} · {{ pw_brl(pw.total.valor) }} · {{ pw.total.n_lib }} liberado{{ '' if pw.total.n_lib == 1 else 's' }} ({{ pw.total.pct_valor|round|int }}% do valor)</span>
+    </div>
+    <div class="pw-acoes">
+      <a id="pwPdfSemana" class="btn btn-success btn-sm" target="_blank"
+         href="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_mensal=pw.mes, semana=pw.ativa)) }}"
+         data-base="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_mensal=pw.mes)) }}"
+         title="PDF A4 horizontal, 1 folha, só a semana aberta agora"><i class="bi bi-printer"></i> Imprimir semana (1 folha)</a>
+      <a class="btn btn-outline-success btn-sm" target="_blank"
+         href="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_mensal=pw.mes)) }}"
+         title="Uma folha por semana do mês"><i class="bi bi-files"></i> Todas as semanas (PDF)</a>
+    </div>
+  </div>
+  <p class="pw-nota text-muted small mb-2"><i class="bi bi-funnel"></i> Mostra as 4 semanas do Planejamento PCP do mês, respeitando a busca/filtros acima (vendedor, status, estação, região, datas…). Clique na linha para abrir o pedido.</p>
+
+  {# ---------- abas das semanas ---------- #}
+  <div class="pw-tabs" role="tablist">
+    {% for sem in pw.semanas %}
+    {% set r = sem.resumo %}
+    <button type="button" class="pw-tab {% if sem.num == pw.ativa %}ativa{% endif %} {% if sem.atual %}pw-tab-atual{% endif %}" data-semana="{{ sem.num }}" role="tab">
+      <span class="pw-tab-tit">{{ sem.titulo }}{% if sem.atual %} <span class="pw-selo">atual</span>{% endif %}</span>
+      <span class="pw-tab-per">{% if sem.inicio %}{{ sem.inicio.strftime('%d/%m') }} – {{ sem.fim.strftime('%d/%m') }}{% else %}&nbsp;{% endif %}</span>
+      <span class="pw-tab-n"><b>{{ r.n }}</b> ped. · {{ r.n_lib }} lib.</span>
+      <span class="pw-tab-bar"><span style="width: {{ r.pct_valor|round(1) }}%"></span></span>
+    </button>
+    {% endfor %}
+  </div>
+
+  {# ---------- uma pane por semana ---------- #}
+  {% for sem in pw.semanas %}
+  {% set r = sem.resumo %}
+  <div class="pw-pane {% if sem.num == pw.ativa %}ativa{% endif %}" data-semana="{{ sem.num }}">
+    <div class="pw-cabpane">
+      <span class="pw-pane-tit">{{ sem.titulo }}</span>
+      <span class="pw-pane-per">{{ sem.periodo_txt }}</span>
+    </div>
+
+    <div class="pw-kpis">
+      <button type="button" class="pw-kpi pw-kpi-total ativo" data-filtro-sit="todos" title="Mostrar todos os pedidos da semana">
+        <span class="pw-kpi-v">{{ r.n }}</span><span class="pw-kpi-l">PEDIDOS NA SEMANA</span>
+        <span class="pw-kpi-s">{{ r.clientes }} cliente{{ '' if r.clientes == 1 else 's' }}</span>
+      </button>
+      <div class="pw-kpi pw-kpi-valor">
+        <span class="pw-kpi-v">{{ pw_brl(r.valor) }}</span><span class="pw-kpi-l">VALOR TOTAL</span>
+        <span class="pw-kpi-s">CIF {{ pw_brl(r.cif) }} · FOB {{ pw_brl(r.fob) }}</span>
+      </div>
+      <button type="button" class="pw-kpi pw-kpi-lib" data-filtro-sit="liberado" title="Mostrar só os pedidos já liberados pelo PCP">
+        <span class="pw-kpi-v">{{ r.n_lib }}</span><span class="pw-kpi-l">LIBERADOS (PCP)</span>
+        <span class="pw-kpi-s">{{ pw_brl(r.v_lib) }} · {{ r.pct_valor|round|int }}% do valor</span>
+      </button>
+      <button type="button" class="pw-kpi pw-kpi-pend" data-filtro-sit="pendente" title="Mostrar só os pedidos ainda a liberar">
+        <span class="pw-kpi-v">{{ r.n_pend }}</span><span class="pw-kpi-l">A LIBERAR</span>
+        <span class="pw-kpi-s">{{ pw_brl(r.v_pend) }}{% if r.valor %} · {{ (100 - r.pct_valor)|round|int }}% do valor{% endif %}</span>
+      </button>
+    </div>
+
+    {% if r.valor %}
+    <div class="pw-prog">
+      <div class="pw-prog-txt"><b>Progresso da liberação (valor)</b><br><span>{{ r.pct_valor|round|int }}% liberado pelo PCP · {{ r.pct_ped|round|int }}% dos pedidos</span></div>
+      <div class="pw-prog-barra" title="Verde = liberado · azul = a liberar">
+        <span class="pw-prog-lib" style="width: {{ r.pct_valor|round(2) }}%"></span><span class="pw-prog-pend" style="width: {{ (100 - r.pct_valor)|round(2) }}%"></span>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if r.regioes %}
+    <div class="pw-regioes">
+      <span class="pw-regioes-tit">Por região:</span>
+      <button type="button" class="pw-chip ativo" data-filtro-regiao="">Todas</button>
+      {% for nome, qtd, val in r.regioes %}
+      <button type="button" class="pw-chip" data-filtro-regiao="{{ nome }}" title="Filtrar só {{ nome }}"><b>{{ nome }}</b> {{ qtd }} ped. · {{ pw_brl(val) }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if sem.pedidos %}
+    <div class="table-responsive pw-tabela-wrap">
+      <table class="pw-tabela table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th data-sort="txt">Pedido</th>
+            <th data-sort="txt">Cliente</th>
+            <th data-sort="txt" class="text-center">Frete</th>
+            <th data-sort="txt" class="text-center">Região / UF</th>
+            <th data-sort="txt" class="text-center">Inclusão</th>
+            <th data-sort="txt" class="text-center">Prazo cliente</th>
+            <th data-sort="txt" class="text-center">Lib. prevista PCP</th>
+            <th data-sort="txt" class="text-center">Lib. efetiva</th>
+            <th data-sort="num" class="text-center">Folga</th>
+            <th data-sort="txt" class="text-center">Situação</th>
+            <th data-sort="num" class="text-end">Valor total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in sem.pedidos %}
+          {% set lib = p.situacao == 'liberado' %}
+          {% set fr = (p.frete or '')|upper %}
+          {% set f = p.folga_dias %}
+          <tr class="pw-linha {{ 'pw-lib' if lib else 'pw-pend' }}" data-sit="{{ 'liberado' if lib else 'pendente' }}" data-regiao="{{ p.regiao }}" data-valor="{{ p.valor }}"
+              data-href="{{ url_for('detalhe_pedido', pedido_id=p.pedido_id) }}" title="Clique para abrir o pedido">
+            <td class="pw-ped" data-v="{{ p.pedido_venda }}">{{ p.pedido_venda }}</td>
+            <td class="pw-cli" data-v="{{ p.cliente }}" title="{{ p.cliente }}">{{ p.cliente }}</td>
+            <td class="text-center {{ 'pw-cif' if fr == 'CIF' else ('pw-fob' if fr == 'FOB' else '') }}" data-v="{{ fr }}" title="{{ p.frete or '' }}">{{ fr if fr in ('CIF', 'FOB') else (fr[:3] ~ '.' if fr|length > 4 else (fr or '—')) }}</td>
+            <td class="text-center text-nowrap" data-v="{{ p.regiao }}">{{ p.regiao }}{% if p.uf and p.uf != '—' %} · {{ p.uf }}{% endif %}</td>
+            <td class="text-center text-nowrap" data-v="{{ p.data_inclusao.isoformat() if p.data_inclusao else '' }}">{{ pw_data(p.data_inclusao, sem.ano) }}</td>
+            <td class="text-center text-nowrap" data-v="{{ p.prazo_cliente.isoformat() if p.prazo_cliente else '' }}">{{ pw_data(p.prazo_cliente, sem.ano) }}</td>
+            <td class="text-center text-nowrap" data-v="{{ p.lib_prevista.isoformat() if p.lib_prevista else '' }}">{{ pw_data(p.lib_prevista, sem.ano) }}</td>
+            <td class="text-center text-nowrap {{ 'pw-efetiva' if lib else '' }}" data-v="{{ p.lib_real.isoformat() if (lib and p.lib_real) else '' }}">{{ pw_data(p.lib_real, sem.ano) if lib else '—' }}</td>
+            <td class="text-center text-nowrap pw-folga {{ '' if f is none else ('pw-folga-neg' if f < 0 else ('pw-folga-med' if f <= 3 else 'pw-folga-ok')) }}" data-v="{{ f if f is not none else '' }}">{% if f is none %}—{% elif f < 0 %}{{ f }}d{% else %}+{{ f }}d{% endif %}</td>
+            <td class="text-center" data-v="{{ 'a' if lib else 'b' }}"><span class="pw-pill {{ 'pw-pill-lib' if lib else 'pw-pill-pend' }}">{{ 'LIBERADO' if lib else 'A LIBERAR' }}</span></td>
+            <td class="text-end text-nowrap pw-valor" data-v="{{ p.valor }}">{{ pw_brl(p.valor) }}{% if p.parcial_semana %}<span title="Pedido com itens também em outras semanas: valor = parte planejada nesta semana">*</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="pw-total">
+            <td colspan="2"><b>TOTAL</b> <span class="pw-total-n"></span></td>
+            <td colspan="8" class="text-center pw-total-lib"></td>
+            <td class="text-end pw-total-valor"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="pw-legenda text-muted small mt-2">
+      <span class="pw-pill pw-pill-lib">LIBERADO</span> PCP já lançou a liberação efetiva ·
+      <span class="pw-pill pw-pill-pend">A LIBERAR</span> ainda sem liberação efetiva ·
+      <b>Folga</b> = prazo do cliente menos a liberação (efetiva, ou a prevista enquanto não liberou): <span class="pw-folga-neg">vermelho = negativa</span>, <span class="pw-folga-med">amarelo = até 3 dias</span>.
+      {% if sem.pedidos|selectattr('parcial_semana')|list %}<span class="pw-nota-parcial">* pedido com itens também em outras semanas: valor = parte planejada nesta semana.</span>{% endif %}
+    </div>
+    {% else %}
+    <div class="pw-vazio">Nenhum pedido planejado nesta semana{% if filtros.busca or filtros.vendedor or filtros.status or filtros.estacao or filtros.regiao %} com os filtros atuais{% endif %}.</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+(function () {
+  var raiz = document.getElementById("painelSemanal");
+  if (!raiz) return;
+  var brl = function (v) { return "R$ " + v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  var ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+  // ---- abas de semana ----
+  var pdfSemana = document.getElementById("pwPdfSemana");
+  raiz.querySelectorAll(".pw-tab").forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      var n = tab.dataset.semana;
+      raiz.querySelectorAll(".pw-tab").forEach(function (t) { t.classList.toggle("ativa", t === tab); });
+      raiz.querySelectorAll(".pw-pane").forEach(function (p) { p.classList.toggle("ativa", p.dataset.semana === n); });
+      if (pdfSemana) pdfSemana.href = pdfSemana.dataset.base + (pdfSemana.dataset.base.indexOf("?") >= 0 ? "&" : "?") + "semana=" + n;
+    });
+  });
+
+  // ---- filtros (situação / região) + total dinâmico, por semana ----
+  raiz.querySelectorAll(".pw-pane").forEach(function (pane) {
+    var estado = { sit: "todos", regiao: "" };
+    var linhas = Array.from(pane.querySelectorAll("tbody .pw-linha"));
+    function aplicar() {
+      var n = 0, valor = 0, lib = 0, pend = 0;
+      linhas.forEach(function (tr) {
+        var ok = (estado.sit === "todos" || tr.dataset.sit === estado.sit) && (!estado.regiao || tr.dataset.regiao === estado.regiao);
+        tr.style.display = ok ? "" : "none";
+        if (ok) { n++; valor += parseFloat(tr.dataset.valor) || 0; if (tr.dataset.sit === "liberado") lib++; else pend++; }
+      });
+      var tn = pane.querySelector(".pw-total-n"), tl = pane.querySelector(".pw-total-lib"), tv = pane.querySelector(".pw-total-valor");
+      if (tn) tn.textContent = "· " + n + " pedido" + (n === 1 ? "" : "s") + (n !== linhas.length ? " (de " + linhas.length + ")" : "");
+      if (tl) tl.textContent = lib + " liberado" + (lib === 1 ? "" : "s") + " / " + pend + " a liberar";
+      if (tv) tv.textContent = brl(valor);
+    }
+    pane.querySelectorAll("[data-filtro-sit]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        // clicar de novo no card já ativo volta para "todos"
+        estado.sit = (estado.sit === b.dataset.filtroSit && b.dataset.filtroSit !== "todos") ? "todos" : b.dataset.filtroSit;
+        pane.querySelectorAll("[data-filtro-sit]").forEach(function (x) { x.classList.toggle("ativo", x.dataset.filtroSit === estado.sit); });
+        aplicar();
+      });
+    });
+    pane.querySelectorAll("[data-filtro-regiao]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        estado.regiao = b.dataset.filtroRegiao;
+        pane.querySelectorAll("[data-filtro-regiao]").forEach(function (x) { x.classList.toggle("ativo", x === b); });
+        aplicar();
+      });
+    });
+    aplicar();
+
+    // ---- ordenação por coluna ----
+    var tbody = pane.querySelector("tbody");
+    pane.querySelectorAll("thead th[data-sort]").forEach(function (th, idx) {
+      th.addEventListener("click", function () {
+        var asc = th.dataset.dir !== "asc";
+        pane.querySelectorAll("thead th").forEach(function (x) { x.removeAttribute("data-dir"); });
+        th.dataset.dir = asc ? "asc" : "desc";
+        var num = th.dataset.sort === "num";
+        linhas.sort(function (a, b) {
+          var va = a.children[idx].dataset.v || "", vb = b.children[idx].dataset.v || "";
+          if (va === "" && vb !== "") return 1;      // vazios sempre no fim
+          if (vb === "" && va !== "") return -1;
+          var r;
+          if (num) r = (parseFloat(va) || 0) - (parseFloat(vb) || 0);
+          else if (ISO.test(va) && ISO.test(vb)) r = va < vb ? -1 : (va > vb ? 1 : 0);
+          else r = va.localeCompare(vb, "pt-BR", { numeric: true });
+          return asc ? r : -r;
+        });
+        linhas.forEach(function (tr) { tbody.appendChild(tr); });
+      });
+    });
+  });
+
+  // ---- clique na linha abre o pedido ----
+  raiz.addEventListener("click", function (ev) {
+    var tr = ev.target.closest("tr.pw-linha");
+    if (tr && tr.dataset.href && !ev.target.closest("a, button")) window.location.href = tr.dataset.href;
+  });
+})();
+</script>

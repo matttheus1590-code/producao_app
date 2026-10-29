@@ -3698,3 +3698,113 @@ a.pn-kpi:hover {
 .kb-barra { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .6rem 1.4rem; }
 .kb-barra-busca { flex: 0 0 auto; width: 440px; max-width: 100%; }
 .kb-barra .kb-pcp { flex: 1 1 420px; margin-top: 0; min-width: 0; }
+
+/* ======================================================================
+   Painel semanal da Listagem Geral (pedido do Bruno, 29/10/2026): "quero a
+   Listagem Geral da forma que já tenho + esse painel semanal dinâmico,
+   totalmente intuitivo". Mesmo visual do PDF "Painel semanal (1 folha)":
+   KPIs, barra de progresso, tabela de 1 linha por pedido, situação em
+   pílula (verde = liberado pelo PCP, azul = a liberar).
+   ====================================================================== */
+.listagem-visoes { display: flex; gap: .5rem; flex-wrap: wrap; }
+.lv-aba {
+  display: inline-flex; align-items: center; gap: .4rem; padding: .45rem .9rem;
+  border: 1px solid #cfd8e6; border-radius: 999px; background: #fff; color: #1b2a4a;
+  font-weight: 600; font-size: .88rem; text-decoration: none;
+}
+.lv-aba small { font-weight: 400; color: #6b7280; }
+.lv-aba:hover { background: #eef3fb; color: #1b2a4a; }
+.lv-aba.ativa { background: #1b2a4a; border-color: #1b2a4a; color: #fff; }
+.lv-aba.ativa small { color: #c9d4ea; }
+
+.pw { background: #fff; border: 1px solid #dfe5ef; border-radius: .6rem; padding: .9rem 1rem 1rem; }
+.pw-topo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem; margin-bottom: .3rem; }
+.pw-mes { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.pw-mes-tit { font-size: 1.15rem; font-weight: 700; color: #1b2a4a; min-width: 9.5rem; text-align: center; }
+.pw-acoes { display: flex; gap: .4rem; flex-wrap: wrap; }
+
+.pw-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .5rem; margin: .4rem 0 .9rem; }
+.pw-tab {
+  text-align: left; border: 1px solid #d5dbe5; background: #f6f8fb; border-radius: .5rem; padding: .5rem .7rem;
+  display: flex; flex-direction: column; gap: .1rem; cursor: pointer; transition: box-shadow .15s, background .15s;
+}
+.pw-tab:hover { background: #eaf1fd; }
+.pw-tab.ativa { background: #1b2a4a; border-color: #1b2a4a; color: #fff; box-shadow: 0 2px 8px rgba(27, 42, 74, .25); }
+.pw-tab-tit { font-weight: 700; font-size: .92rem; }
+.pw-tab-per { font-size: .75rem; opacity: .8; }
+.pw-tab-n { font-size: .78rem; }
+.pw-tab-bar { display: block; height: 5px; border-radius: 3px; background: #c9d4ea; overflow: hidden; margin-top: .25rem; }
+.pw-tab-bar > span { display: block; height: 100%; background: #198754; }
+.pw-tab.ativa .pw-tab-bar { background: rgba(255, 255, 255, .25); }
+.pw-tab.ativa .pw-tab-bar > span { background: #5fd68f; }
+.pw-selo { background: #ffc107; color: #3b2d00; font-size: .62rem; font-weight: 700; padding: .05rem .35rem; border-radius: 999px; vertical-align: middle; text-transform: uppercase; }
+
+.pw-pane { display: none; }
+.pw-pane.ativa { display: block; }
+.pw-cabpane { display: flex; align-items: baseline; gap: .7rem; margin-bottom: .5rem; }
+.pw-pane-tit { font-size: 1.5rem; font-weight: 800; color: #1b2a4a; letter-spacing: .02em; }
+.pw-pane-per { font-size: .95rem; color: #3b4559; font-weight: 600; }
+
+.pw-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid #d5dbe5; border-radius: .5rem; overflow: hidden; background: #f6f8fb; }
+.pw-kpi { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: .55rem .4rem; border: 0; border-right: 1px solid #d5dbe5; background: transparent; text-align: center; }
+.pw-kpi:last-child { border-right: 0; }
+button.pw-kpi { cursor: pointer; transition: background .15s, box-shadow .15s; }
+button.pw-kpi:hover { background: #eaf1fd; }
+.pw-kpi-v { font-size: 1.45rem; font-weight: 800; color: #1b2a4a; line-height: 1.15; }
+.pw-kpi-l { font-size: .68rem; color: #4a5365; letter-spacing: .03em; }
+.pw-kpi-s { font-size: .68rem; color: #6b7280; }
+.pw-kpi-lib { background: #e3f5e8; } .pw-kpi-lib .pw-kpi-v { color: #198754; }
+.pw-kpi-pend .pw-kpi-v { color: #1b2a4a; }
+button.pw-kpi.ativo { box-shadow: inset 0 -4px 0 #1b2a4a; }
+button.pw-kpi-lib.ativo { box-shadow: inset 0 -4px 0 #198754; }
+
+.pw-prog { display: flex; align-items: center; gap: .8rem; margin: .6rem 0 .4rem; }
+.pw-prog-txt { min-width: 15rem; font-size: .78rem; line-height: 1.25; color: #1b2a4a; }
+.pw-prog-txt span { color: #5b6472; font-size: .72rem; }
+.pw-prog-barra { flex: 1; display: flex; height: 12px; border-radius: 3px; overflow: hidden; border: 1px solid #8a93a3; background: #b9c8e3; }
+.pw-prog-lib { background: #198754; display: block; }
+.pw-prog-pend { background: #b9c8e3; display: block; }
+
+.pw-regioes { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin: .4rem 0 .7rem; font-size: .78rem; }
+.pw-regioes-tit { font-weight: 700; color: #1b2a4a; }
+.pw-chip { border: 1px solid #d5dbe5; background: #f6f8fb; border-radius: 999px; padding: .1rem .6rem; font-size: .76rem; color: #1b2a4a; cursor: pointer; }
+.pw-chip:hover { background: #eaf1fd; }
+.pw-chip.ativo { background: #1b2a4a; border-color: #1b2a4a; color: #fff; }
+
+.pw-tabela-wrap { border: 1px solid #d5dbe5; border-radius: .4rem; }
+.pw-tabela { font-size: .86rem; --bs-table-bg: transparent; }
+.pw-tabela thead th {
+  background: #1b2a4a; color: #fff; font-size: .7rem; letter-spacing: .03em; text-transform: uppercase;
+  white-space: nowrap; cursor: pointer; user-select: none; border: 0; padding: .45rem .5rem;
+}
+.pw-tabela thead th[data-dir="asc"]::after { content: " \25B2"; font-size: .6rem; }
+.pw-tabela thead th[data-dir="desc"]::after { content: " \25BC"; font-size: .6rem; }
+.pw-tabela tbody td { padding: .38rem .5rem; border-bottom: 1px solid #e6eaf1; vertical-align: middle; }
+.pw-tabela tbody tr.pw-linha { cursor: pointer; }
+.pw-tabela tbody tr.pw-pend:nth-child(even) > td { background: #f6f8fb; }
+.pw-tabela tbody tr.pw-lib > td { background: #e3f5e8; }
+.pw-tabela tbody tr.pw-linha:hover > td { background: #d8e6fb; }
+.pw-tabela tbody tr.pw-lib:hover > td { background: #c8ecd2; }
+.pw-ped { font-weight: 700; white-space: nowrap; }
+.pw-cli { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-cif { color: #0b5ed7; font-weight: 700; }
+.pw-fob { color: #b35c00; font-weight: 700; }
+.pw-dia { color: #6b7280; font-size: .75em; }
+.pw-efetiva { color: #0f5a2d; font-weight: 700; }
+.pw-efetiva .pw-dia { color: #3f7d57; }
+.pw-folga { font-weight: 700; }
+.pw-folga-neg { color: #c0392b; }
+.pw-folga-med { color: #d99a00; }
+.pw-folga-ok { color: #198754; }
+.pw-pill { display: inline-block; min-width: 6.2rem; padding: .12rem .5rem; border-radius: .25rem; font-size: .72rem; font-weight: 700; text-align: center; }
+.pw-pill-lib { background: #198754; color: #fff; }
+.pw-pill-pend { background: #dbe5f4; color: #1b2a4a; }
+.pw-valor { font-variant-numeric: tabular-nums; }
+.pw-tabela tfoot .pw-total td { background: #dbe5f4; color: #1b2a4a; font-weight: 700; border-top: 2px solid #1b2a4a; padding: .5rem; }
+.pw-vazio { padding: 2rem; text-align: center; color: #6b7280; border: 1px dashed #cfd8e6; border-radius: .5rem; margin-top: .6rem; }
+.pw-legenda .pw-pill { min-width: 0; }
+
+@media (max-width: 768px) {
+  .pw-kpis { grid-template-columns: repeat(2, 1fr); }
+  .pw-prog { flex-direction: column; align-items: stretch; }
+}

@@ -69,6 +69,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
      23/10/2026, mas ainda aceito por link/relatório): se vier preenchido,
      é preservado aqui e aparece como chip removível. #}
   <input type="hidden" name="sem_planejamento_semanal" value="{{ filtros.sem_planejamento_semanal }}">
+  {% if visao_painel %}<input type="hidden" name="visao" value="painel">{% if painel_semanal %}<input type="hidden" name="painel_mes" value="{{ painel_semanal.mes }}">{% endif %}{% endif %}
   {% if filtros.cliente %}<input type="hidden" name="cliente" value="{{ filtros.cliente }}">{% endif %}
   <div class="row g-2 align-items-end">
     <div class="col-12 col-lg-4">
@@ -226,6 +227,20 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
   {{ kpi('💰', 'Valor total', brl(resumo.valor_total), 'valor', None, False, (('ticket médio ' ~ brl(resumo.valor_total / resumo.total)) if resumo.total else None)) }}
 </div>
 
+{# ---------- 3b. Alternador de visão (pedido do Bruno, 29/10/2026): a Listagem Geral
+     como sempre foi + o Painel semanal (1 linha por pedido, por semana do mês) ---------- #}
+<div class="listagem-visoes mb-3" role="tablist">
+  <a class="lv-aba {% if not visao_painel %}ativa{% endif %}" href="{{ url_for('dashboard', **filtros) }}" title="Listagem Geral completa: 1 linha por item">
+    <i class="bi bi-table"></i> Listagem detalhada <small>(1 linha por item)</small>
+  </a>
+  <a class="lv-aba {% if visao_painel %}ativa{% endif %}" href="{{ url_for('dashboard', **dict(filtros, visao='painel')) }}" title="Painel semanal: 1 linha por pedido, semana a semana, com datas e liberação efetiva do PCP">
+    <i class="bi bi-calendar-week"></i> Painel semanal <small>(1 linha por pedido)</small>
+  </a>
+</div>
+
+{% if visao_painel %}
+{% include "_painel_semanal.html" %}
+{% else %}
 {# ---------- 4. Barra de ações da tabela ---------- #}
 <div class="listagem-acoes mb-2 pt-1">
   <div class="listagem-acoes-info">
@@ -475,7 +490,9 @@ document.addEventListener("click", function (ev) {
   </table>
 </div>
 
-{% if total_paginas > 1 %}
+{% endif %}{# /visao_painel #}
+
+{% if total_paginas > 1 and not visao_painel %}
 <nav class="d-flex justify-content-center">
   <ul class="pagination">
     {% for pg in range(1, total_paginas + 1) %}

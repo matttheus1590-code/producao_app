@@ -17453,12 +17453,83 @@ def _dados_painel_semanal_visual(linhas, mes_ano, semanas_sel, hoje):
                 "parcial_semana": abs(valor - total_pedido) > 0.01,
                 "folga_dias": folga,
                 "_id": p0.id,
+                "pedido_id": p0.id,
             })
         pedidos.sort(key=lambda p: (p["prazo_cliente"] or date.max, p["lib_prevista"] or date.max,
                                     str(p["pedido_venda"]), p["_id"]))
-        semanas.append({"titulo": tit, "periodo_txt": periodo_txt, "mes_txt": mes_txt if num else "",
-                        "ano": ano, "pedidos": pedidos})
+        semana = {"titulo": tit, "periodo_txt": periodo_txt, "mes_txt": mes_txt if num else "",
+                  "ano": ano, "pedidos": pedidos, "num": num,
+                  "inicio": ini if num else None, "fim": fim if num else None}
+        semana["resumo"] = _resumo_semana_visual(pedidos)
+        semanas.append(semana)
     return semanas
+
+
+def _resumo_semana_visual(pedidos):
+    """Totais de uma semana do Painel semanal (tela e PDF usam a mesma ideia):
+    pedidos/valor, liberados x a liberar (por pedido e por valor), CIF x FOB,
+    nº de clientes e resumo por região."""
+    n = len(pedidos)
+    valor = sum(p["valor"] for p in pedidos)
+    lib = [p for p in pedidos if p["situacao"] == "liberado"]
+    v_lib = sum(p["valor"] for p in lib)
+    regioes = {}
+    for p in pedidos:
+        r = regioes.setdefault(p["regiao"] or "—", [0, 0.0])
+        r[0] += 1
+        r[1] += p["valor"]
+    return {
+        "n": n, "valor": valor,
+        "n_lib": len(lib), "v_lib": v_lib,
+        "n_pend": n - len(lib), "v_pend": valor - v_lib,
+        "pct_valor": (v_lib / valor * 100) if valor else 0,
+        "pct_ped": (len(lib) / n * 100) if n else 0,
+        "cif": sum(p["valor"] for p in pedidos if (p["frete"] or "").upper() == "CIF"),
+        "fob": sum(p["valor"] for p in pedidos if (p["frete"] or "").upper() == "FOB"),
+        "clientes": len({(p["cliente"] or "").strip().upper() for p in pedidos}),
+        "regioes": [(k, v[0], v[1]) for k, v in sorted(regioes.items(), key=lambda kv: -kv[1][1])],
+    }
+
+
+def _contexto_painel_semanal_tela(args_originais, filtros):
+    """Dados da aba "Painel semanal" da Listagem Geral. Respeita os MESMOS
+    filtros da listagem (busca, vendedor, status, estação, região, datas...),
+    mas o mês vem do seletor do painel (`painel_mes`; padrão: o "Planejamento
+    mensal" filtrado ou o mês atual) e os filtros de semana/"sem
+    planejamento" são ignorados — o painel mostra as 4 semanas do mês."""
+    hoje = _agora_brt().date()
+    args = args_originais.to_dict()
+    pm = (args.get("painel_mes") or filtros.get("planejamento_mensal") or hoje.strftime("%Y-%m")).strip()
+    mes_ano = _parse_mes_ano_form(pm, None) or (hoje.year, hoje.month)
+    pm = f"{mes_ano[0]:04d}-{mes_ano[1]:02d}"
+    args["planejamento_mensal"] = pm
+    args.pop("planejamento_semanal", None)
+    args.pop("sem_planejamento_semanal", None)
+    query, _f = _filtrar_pedidos(args)
+    linhas = _linhas_listagem_geral(query.all(), args)
+    semanas = _dados_painel_semanal_visual(linhas, mes_ano, {1, 2, 3, 4}, hoje)
+    # semana aberta por padrão: a de hoje (se cair no mês), senão a 1ª com pedidos
+    ativa = None
+    for sem in semanas:
+        sem["atual"] = bool(sem["inicio"] and sem["inicio"] <= hoje <= sem["fim"])
+        if sem["atual"] and ativa is None:
+            ativa = sem["num"]
+    try:
+        pedida = int(args.get("semana_ativa", ""))
+    except (TypeError, ValueError):
+        pedida = None
+    if pedida is not None and any(s["num"] == pedida for s in semanas):
+        ativa = pedida
+    if ativa is None:
+        ativa = next((s["num"] for s in semanas if s["pedidos"]), semanas[0]["num"] if semanas else 1)
+    ano_ant, mes_ant = _somar_meses(mes_ano[0], mes_ano[1], -1)
+    ano_seg, mes_seg = _somar_meses(mes_ano[0], mes_ano[1], 1)
+    return {
+        "mes": pm, "mes_txt": f"{_MESES_PT[mes_ano[1] - 1].capitalize()}/{mes_ano[0]}",
+        "mes_anterior": f"{ano_ant:04d}-{mes_ant:02d}", "mes_seguinte": f"{ano_seg:04d}-{mes_seg:02d}",
+        "semanas": semanas, "ativa": ativa,
+        "total": _resumo_semana_visual([p for s in semanas for p in s["pedidos"]]),
+    }
 
 
 def _texto_semanas_selecionadas(sel, mes_ano):
@@ -22350,8 +22421,15 @@ def register_routes(app):
         # avançados estão em uso (abre o painel "Mais filtros" sozinho).
         chips_filtros, n_filtros_avancados = _chips_filtros_listagem(filtros)
 
+        # Painel semanal dentro da Listagem Geral (Bruno, 29/10/2026: "quero a
+        # Listagem Geral da forma que já tenho + esse painel semanal dinâmico").
+        # Só calcula quando a aba "Painel semanal" está aberta (visao=painel).
+        painel_semanal = _contexto_painel_semanal_tela(request.args, filtros) if request.args.get("visao") == "painel" else None
+
         return render_template(
             "dashboard.html",
+            painel_semanal=painel_semanal,
+            visao_painel=painel_semanal is not None,
             chips_filtros=chips_filtros,
             n_filtros_avancados=n_filtros_avancados,
             linhas=linhas_pagina,
