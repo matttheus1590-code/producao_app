@@ -384,6 +384,7 @@ def _contexto_painel(args, ultima_visita=None):
     # visita" do feed de Qualidade acima.
     pedidos_recentes_producao = _pedidos_recentes_producao(desde=ultima_visita)
     novos_pedidos_producao = sum(1 for e in pedidos_recentes_producao if e["novo"])
+    pedidos_liberados_pcp = _pedidos_liberados_pcp_recentes(hoje=hoje)
     atualizacoes_pd = _atualizacoes_recentes_pd(desde=ultima_visita)
     novas_atualizacoes_pd = sum(1 for e in atualizacoes_pd if e["novo"])
 
@@ -427,6 +428,7 @@ def _contexto_painel(args, ultima_visita=None):
         apontamentos_qualidade=apontamentos_qualidade,
         novos_apontamentos=novos_apontamentos,
         pedidos_recentes_producao=pedidos_recentes_producao,
+        pedidos_liberados_pcp=pedidos_liberados_pcp,
         novos_pedidos_producao=novos_pedidos_producao,
         atualizacoes_pd=atualizacoes_pd,
         novas_atualizacoes_pd=novas_atualizacoes_pd,
@@ -958,6 +960,23 @@ def _gerar_pdf_painel_diario(ctx):
         elementos.append(tabela(["Pedido", "Incluído em", "Data cliente", "Valor", "Há", "Detalhes"], linhas_rec, [22, 11, 11, 14, 10, 46], alin="LCCRCL"))
     else:
         elementos.append(vazio("Nenhum pedido incluído recentemente."))
+    # Últimos pedidos liberados pelo PCP (pedido do Bruno, 30/10/2026)
+    lib_rec = ctx.get("pedidos_liberados_pcp") or []
+    elementos.append(Spacer(1, 2 * mm))
+    elementos.append(P(f'{_icone_pdf("check", 9)} <b>Últimos pedidos liberados pelo PCP</b> (liberação efetiva)', base))
+    if lib_rec:
+        linhas_lib = []
+        for e in lib_rec:
+            f = e.get("folga_dias")
+            linhas_lib.append([
+                T(e["titulo"], base_b), T(e["data_liberacao"].strftime("%d/%m/%Y"), centro),
+                T(e["data_cliente"].strftime("%d/%m/%Y") if e.get("data_cliente") else "—", centro),
+                T("—" if f is None else (f"{f}d" if f < 0 else f"+{f}d"), centro),
+                P(_formatar_moeda_br(e.get("valor")), direita), T(e.get("ha_quanto_tempo") or "—", centro),
+            ])
+        elementos.append(tabela(["Pedido", "Liberação efetiva", "Data cliente", "Folga", "Valor", "Quando"], linhas_lib, [34, 14, 12, 8, 14, 10], alin="LCCCRC"))
+    else:
+        elementos.append(vazio("Nenhum pedido liberado pelo PCP ainda."))
     elementos.append(Spacer(1, 4 * mm))
 
     # ================= 10. RISCO DE PRAZOS =================
@@ -9120,6 +9139,71 @@ def _pedidos_recentes_producao(desde=None, limite=10):
     for e in eventos:
         e["ha_quanto_tempo"] = _tempo_relativo(e["criado_em"])
         e["novo"] = bool(desde and e["criado_em"] and e["criado_em"] > desde)
+    return eventos
+
+
+def _pedidos_liberados_pcp_recentes(limite=10, hoje=None):
+    """Últimos pedidos LIBERADOS pelo PCP, mais recentes primeiro — pedido do
+    Bruno (30/10/2026): o quadrante "Últimos pedidos incluídos" do Painel
+    ganha ao lado "últimos pedidos liberados pelo PCP, já com a data de
+    liberação efetiva". Critério idêntico ao do verde da Listagem Geral e do
+    resumo do mês: pedido liberado = TODOS os itens com "Liberação real"
+    preenchida; a data mostrada é a mais recente entre os itens (a do
+    fechamento da liberação do pedido). Desempate pela ordem de cadastro."""
+    hoje = hoje or _agora_brt().date()
+    ids_candidatos = [
+        r[0] for r in (
+            db.session.query(ItemPedido.pedido_id)
+            .filter(ItemPedido.liberacao_real.isnot(None))
+            .order_by(ItemPedido.liberacao_real.desc())
+            .limit(600)
+            .all()
+        )
+    ]
+    ids_unicos = list(dict.fromkeys(ids_candidatos))
+    if not ids_unicos:
+        return []
+    pedidos = (
+        Pedido.query.options(selectinload(Pedido.itens))
+        .filter(Pedido.id.in_(ids_unicos))
+        .all()
+    )
+    liberados = []
+    for p in pedidos:
+        if not p.itens or any(not i.liberacao_real for i in p.itens):
+            continue
+        liberados.append((max(i.liberacao_real for i in p.itens), p))
+    liberados.sort(key=lambda t: (t[0], t[1].id), reverse=True)
+
+    eventos = []
+    for data_lib, p in liberados[:limite]:
+        dias = (hoje - data_lib).days
+        if dias <= 0:
+            quando = "hoje"
+        elif dias == 1:
+            quando = "ontem"
+        elif dias < 30:
+            quando = f"há {dias} dias"
+        else:
+            quando = data_lib.strftime("%d/%m/%Y")
+        folga = (p.data_cliente - data_lib).days if p.data_cliente else None
+        tooltip_linhas = [
+            f"{p.quantidade_total:g} peça(s) · {p.descricao_resumo}",
+            f"Vendedor: {p.vendedor or '—'}",
+            f"Cidade/UF: {p.cidade or '—'}/{p.estado or '—'}",
+            f"Frete: {p.frete or '—'}",
+        ]
+        eventos.append({
+            "titulo": f"{p.pedido_venda or ('Pedido #' + str(p.id))} · {p.cliente}",
+            "data_liberacao": data_lib,
+            "data_cliente": p.data_cliente,
+            "folga_dias": folga,
+            "valor": p.valor_total,
+            "frete": p.frete,
+            "ha_quanto_tempo": quando,
+            "tooltip": "\n".join(tooltip_linhas),
+            "link": url_for("detalhe_pedido", pedido_id=p.id),
+        })
     return eventos
 
 

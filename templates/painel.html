@@ -439,38 +439,77 @@ document.addEventListener("click", function (ev) {
 
 <div class="card pn-sec pn-t-green" id="sec-pedidos" data-sec="pedidos">
   <div class="card-body">
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-      <h6 class="text-uppercase text-muted small mb-0">
-        🛒 <i class="bi bi-cart-plus"></i> Últimos pedidos incluídos (Gestão Produção)
-      </h6>
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        {% if novos_pedidos_producao %}
-          <span class="badge bg-danger">{{ novos_pedidos_producao }} novo(s) desde sua última visita</span>
+    {# Quadrante dividido em dois (pedido do Bruno, 30/10/2026): à esquerda o que já
+       existia (últimos pedidos incluídos); à direita os últimos pedidos liberados
+       pelo PCP, com a data de liberação efetiva. #}
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <h6 class="text-uppercase text-muted small mb-0">
+            🛒 <i class="bi bi-cart-plus"></i> Últimos pedidos incluídos (Gestão Produção)
+          </h6>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            {% if novos_pedidos_producao %}
+              <span class="badge bg-danger">{{ novos_pedidos_producao }} novo(s) desde sua última visita</span>
+            {% endif %}
+            <a href="{{ url_for('novo_pedido') }}" class="small"><i class="bi bi-plus-circle"></i> Novo pedido</a>
+            <a href="{{ url_for('dashboard') }}" class="small"><i class="bi bi-list-ul"></i> Listagem Geral</a>
+          </div>
+        </div>
+        {% if pedidos_recentes_producao %}
+        <div class="notif-feed-lista">
+          {% for e in pedidos_recentes_producao %}
+          <a href="{{ e.link }}" class="notif-feed-item {% if e.novo %}notif-feed-item-novo{% endif %}" title="{{ e.tooltip }}">
+            <div class="notif-feed-linha1">
+              <span class="notif-feed-titulo">{{ e.titulo }}</span>
+              <span class="badge bg-success">R$ {{ "{:,.2f}".format(e.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}</span>
+              {% if e.novo %}<span class="badge bg-danger">NOVO</span>{% endif %}
+              <span class="notif-feed-tempo text-muted small">{{ e.ha_quanto_tempo }}</span>
+            </div>
+            <div class="notif-feed-contexto text-muted small">
+              Incluído em {{ e.data_inclusao.strftime("%d/%m/%Y") if e.data_inclusao else "—" }}
+              · Solicitado pelo cliente em {{ e.data_cliente.strftime("%d/%m/%Y") if e.data_cliente else "—" }}
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">Nenhum pedido cadastrado ainda.</p>
         {% endif %}
-        <a href="{{ url_for('novo_pedido') }}" class="small"><i class="bi bi-plus-circle"></i> Novo pedido</a>
-        <a href="{{ url_for('dashboard') }}" class="small"><i class="bi bi-list-ul"></i> Listagem Geral</a>
+      </div>
+
+      <div class="col-lg-6 pn-col-liberados">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <h6 class="text-uppercase text-muted small mb-0">
+            ✅ <i class="bi bi-check2-circle"></i> Últimos pedidos liberados pelo PCP
+          </h6>
+          <a href="{{ url_for('dashboard') }}" class="small"><i class="bi bi-list-ul"></i> Listagem Geral</a>
+        </div>
+        {% if pedidos_liberados_pcp %}
+        <div class="notif-feed-lista">
+          {% for e in pedidos_liberados_pcp %}
+          <a href="{{ e.link }}" class="notif-feed-item notif-feed-item-lib" title="{{ e.tooltip }}">
+            <div class="notif-feed-linha1">
+              <span class="notif-feed-titulo">{{ e.titulo }}</span>
+              <span class="badge bg-success">R$ {{ "{:,.2f}".format(e.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}</span>
+              <span class="notif-feed-tempo text-muted small">{{ e.ha_quanto_tempo }}</span>
+            </div>
+            <div class="notif-feed-contexto text-muted small">
+              <span class="pn-lib-data">Liberação efetiva em <b>{{ e.data_liberacao.strftime("%d/%m/%Y") }}</b></span>
+              · Prazo do cliente {{ e.data_cliente.strftime("%d/%m/%Y") if e.data_cliente else "—" }}
+              {% if e.folga_dias is not none %}
+              · <span class="{{ 'pn-folga-neg' if e.folga_dias < 0 else 'pn-folga-ok' }}">{% if e.folga_dias < 0 %}{{ -e.folga_dias }} dia(s) após o prazo{% elif e.folga_dias == 0 %}no dia do prazo{% else %}{{ e.folga_dias }} dia(s) antes do prazo{% endif %}</span>
+              {% endif %}
+              {% if e.frete %}· {{ e.frete }}{% endif %}
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">Nenhum pedido liberado pelo PCP ainda (liberado = todos os itens com liberação efetiva).</p>
+        {% endif %}
       </div>
     </div>
-    {% if pedidos_recentes_producao %}
-    <div class="notif-feed-lista">
-      {% for e in pedidos_recentes_producao %}
-      <a href="{{ e.link }}" class="notif-feed-item {% if e.novo %}notif-feed-item-novo{% endif %}" title="{{ e.tooltip }}">
-        <div class="notif-feed-linha1">
-          <span class="notif-feed-titulo">{{ e.titulo }}</span>
-          <span class="badge bg-success">R$ {{ "{:,.2f}".format(e.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}</span>
-          {% if e.novo %}<span class="badge bg-danger">NOVO</span>{% endif %}
-          <span class="notif-feed-tempo text-muted small">{{ e.ha_quanto_tempo }}</span>
-        </div>
-        <div class="notif-feed-contexto text-muted small">
-          Incluído em {{ e.data_inclusao.strftime("%d/%m/%Y") if e.data_inclusao else "—" }}
-          · Solicitado pelo cliente em {{ e.data_cliente.strftime("%d/%m/%Y") if e.data_cliente else "—" }}
-        </div>
-      </a>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="text-muted small mb-0">Nenhum pedido cadastrado ainda.</p>
-    {% endif %}
   </div>
 </div>
 
