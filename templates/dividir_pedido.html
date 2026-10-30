@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Dividir pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }} · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+{% set pv = pedido.pedido_venda or ("#" ~ pedido.id) %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-11">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h4 class="mb-0"><i class="bi bi-diagram-2"></i> Dividir pedido {{ pv }} — {{ pedido.cliente }}</h4>
+      <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i> Voltar ao pedido
+      </a>
+    </div>
+
+    {% if erro %}
+    <div class="alert alert-danger py-2">{{ erro }}</div>
+    {% endif %}
+
+    <div class="alert alert-info small">
+      Use quando uma parte do pedido precisa seguir antes (envio parcial). Marque os itens que vão para o <strong>novo pedido</strong>
+      e, se for só uma parte da quantidade de um item, informe quantas peças. O que não for marcado continua em <strong>{{ pv }}</strong>.
+      O novo pedido herda cliente, frete, região, prazo do cliente, vendedor e prioridade, e cada item leva consigo
+      suas datas, planejamento semanal, liberação, status e estação. Em Gestão Operação nasce um fluxo novo em branco
+      (NF, logística e datas vazias){% if po_original and po_original.go_valor_pedido_operacao is not none %}, com o valor comercial dividido proporcionalmente ao valor dos itens enviados{% endif %}.
+    </div>
+
+    <form method="post" id="formDividir">
+      <div class="card p-3 shadow-sm mb-3">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label small text-muted mb-1">Número do novo pedido</label>
+            <input type="text" class="form-control" name="novo_pedido_venda" required maxlength="40"
+                   value="{{ form.get('novo_pedido_venda') if form else sugestao }}" placeholder="ex.: {{ sugestao or '888/1' }}">
+          </div>
+          <div class="col-md-8 small text-muted">
+            Sugestão automática: <strong>{{ sugestao or "—" }}</strong> (próximo número livre). Você pode editar.
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-3">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0" id="tabDividir">
+            <thead class="table-light">
+              <tr>
+                <th style="width:40px" class="text-center"><input type="checkbox" id="chkTodos" title="Marcar todos"></th>
+                <th>Produto</th>
+                <th class="text-end">Qtd no pedido</th>
+                <th style="width:150px">Qtd a enviar</th>
+                <th class="text-end">Fica em {{ pv }}</th>
+                <th class="text-end">Custo unit.</th>
+                <th class="text-end">Valor enviado</th>
+                <th>Estação</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in itens %}
+              {% set marcado = form and form.get('mover_' ~ item.id) %}
+              <tr data-total="{{ item.quantidade or 0 }}" data-custo="{{ item.custo_unitario or 0 }}">
+                <td class="text-center"><input type="checkbox" class="chk-mover" name="mover_{{ item.id }}" value="1" {% if marcado %}checked{% endif %}></td>
+                <td>{{ item.descricao_produto }}</td>
+                <td class="text-end">{{ item.quantidade|br_qtd }}</td>
+                <td>
+                  <input type="text" inputmode="decimal" autocomplete="off" class="form-control form-control-sm qtd-mover"
+                         name="qtd_{{ item.id }}" value="{{ (form.get('qtd_' ~ item.id) if form else '') or (item.quantidade|br_qtd) }}"
+                         {% if not marcado %}disabled{% endif %}>
+                </td>
+                <td class="text-end fica-qtd">{{ item.quantidade|br_qtd }}</td>
+                <td class="text-end">R$ {{ item.custo_unitario|br_num }}</td>
+                <td class="text-end val-mover">—</td>
+                <td class="small">{{ item.estacao or "—" }}</td>
+                <td><span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="alert alert-light border d-flex justify-content-between flex-wrap gap-2 mb-3">
+        <span>Fica em <strong>{{ pv }}</strong>: <strong id="pvFica">—</strong></span>
+        <span>Vai para o novo pedido: <strong id="pvVai">R$ 0,00</strong></span>
+      </div>
+
+      <div class="d-flex justify-content-between">
+        <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-outline-secondary">Cancelar</a>
+        <button type="submit" class="btn btn-primary" id="btnDividir"
+                onclick="return confirm('Criar o novo pedido com os itens marcados? A divisão fica registrada no histórico dos dois pedidos.')">
+          <i class="bi bi-diagram-2"></i> Dividir pedido
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const linhas = Array.from(document.querySelectorAll('#tabDividir tbody tr'));
+  const brl = v => 'R$ ' + v.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const qtdFmt = v => v.toLocaleString('pt-BR', {maximumFractionDigits: 3});
+  function parse(t) {
+    t = (t || '').trim().replace(/\s/g, '');
+    if (!t) return NaN;
+    if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+    else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+    return parseFloat(t);
+  }
+  function recalc() {
+    let totalOrig = 0, vai = 0;
+    linhas.forEach(tr => {
+      const total = parseFloat(tr.dataset.total) || 0, custo = parseFloat(tr.dataset.custo) || 0;
+      const chk = tr.querySelector('.chk-mover'), inp = tr.querySelector('.qtd-mover');
+      inp.disabled = !chk.checked;
+      totalOrig += total * custo;
+      let q = 0;
+      if (chk.checked) { q = parse(inp.value); if (isNaN(q)) q = total; q = Math.max(0, Math.min(q, total)); }
+      vai += q * custo;
+      tr.querySelector('.fica-qtd').textContent = qtdFmt(total - q);
+      tr.querySelector('.val-mover').textContent = chk.checked ? brl(q * custo) : '—';
+      tr.classList.toggle('table-warning', chk.checked);
+    });
+    document.getElementById('pvVai').textContent = brl(vai);
+    document.getElementById('pvFica').textContent = brl(totalOrig - vai);
+  }
+  document.getElementById('chkTodos').addEventListener('change', e => {
+    linhas.forEach(tr => { tr.querySelector('.chk-mover').checked = e.target.checked; });
+    recalc();
+  });
+  linhas.forEach(tr => {
+    tr.querySelector('.chk-mover').addEventListener('change', recalc);
+    tr.querySelector('.qtd-mover').addEventListener('input', recalc);
+  });
+  recalc();
+})();
+</script>
+{% endblock %}

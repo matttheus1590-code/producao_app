@@ -57,6 +57,7 @@
         {% endif %}
         {% if current_user.role in ('ADMIN', 'PCP', 'LIDER') %}
         <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-primary btn-sm"><i class="bi bi-pencil-square"></i> Editar</a>
+        {% if current_user.role in ('ADMIN','PCP','LIDER') %}<a href="{{ url_for('dividir_pedido', pedido_id=pedido.id) }}" class="btn btn-outline-primary btn-sm" title="Enviar parte do pedido para um novo pedido (ex.: 888/1)"><i class="bi bi-diagram-2"></i> Dividir</a>{% endif %}
         {% endif %}
       </div>
     </div>

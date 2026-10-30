@@ -22754,6 +22754,199 @@ def register_routes(app):
             tem_pedido_operacao=po_valor is not None,
         )
 
+    # ------------------------------------------------------------------
+    # Dividir pedido (parcial) — pedido do Bruno (30/10/2026): "duplicar
+    # pedido, tipo 888 e 888/1, para cenários em que, durante o trajeto/
+    # produção, surja a necessidade de enviar o pedido de forma parcial —
+    # manualmente, dentro da área do pedido".
+    #   - Itens inteiros: o próprio ItemPedido muda de pedido (preserva
+    #     programação, inspeções, RNC, histórico e todas as datas).
+    #   - Quantidade parcial: o item é copiado no pedido novo com a
+    #     quantidade movida (mesmas datas/planejamento/status/estação) e a
+    #     quantidade do original é reduzida.
+    #   - Pedido novo herda cliente/frete/UF/cidade/país/prazo do cliente/
+    #     vendedor/prioridade/obs/cnpj do original.
+    #   - Gestão Operação: cria um fluxo NOVO em branco (cliente/frete/
+    #     prazo copiados; NF, logística e datas em branco), com o valor
+    #     comercial proporcional ao valor dos itens movidos (que sai do
+    #     valor do original, para a soma continuar igual).
+    # ------------------------------------------------------------------
+    def _proximo_numero_divisao(pedido):
+        base = (pedido.pedido_venda or "").strip()
+        if not base:
+            return ""
+        raiz = base.split("/")[0].strip()
+        usados = set()
+        for (pv,) in db.session.query(Pedido.pedido_venda).filter(Pedido.pedido_venda.isnot(None)).all():
+            usados.add(_normalizar_pedido_venda(pv))
+        for (pv,) in db.session.query(PedidoOperacao.pedido_venda).filter(PedidoOperacao.pedido_venda.isnot(None)).all():
+            usados.add(_normalizar_pedido_venda(pv))
+        n = 1
+        while _normalizar_pedido_venda(f"{raiz}/{n}") in usados:
+            n += 1
+        return f"{raiz}/{n}"
+
+    def _pedido_venda_em_uso(pv):
+        chave = _normalizar_pedido_venda(pv)
+        if not chave:
+            return False
+        for (x,) in db.session.query(Pedido.pedido_venda).filter(Pedido.pedido_venda.isnot(None)).all():
+            if _normalizar_pedido_venda(x) == chave:
+                return True
+        return _pedido_operacao_do_pedido(pv) is not None
+
+    @app.route("/pedidos/<int:pedido_id>/dividir", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP", "LIDER")
+    def dividir_pedido(pedido_id):
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(url_for("dashboard"))
+
+        itens = list(pedido.itens)
+        po_original = _pedido_operacao_do_pedido(pedido.pedido_venda)
+        sugestao = _proximo_numero_divisao(pedido)
+        erro = None
+        form = {}
+
+        if request.method == "POST":
+            f = request.form
+            form = f
+            novo_pv = (f.get("novo_pedido_venda") or "").strip()
+            escolhas = []  # (item, qtd_mover)
+            for item in itens:
+                if not f.get(f"mover_{item.id}"):
+                    continue
+                qtd_total = float(item.quantidade or 0)
+                txt = (f.get(f"qtd_{item.id}") or "").strip()
+                qtd = qtd_total if not txt else _parse_valor_br(txt)
+                if qtd is None or qtd <= 0:
+                    erro = f'Quantidade inválida para "{item.descricao_produto}".'
+                    break
+                if qtd > qtd_total + 1e-9:
+                    erro = f'A quantidade a enviar de "{item.descricao_produto}" é maior que a do pedido ({_fmt_br(qtd_total, 0, 3)}).'
+                    break
+                escolhas.append((item, min(qtd, qtd_total)))
+
+            if erro is None:
+                if not escolhas:
+                    erro = "Marque ao menos um item para enviar ao novo pedido."
+                elif not novo_pv:
+                    erro = "Informe o número do novo pedido."
+                elif _pedido_venda_em_uso(novo_pv):
+                    erro = f'O número "{novo_pv}" já existe. Escolha outro (ex.: {sugestao}).'
+                else:
+                    resta = False
+                    mov_ids = {it.id: q for it, q in escolhas}
+                    for it in itens:
+                        q = mov_ids.get(it.id, 0)
+                        if float(it.quantidade or 0) - q > 1e-9:
+                            resta = True
+                    if not resta:
+                        erro = "O pedido original precisa continuar com ao menos um item (ou parte dele)."
+
+            if erro is None:
+                valor_total_antes = pedido.valor_total
+                valor_movido = 0.0
+                novo = Pedido(
+                    data_cliente=pedido.data_cliente,
+                    data_inclusao_pedido=pedido.data_inclusao_pedido,
+                    cliente=pedido.cliente,
+                    cnpj=pedido.cnpj,
+                    cidade=pedido.cidade,
+                    estado=pedido.estado,
+                    pais=pedido.pais,
+                    frete=pedido.frete,
+                    vendedor=pedido.vendedor,
+                    pedido_venda=novo_pv,
+                    prioridade=pedido.prioridade,
+                    obs=pedido.obs,
+                )
+                db.session.add(novo)
+                db.session.flush()
+                resumo = []
+                campos_copia = [
+                    "descricao_produto", "custo_unitario", "estacao", "status_producao", "status_manual",
+                    "inicio_producao", "inicio_inspecao", "termino_inspecao", "liberacao_faturamento",
+                    "liberacao_prevista", "liberacao_real", "planejamento_semanal", "rnc",
+                    "numero_nota_fiscal", "transportadora_id", "data_envio",
+                ]
+                for item, qtd in escolhas:
+                    qtd_total = float(item.quantidade or 0)
+                    valor_movido += qtd * float(item.custo_unitario or 0)
+                    if qtd >= qtd_total - 1e-9:
+                        # item inteiro: o mesmo registro muda de pedido
+                        item.pedido = novo
+                        resumo.append(f"{item.descricao_produto} (inteiro, {_fmt_br(qtd_total, 0, 3)})")
+                    else:
+                        copia = ItemPedido(pedido=novo, quantidade=qtd)
+                        for c in campos_copia:
+                            setattr(copia, c, getattr(item, c))
+                        # valor faturado é do item original (não se divide)
+                        db.session.add(copia)
+                        antes_q = qtd_total
+                        item.quantidade = round(qtd_total - qtd, 6)
+                        _registrar_alteracoes(
+                            "item_pedido", item.id, pedido.id,
+                            {"quantidade": antes_q}, {"quantidade": item.quantidade}, ["quantidade"],
+                        )
+                        resumo.append(f"{item.descricao_produto} ({_fmt_br(qtd, 0, 3)} de {_fmt_br(antes_q, 0, 3)})")
+                db.session.flush()
+
+                # --- Gestão Operação: fluxo novo em branco ---
+                fonte = po_original
+                valor_po_novo = None
+                if po_original is not None and po_original.go_valor_pedido_operacao is not None and valor_total_antes > 0:
+                    valor_po_novo = round(po_original.go_valor_pedido_operacao * (valor_movido / valor_total_antes), 2)
+                po_novo = PedidoOperacao(
+                    cliente=(fonte.cliente if fonte else None) or pedido.cliente,
+                    vendedor=(fonte.vendedor if fonte else None) or pedido.vendedor,
+                    pedido_venda=novo_pv,
+                    data_inclusao_pedido=(fonte.data_inclusao_pedido if fonte else None) or pedido.data_inclusao_pedido,
+                    prioridade=(fonte.prioridade if fonte else None) or pedido.prioridade,
+                    frete=(fonte.frete if fonte else None) or pedido.frete,
+                    pais=(fonte.pais if fonte else None) or pedido.pais,
+                    estado=(fonte.estado if fonte else None) or pedido.estado,
+                    cidade=(fonte.cidade if fonte else None) or pedido.cidade,
+                    go_data_solicitada_entrega=(fonte.go_data_solicitada_entrega if fonte else None) or pedido.data_cliente,
+                    go_data_solicitada_cliente_retira=(fonte.go_data_solicitada_cliente_retira if fonte else None) or pedido.data_cliente,
+                    go_tipo_pedido=fonte.go_tipo_pedido if fonte else None,
+                    go_contrato=fonte.go_contrato if fonte else None,
+                    go_proposta=fonte.go_proposta if fonte else None,
+                    go_pedido_compra_cliente=fonte.go_pedido_compra_cliente if fonte else None,
+                    go_valor_pedido_operacao=valor_po_novo,
+                )
+                db.session.add(po_novo)
+                if valor_po_novo is not None:
+                    antes_v = po_original.go_valor_pedido_operacao
+                    po_original.go_valor_pedido_operacao = round(antes_v - valor_po_novo, 2)
+                    _registrar_alteracoes(
+                        "pedido_operacao", po_original.id, None,
+                        {"go_valor_pedido_operacao": antes_v},
+                        {"go_valor_pedido_operacao": po_original.go_valor_pedido_operacao},
+                        ["go_valor_pedido_operacao"],
+                    )
+
+                # --- trilha de auditoria nos dois pedidos ---
+                descr = "; ".join(resumo)
+                for alvo, campo, texto in (
+                    (pedido, "divisão do pedido", f"Enviado para {novo_pv}: {descr}"),
+                    (novo, "origem do pedido", f"Dividido de {pedido.pedido_venda or ('#' + str(pedido.id))}: {descr}"),
+                ):
+                    db.session.add(HistoricoAlteracao(
+                        entidade_tipo="pedido", entidade_id=alvo.id, pedido_id=alvo.id,
+                        usuario_id=current_user.id, usuario_nome=current_user.nome,
+                        campo=campo, valor_anterior=None, valor_novo=texto[:1500],
+                    ))
+                db.session.commit()
+                flash(f"Pedido dividido: {len(escolhas)} item(ns) enviados para {novo_pv}.", "success")
+                return redirect(url_for("editar_pedido", pedido_id=novo.id))
+
+        return render_template(
+            "dividir_pedido.html", pedido=pedido, itens=itens, sugestao=sugestao,
+            erro=erro, form=form, po_original=po_original,
+        )
+
     @app.route("/pedidos/<int:pedido_id>")
     @login_required
     def detalhe_pedido(pedido_id):
