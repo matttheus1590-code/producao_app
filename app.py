@@ -5847,6 +5847,10 @@ def _resumo_mes_pcp(ano, mes):
         "pedidos_em_aberto": len(em_aberto),
         "valor_em_aberto": round(sum(p["valor"] for p in em_aberto), 2),
         "top5": top5,
+        # Listas completas (maior valor primeiro) pro pop-up de passar o mouse no
+        # card "Faturamento previsto" do Painel (Bruno, 30/10/2026).
+        "lista_finalizados": sorted(finalizados, key=lambda p: p["valor"], reverse=True),
+        "lista_em_aberto": sorted(em_aberto, key=lambda p: p["valor"], reverse=True),
     }
 
 

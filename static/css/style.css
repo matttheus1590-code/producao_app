@@ -3832,3 +3832,28 @@ button.pw-kpi-lib.ativo { box-shadow: inset 0 -4px 0 #198754; }
 @media (min-width: 992px) {
   .pn-col-liberados { border-left: 1px solid #eef0f2; }
 }
+
+/* Pop-up ao passar o mouse em "Liberados pelo PCP" / "Projetados" do card
+   Faturamento previsto (Bruno, 30/10/2026): lista de pedidos com PV e valor. */
+.painel-hero-lib { position: relative; }
+.phl-linha { cursor: help; border-radius: .25rem; }
+.phl-linha:hover, .phl-linha:focus-within { background: rgba(13, 110, 253, .06); outline: none; }
+.phl-pop {
+  display: none; position: absolute; left: 0; top: 100%; z-index: 60; width: min(30rem, 92vw);
+  background: #fff; border: 1px solid #ced4da; border-radius: .5rem; padding: .55rem .65rem;
+  box-shadow: 0 .6rem 1.4rem rgba(0, 0, 0, .18); cursor: default; white-space: normal;
+}
+.phl-linha:hover .phl-pop, .phl-linha:focus .phl-pop { display: block; }
+.phl-pop-tit { font-size: .76rem; font-weight: 700; color: #1b2a4a; margin-bottom: .35rem; }
+.phl-pop-lista { max-height: 15rem; overflow-y: auto; }
+.phl-pop-row {
+  display: grid; grid-template-columns: 4.6rem 1fr 2.8rem auto; gap: .5rem; align-items: baseline;
+  padding: .22rem .2rem; border-bottom: 1px dashed #eef0f2; font-size: .74rem; cursor: pointer;
+}
+.phl-pop-row:hover { background: #eaf1fd; }
+.phl-pop-pv { color: #1b2a4a; white-space: nowrap; }
+.phl-pop-cli { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3b4559; }
+.phl-pop-dt { color: #6b7280; font-size: .68rem; text-align: right; }
+.phl-pop-val { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; white-space: nowrap; }
+.phl-pop-vazio { font-size: .74rem; color: #6b7280; }
+.phl-pop-rod { margin-top: .3rem; font-size: .66rem; color: #6b7280; }
