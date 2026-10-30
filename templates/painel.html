@@ -133,6 +133,22 @@
         <div class="painel-hero-label">Faturamento previsto (mês)</div>
         <div class="painel-hero-valor">R$ {{ "{:,.0f}".format(resumo_mes_atual_pcp.valor_total).replace(",", ".") }}</div>
         <div class="painel-hero-sufixo">{{ resumo_mes_atual_pcp.pedidos_total }} pedido(s) · Planejamento PCP · Listagem Geral</div>
+        {# Liberado pelo PCP x projetado (pedido do Bruno, 30/10/2026): do previsto do
+           mês, quanto o PCP já liberou (todos os itens do pedido com liberação
+           efetiva) e quanto ainda é projeção — em pedidos e em faturamento (R$). #}
+        {% set rm = resumo_mes_atual_pcp %}
+        {% set pct_lib = ((rm.valor_finalizado / rm.valor_total * 100) if rm.valor_total else 0) %}
+        <div class="painel-hero-lib" title="Dos pedidos planejados pro mês: liberado = todos os itens já com liberação efetiva do PCP; projetado = ainda a liberar.">
+          <div class="phl-barra"><span class="phl-lib" style="width: {{ pct_lib|round(1) }}%"></span></div>
+          <div class="phl-linha phl-linha-lib">
+            <span class="phl-rot"><i class="phl-dot phl-dot-lib"></i>Liberados pelo PCP</span>
+            <span class="phl-val"><b>R$ {{ "{:,.0f}".format(rm.valor_finalizado).replace(",", ".") }}</b> · {{ rm.pedidos_finalizados }} ped. · {{ pct_lib|round|int }}%</span>
+          </div>
+          <div class="phl-linha">
+            <span class="phl-rot"><i class="phl-dot phl-dot-proj"></i>Projetados (a liberar)</span>
+            <span class="phl-val"><b>R$ {{ "{:,.0f}".format(rm.valor_em_aberto).replace(",", ".") }}</b> · {{ rm.pedidos_em_aberto }} ped. · {{ (100 - pct_lib)|round|int if rm.valor_total else 0 }}%</span>
+          </div>
+        </div>
       </div>
       <div class="painel-hero-top5">
         <div class="painel-hero-top5-titulo">Top 5 · maior faturamento</div>

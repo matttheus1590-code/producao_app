@@ -3808,3 +3808,16 @@ button.pw-kpi-lib.ativo { box-shadow: inset 0 -4px 0 #198754; }
   .pw-kpis { grid-template-columns: repeat(2, 1fr); }
   .pw-prog { flex-direction: column; align-items: stretch; }
 }
+
+/* Liberado pelo PCP x projetado dentro do card "Faturamento previsto (mês)"
+   do Painel (pedido do Bruno, 30/10/2026). */
+.painel-hero-lib { margin-top: .55rem; font-size: .76rem; line-height: 1.3; }
+.phl-barra { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: #b9c8e3; margin-bottom: .35rem; }
+.phl-lib { display: block; background: #198754; }
+.phl-linha { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; flex-wrap: wrap; padding: .1rem 0; }
+.phl-rot { color: #3b4559; font-weight: 600; white-space: nowrap; }
+.phl-val { color: #212529; white-space: nowrap; }
+.phl-linha-lib .phl-val b { color: #198754; }
+.phl-dot { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin-right: .35rem; }
+.phl-dot-lib { background: #198754; }
+.phl-dot-proj { background: #b9c8e3; border: 1px solid #8fa8cc; }
