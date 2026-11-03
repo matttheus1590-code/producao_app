@@ -2,11 +2,12 @@
 {% from "_macros.html" import rdim_status_item %}
 {% block title %}Pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }} · Detalhe{% endblock %}
 
-{# ===== Detalhe do Pedido 360 (pedido do Bruno, 23/10/2026): "esse campo do pedido está muito
-   vago e simples — totalmente intuitivo, dinâmico e claro, reforçando todas as informações do
-   pedido, bem distribuídas e agrupadas". Ordem: situação & riscos → indicadores → jornada →
-   itens / linha do tempo / histórico (esquerda) + comercial / entrega / PCP / financeiro /
-   qualidade (direita). Tudo calculado ao vivo (ver _visao_pedido_detalhe em app.py). ===== #}
+{# ===== Detalhe do Pedido — padrão gerencial (pedido do Bruno, 03/11/2026): "toda essa tela fique
+   bem melhor visualmente, mais intuitiva, dinâmica e clara, principalmente datas, valores e
+   logística — quero emotions". Ordem: cabeçalho executivo → riscos → DATAS-CHAVE → jornada →
+   VALORES + LOGÍSTICA em destaque → itens / linha do tempo / histórico (esquerda) + comercial /
+   PCP / qualidade (direita). Campos vazios ficam agrupados numa linha só ("Sem informação").
+   Tudo calculado ao vivo (ver _visao_pedido_detalhe em app.py). ===== #}
 
 {% macro dt(d, fmt="%d/%m/%Y") %}{{ d.strftime(fmt) if d else "—" }}{% endmacro %}
 {% macro brl(v) %}{% if v is none %}—{% else %}R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endif %}{% endmacro %}
@@ -16,50 +17,69 @@
   <span class="dp-val{{ ' dp-val-forte' if destaque else '' }}">{% if valor is none or valor == "" %}<span class="dp-vazio">—</span>{% else %}{{ valor }}{% endif %}</span>
 </div>
 {% endmacro %}
+{# lista de (rótulo, valor[, destaque[, cheio]]): só mostra o que tem valor; o resto vira 1 linha "Sem informação" #}
+{% macro bloco(lista) %}
+{%- set vazios = [] -%}
+<div class="dp-campos">
+  {%- for c in lista -%}
+    {%- if c[1] is none or c[1] == "" or c[1] == "—" -%}{%- set _ = vazios.append(c[0]) -%}
+    {%- else -%}{{ campo(c[0], c[1], (c[2] if c | length > 2 else False), (c[3] if c | length > 3 else False)) }}{%- endif -%}
+  {%- endfor -%}
+</div>
+{% if vazios %}<div class="pg-vazios">➖ <b>Sem informação:</b> {{ vazios | join(" · ") }}</div>{% endif %}
+{% endmacro %}
 
 {% block content %}
 {% set GO = v.go %}
 {% set LG = v.logi %}
 {% set uf_txt = v.uf %}
+{% set pri_cor = PRIORIDADE_CORES.get(pedido.prioridade, 'secondary') %}
 <div class="row justify-content-center">
   <div class="col-12 col-xxl-11">
 
-    {# ============ CABEÇALHO ============ #}
-    <div class="dp-topo">
-      <div class="dp-topo-id">
-        <div class="dp-topo-linha1">
-          <span class="dp-topo-ico"><i class="bi bi-file-earmark-text"></i></span>
-          <h4 class="dp-titulo">Pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }}</h4>
-          <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }} dp-badge-status">{{ pedido.status_producao }}</span>
-          <span class="badge bg-{{ PRIORIDADE_CORES.get(pedido.prioridade, 'secondary') }}-subtle text-{{ PRIORIDADE_CORES.get(pedido.prioridade, 'secondary') }}-emphasis border border-{{ PRIORIDADE_CORES.get(pedido.prioridade, 'secondary') }}-subtle">Prioridade {{ (pedido.prioridade or "—") | lower }}</span>
+    {# ============ CABEÇALHO EXECUTIVO ============ #}
+    <div class="pg-hero">
+      <div class="pg-hero-esq">
+        <div class="pg-hero-l1">
+          <span class="pg-hero-ico">📋</span>
+          <h4 class="pg-hero-num">Pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }}</h4>
+          <span class="badge bg-{{ STATUS_CORES.get(pedido.status_producao, 'secondary') }} pg-hero-badge">{{ {'FINALIZADO': '✅', 'ANDAMENTO': '🏭', 'PENDENTE': '⏳', 'EM TRATATIVA': '🛠️'}.get(pedido.status_producao, '•') }} {{ pedido.status_producao }}</span>
+          <span class="badge pg-hero-pri pg-pri-{{ pri_cor }}">{{ {'ALTA': '🔥', 'MÉDIA': '⚖️', 'MEDIA': '⚖️', 'BAIXA': '🌿'}.get((pedido.prioridade or '')|upper, '🏷️') }} Prioridade {{ (pedido.prioridade or "—") | lower }}</span>
         </div>
-        <div class="dp-cliente">{{ pedido.cliente }}</div>
-        <div class="dp-chips">
+        <div class="pg-hero-cliente">🏢 {{ pedido.cliente }}</div>
+        <div class="dp-chips pg-hero-chips">
           {% if pedido.vendedor %}<span class="dp-chip" title="Vendedor">👤 {{ pedido.vendedor }}</span>{% endif %}
-          {% if pedido.frete %}<span class="dp-chip dp-chip-frete-{{ pedido.frete | lower }}" title="Modalidade de frete">{{ '🚢' if pedido.frete == 'CIF' else ('🚚' if pedido.frete == 'FOB' else '📦') }} {{ pedido.frete }}</span>{% endif %}
+          {% if pedido.frete %}<span class="dp-chip dp-chip-frete-{{ pedido.frete | lower }}" title="Modalidade de frete">{{ '🚢' if pedido.frete == 'CIF' else ('🚚' if pedido.frete == 'FOB' else '📦') }} Frete {{ pedido.frete }}</span>{% endif %}
           {% if uf_txt or pedido.cidade %}<span class="dp-chip" title="Destino">📍 {{ pedido.cidade or "" }}{% if pedido.cidade and uf_txt %} · {% endif %}{{ uf_txt or "" }}{% if v.regiao %} · {{ v.regiao }}{% endif %}</span>{% endif %}
           {% if GO and GO.go_tipo_pedido %}<span class="dp-chip" title="Tipo de pedido">🏷️ {{ GO.go_tipo_pedido }}</span>{% endif %}
           <span class="dp-chip" title="Itens do pedido">📦 {{ v.n_itens }} item(ns)</span>
         </div>
       </div>
-      <div class="dp-acoes">
-        <a href="{{ url_for('dashboard', busca=pedido.pedido_venda) if pedido.pedido_venda else url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Voltar</a>
-        <a href="{{ url_for('espelho_pedido_pdf', pedido_id=pedido.id) }}" class="btn btn-outline-danger btn-sm" target="_blank"><i class="bi bi-file-earmark-pdf"></i> 🖨️ Espelho PDF</a>
-        <div class="btn-group pptx-botao">
-      <button type="button" class="btn btn-warning btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Gera uma apresentação PowerPoint já com números, projeções e riscos">📊 Apresentação (PowerPoint)</button>
-      <ul class="dropdown-menu dropdown-menu-end">
-        <li><a class="dropdown-item" href="{{ url_for('pedido_apresentacao_pptx', modo='executiva', pedido_id=pedido.id) }}">🎯 Executiva <small class="text-muted d-block">enxuta · alta direção</small></a></li>
-        <li><a class="dropdown-item" href="{{ url_for('pedido_apresentacao_pptx', modo='completa', pedido_id=pedido.id) }}">📚 Completa <small class="text-muted d-block">detalhada · gerencial</small></a></li>
-      </ul>
-    </div>
-        {% if GO and current_user.role in ('ADMIN', 'PCP') %}
-        <a href="{{ url_for('gestao_operacao_editar', pedido_id=GO.id) }}" class="btn btn-outline-primary btn-sm" title="Abrir este pedido na Gestão Operação"><i class="bi bi-box-arrow-up-right"></i> Gestão Operação</a>
-        {% endif %}
-        {% if current_user.role in ('ADMIN', 'PCP', 'LIDER') %}
-        <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-primary btn-sm"><i class="bi bi-pencil-square"></i> Editar</a>
-        {% if current_user.role in ('ADMIN','PCP','LIDER') %}<a href="{{ url_for('dividir_pedido', pedido_id=pedido.id) }}" class="btn btn-outline-primary btn-sm" title="Enviar parte do pedido para um novo pedido (ex.: 888/1)"><i class="bi bi-diagram-2"></i> Dividir</a>{% endif %}
-        {% endif %}
+      <div class="pg-hero-dir">
+        <div class="pg-hero-valor-rot">💰 Valor do pedido</div>
+        <div class="pg-hero-valor">{{ brl(v.fin.valor_total) }}</div>
+        <div class="pg-hero-prazo pg-tom-{{ v.prazo.tom }}">🎯 Prazo do cliente: <b>{{ dt(v.prazo.data) }}</b> · {{ v.prazo.texto }}</div>
+        <div class="pg-hero-prog"><span style="width: {{ v.pct_final }}%"></span></div>
+        <div class="pg-hero-prog-txt">{{ v.pct_final }}% concluído · {{ v.cont.get('FINALIZADO', 0) }} de {{ v.n_itens }} item(ns) finalizado(s)</div>
       </div>
+    </div>
+    <div class="pg-acoes">
+      <a href="{{ url_for('dashboard', busca=pedido.pedido_venda) if pedido.pedido_venda else url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Voltar</a>
+      <a href="{{ url_for('espelho_pedido_pdf', pedido_id=pedido.id) }}" class="btn btn-outline-danger btn-sm" target="_blank">🖨️ Espelho PDF</a>
+      <div class="btn-group pptx-botao">
+        <button type="button" class="btn btn-warning btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Gera uma apresentação PowerPoint já com números, projeções e riscos">📊 Apresentação (PowerPoint)</button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><a class="dropdown-item" href="{{ url_for('pedido_apresentacao_pptx', modo='executiva', pedido_id=pedido.id) }}">🎯 Executiva <small class="text-muted d-block">enxuta · alta direção</small></a></li>
+          <li><a class="dropdown-item" href="{{ url_for('pedido_apresentacao_pptx', modo='completa', pedido_id=pedido.id) }}">📚 Completa <small class="text-muted d-block">detalhada · gerencial</small></a></li>
+        </ul>
+      </div>
+      {% if GO and current_user.role in ('ADMIN', 'PCP') %}
+      <a href="{{ url_for('gestao_operacao_editar', pedido_id=GO.id) }}" class="btn btn-outline-primary btn-sm" title="Abrir este pedido na Gestão Operação">🧭 Gestão Operação</a>
+      {% endif %}
+      {% if current_user.role in ('ADMIN', 'PCP', 'LIDER') %}
+      <a href="{{ url_for('dividir_pedido', pedido_id=pedido.id) }}" class="btn btn-outline-primary btn-sm" title="Enviar parte do pedido para um novo pedido (ex.: 888/1)">✂️ Dividir pedido</a>
+      <a href="{{ url_for('editar_pedido', pedido_id=pedido.id) }}" class="btn btn-primary btn-sm">✏️ Editar pedido</a>
+      {% endif %}
     </div>
 
     {# ============ SITUAÇÃO & RISCOS ============ #}
@@ -77,53 +97,24 @@
       {% endfor %}
     </div>
 
-    {# ============ INDICADORES ============ #}
-    <div class="dp-kpis">
-      <div class="dp-kpi">
-        <div class="dp-kpi-rot">Progresso do pedido</div>
-        <div class="dp-kpi-val">{{ v.pct_final }}<small>%</small></div>
-        <div class="dp-prog"><span style="width: {{ v.pct_final }}%"></span></div>
-        <div class="dp-kpi-sub">
-          {{ v.cont.get('FINALIZADO', 0) }} de {{ v.n_itens }} finalizado(s)
-          {% if v.cont.get('ANDAMENTO', 0) %}· {{ v.cont.get('ANDAMENTO') }} em andamento{% endif %}
-          {% if v.cont.get('PENDENTE', 0) %}· {{ v.cont.get('PENDENTE') }} pendente(s){% endif %}
-          {% if v.cont.get('EM TRATATIVA', 0) %}· {{ v.cont.get('EM TRATATIVA') }} em tratativa{% endif %}
+    {# ============ DATAS-CHAVE ============ #}
+    <div class="dp-card pg-card-datas">
+      <div class="dp-card-tit">📅 Datas do pedido <span class="dp-card-tit-sub">do pedido incluído até a entrega ao cliente · verde = realizado · azul = previsto · vermelho = vencido</span></div>
+      <div class="pg-datas">
+        {% for m in v.datas_chave %}
+        <div class="pg-data pg-data-{{ m.estado }}">
+          <div class="pg-data-topo"><span class="pg-data-emoji">{{ m.emoji }}</span><span class="pg-data-tit">{{ m.titulo }}</span></div>
+          {% if m.data %}
+          <div class="pg-data-dt">{{ dt(m.data, '%d/%m/%Y') }}</div>
+          <div class="pg-data-dia">{{ m.dia_semana }}{% if m.rel %} · {{ m.rel }}{% endif %}</div>
+          {% else %}
+          <div class="pg-data-dt pg-data-sem">—</div>
+          <div class="pg-data-dia">{{ 'ainda sem data' }}</div>
+          {% endif %}
+          <div class="pg-data-sub">{{ m.sub or '' }}</div>
+          <div class="pg-data-selo">{{ {'feito': '✅ realizado', 'previsto': '🔵 previsto', 'atencao': '🟡 atenção', 'vencido': '🔴 vencido', 'hoje': '🟠 é hoje', 'vazio': '⚪ sem data'}[m.estado] }}</div>
         </div>
-      </div>
-      <div class="dp-kpi dp-kpi-{{ v.prazo.tom }}">
-        <div class="dp-kpi-rot">Prazo do cliente</div>
-        <div class="dp-kpi-val dp-kpi-val-data">{{ dt(v.prazo.data) }}</div>
-        <div class="dp-kpi-sub dp-kpi-tom">{{ v.prazo.texto }}</div>
-        <div class="dp-kpi-sub">Prazo comercial: {% if v.lts.comercial is not none %}{{ v.lts.comercial }} dias da inclusão{% else %}—{% endif %}</div>
-      </div>
-      <div class="dp-kpi">
-        <div class="dp-kpi-rot">Previsão do PCP</div>
-        <div class="dp-kpi-val dp-kpi-val-data">{{ dt(v.pcp.proxima) if v.pcp.proxima else (dt(v.pcp.ultima) if v.pcp.ultima else "—") }}</div>
-        <div class="dp-kpi-sub">{% if v.pcp.proxima %}próxima liberação prevista{% elif v.pcp.ultima %}última liberação prevista{% else %}sem liberação prevista{% endif %}</div>
-        <div class="dp-kpi-sub">{% if v.pcp.semanas %}{{ v.pcp.semanas[0] }}{% if v.pcp.semanas | length > 1 %} +{{ v.pcp.semanas | length - 1 }}{% endif %}{% else %}sem planejamento semanal{% endif %}</div>
-      </div>
-      <div class="dp-kpi">
-        <div class="dp-kpi-rot">Valor do pedido</div>
-        <div class="dp-kpi-val dp-kpi-val-valor">{{ brl(v.fin.valor_total) }}</div>
-        <div class="dp-kpi-sub">{{ v.fin.n_itens }} item(ns) · {{ v.fin.qtd_total | int if v.fin.qtd_total == v.fin.qtd_total | int else v.fin.qtd_total }} peça(s)</div>
-        <div class="dp-kpi-sub">{% if v.fin.faturado is not none %}faturado: {{ brl(v.fin.faturado) }}{% else %}ainda sem valor faturado{% endif %}</div>
-      </div>
-      <div class="dp-kpi">
-        <div class="dp-kpi-rot">Lead time (chão de fábrica)</div>
-        <div class="dp-kpi-val">{% if v.lts.total is not none %}{{ v.lts.total }}<small>d</small>{% else %}—{% endif %}</div>
-        <div class="dp-kpi-sub">fila: {{ (v.lts.fila ~ 'd') if v.lts.fila is not none else '—' }} · chão: {{ (v.lts.chao ~ 'd') if v.lts.chao is not none else '—' }}</div>
-        <div class="dp-kpi-sub">{% if v.lts.total is none %}aparece quando houver itens com início e término{% else %}fila + chão (médias dos itens){% endif %}</div>
-      </div>
-      <div class="dp-kpi">
-        <div class="dp-kpi-rot">Entrega &amp; OTD</div>
-        {% if LG %}
-          {% if LG.otd.status == 'SIM' %}<div class="dp-kpi-val dp-ok-txt">No prazo</div><div class="dp-kpi-sub">entregue {{ '%d' % (-LG.otd.dias) if LG.otd.dias < 0 else 'no dia' }}{{ ' dia(s) antes' if LG.otd.dias < 0 else '' }}</div>
-          {% elif LG.otd.status == 'NAO' %}<div class="dp-kpi-val dp-bad-txt">{{ LG.otd.dias }}<small>d atraso</small></div><div class="dp-kpi-sub">entregue depois do prazo</div>
-          {% else %}<div class="dp-kpi-val dp-mut-txt">Em aberto</div><div class="dp-kpi-sub">OTD sai após a entrega ao cliente</div>{% endif %}
-          <div class="dp-kpi-sub">{{ pedido.frete or "frete n/d" }}{% if LG.transporte_param is not none %} · transporte {{ LG.transporte_param }}d{% endif %}</div>
-        {% else %}
-          <div class="dp-kpi-val dp-mut-txt">—</div><div class="dp-kpi-sub">sem registro na Gestão Operação</div>
-        {% endif %}
+        {% endfor %}
       </div>
     </div>
 
@@ -146,6 +137,64 @@
       </div>
     </div>
 
+    {# ============ VALORES + LOGÍSTICA ============ #}
+    <div class="row g-3 pg-duplo">
+      <div class="col-lg-6">
+        <div class="dp-card pg-painel pg-painel-valores">
+          <div class="dp-card-tit">💰 Valores</div>
+          <div class="pg-valor-grande">{{ brl(v.fin.valor_total) }}</div>
+          <div class="pg-valor-sub">soma dos {{ v.fin.n_itens }} item(ns) · {{ v.fin.qtd_total | int if v.fin.qtd_total == v.fin.qtd_total | int else v.fin.qtd_total }} peça(s) · ticket médio {{ brl(v.fin.ticket) }}</div>
+          <div class="pg-barra-rot"><span>🧾 Faturado</span><span><b>{{ brl(v.fin.faturado) if v.fin.faturado is not none else 'ainda sem valor faturado' }}</b>{% if v.fin.pct_faturado is not none %} · {{ v.fin.pct_faturado }}%{% endif %}</span></div>
+          <div class="pg-barra"><span style="width: {{ v.fin.pct_faturado or 0 }}%"></span></div>
+          <div class="pg-linhas">
+            <div class="pg-linha"><span>🤝 Valor do pedido (comercial / Operação)</span><b>{{ brl(v.fin.valor_operacao) }}</b></div>
+            {% if v.fin.dif_operacao is not none and v.fin.dif_operacao != 0 %}
+            <div class="pg-linha pg-linha-alerta"><span>⚠️ Diferença p/ soma dos itens</span><b>{{ brl(v.fin.dif_operacao) }}</b></div>
+            {% endif %}
+            <div class="pg-linha"><span>🧾 Valor da NF emitida</span><b>{{ brl(v.fin.valor_nf) }}</b></div>
+            {% if GO and GO.go_numero_nf %}<div class="pg-linha"><span>🔢 Nota fiscal</span><b>Nº {{ GO.go_numero_nf }}{% if GO.go_data_emissao_nf %} · {{ dt(GO.go_data_emissao_nf) }}{% endif %}</b></div>{% endif %}
+            {% if ve_pd_qualidade_custos and GO %}
+            <div class="pg-linha"><span>🏭 Custo de produção real</span><b>{{ brl(v.fin.custo_producao) }}</b></div>
+            <div class="pg-linha"><span>🚚 Frete previsto / final</span><b>{{ brl(v.fin.frete_previsto) }} / {{ brl(v.fin.frete_final) }}</b></div>
+            <div class="pg-linha pg-linha-total"><span>📊 Custo total (produção + frete)</span><b>{{ brl(v.fin.custo_total) }}</b></div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="dp-card pg-painel pg-painel-logi">
+          <div class="dp-card-tit">🚚 Entrega &amp; logística</div>
+          <div class="pg-rota">
+            <div class="pg-rota-no"><span class="pg-rota-ico">🏭</span><b>Fábrica</b><small>4PIPE</small></div>
+            <div class="pg-rota-via"><span class="pg-rota-linha"></span><span class="pg-rota-modo">{{ '🚢' if pedido.frete == 'CIF' else ('🚚' if pedido.frete == 'FOB' else '📦') }} {{ pedido.frete or 'frete n/d' }}</span><span class="pg-rota-linha"></span></div>
+            <div class="pg-rota-no"><span class="pg-rota-ico">📍</span><b>{{ pedido.cidade or 'Destino' }}{% if uf_txt %} · {{ uf_txt }}{% endif %}</b><small>{{ pedido.pais or '' }}{% if v.regiao %} · {{ v.regiao }}{% endif %}</small></div>
+          </div>
+          {% if LG %}
+          <div class="pg-logi-status">
+            <span class="pg-logi-st">📦 {{ GO.go_status_logistica or 'status da logística não informado' }}</span>
+            {% if LG.otd.status == 'SIM' %}<span class="badge bg-success">🎯 No prazo (OTD)</span>
+            {% elif LG.otd.status == 'NAO' %}<span class="badge bg-danger">🚨 {{ LG.otd.dias }}d de atraso (OTD)</span>
+            {% else %}<span class="badge bg-secondary">⏳ OTD pendente</span>{% endif %}
+          </div>
+          {{ bloco([
+            ("🚛 Transportadora", LG.transportadora),
+            ("📤 Expedido em", dt(GO.go_data_pedido_expedido)),
+            ("🗓️ Previsão de entrega", dt(GO.go_data_prevista_entrega)),
+            ("📍 Chegada ao destino", dt(GO.go_data_real_entrega)),
+            ("🎉 Entregue ao cliente", dt(GO.go_data_entregue_cliente), True),
+            ("🎯 Prazo comprometido (OTD)", dt(LG.comprometida)),
+            ("⏱️ LT de frete (real)", (GO.go_lead_time_frete_dias ~ " dias") if GO.go_lead_time_frete_dias is not none else none),
+            ("🧮 LT total da operação", (GO.go_lead_time_operacao_dias ~ " dias") if GO.go_lead_time_operacao_dias is not none else none),
+            ("📐 Transporte parametrizado", (LG.transporte_param ~ " dias (rodoviário)") if LG.transporte_param is not none else ("n/a (não é CIF)" if pedido.frete != 'CIF' else "sem LT p/ a UF")),
+            ("🔁 Alinhamento final", GO.go_status_final_alinhamento),
+          ]) }}
+          {% else %}
+          <div class="dp-vazio-bloco">📭 Sem registro na Gestão Operação — expedição, NF e entrega ainda não são acompanhadas aqui.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
     <div class="row g-3 dp-grade">
       {# ================= COLUNA PRINCIPAL ================= #}
       <div class="col-xl-8">
@@ -158,25 +207,25 @@
           <div class="dp-item dp-item-{{ item.status_producao | lower | replace(' ', '-') }}">
             <div class="dp-item-topo">
               <div class="dp-item-nome">
-                <div class="dp-item-titulo">{{ item.descricao_produto }}</div>
+                <div class="dp-item-titulo">{{ loop.index }}. {{ item.descricao_produto }}</div>
                 <div class="dp-item-meta">
                   <span>🏭 {{ item.estacao or "sem estação" }}</span>
                   <span>🔢 {{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s)</span>
-                  <span>💰 {{ brl(it.valor) }}</span>
+                  <span>💰 <b>{{ brl(it.valor) }}</b></span>
                 </div>
               </div>
               <div class="dp-item-badges">
                 <span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span>
                 {% if item.status_producao != 'FINALIZADO' %}
                 <span class="badge bg-{{ SEMAFORO_CORES.get(it.sem_cor, 'secondary') }}-subtle text-{{ SEMAFORO_CORES.get(it.sem_cor, 'secondary') }}-emphasis border border-{{ SEMAFORO_CORES.get(it.sem_cor, 'secondary') }}-subtle" title="{{ SEMAFORO_LABELS.get(it.sem_cor, '') }}">
-                  {% if it.sem_dias is none %}sem prazo{% elif it.sem_dias < 0 %}{{ -it.sem_dias }}d atrasado{% elif it.sem_dias == 0 %}vence hoje{% else %}{{ it.sem_dias }}d p/ liberar{% endif %}
+                  {% if it.sem_dias is none %}⏱️ sem prazo{% elif it.sem_dias < 0 %}🔴 {{ -it.sem_dias }}d atrasado{% elif it.sem_dias == 0 %}🟠 vence hoje{% else %}🟢 {{ it.sem_dias }}d p/ liberar{% endif %}
                 </span>
                 {% endif %}
               </div>
             </div>
 
             <div class="dp-item-trilha">
-              {% for rot, d in [('Início produção', item.inicio_producao), ('Início inspeção', item.inicio_inspecao), ('Término inspeção', item.termino_inspecao), ('Lib. faturamento', item.liberacao_faturamento)] %}
+              {% for rot, d in [('🏁 Início produção', item.inicio_producao), ('🔍 Início inspeção', item.inicio_inspecao), ('🔎 Término inspeção', item.termino_inspecao), ('🧾 Lib. faturamento', item.liberacao_faturamento)] %}
               <div class="dp-trilha-p {{ 'ok' if d else '' }}">
                 <span class="dp-trilha-bol"></span>
                 <span class="dp-trilha-rot">{{ rot }}</span>
@@ -185,33 +234,28 @@
               {% endfor %}
             </div>
 
-            <div class="dp-item-grid">
-              <div class="dp-mini">
-                <div class="dp-mini-tit">🗓️ PCP</div>
-                {{ campo("Semana", item.planejamento_semanal) }}
-                {{ campo("Liberação prevista", dt(item.liberacao_prevista)) }}
-                {{ campo("Liberação real", dt(item.liberacao_real)) }}
-              </div>
-              <div class="dp-mini">
-                <div class="dp-mini-tit">⏱️ Tempos</div>
-                {{ campo("Fila de espera", (item.tempo_espera_dias ~ " dias") if item.tempo_espera_dias is not none else none) }}
-                {{ campo("Chão de fábrica", (item.lt_producao_dias ~ " dias") if item.lt_producao_dias is not none else none) }}
-                {{ campo("LT padrão cadastrado", (it.lt_padrao ~ " dias") if it.lt_padrao is not none else none) }}
-              </div>
-              <div class="dp-mini">
-                <div class="dp-mini-tit">🧾 Faturamento</div>
-                {{ campo("Nota fiscal", item.numero_nota_fiscal) }}
-                {{ campo("Valor faturado", brl(item.valor_faturado) if item.valor_faturado is not none else none) }}
-                {{ campo("Transportadora", item.transportadora.nome if item.transportadora else none) }}
-              </div>
-              {% if ve_pd_qualidade_custos %}
-              <div class="dp-mini">
-                <div class="dp-mini-tit">🧪 Qualidade</div>
-                {{ campo("RNC", item.rnc) }}
-                <div class="dp-campo"><span class="dp-rot">Inspeção RDIM</span><span class="dp-val">{% set rd = rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) %}{% if rd | trim %}{{ rd }}{% else %}<span class="dp-vazio">sem desvio / sem inspeção</span>{% endif %}</span></div>
-              </div>
-              {% endif %}
+            <div class="pg-item-chips">
+              {% if item.planejamento_semanal %}<span class="pg-ichip">🗓️ {{ item.planejamento_semanal }}</span>{% else %}<span class="pg-ichip pg-ichip-vazio">🗓️ sem semana PCP</span>{% endif %}
+              <span class="pg-ichip {{ '' if item.liberacao_prevista else 'pg-ichip-vazio' }}">⏳ Lib. prevista: {{ dt(item.liberacao_prevista) }}</span>
+              <span class="pg-ichip {{ 'pg-ichip-ok' if item.liberacao_real else 'pg-ichip-vazio' }}">✅ Lib. real: {{ dt(item.liberacao_real) }}</span>
+              {% if item.numero_nota_fiscal %}<span class="pg-ichip">🧾 NF {{ item.numero_nota_fiscal }}</span>{% endif %}
+              {% if item.valor_faturado is not none %}<span class="pg-ichip pg-ichip-ok">💵 Faturado {{ brl(item.valor_faturado) }}</span>{% endif %}
+              {% if item.transportadora %}<span class="pg-ichip">🚛 {{ item.transportadora.nome }}</span>{% endif %}
+              {% if item.data_envio %}<span class="pg-ichip">📤 Enviado {{ dt(item.data_envio) }}</span>{% endif %}
             </div>
+
+            <details class="pg-item-det">
+              <summary>⏱️ Tempos{% if ve_pd_qualidade_custos %} e qualidade{% endif %}</summary>
+              {{ bloco([
+                ("⌛ Fila de espera", (item.tempo_espera_dias ~ " dias") if item.tempo_espera_dias is not none else none),
+                ("🏭 Chão de fábrica", (item.lt_producao_dias ~ " dias") if item.lt_producao_dias is not none else none),
+                ("📏 LT padrão cadastrado", (it.lt_padrao ~ " dias") if it.lt_padrao is not none else none),
+                ("🚨 RNC", (item.rnc if ve_pd_qualidade_custos else none)),
+              ]) }}
+              {% if ve_pd_qualidade_custos %}
+              <div class="dp-campo"><span class="dp-rot">🧪 Inspeção RDIM</span><span class="dp-val">{% set rd = rdim_status_item(item, inspecoes_rdim, RDIM_RESULTADO_CORES, RDIM_RESULTADO_LABELS) %}{% if rd | trim %}{{ rd }}{% else %}<span class="dp-vazio">sem desvio / sem inspeção</span>{% endif %}</span></div>
+              {% endif %}
+            </details>
           </div>
           {% else %}
           <div class="text-center text-muted py-3">Nenhum item.</div>
@@ -275,96 +319,40 @@
         {# ---- COMERCIAL ---- #}
         <div class="dp-card">
           <div class="dp-card-tit">🤝 Comercial</div>
-          <div class="dp-campos">
-            {{ campo("Cliente", pedido.cliente, True, True) }}
-            {{ campo("CNPJ", pedido.cnpj) }}
-            {{ campo("Vendedor", pedido.vendedor) }}
-            {{ campo("Pedido de venda", pedido.pedido_venda, True) }}
-            {{ campo("Tipo de pedido", GO.go_tipo_pedido if GO else none) }}
-            {{ campo("Contrato", GO.go_contrato if GO else none) }}
-            {{ campo("Pedido de compra do cliente", GO.go_pedido_compra_cliente if GO else none) }}
-            {{ campo("Proposta", GO.go_proposta if GO else none) }}
-            {{ campo("Data de inclusão", dt(pedido.data_inclusao_pedido)) }}
-            {{ campo("Data solicitada pelo cliente", dt(pedido.data_cliente)) }}
-            {% if GO and GO.go_data_solicitada_cliente_final %}{{ campo("Data renegociada (final)", dt(GO.go_data_solicitada_cliente_final)) }}{% endif %}
-            {% if GO and GO.go_status_pedido_info %}{{ campo("Status do pedido (info)", GO.go_status_pedido_info) }}{% endif %}
-            <div class="dp-campo dp-campo-cheio">
-              <span class="dp-rot">Observações</span>
-              <span class="dp-val dp-obs">{% if pedido.obs %}{{ pedido.obs }}{% else %}<span class="dp-vazio">—</span>{% endif %}</span>
-            </div>
-            {% if GO and GO.go_obs_operacao %}
-            <div class="dp-campo dp-campo-cheio"><span class="dp-rot">Observações da operação</span><span class="dp-val dp-obs">{{ GO.go_obs_operacao }}</span></div>
-            {% endif %}
-          </div>
-        </div>
-
-        {# ---- ENTREGA E LOGÍSTICA ---- #}
-        <div class="dp-card">
-          <div class="dp-card-tit">🚚 Entrega &amp; logística</div>
-          <div class="dp-campos">
-            {{ campo("Modalidade de frete", pedido.frete, True) }}
-            {{ campo("País", pedido.pais) }}
-            {{ campo("Cidade", pedido.cidade) }}
-            {{ campo("Estado / Região", ((uf_txt or "—") ~ (" · " ~ v.regiao if v.regiao else ""))) }}
-            {% if LG %}
-              {{ campo("Transportadora", LG.transportadora) }}
-              {{ campo("Status da logística", GO.go_status_logistica) }}
-              {{ campo("Expedido em", dt(GO.go_data_pedido_expedido)) }}
-              {{ campo("Previsão de entrega", dt(GO.go_data_prevista_entrega)) }}
-              {{ campo("Chegada ao destino", dt(GO.go_data_real_entrega)) }}
-              {{ campo("Entregue ao cliente", dt(GO.go_data_entregue_cliente), True) }}
-              {{ campo("LT de frete (real)", (GO.go_lead_time_frete_dias ~ " dias") if GO.go_lead_time_frete_dias is not none else none) }}
-              {{ campo("LT total da operação", (GO.go_lead_time_operacao_dias ~ " dias") if GO.go_lead_time_operacao_dias is not none else none) }}
-              {{ campo("Transporte parametrizado", (LG.transporte_param ~ " dias (rodoviário)") if LG.transporte_param is not none else ("n/a (não é CIF)" if pedido.frete != 'CIF' else "sem LT p/ a UF")) }}
-              {{ campo("Prazo comprometido (OTD)", dt(LG.comprometida)) }}
-              <div class="dp-campo"><span class="dp-rot">Resultado OTD</span><span class="dp-val">
-                {% if LG.otd.status == 'SIM' %}<span class="badge bg-success">No prazo</span>
-                {% elif LG.otd.status == 'NAO' %}<span class="badge bg-danger">{{ LG.otd.dias }}d de atraso</span>
-                {% else %}<span class="badge bg-secondary">Pendente</span>{% endif %}
-              </span></div>
-              {% if GO.go_status_final_alinhamento %}{{ campo("Alinhamento final", GO.go_status_final_alinhamento) }}{% endif %}
-            {% else %}
-            <div class="dp-campo dp-campo-cheio"><span class="dp-vazio">Sem registro na Gestão Operação — expedição, NF e entrega ainda não são acompanhadas aqui.</span></div>
-            {% endif %}
-          </div>
+          {{ bloco([
+            ("🏢 Cliente", pedido.cliente, True, True),
+            ("🪪 CNPJ", pedido.cnpj),
+            ("👤 Vendedor", pedido.vendedor),
+            ("🔖 Pedido de venda", pedido.pedido_venda, True),
+            ("🏷️ Tipo de pedido", GO.go_tipo_pedido if GO else none),
+            ("📑 Contrato", GO.go_contrato if GO else none),
+            ("🛒 Pedido de compra do cliente", GO.go_pedido_compra_cliente if GO else none),
+            ("📝 Proposta", GO.go_proposta if GO else none),
+            ("📥 Data de inclusão", dt(pedido.data_inclusao_pedido)),
+            ("🎯 Data solicitada pelo cliente", dt(pedido.data_cliente)),
+            ("🔄 Data renegociada (final)", dt(GO.go_data_solicitada_cliente_final) if GO else none),
+            ("ℹ️ Status do pedido (info)", GO.go_status_pedido_info if GO else none),
+            ("💬 Observações", pedido.obs, False, True),
+            ("🗒️ Observações da operação", GO.go_obs_operacao if GO else none, False, True),
+          ]) }}
         </div>
 
         {# ---- PCP E PRAZOS ---- #}
         <div class="dp-card">
           <div class="dp-card-tit">🗓️ PCP &amp; prazos</div>
-          <div class="dp-campos">
-            {{ campo("Semana(s) de planejamento", (v.pcp.semanas | join(" · ")) if v.pcp.semanas else none, True, True) }}
-            {{ campo("Próxima liberação prevista", dt(v.pcp.proxima)) }}
-            {{ campo("Última liberação prevista", dt(v.pcp.ultima)) }}
-            {% if GO %}
-              {{ campo("Previsão de liberação (Operação)", dt(GO.go_previsao_liberacao_pcp)) }}
-              {{ campo("Liberação efetiva (PCP)", dt(GO.go_data_efetiva_liberacao_pcp)) }}
-              {{ campo("Término semanal PCP", GO.go_termino_semanal_pcp) }}
-            {% endif %}
-            {{ campo("Fila de espera (média)", (v.lts.fila ~ " dias") if v.lts.fila is not none else none) }}
-            {{ campo("Chão de fábrica (média)", (v.lts.chao ~ " dias") if v.lts.chao is not none else none) }}
-            {{ campo("Prazo total", (pedido.prazo_total_dias ~ " dias") if pedido.prazo_total_dias is not none else none) }}
-          </div>
+          {{ bloco([
+            ("📆 Semana(s) de planejamento", (v.pcp.semanas | join(" · ")) if v.pcp.semanas else none, True, True),
+            ("⏭️ Próxima liberação prevista", dt(v.pcp.proxima)),
+            ("🏁 Última liberação prevista", dt(v.pcp.ultima)),
+            ("🔮 Previsão de liberação (Operação)", dt(GO.go_previsao_liberacao_pcp) if GO else none),
+            ("✅ Liberação efetiva (PCP)", dt(GO.go_data_efetiva_liberacao_pcp) if GO else none),
+            ("📌 Término semanal PCP", GO.go_termino_semanal_pcp if GO else none),
+            ("⌛ Fila de espera (média)", (v.lts.fila ~ " dias") if v.lts.fila is not none else none),
+            ("🏭 Chão de fábrica (média)", (v.lts.chao ~ " dias") if v.lts.chao is not none else none),
+            ("📏 Prazo total", (pedido.prazo_total_dias ~ " dias") if pedido.prazo_total_dias is not none else none),
+            ("🤝 Prazo comercial", (v.lts.comercial ~ " dias da inclusão") if v.lts.comercial is not none else none),
+          ]) }}
           <div class="dp-simulado">{% include "_simulado_a.html" %}</div>
-        </div>
-
-        {# ---- FINANCEIRO ---- #}
-        <div class="dp-card">
-          <div class="dp-card-tit">💰 Financeiro</div>
-          <div class="dp-campos">
-            {{ campo("Valor total dos itens", brl(v.fin.valor_total), True, True) }}
-            {{ campo("Ticket médio por item", brl(v.fin.ticket)) }}
-            {{ campo("Valor faturado (itens)", brl(v.fin.faturado) if v.fin.faturado is not none else none) }}
-            {{ campo("Valor do pedido (Operação)", brl(v.fin.valor_operacao) if v.fin.valor_operacao is not none else none) }}
-            {{ campo("Valor da NF emitida", brl(v.fin.valor_nf) if v.fin.valor_nf is not none else none) }}
-            {% if GO and GO.go_numero_nf %}{{ campo("Número da NF", GO.go_numero_nf ~ (" · " ~ dt(GO.go_data_emissao_nf) if GO.go_data_emissao_nf else "")) }}{% endif %}
-            {% if ve_pd_qualidade_custos and GO %}
-              {{ campo("Custo de produção real", brl(v.fin.custo_producao) if v.fin.custo_producao is not none else none) }}
-              {{ campo("Frete previsto", brl(v.fin.frete_previsto) if v.fin.frete_previsto is not none else none) }}
-              {{ campo("Frete final", brl(v.fin.frete_final) if v.fin.frete_final is not none else none) }}
-              {{ campo("Custo total (prod. + frete)", brl(v.fin.custo_total) if v.fin.custo_total is not none else none, True) }}
-            {% endif %}
-          </div>
         </div>
 
         {# ---- QUALIDADE ---- #}
@@ -384,6 +372,7 @@
           {% endif %}
         </div>
         {% endif %}
+
       </div>
     </div>
 

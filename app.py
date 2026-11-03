@@ -7217,7 +7217,61 @@ def _visao_pedido_detalhe(pedido, simulado_a=None, resumo_rdim=None, historico=N
             "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
         }
 
+    # ---- datas-chave (faixa "Datas do pedido" — pedido do Bruno, 03/11/2026) ----
+    def _rel(d):
+        if d is None:
+            return None
+        dd = (d - hoje).days
+        if dd == 0:
+            return "hoje"
+        return f"em {dd} dia(s)" if dd > 0 else f"há {-dd} dia(s)"
+
+    def _marco(emoji, titulo, d, realizado, sub=None, tom_extra=None):
+        """realizado=True: fato já ocorrido (verde). False: data prevista —
+        vira 'vencido' (vermelho) se já passou e ainda não aconteceu."""
+        if d is None:
+            estado = "vazio"
+        elif realizado:
+            estado = "feito"
+        else:
+            estado = "vencido" if d < hoje else ("hoje" if d == hoje else "previsto")
+        if tom_extra and d is not None:
+            estado = tom_extra
+        return {"emoji": emoji, "titulo": titulo, "data": d, "estado": estado,
+                "rel": _rel(d) if d else None, "sub": sub,
+                "dia_semana": _DIAS_SEMANA_ABREV_PT[d.weekday()] if d else None}
+
+    n_lib = sum(1 for i in itens if i.liberacao_real)
+    lib_real = max((i.liberacao_real for i in itens if i.liberacao_real), default=None)
+    todos_liberados = bool(n) and n_lib == n
+    prev_ref = pcp["proxima"] or pcp["ultima"]
+    entregue = go.go_data_entregue_cliente if go else None
+    marcos = [
+        _marco("📥", "Pedido incluído", pedido.data_inclusao_pedido, True),
+        _marco("🎯", "Prazo do cliente", pedido.data_cliente, bool(entregue) or pedido.status_producao == "FINALIZADO", sub=prazo["texto"]),
+        _marco("🗓️", "Liberação prevista (PCP)", prev_ref, todos_liberados,
+               sub=(pcp["semanas"][0] if pcp["semanas"] else "sem semana planejada")),
+        _marco("✅", "Liberação real (PCP)", lib_real if todos_liberados else None, True,
+               sub=(f"{n_lib}/{n} itens liberados" if n else None)),
+        _marco("🧾", "Nota fiscal emitida", go.go_data_emissao_nf if go else None, True,
+               sub=(f"NF {go.go_numero_nf}" if go and go.go_numero_nf else None)),
+        _marco("🚚", "Expedido", go.go_data_pedido_expedido if go else None, True,
+               sub=(logi["transportadora"] if logi and logi.get("transportadora") else None)),
+        _marco("📍", "Previsão de entrega", go.go_data_prevista_entrega if go else None, bool(entregue)),
+        _marco("🎉", "Entregue ao cliente", entregue, True,
+               sub=({"SIM": "no prazo", "NAO": "fora do prazo"}.get(logi["otd"]["status"]) if logi else None)),
+    ]
+    # prazo do cliente: amarelo quando vence em <= 7 dias
+    if marcos[1]["estado"] == "previsto" and prazo["tom"] == "warn":
+        marcos[1]["estado"] = "atencao"
+    fat_pct = None
+    if fin["faturado"] is not None and pedido.valor_total:
+        fat_pct = min(100, round(100 * fin["faturado"] / pedido.valor_total))
+    fin["pct_faturado"] = fat_pct
+    fin["dif_operacao"] = (round(fin["valor_operacao"] - pedido.valor_total, 2) if fin["valor_operacao"] is not None else None)
+
     return {
+        "datas_chave": marcos,
         "go": go, "logi": logi, "linha_atraso": linha_atraso,
         "uf": uf or None, "regiao": REGIAO_POR_UF.get(uf),
         "cont": cont, "n_itens": n, "pct_final": round(100 * cont.get("FINALIZADO", 0) / n) if n else 0,
@@ -22763,6 +22817,7 @@ def register_routes(app):
 
         return render_template(
             "editar_pedido.html", pedido=pedido, transportadoras=transportadoras, simulado_a=simulado_a,
+            v=_visao_pedido_detalhe(pedido, simulado_a),
             valor_comercial=po_valor.go_valor_pedido_operacao if po_valor is not None else None,
             tem_pedido_operacao=po_valor is not None,
         )
