@@ -1,9 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Faturamento Projetado · Gestão da Produção e Operação{% endblock %}
+{% block title %}Faturamento e Projeção · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h4 class="mb-0"><i class="bi bi-cash-coin"></i> Faturamento Projetado — {{ mes_label }}</h4>
+  <div>
+    <h4 class="mb-0">💵 Faturamento e Projeção — {{ mes_label }}</h4>
+    <div class="cc-sub">Previsto × realizado, projeção dos próximos 6 meses, o que já deveria ter sido faturado e onde está o dinheiro parado.</div>
+  </div>
   <div class="d-flex align-items-center gap-2">
     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('faturamento', ano=mes_anterior.ano, mes=mes_anterior.mes, **filtros) }}">
       <i class="bi bi-chevron-left"></i> Mês anterior
@@ -40,6 +43,7 @@
 </form>
 
 <div class="d-flex justify-content-end gap-2 mb-4">
+  <a href="{{ url_for('faturamento_relatorio_pdf', ano=ano, mes=mes, **filtros) }}" class="btn btn-danger btn-sm">📄 Relatório PDF</a>
   <a href="{{ url_for('relatorio_faturamento_csv', ano=ano, mes=mes, **filtros) }}" class="btn btn-outline-secondary btn-sm">
     <i class="bi bi-filetype-csv"></i> Exportar CSV
   </a>
@@ -67,6 +71,91 @@
       <div class="text-muted small">Itens faturados no mês</div>
       <div class="fs-4 fw-semibold">{{ itens_realizados }}</div>
     </div></div>
+  </div>
+</div>
+
+<!-- ===== Projeção e faturamento atrasado (Centro de Comando, 03/11/2026) ===== -->
+{% set pct_real = ((realizado_total / previsto_total * 100) | round | int) if previsto_total else none %}
+<div class="cc-tiles" style="grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));">
+  <div class="cc-tile cc-{{ 'verde' if pct_real is not none and pct_real >= 80 else ('amarelo' if pct_real else 'cinza') }}">
+    <div class="cc-tile-tit">🎯 Realizado do previsto</div>
+    <div class="cc-tile-val">{{ (pct_real ~ '%') if pct_real is not none else '—' }}</div>
+    <div class="cc-tile-sub">{{ realizado_total | moeda_brl }} de {{ previsto_total | moeda_brl }}</div>
+  </div>
+  <div class="cc-tile cc-{{ 'amarelo' if fp.fat_pend_total else 'verde' }}">
+    <div class="cc-tile-tit">⏳ Previsto e não faturado</div>
+    <div class="cc-tile-val">{{ fp.fat_pend_total | moeda_brl }}</div>
+    <div class="cc-tile-sub">{{ fp.fat_pend_itens }} itens com liberação prevista já vencida</div>
+  </div>
+  <div class="cc-tile cc-azul">
+    <div class="cc-tile-tit">📦 Carteira em aberto</div>
+    <div class="cc-tile-val">{{ fp.carteira_total | moeda_brl }}</div>
+    <div class="cc-tile-sub">valor parado nas estações (itens não finalizados)</div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-xl-7">
+    <div class="cc-painel">
+      <h6><span>📈 {{ ano }} mês a mês — projetado pelo PCP × faturado (R$ mil)</span></h6>
+      <canvas id="graficoAno" height="150"></canvas>
+    </div>
+  </div>
+  <div class="col-xl-5">
+    <div class="cc-painel">
+      <h6><span>🔮 Projeção dos próximos 6 meses</span><a href="{{ url_for('painel') }}#sec-projecao">ver no Painel →</a></h6>
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light"><tr><th>Mês</th><th class="text-center">Pedidos em aberto</th><th class="text-end">Valor em aberto</th><th class="text-end">Planejado no mês</th></tr></thead>
+        <tbody>
+          {% for f in fp.futuros %}
+          <tr><td class="fw-semibold">{{ f.label }}</td><td class="text-center">{{ f.pedidos_aberto }}</td><td class="text-end">{{ f.valor_aberto | moeda_brl }}</td><td class="text-end text-muted">{{ f.valor_total | moeda_brl }}</td></tr>
+          {% else %}
+          <tr><td colspan="4" class="text-center text-muted py-3">Sem planejamento do PCP para os próximos meses.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-xl-7">
+    <div class="cc-painel">
+      <h6><span>⏳ Previsto e ainda não faturado</span><a href="{{ url_for('alertas') }}#faturamento">ver todos →</a></h6>
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light"><tr><th>Pedido</th><th>Cliente</th><th class="text-center">Itens</th><th class="text-center">Dias de atraso</th><th class="text-end">Valor</th></tr></thead>
+        <tbody>
+          {% for r in fp.fat_pend[:6] %}
+          <tr>
+            <td>{% if r.pedido_id %}<a class="fw-semibold" href="{{ url_for('detalhe_pedido', pedido_id=r.pedido_id) }}">{{ r.pedido }}</a>{% else %}{{ r.pedido }}{% endif %}</td>
+            <td>{{ r.cliente }}</td><td class="text-center">{{ r.itens }}</td>
+            <td class="text-center"><span class="badge bg-warning text-dark">{{ r.dias }}d</span></td>
+            <td class="text-end fw-semibold">{{ r.valor | moeda_brl }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-3">Nada atrasado para faturar. ✅</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="col-xl-5">
+    <div class="cc-painel">
+      <h6><span>🏭 Onde está o dinheiro parado (por estação)</span></h6>
+      {% for r in fp.carteira_estacao[:8] %}
+      {% set maximo = fp.carteira_estacao[0].valor %}
+      <div class="cc-garg" style="grid-template-columns: minmax(0, 1fr) auto;">
+        <div>
+          <div class="cc-garg-nome">{{ r.estacao }}</div>
+          <div class="cc-barra cc-azul"><span style="width: {{ (r.valor / maximo * 100) | round | int }}%"></span></div>
+          <div class="cc-garg-meta">{{ r.fila }} itens abertos</div>
+        </div>
+        <div class="fw-semibold small">{{ r.valor | moeda_brl }}</div>
+      </div>
+      {% else %}
+      <div class="text-muted small py-3 text-center">Sem itens abertos com custo.</div>
+      {% endfor %}
+    </div>
   </div>
 </div>
 
@@ -162,6 +251,18 @@
 (function () {
   Chart.defaults.color = "#495057";
   Chart.defaults.font.size = 12;
+
+  const mesesAno = {{ fp.meses_ano | tojson }};
+  const elAno = document.getElementById("graficoAno");
+  if (elAno) {
+    new Chart(elAno, {
+      type: "bar",
+      data: { labels: mesesAno.map(function (m) { return m.label; }), datasets: [
+        { label: "Projetado pelo PCP", data: mesesAno.map(function (m) { return Math.round(m.projetado / 1000); }), backgroundColor: "#6ea8fe" },
+        { label: "Faturado", data: mesesAno.map(function (m) { return Math.round(m.realizado / 1000); }), backgroundColor: "#198754" } ] },
+      options: { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true } } },
+    });
+  }
 
   const previstoPorRegiao = {{ previsto_por_regiao | tojson }};
   const previstoPorEstacao = {{ previsto_por_estacao | tojson }};

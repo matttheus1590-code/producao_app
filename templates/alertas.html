@@ -1,157 +1,167 @@
 {% extends "base.html" %}
-{% block title %}Alertas · Gestão da Produção e Operação{% endblock %}
+{% block title %}Alertas e Gargalos · Gestão da Produção e Operação{% endblock %}
 {% block content %}
+{% set at = a.atrasados %}
+{% set ra = at.resumo %}
+{% set n_garg_crit = a.gargalos | selectattr('cor', 'equalto', 'vermelho') | list | length %}
 
-<h4 class="mb-3"><i class="bi bi-bell"></i> Alertas</h4>
-<p class="text-muted small mb-4">Painel consolidado com tudo que precisa de atenção agora: pedidos atrasados, vencendo, gargalos de fila e faturamento previsto que ainda não aconteceu.</p>
-
-<div class="row g-3 mb-4">
-  <div class="col-md-3">
-    <div class="card text-center h-100 border-danger"><div class="card-body">
-      <div class="text-muted small">Pedidos atrasados</div>
-      <div class="fs-3 fw-semibold text-danger">{{ pedidos_atrasados | length }}</div>
-    </div></div>
+<div class="cc-topo">
+  <div>
+    <h4 class="mb-0">🚨 Alertas e Gargalos</h4>
+    <div class="cc-sub">Tudo que exige ação agora, do mais urgente para o menos: atrasados, vencendo, estações críticas, faturamento atrasado e P&amp;D.</div>
   </div>
-  <div class="col-md-3">
-    <div class="card text-center h-100 border-warning"><div class="card-body">
-      <div class="text-muted small">Pedidos vencendo</div>
-      <div class="fs-3 fw-semibold text-warning">{{ pedidos_vencendo | length }}</div>
-    </div></div>
-  </div>
-  <div class="col-md-3">
-    <div class="card text-center h-100"><div class="card-body">
-      <div class="text-muted small">Estações com gargalo</div>
-      <div class="fs-3 fw-semibold">{{ gargalos_criticos | length }}</div>
-    </div></div>
-  </div>
-  <div class="col-md-3">
-    <div class="card text-center h-100"><div class="card-body">
-      <div class="text-muted small">Faturamento previsto não realizado</div>
-      <div class="fs-3 fw-semibold">{{ faturamento_pendente | length }}</div>
-    </div></div>
+  <div class="cc-acoes">
+    <a class="btn btn-sm btn-danger" href="{{ url_for('alertas_relatorio_pdf') }}">📄 Relatório PDF</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('relatorio_gargalos_xlsx') }}">📊 Excel dos gargalos</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('comando') }}">🎯 Centro de Comando</a>
   </div>
 </div>
 
-<div class="card mb-4">
-  <div class="card-body">
-    <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-exclamation-octagon text-danger"></i> Pedidos atrasados</h6>
-    <div class="table-responsive">
-      <table class="table table-sm table-hover align-middle mb-0">
-        <thead class="table-light">
-          <tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Estação</th><th>Prazo</th><th></th></tr>
-        </thead>
-        <tbody>
-          {% for p in pedidos_atrasados %}
-          {% set cor, dias = p.semaforo %}
-          <tr>
-            <td>{{ p.pedido_venda or "—" }}</td>
-            <td>{{ p.cliente }}</td>
-            <td class="text-truncate" style="max-width: 220px;">{{ p.descricao_resumo }}</td>
-            <td>{{ p.estacao_resumo }}</td>
-            <td><span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">{% if dias is none %}—{% else %}{{ -dias }}d atrasado{% endif %}</span></td>
-            <td class="text-end">
-              <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
-            </td>
-          </tr>
-          {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-3">Nenhum pedido atrasado. 🎉</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
+<div class="cc-fichas" id="fichas">
+  <button type="button" class="cc-ficha cc-azul ativa" data-alvo="todos">📋 Tudo</button>
+  <button type="button" class="cc-ficha {{ 'cc-vermelho' if ra.total else 'cc-verde' }}" data-alvo="atrasados">🔴 Atrasados <b>{{ ra.total }}</b></button>
+  <button type="button" class="cc-ficha {{ 'cc-amarelo' if a.vencendo else 'cc-verde' }}" data-alvo="vencendo">🟡 Vencendo <b>{{ a.vencendo | length }}</b></button>
+  <button type="button" class="cc-ficha {{ 'cc-vermelho' if n_garg_crit else 'cc-verde' }}" data-alvo="gargalos">🏭 Estações críticas <b>{{ n_garg_crit }}</b></button>
+  <button type="button" class="cc-ficha {{ 'cc-amarelo' if a.fat_pend_total else 'cc-verde' }}" data-alvo="faturamento">💵 Faturamento atrasado <b>{{ a.fat_pend_total | moeda_brl }}</b></button>
+  {% if ve_pd_qualidade_custos %}
+  {% set n_pd = (pd_alertas.atrasados | length) + (pd_alertas.testes_atrasados | length) + (pd_alertas.parados | length) %}
+  <button type="button" class="cc-ficha {{ 'cc-amarelo' if n_pd else 'cc-verde' }}" data-alvo="pd">🧪 P&amp;D <b>{{ n_pd }}</b></button>
+  {% endif %}
 </div>
 
-<div class="card mb-4">
-  <div class="card-body">
-    <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-exclamation-triangle text-warning"></i> Pedidos vencendo (próximos {{ PRAZO_ALERTA_DIAS }} dias)</h6>
-    <div class="table-responsive">
-      <table class="table table-sm table-hover align-middle mb-0">
-        <thead class="table-light">
-          <tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Estação</th><th>Prazo</th><th></th></tr>
-        </thead>
-        <tbody>
-          {% for p in pedidos_vencendo %}
-          {% set cor, dias = p.semaforo %}
-          <tr>
-            <td>{{ p.pedido_venda or "—" }}</td>
-            <td>{{ p.cliente }}</td>
-            <td class="text-truncate" style="max-width: 220px;">{{ p.descricao_resumo }}</td>
-            <td>{{ p.estacao_resumo }}</td>
-            <td><span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">{% if dias is none %}—{% else %}{{ dias }}d{% endif %}</span></td>
-            <td class="text-end">
-              <a href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
-            </td>
-          </tr>
-          {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-3">Nenhum pedido vencendo nos próximos dias.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+<section class="cc-secao" id="atrasados" data-secao="atrasados">
+  <h5>🔴 Pedidos atrasados — causa, datas e ação recomendada</h5>
+  {% if ra.total %}
+  <div class="cc-motivos">
+    <span class="cc-chip cc-vermelho">{{ ra.valor_em_risco | moeda_brl }} em risco</span>
+    <span class="cc-chip cc-vermelho">atraso médio {{ ra.atraso_medio }}d · máximo {{ ra.atraso_max }}d</span>
+    {% for m in ra.por_motivo %}<span class="cc-chip cc-cinza">{{ m.emoji }} {{ m.titulo }}: {{ m.n }}</span>{% endfor %}
+    {% for f, n in ra.por_frete %}<span class="cc-chip cc-azul">🚚 {{ f }}: {{ n }}</span>{% endfor %}
+    {% for r, n in ra.por_regiao %}<span class="cc-chip cc-azul">📍 {{ r }}: {{ n }}</span>{% endfor %}
   </div>
-</div>
+  {% endif %}
+  <div class="card"><div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr><th>Pedido</th><th>Cliente</th><th>Estação</th><th>Prazo cliente</th><th>Prev. PCP</th><th class="text-center">Atraso</th><th class="text-end">Valor</th><th>Frete/UF</th><th>Causa</th><th>Ação recomendada</th></tr>
+      </thead>
+      <tbody>
+        {% for p in at.pedidos | sort(attribute='valor', reverse=True) | sort(attribute='dias_atraso', reverse=True) %}
+        <tr>
+          <td><a class="fw-semibold" href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}">{{ p.pedido_venda }}</a></td>
+          <td style="min-width: 9rem">{{ p.cliente }}</td>
+          <td class="small">{{ p.estacoes or '—' }}</td>
+          <td class="small">{{ p.prazo_cliente.strftime('%d/%m/%Y') if p.prazo_cliente else '—' }}</td>
+          <td class="small">{{ p.prevista_pcp.strftime('%d/%m/%Y') if p.prevista_pcp else '—' }}</td>
+          <td class="text-center"><span class="badge bg-danger">{{ p.dias_atraso }}d</span></td>
+          <td class="text-end text-nowrap">{{ p.valor | moeda_brl }}</td>
+          <td class="small">{{ p.frete or '—' }}/{{ p.uf or '—' }}</td>
+          <td class="small" title="{{ p.motivo_detalhe }}">{{ p.motivo_emoji }} {{ p.motivo_titulo }}</td>
+          <td class="small" style="min-width: 16rem">
+            <span class="badge bg-{{ 'danger' if p.cenario.status in ('renegociar', 'critico') else 'warning text-dark' }}">{{ p.cenario.rotulo }}</span>
+            <div class="text-muted">{{ p.acao }}</div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="10" class="text-center text-muted py-4">Nenhum pedido atrasado. 🎉</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div></div>
+  <div class="cc-sub mt-1">Para o cenário de entrega projetada e pedir revisão de prazo ao comercial, abra o <a href="{{ url_for('painel') }}#sec-risco">Painel › Mini gestão de risco</a>.</div>
+</section>
 
-<div class="row g-3">
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-signpost-split"></i> Gargalos de fila</h6>
-        <table class="table table-sm mb-0">
+<section class="cc-secao" id="vencendo" data-secao="vencendo">
+  <h5>🟡 Vencendo nos próximos {{ PRAZO_ALERTA_DIAS }} dias</h5>
+  <div class="card"><div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light"><tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Estação</th><th>Prazo do cliente</th><th class="text-center">Dias</th></tr></thead>
+      <tbody>
+        {% for p in a.vencendo %}
+        {% set cor, dias = p.semaforo %}
+        <tr>
+          <td><a class="fw-semibold" href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}">{{ p.pedido_venda or '—' }}</a></td>
+          <td>{{ p.cliente }}</td>
+          <td class="text-truncate" style="max-width: 240px;">{{ p.descricao_resumo }}</td>
+          <td>{{ p.estacao_resumo }}</td>
+          <td>{{ p.data_cliente.strftime('%d/%m/%Y') if p.data_cliente else '—' }}</td>
+          <td class="text-center"><span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}">{% if dias is none %}—{% else %}{{ dias }}d{% endif %}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-3">Nenhum pedido vencendo nos próximos dias. ✅</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div></div>
+</section>
+
+<section class="cc-secao" id="gargalos" data-secao="gargalos">
+  <h5>🏭 Gargalos por estação — fila, atraso, espera, lead time e capacidade</h5>
+  <div class="row g-3">
+    <div class="col-xl-8">
+      <div class="card"><div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
           <thead class="table-light">
-            <tr><th>Estação</th><th class="text-center">Fila</th><th class="text-center">Atrasados</th></tr>
+            <tr><th>Estação</th><th class="text-center">Abertos</th><th class="text-center">Atrasados</th><th class="text-center" title="Cliente com prazo vencido + itens que estouram o prazo">Em risco</th>
+                <th style="min-width:7rem">Risco</th><th class="text-center">Espera</th><th class="text-center">Lead time</th><th class="text-end">Valor parado</th><th class="text-center" title="Semanas de fila no ritmo atual">Cobertura</th></tr>
           </thead>
           <tbody>
-            {% for g in gargalos_criticos %}
-            <tr>
-              <td>{{ g.estacao }}</td>
-              <td class="text-center"><span class="badge bg-{{ 'danger' if g.fila > 10 else 'warning' }}">{{ g.fila }}</span></td>
-              <td class="text-center">{% if g.atraso > 0 %}<span class="badge bg-danger">{{ g.atraso }}</span>{% else %}—{% endif %}</td>
+            {% for g in a.gargalos %}
+            <tr class="cc-{{ g.cor }}">
+              <td><a class="fw-semibold text-decoration-none" href="{{ url_for('estacao_kanban', nome=g.nome) }}">{{ g.emoji }} {{ g.curto }}</a></td>
+              <td class="text-center">{{ g.abertos }}</td>
+              <td class="text-center">{% if g.atrasados %}<span class="badge bg-danger">{{ g.atrasados }}</span>{% else %}—{% endif %}</td>
+              <td class="text-center">{{ g.em_risco or '—' }}</td>
+              <td><div class="cc-barra"><span style="width: {{ [g.risco_pct, 100] | min }}%"></span></div><span class="cc-garg-meta">{{ g.risco_pct }}%</span></td>
+              <td class="text-center">{{ (g.espera ~ 'd') if g.espera is not none else '—' }}</td>
+              <td class="text-center">{{ (g.lt ~ 'd') if g.lt is not none else '—' }}</td>
+              <td class="text-end text-nowrap">{{ g.valor_parado | moeda_brl }}</td>
+              <td class="text-center cc-{{ g.cap_cor }}"><span class="cc-chip">{% if g.cobertura is not none %}{{ ('%.1f' | format(g.cobertura)).replace('.', ',') }} sem{% else %}—{% endif %}</span></td>
             </tr>
             {% else %}
-            <tr><td colspan="3" class="text-center text-muted py-3">Nenhum gargalo relevante no momento.</td></tr>
+            <tr><td colspan="9" class="text-center text-muted py-4">Nenhuma estação cadastrada.</td></tr>
             {% endfor %}
           </tbody>
         </table>
-        <div class="text-end mt-2">
-          <a href="{{ url_for('gargalos') }}" class="small">Ver ranking completo →</a>
-        </div>
-      </div>
+      </div></div>
+    </div>
+    <div class="col-xl-4">
+      <div class="cc-painel"><h6>📊 Itens abertos × atrasados</h6><canvas id="graficoGargalos" height="230"></canvas></div>
     </div>
   </div>
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3"><i class="bi bi-cash-coin"></i> Faturamento previsto não realizado</h6>
-        <table class="table table-sm mb-0">
-          <thead class="table-light">
-            <tr><th>Pedido</th><th>Produto</th><th>Previsto para</th><th class="text-end">Valor</th></tr>
-          </thead>
-          <tbody>
-            {% for item in faturamento_pendente %}
-            <tr>
-              <td>{{ (item.pedido.pedido_venda or item.pedido.cliente) if item.pedido else "—" }}</td>
-              <td class="text-truncate" style="max-width: 160px;">{{ item.descricao_produto }}</td>
-              <td>{{ item.liberacao_prevista }}</td>
-              <td class="text-end">R$ {{ "{:,.2f}".format(item.valor_total).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-            </tr>
-            {% else %}
-            <tr><td colspan="4" class="text-center text-muted py-3">Sem pendências de faturamento previsto.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        <div class="text-end mt-2">
-          <a href="{{ url_for('faturamento') }}" class="small">Ver tela de Faturamento →</a>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+  <div class="cc-sub mt-1">Cobertura = semanas de trabalho na fila, no ritmo real das últimas semanas (sobrecarga = carga acima do pico histórico). Observações e plano de ação do mês ficam em <a href="{{ url_for('kpis') }}#plano-acao">Lead Time e Gaps</a>.</div>
+</section>
+
+<section class="cc-secao" id="faturamento" data-secao="faturamento">
+  <h5>💵 Faturamento previsto e ainda não realizado — {{ a.fat_pend_total | moeda_brl }} <span class="text-muted fs-6 fw-normal">({{ a.fat_pend_itens }} itens)</span></h5>
+  <div class="card"><div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light"><tr><th>Pedido</th><th>Cliente</th><th class="text-center">Itens</th><th>Previsto desde</th><th class="text-center">Dias de atraso</th><th class="text-end">Valor</th></tr></thead>
+      <tbody>
+        {% for r in a.fat_pend[:15] %}
+        <tr>
+          <td>{% if r.pedido_id %}<a class="fw-semibold" href="{{ url_for('detalhe_pedido', pedido_id=r.pedido_id) }}">{{ r.pedido }}</a>{% else %}{{ r.pedido }}{% endif %}</td>
+          <td>{{ r.cliente }}</td>
+          <td class="text-center">{{ r.itens }}</td>
+          <td>{{ r.mais_antigo.strftime('%d/%m/%Y') if r.mais_antigo else '—' }}</td>
+          <td class="text-center"><span class="badge bg-warning text-dark">{{ r.dias }}d</span></td>
+          <td class="text-end fw-semibold">{{ r.valor | moeda_brl }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-3">Sem pendências de faturamento previsto. ✅</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div></div>
+  {% if a.fat_pend | length > 15 %}<div class="cc-sub mt-1">Mostrando os 15 maiores de {{ a.fat_pend | length }} pedidos. <a href="{{ url_for('faturamento') }}">Ver Faturamento e Projeção →</a></div>
+  {% else %}<div class="cc-sub mt-1"><a href="{{ url_for('faturamento') }}">Ver Faturamento e Projeção →</a></div>{% endif %}
+</section>
 
 {% if ve_pd_qualidade_custos %}
 <hr class="my-4">
 
-<h5 class="mb-3">🧪 P&D</h5>
+<div class="cc-secao" id="pd" data-secao="pd">
+<h5 class="mb-3">🧪 P&D — projetos e testes</h5>
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-2">
     <div class="card text-center h-100 border-danger"><div class="card-body">
@@ -287,6 +297,40 @@
     </div>
   </div>
 </div>
+</div>
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  var fichas = document.querySelectorAll(".cc-ficha");
+  var secoes = document.querySelectorAll("[data-secao]");
+  function filtrar(alvo) {
+    secoes.forEach(function (s) { s.style.display = (alvo === "todos" || s.dataset.secao === alvo) ? "" : "none"; });
+    fichas.forEach(function (f) { f.classList.toggle("ativa", f.dataset.alvo === alvo); });
+    if (alvo !== "todos") { window.scrollTo({ top: 0, behavior: "smooth" }); }
+  }
+  fichas.forEach(function (f) { f.addEventListener("click", function () { filtrar(f.dataset.alvo); }); });
+  var h = (location.hash || "").replace("#", "");
+  if (h && document.querySelector('[data-secao="' + h + '"]')) { document.getElementById(h).scrollIntoView(); }
+
+  var g = {{ a.gargalos | map(attribute='curto') | list | tojson }};
+  var ab = {{ a.gargalos | map(attribute='abertos') | list | tojson }};
+  var at = {{ a.gargalos | map(attribute='atrasados') | list | tojson }};
+  var el = document.getElementById("graficoGargalos");
+  if (el && g.length) {
+    Chart.defaults.font.size = 12;
+    new Chart(el, {
+      type: "bar",
+      data: { labels: g, datasets: [
+        { label: "Abertos", data: ab, backgroundColor: "#f59f00" },
+        { label: "Atrasados", data: at, backgroundColor: "#dc3545" } ] },
+      options: { indexAxis: "y", plugins: { legend: { position: "bottom" } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
+    });
+  }
+})();
+</script>
 {% endblock %}

@@ -90,7 +90,7 @@ ENDPOINTS_PERMITIDOS_COMERCIAL_GERAL = {
     # Gestão Produção > Programação
     "programacao_semana",
     # Gestão Produção > Faturamento (+ exportações)
-    "faturamento", "relatorio_faturamento_csv", "relatorio_faturamento_xlsx",
+    "faturamento", "faturamento_relatorio_pdf", "relatorio_faturamento_csv", "relatorio_faturamento_xlsx",
     # Consulta Pedido/Planejamento PCP
     "consulta_pedido", "consulta_pedido_busca_sugestoes", "consulta_pedido_busca_detalhe",
     "consulta_planejamento_pcp",

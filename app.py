@@ -9756,7 +9756,7 @@ def _kpi_gerencial_mensal(ano, mes):
     return linha
 
 
-def _gerar_pdf_kpis(meses, ano, mes, lead_time_fila_estacao, tendencia, variacoes, gargalos, produtividade, kpi_mensal):
+def _gerar_pdf_kpis(meses, ano, mes, lead_time_fila_estacao, tendencia, variacoes, gargalos, produtividade, kpi_mensal, gaps=None):
     """Relatório PDF da tela de KPIs (pedido do Bruno, 18/09/2026: "incluir
     para gerar relatório em PDF... totalmente intuitivo e didático") —
     paisagem A4, reaproveita EXATAMENTE os mesmos dados já calculados pra
@@ -9830,8 +9830,14 @@ def _gerar_pdf_kpis(meses, ano, mes, lead_time_fila_estacao, tendencia, variacoe
         return t
 
     mes_label = f"{MESES_PT[mes - 1]}/{ano}"
-    elementos = [
-        Paragraph("Relatório de KPIs — Gestão da Produção", estilos["Title"]),
+    from reportlab.platypus import Image as _ImgLogo
+    elementos = []
+    if os.path.exists(_ESPELHO_LOGO_PATH):
+        _logo = _ImgLogo(_ESPELHO_LOGO_PATH, width=48 * mm, height=48 * mm * (63 / 261))
+        _logo.hAlign = "LEFT"
+        elementos.append(_logo)
+    elementos += [
+        Paragraph("Relatório de Lead Time, Gaps e KPIs — Gestão da Produção", estilos["Title"]),
         Paragraph(
             f'Gerado em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · '
             f'Bloco de lead time/fila: últimos {meses} meses · Controle mensal: {mes_label}',
@@ -9911,6 +9917,14 @@ def _gerar_pdf_kpis(meses, ano, mes, lead_time_fila_estacao, tendencia, variacoe
     elementos.append(Spacer(1, 7 * mm))
 
     # ---------------- Bloco B — Causas do aumento ----------------
+    if gaps:
+        import pdf_comando
+        from reportlab.platypus import CondPageBreak as _CondPB
+        elementos.append(_CondPB(95 * mm))
+        elementos += pdf_comando.sec_leadtime_gaps(
+            {"icone": _icone_pdf}, gaps, None, largura_pagina, titulo="Gaps da cadeia",
+        )
+        elementos.append(Spacer(1, 4 * mm))
     elementos.append(Paragraph("Causas do aumento do tempo de fila e do lead time", estilo_secao))
     if variacoes:
         elementos.append(Paragraph(
@@ -10041,7 +10055,16 @@ def _gerar_pdf_kpis(meses, ano, mes, lead_time_fila_estacao, tendencia, variacoe
     ]))
     elementos.append(tabela_p)
 
-    doc.build(elementos)
+    def _rodape_kpis(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        canvas_obj.setFont("Helvetica", 7.5)
+        canvas_obj.setFillColor(colors.HexColor("#888888"))
+        canvas_obj.drawString(doc_obj.leftMargin, 6 * mm, "4PIPE Solutions · Gestão da Produção e Operação · Lead Time, Gaps e KPIs")
+        canvas_obj.drawRightString(landscape(A4)[0] - doc_obj.rightMargin, 6 * mm,
+                                   f'Emitido em {_agora_brt().strftime("%d/%m/%Y %H:%M")} · Página {doc_obj.page}')
+        canvas_obj.restoreState()
+
+    doc.build(elementos, onFirstPage=_rodape_kpis, onLaterPages=_rodape_kpis)
     buffer.seek(0)
     resposta = Response(buffer.getvalue(), mimetype="application/pdf")
     nome_arquivo = f"kpis_{ano}-{mes:02d}.pdf"
@@ -10518,6 +10541,368 @@ def _faturamento_previsto_nao_realizado():
         .order_by(ItemPedido.liberacao_prevista)
         .all()
     )
+
+
+# ---------------------------------------------------------------------------
+# CENTRO DE COMANDO (pedido do Bruno, 03/11/2026): "KPIs, Gargalos,
+# Faturamento, Alertas e Relatórios estão vagos e repetitivos — quero tudo na
+# palma da mão, em segundos, e que tudo se converse dentro de Gestão Produção
+# / Operação". Nenhum número novo é inventado aqui: as funções abaixo só
+# COMPÕEM o que o Painel e a Gestão Operação já calculam (mesmas funções, mesmo
+# critério), pra a tela, o PDF e o Painel nunca divergirem.
+# ---------------------------------------------------------------------------
+
+def _cor_semaforo(sem):
+    return {
+        "critico": "vermelho", "sobrecarga": "vermelho", "vermelho": "vermelho",
+        "atencao": "amarelo", "apertado": "amarelo", "amarelo": "amarelo",
+        "ok": "verde", "verde": "verde",
+    }.get(sem, "cinza")
+
+
+def _cor_por_limites(valor, amarelo, vermelho):
+    """Menor é melhor: >= vermelho -> vermelho; >= amarelo -> amarelo."""
+    if valor is None:
+        return "cinza"
+    return "vermelho" if valor >= vermelho else ("amarelo" if valor >= amarelo else "verde")
+
+
+def _br_num(valor, casas=1):
+    if valor is None:
+        return "—"
+    return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _moeda_curta(valor):
+    """R$ 17,9 mi / R$ 250 mil / R$ 980 — pra caber em cartão grande."""
+    if valor is None:
+        return "—"
+    v = abs(valor)
+    sinal = "-" if valor < 0 else ""
+    if v >= 1_000_000:
+        return f"{sinal}R$ {_br_num(v / 1_000_000, 1)} mi"
+    if v >= 10_000:
+        return f"{sinal}R$ {_br_num(v / 1_000, 0)} mil"
+    return f"{sinal}R$ {_br_num(v, 0)}"
+
+
+def _dados_comando(hoje=None):
+    """Tudo que o Centro de Comando (e o PDF "Resumo executivo") mostra."""
+    hoje = hoje or date.today()
+    resumo = _calcular_resumo()
+    atr = _atrasados_contextualizados(hoje)
+    ra = atr["resumo"]
+    n_vencendo = Pedido.query.filter(_predicado_vencendo()).count()
+    risco_est = _risco_por_estacao_painel(hoje)
+    cap = _capacidade_estacoes_painel(hoje)
+    desemp = _visao_360_desempenho(hoje)
+    fat = _faturamento_detalhado(hoje.year, hoje.month)
+    pend = _faturamento_previsto_nao_realizado()
+    valor_pend = round(sum(i.valor_total for i in pend), 2)
+    kanban = _kanban_expedicao()
+    linhas_risco = _dados_gestao_risco_completa()["linhas"]
+    n_prazo = {c: sum(1 for l in linhas_risco if l["classe"] == c) for c in ("atraso", "risco", "sem_plano")}
+    backlog = resumo["total"] - resumo["finalizado"]
+
+    # ---- OTD e Lead time (Gestão Operação) — mês atual; sem dado no mês, cai no acumulado do ano
+    p0 = desemp["periodos"][0]
+    refs = desemp.get("refs") or {}
+    otd_mes = p0["otd"]
+    if otd_mes["percentual"] is not None:
+        otd_val, otd_sub = otd_mes["percentual"], f'{otd_mes["no_prazo"]}/{otd_mes["total"]} no prazo · {p0["curto"]}'
+    elif refs.get("otd"):
+        otd_val, otd_sub = refs["otd"]["valor"], f'acumulado {refs["otd"]["periodo"]} · {refs["otd"]["n"]} pedidos'
+    else:
+        otd_val, otd_sub = None, "sem pedidos avaliados"
+    if otd_val is None:
+        otd_cor = "cinza"
+    elif otd_val >= GO_OTD_META_PERCENTUAL:
+        otd_cor = "verde"
+    elif otd_val >= GO_OTD_META_PERCENTUAL - 10:
+        otd_cor = "amarelo"
+    else:
+        otd_cor = "vermelho"
+
+    lt_mes = p0["lt"]["lt_operacao"]["media"]
+    lt_ref = refs.get("lt_operacao")
+    if lt_mes is not None:
+        lt_val, lt_sub = lt_mes, f'operação · {p0["curto"]}' + (f' · ref. {_br_num(lt_ref["valor"])}d' if lt_ref else "")
+    elif lt_ref:
+        lt_val, lt_sub = lt_ref["valor"], f'operação · acumulado {lt_ref["periodo"]} · {lt_ref["n"]} pedidos'
+    else:
+        lt_val, lt_sub = None, "sem pedidos entregues"
+    lt_cor = "cinza"
+    if lt_val is not None and lt_ref and lt_ref["valor"]:
+        lt_cor = "verde" if lt_val <= lt_ref["valor"] else ("amarelo" if lt_val <= lt_ref["valor"] * 1.1 else "vermelho")
+
+    n_crit = risco_est["n_criticas"]
+    n_sobre = cap["n_sobrecarga"]
+    realizado = fat["realizado_total"]
+    previsto = fat["previsto_total"]
+    pct_real = round(100 * realizado / previsto) if previsto else None
+    n_aguard_nf, n_aguard_col, n_exp_hoje = (len(kanban["aguardando_nf"]), len(kanban["aguardando_coleta"]), len(kanban["expedido_hoje"]))
+
+    tiles = [
+        {"chave": "backlog", "emoji": "📦", "titulo": "Backlog", "valor": str(backlog),
+         "sub": f'pedidos abertos · {resumo["finalizado"]} finalizados', "cor": "azul", "href": "listagem"},
+        {"chave": "atrasados", "emoji": "🔴", "titulo": "Pedidos atrasados", "valor": str(ra["total"]),
+         "sub": f'{_moeda_curta(ra["valor_em_risco"])} em risco · +{n_vencendo} vencendo em 3 dias',
+         "cor": _cor_por_limites(ra["total"], 1, 4), "href": "alertas#atrasados"},
+        {"chave": "prazo", "emoji": "🛡️", "titulo": "Risco de prazo (projetado)",
+         "valor": str(n_prazo["atraso"] + n_prazo["risco"] + n_prazo["sem_plano"]),
+         "sub": f'{n_prazo["atraso"]} atraso · {n_prazo["risco"]} em risco · {n_prazo["sem_plano"]} sem plano PCP',
+         "cor": "vermelho" if n_prazo["atraso"] else ("amarelo" if n_prazo["risco"] or n_prazo["sem_plano"] else "verde"),
+         "href": "painel#mini-risco"},
+        {"chave": "otd", "emoji": "🎯", "titulo": "OTD (entrega no prazo)",
+         "valor": (f"{_br_num(otd_val)}%" if otd_val is not None else "—"),
+         "sub": f'meta {GO_OTD_META_PERCENTUAL}% · {otd_sub}', "cor": otd_cor, "href": "resultados"},
+        {"chave": "lt", "emoji": "⏱️", "titulo": "Lead time operação",
+         "valor": (f"{_br_num(lt_val)} d" if lt_val is not None else "—"), "sub": lt_sub, "cor": lt_cor, "href": "kpis"},
+        {"chave": "estacoes", "emoji": "🏭", "titulo": "Estações críticas",
+         "valor": str(max(n_crit, n_sobre)),
+         "sub": f'{n_crit} com prazo crítico · {n_sobre} em sobrecarga · {risco_est["n_atencao"]} em atenção',
+         "cor": "vermelho" if (n_crit or n_sobre) else ("amarelo" if risco_est["n_atencao"] or cap["n_apertado"] else "verde"),
+         "href": "alertas#gargalos"},
+        {"chave": "faturamento", "emoji": "💵", "titulo": f"Faturamento {MESES_PT[hoje.month - 1][:3]}",
+         "valor": _moeda_curta(realizado),
+         "sub": f'realizado de {_moeda_curta(previsto)} previstos' + (f' ({pct_real}%)' if pct_real is not None else "") + f' · {_moeda_curta(valor_pend)} atrasado',
+         "cor": ("verde" if not valor_pend else ("vermelho" if previsto and valor_pend > 0.25 * previsto else "amarelo")),
+         "href": "faturamento"},
+        {"chave": "expedicao", "emoji": "🚚", "titulo": "Expedição",
+         "valor": str(n_aguard_nf + n_aguard_col),
+         "sub": f'{n_aguard_nf} aguardando NF · {n_aguard_col} aguardando coleta · {n_exp_hoje} expedidos hoje',
+         "cor": "amarelo" if (n_aguard_nf + n_aguard_col) else "verde", "href": "logistica"},
+    ]
+
+    # ---- Gargalos (estações) — risco do Painel + capacidade projetada pelo PCP
+    cap_por_nome = {e["nome"]: e for e in cap["estacoes"]}
+    ordem = {"critico": 0, "atencao": 1}
+    estacoes = sorted(
+        [e for e in risco_est["estacoes"] if e["abertos"] > 0],
+        key=lambda e: (ordem.get(e["semaforo"], 2), -e["atrasados"], -e["em_risco"]),
+    )[:6]
+    gargalos = []
+    for e in estacoes:
+        c = cap_por_nome.get(e["nome"]) or {}
+        gargalos.append({
+            "nome": e["nome"], "curto": e["curto"], "emoji": e["emoji"], "abertos": e["abertos"],
+            "atrasados": e["atrasados"], "em_risco": e["em_risco"], "risco_pct": e["risco_pct"],
+            "valor_risco": e["valor_risco"], "cor": _cor_semaforo(e["semaforo"]),
+            "ritmo": c.get("ritmo"), "cobertura": c.get("cobertura"), "cap_cor": _cor_semaforo(c.get("semaforo")),
+        })
+
+    # ---- Pedidos críticos (os mais atrasados, com causa e ação)
+    criticos = sorted(atr["pedidos"], key=lambda p: (-(p["dias_atraso"] or 0), -(p["valor"] or 0)))[:6]
+
+    # ---- O que fazer agora (regras simples e explicáveis)
+    sem_plano = sum(1 for p in atr["pedidos"] if p["motivo_chave"] == "sem_plano")
+    sobrecarregadas = [e["curto"] for e in cap["estacoes"] if e["semaforo"] == "sobrecarga"]
+    decisoes = []
+    if ra["a_renegociar"]:
+        decisoes.append({"emoji": "🤝", "nivel": "vermelho", "href": "alertas#atrasados",
+                         "texto": f'Renegociar prazo de {ra["a_renegociar"]} pedido(s): inviável mesmo liberando hoje.'})
+    if sem_plano:
+        decisoes.append({"emoji": "🗓️", "nivel": "vermelho", "href": "consulta",
+                         "texto": f'Planejar no PCP {sem_plano} pedido(s) atrasado(s) que estão sem planejamento semanal.'})
+    if sobrecarregadas:
+        decisoes.append({"emoji": "🏭", "nivel": "vermelho", "href": "alertas#gargalos",
+                         "texto": "Remanejar carga ou reforçar turno: " + ", ".join(sobrecarregadas[:3]) + " em sobrecarga."})
+    if n_prazo["atraso"]:
+        decisoes.append({"emoji": "🛡️", "nivel": "vermelho", "href": "painel#mini-risco",
+                         "texto": f'{n_prazo["atraso"]} pedido(s) com atraso projetado: pedir revisão de prazo ao comercial.'})
+    if valor_pend:
+        decisoes.append({"emoji": "💵", "nivel": "amarelo", "href": "faturamento",
+                         "texto": f'Liberar faturamento: {_moeda_curta(valor_pend)} previstos e ainda não faturados ({len(pend)} itens).'})
+    if n_aguard_nf:
+        decisoes.append({"emoji": "🧾", "nivel": "amarelo", "href": "logistica",
+                         "texto": f'Emitir NF de {n_aguard_nf} pedido(s) já liberado(s) pelo PCP.'})
+    if n_aguard_col:
+        decisoes.append({"emoji": "🚚", "nivel": "amarelo", "href": "logistica",
+                         "texto": f'Agendar coleta/embarque de {n_aguard_col} pedido(s) com NF emitida.'})
+    if otd_cor in ("vermelho", "amarelo") and otd_val is not None:
+        decisoes.append({"emoji": "🎯", "nivel": otd_cor, "href": "resultados",
+                         "texto": f'OTD em {_br_num(otd_val)}% — meta {GO_OTD_META_PERCENTUAL}%: ver OTD por cliente/vendedor/região.'})
+    decisoes.sort(key=lambda d: 0 if d["nivel"] == "vermelho" else 1)
+
+    return {
+        "hoje": hoje, "tiles": tiles, "gargalos": gargalos, "criticos": criticos, "decisoes": decisoes[:7],
+        "carga": {"rotulos": cap["rotulos"], "cargas": cap["total"]["cargas"], "ritmo": cap["total"]["ritmo"],
+                  "cobertura": cap["total"]["cobertura"], "abertos": cap["total"]["abertos"],
+                  "atrasados": cap["total"]["atrasados"], "sem_prev": cap["total"]["sem_prev"]},
+        "resumo_atrasados": ra, "n_vencendo": n_vencendo,
+    }
+
+
+def _faturamento_pendente_agrupado(hoje=None):
+    """Itens previstos e ainda não faturados, agrupados por pedido (maior valor
+    primeiro) -> (linhas, valor total, nº de itens)."""
+    hoje = hoje or date.today()
+    pend = _faturamento_previsto_nao_realizado()
+    por_pedido = {}
+    for i in pend:
+        p = i.pedido
+        chave = (p.pedido_venda or p.cliente) if p else "—"
+        r = por_pedido.setdefault(chave, {"pedido": chave, "pedido_id": p.id if p else None, "cliente": p.cliente if p else "—",
+                                          "itens": 0, "valor": 0.0, "mais_antigo": i.liberacao_prevista})
+        r["itens"] += 1
+        r["valor"] += i.valor_total
+        if i.liberacao_prevista and (r["mais_antigo"] is None or i.liberacao_prevista < r["mais_antigo"]):
+            r["mais_antigo"] = i.liberacao_prevista
+    fat_pend = sorted(por_pedido.values(), key=lambda r: -r["valor"])
+    for r in fat_pend:
+        r["valor"] = round(r["valor"], 2)
+        r["dias"] = (hoje - r["mais_antigo"]).days if r["mais_antigo"] else None
+    return fat_pend, round(sum(r["valor"] for r in fat_pend), 2), len(pend)
+
+
+def _dados_alertas(hoje=None):
+    """Central de Alertas & Gargalos — tudo que exige ação agora, em seções."""
+    hoje = hoje or date.today()
+    atr = _atrasados_contextualizados(hoje)
+    vencendo = (
+        Pedido.query.options(selectinload(Pedido.itens))
+        .filter(_predicado_vencendo()).order_by(Pedido.data_cliente.asc().nullslast()).all()
+    )
+    risco_est = _risco_por_estacao_painel(hoje)
+    cap = _capacidade_estacoes_painel(hoje)
+    cap_por_nome = {e["nome"]: e for e in cap["estacoes"]}
+    gerais = {g["estacao"]: g for g in _gargalos_por_estacao()}
+    ordem = {"critico": 0, "atencao": 1}
+    gargalos = []
+    for e in sorted(risco_est["estacoes"], key=lambda e: (ordem.get(e["semaforo"], 2), -e["atrasados"], -e["abertos"])):
+        g = gerais.get(e["nome"], {})
+        c = cap_por_nome.get(e["nome"]) or {}
+        gargalos.append({
+            "nome": e["nome"], "curto": e["curto"], "emoji": e["emoji"], "url": e.get("url"),
+            "abertos": e["abertos"], "pendente": e["pendente"], "producao": e["producao"], "atrasados": e["atrasados"],
+            "cli_vencido": e["cli_vencido"], "em_risco": e["em_risco"], "risco_pct": e["risco_pct"],
+            "valor_risco": e["valor_risco"], "p_sem": e["p_sem"], "cor": _cor_semaforo(e["semaforo"]),
+            "espera": g.get("tempo_espera_medio"), "lt": g.get("lt_medio"), "valor_parado": g.get("valor_parado", 0.0),
+            "ritmo": c.get("ritmo"), "cobertura": c.get("cobertura"), "cap_cor": _cor_semaforo(c.get("semaforo")),
+        })
+    fat_pend, fat_pend_total, fat_pend_itens = _faturamento_pendente_agrupado(hoje)
+    return {
+        "hoje": hoje, "atrasados": atr, "vencendo": vencendo, "gargalos": gargalos,
+        "fat_pend": fat_pend, "fat_pend_total": fat_pend_total, "fat_pend_itens": fat_pend_itens,
+        "pd": _alertas_pd(),
+    }
+
+
+def _resumo_serie_dias(valores):
+    v = sorted(x for x in valores if x is not None)
+    if not v:
+        return {"media": None, "mediana": None, "max": None, "n": 0, "pct_ok": None}
+    n = len(v)
+    mediana = v[n // 2] if n % 2 else round((v[n // 2 - 1] + v[n // 2]) / 2, 1)
+    return {"media": round(sum(v) / n, 1), "mediana": mediana, "max": v[-1], "n": n,
+            "pct_ok": round(100 * sum(1 for x in v if x <= 0) / n)}
+
+
+def _gaps_operacao(meses=6, hoje=None):
+    """GAPS entre as etapas da cadeia liberação -> NF -> expedição -> entrega
+    e entre o compromisso com o cliente e o que de fato aconteceu. Fonte:
+    PedidoOperacao (Gestão Operação) + itens (previsto x real do PCP). Cada
+    etapa só entra com os pedidos que têm as DUAS datas; o "n" mostra quantos."""
+    hoje = hoje or date.today()
+    desde = hoje - timedelta(days=30 * meses)
+    pedidos = PedidoOperacao.query.all()
+    otd_map = _otd_calculado_por_pedido_id(pedidos)
+
+    def _gap(fim_attr_ou_fn, ini_fn, fim_fn, janela_fn):
+        out = []
+        for p in pedidos:
+            ini, fim = ini_fn(p), fim_fn(p)
+            if ini and fim and janela_fn(p) and janela_fn(p) >= desde:
+                out.append((fim - ini).days)
+        return out
+
+    lib = lambda p: p.go_data_efetiva_liberacao_pcp
+    nf = lambda p: p.go_data_emissao_nf
+    exp = lambda p: p.go_data_pedido_expedido
+    ent = lambda p: p.go_data_entregue_cliente
+    sol = lambda p: (otd_map.get(p.id) or {}).get("solicitada")
+    etapas = [
+        ("lib_nf", "🧾", "Liberação PCP → Nota fiscal", "Espera de faturamento depois que a produção liberou.", _gap(None, lib, nf, nf), False),
+        ("nf_exp", "📦", "Nota fiscal → Expedido", "Espera de coleta/embarque depois da NF.", _gap(None, nf, exp, exp), False),
+        ("exp_ent", "🚚", "Expedido → Entregue ao cliente", "Tempo de transporte (frete).", _gap(None, exp, ent, ent), False),
+        ("lib_ent", "🔁", "Liberação PCP → Entregue (ciclo pós-produção)", "Tudo que acontece depois do chão de fábrica.", _gap(None, lib, ent, ent), False),
+        ("prazo_lib", "🗓️", "Prazo do cliente → Liberação PCP", "Positivo = liberou DEPOIS do prazo do cliente.", _gap(None, sol, lib, lib), True),
+        ("prazo_ent", "🎯", "Prazo do cliente → Entrega", "Positivo = entregue em atraso (base do OTD).", _gap(None, sol, ent, ent), True),
+    ]
+    resultado = []
+    for chave, emoji, titulo, dica, valores, vs_prazo in etapas:
+        s = _resumo_serie_dias(valores)
+        s.update({"chave": chave, "emoji": emoji, "titulo": titulo, "dica": dica, "vs_prazo": vs_prazo})
+        resultado.append(s)
+
+    itens = (
+        ItemPedido.query.filter(ItemPedido.liberacao_prevista.isnot(None), ItemPedido.liberacao_real.isnot(None),
+                                ItemPedido.liberacao_real >= desde).all()
+    )
+    aderencia = _resumo_serie_dias([(i.liberacao_real - i.liberacao_prevista).days for i in itens])
+    return {"meses": meses, "desde": desde, "etapas": resultado, "aderencia_pcp": aderencia}
+
+
+def _dados_faturamento_projecao(ano, mes, cliente=None, regiao=None, vendedor=None, hoje=None):
+    hoje = hoje or date.today()
+    base = _faturamento_detalhado(ano, mes, cliente=cliente or None, regiao=regiao or None, vendedor=vendedor or None)
+    realizado_ano = {l["mes"]: l["realizado"] for l in _faturamento_mensal_ano(ano)}
+    proj_ano = {l["mes"]: l for l in _projecao_pcp_mensal((ano, 1), (ano, 12))}
+    meses_ano = []
+    for m in range(1, 13):
+        p = proj_ano.get(m) or {}
+        meses_ano.append({"mes": m, "label": MESES_PT[m - 1][:3], "projetado": p.get("valor_total_mes", 0.0),
+                          "entregue": p.get("valor_finalizado", 0.0),
+                          "realizado": realizado_ano.get(MESES_PT[m - 1][:3], 0.0)})
+    # Próximos 6 meses a partir do mês em vista: o que o PCP ainda tem em aberto
+    fim_ano, fim_mes = _somar_meses(ano, mes, 5)
+    futuros = []
+    for l in _projecao_pcp_mensal((ano, mes), (fim_ano, fim_mes)):
+        futuros.append({"label": l["label"], "valor_aberto": l["valor_em_aberto"], "pedidos_aberto": l["pedidos_em_aberto"],
+                        "valor_total": l["valor_total_mes"], "pedidos_total": l["pedidos_total"]})
+    fat_pend, fat_pend_total, fat_pend_itens = _faturamento_pendente_agrupado(hoje)
+    carteira_estacao = sorted(
+        [{"estacao": g["estacao"], "valor": g["valor_parado"], "fila": g["fila"]} for g in _gargalos_por_estacao() if g["valor_parado"] > 0],
+        key=lambda r: -r["valor"],
+    )
+    return {
+        "ano": ano, "mes": mes, "mes_label": f"{MESES_PT[mes - 1]}/{ano}", "base": base, "meses_ano": meses_ano,
+        "futuros": futuros, "fat_pend": fat_pend[:10], "fat_pend_total": fat_pend_total,
+        "fat_pend_itens": fat_pend_itens, "carteira_estacao": carteira_estacao,
+        "carteira_total": round(sum(r["valor"] for r in carteira_estacao), 2),
+    }
+
+
+def _catalogo_relatorios():
+    """Central de Relatórios: TODOS os documentos gerenciais do sistema num
+    lugar só, agrupados por área. `ep` = nome do endpoint; `fmt` = botões."""
+    return [
+        {"area": "🎯 Executivos", "cor": "primary", "itens": [
+            {"emoji": "🎯", "titulo": "Resumo executivo (Centro de Comando)", "desc": "KPIs, semáforos, gargalos, pedidos críticos e o que fazer agora.", "fmt": [("PDF", "comando_relatorio_pdf")]},
+            {"emoji": "🗂️", "titulo": "Pacote gerencial completo", "desc": "Resumo + Alertas e Gargalos + Lead Time e Gaps + Faturamento e Projeção em um único PDF.", "fmt": [("PDF", "pacote_gerencial_pdf")]},
+            {"emoji": "🎛️", "titulo": "Painel diário da operação", "desc": "Todo o Painel de Gestão por área.", "fmt": [("PDF", "painel_relatorio_pdf"), ("PowerPoint", "painel_apresentacao_pptx")]},
+            {"emoji": "🛡️", "titulo": "Gestão de risco de prazos", "desc": "FOB x CIF, horizontes de 5/10/20 dias, decisões recomendadas.", "fmt": [("PDF", "painel_risco_prazos_relatorio_pdf")]},
+        ]},
+        {"area": "🚨 Alertas e produção", "cor": "danger", "itens": [
+            {"emoji": "🚨", "titulo": "Alertas e Gargalos", "desc": "Atrasados com causa e ação, vencendo, estações críticas e faturamento atrasado.", "fmt": [("PDF", "alertas_relatorio_pdf"), ("Excel", "relatorio_gargalos_xlsx"), ("CSV", "relatorio_gargalos_csv")]},
+            {"emoji": "⏱️", "titulo": "Lead Time e Gaps", "desc": "Lead time por estação, tendência, gaps da cadeia e controle mensal.", "fmt": [("PDF", "kpis_relatorio_pdf")]},
+            {"emoji": "⏳", "titulo": "Lead time (Quadrante 01)", "desc": "Detalhamento do lead time de chão de fábrica.", "fmt": [("PDF", "painel_lead_time_pdf"), ("Excel", "painel_lead_time_xlsx")]},
+            {"emoji": "🗂️", "titulo": "Conclusões das estações", "desc": "O que cada estação concluiu e o risco do que falta. Relatório de uma ou várias estações específicas: tela Estações.", "fmt": [("PDF", "estacoes_relatorio_conclusoes_pdf")]},
+        ]},
+        {"area": "💵 Faturamento", "cor": "success", "itens": [
+            {"emoji": "💵", "titulo": "Faturamento e Projeção", "desc": "Previsto x realizado, projeção de 6 meses, faturamento atrasado, Pareto de clientes.", "fmt": [("PDF", "faturamento_relatorio_pdf"), ("Excel", "relatorio_faturamento_xlsx"), ("CSV", "relatorio_faturamento_csv")]},
+        ]},
+        {"area": "📦 Gestão Operação", "cor": "info", "itens": [
+            {"emoji": "📃", "titulo": "Operação 360", "desc": "Visão completa dos pedidos da operação.", "fmt": [("PDF", "gestao_operacao_listagem_geral_pdf"), ("Excel", "gestao_operacao_listagem_geral_xlsx")]},
+            {"emoji": "🚚", "titulo": "Expedição / Logística", "desc": "Painel de logística e kanban de expedição.", "fmt": [("PDF", "gestao_operacao_logistica_pdf"), ("Excel", "gestao_operacao_logistica_xlsx")]},
+            {"emoji": "📈", "titulo": "Resultados / OTD", "desc": "OTD, lead times e faturamento semanal do período.", "fmt": [("PDF", "gestao_operacao_resultados_pdf"), ("Excel", "gestao_operacao_resultados_xlsx")]},
+        ]},
+        {"area": "📋 Listagem e PCP", "cor": "secondary", "itens": [
+            {"emoji": "📋", "titulo": "Listagem geral", "desc": "Todos os pedidos (sem filtro) — para filtrar, use a tela Listagem Geral.", "fmt": [("Excel", "relatorio_listagem_xlsx"), ("CSV", "relatorio_listagem_csv")]},
+            {"emoji": "🗓️", "titulo": "Listagem geral semanal", "desc": "Planejamento por semana PCP.", "fmt": [("PDF", "relatorio_listagem_geral_semanal_pdf")]},
+            {"emoji": "📅", "titulo": "Painel semanal PCP", "desc": "Quadrantes do planejamento semanal.", "fmt": [("PDF", "relatorio_painel_semanal_visual_pdf")]},
+        ]},
+    ]
 
 
 def _construir_timeline(pedido):
@@ -21213,6 +21598,7 @@ def register_routes(app):
             gargalos=_gargalos_por_estacao(),
             produtividade=_produtividade_por_setor(ano, mes),
             kpi_mensal=_kpi_gerencial_mensal(ano, mes),
+            gaps=_gaps_operacao(meses),
         )
 
     @app.route("/kpis/relatorio.pdf")
@@ -21246,6 +21632,7 @@ def register_routes(app):
             gargalos=_gargalos_por_estacao(),
             produtividade=_produtividade_por_setor(ano, mes),
             kpi_mensal=_kpi_gerencial_mensal(ano, mes),
+            gaps=_gaps_operacao(meses),
         )
 
     @app.route("/kpis/mensal/<int:ano>/<int:mes>/salvar", methods=["POST"])
@@ -21308,7 +21695,8 @@ def register_routes(app):
     @app.route("/gargalos")
     @login_required
     def gargalos():
-        return render_template("gargalos.html", linhas=_gargalos_por_estacao())
+        # Centro de Comando (03/11/2026): Gargalos virou seção da tela "Alertas e Gargalos".
+        return redirect(url_for("alertas") + "#gargalos")
 
     @app.route("/faturamento")
     @login_required
@@ -21336,6 +21724,7 @@ def register_routes(app):
             mes_anterior=dict(ano=mes_anterior_ano, mes=mes_anterior_mes),
             mes_seguinte=dict(ano=mes_seguinte_ano, mes=mes_seguinte_mes),
             filtros=dict(cliente=cliente, regiao=regiao, vendedor=vendedor),
+            fp=_dados_faturamento_projecao(ano, mes, cliente, regiao, vendedor),
             **dados,
         )
 
@@ -22239,32 +22628,82 @@ def register_routes(app):
     @app.route("/alertas")
     @login_required
     def alertas():
-        pedidos_atrasados = (
-            Pedido.query.options(selectinload(Pedido.itens))
-            .filter(_predicado_atrasado())
-            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
-            .all()
-        )
-        pedidos_vencendo = (
-            Pedido.query.options(selectinload(Pedido.itens))
-            .filter(_predicado_vencendo())
-            .order_by(Pedido.data_inclusao_pedido.desc().nullslast())
-            .all()
-        )
-        gargalos_criticos = [g for g in _gargalos_por_estacao() if g["fila"] > 0 or g["atraso"] > 0][:5]
-        faturamento_pendente = _faturamento_previsto_nao_realizado()
-        pd_alertas = _alertas_pd()
-
         return render_template(
             "alertas.html",
-            pedidos_atrasados=pedidos_atrasados,
-            pedidos_vencendo=pedidos_vencendo,
-            gargalos_criticos=gargalos_criticos,
-            faturamento_pendente=faturamento_pendente,
-            pd_alertas=pd_alertas,
+            a=_dados_alertas(),
+            pd_alertas=_alertas_pd(),
             PD_DIAS_SEM_ATUALIZACAO=PD_DIAS_SEM_ATUALIZACAO,
             PD_DIAS_PARADO=PD_DIAS_PARADO,
         )
+
+    # ------------------------------------------------------------------
+    # Centro de Comando (pedido do Bruno, 03/11/2026) — resumo de 1 tela +
+    # PDFs com logo, data/hora e usuário em cada aba gerencial.
+    # ------------------------------------------------------------------
+    def _ctx_pdf_comando():
+        return {
+            "agora": _agora_brt(), "logo": _ESPELHO_LOGO_PATH, "icone": _icone_pdf, "moeda": _formatar_moeda_br,
+            "usuario": current_user.nome if current_user.is_authenticated else None,
+        }
+
+    def _responder_pdf_comando(pdf, nome, ctx):
+        resposta = Response(pdf, mimetype="application/pdf")
+        resposta.headers["Content-Disposition"] = f"attachment; filename={nome}_{ctx['agora'].strftime('%Y-%m-%d_%H%M')}.pdf"
+        return resposta
+
+    def _args_faturamento():
+        hoje = date.today()
+        ano = request.args.get("ano", hoje.year, type=int)
+        mes = request.args.get("mes", hoje.month, type=int)
+        if not (1 <= mes <= 12):
+            mes = hoje.month
+        return ano, mes, request.args.get("cliente", "").strip(), request.args.get("regiao", "").strip(), request.args.get("vendedor", "").strip()
+
+    def _lt_estacao_args():
+        meses = request.args.get("meses", 6, type=int)
+        if meses not in (3, 6, 12):
+            meses = 6
+        return meses, _lead_time_fila_por_estacao(desde=date.today() - timedelta(days=30 * meses))
+
+    @app.route("/comando")
+    @requer_role("ADMIN", "PCP", "LIDER", "GESTAO")
+    def comando():
+        return render_template("comando.html", c=_dados_comando())
+
+    @app.route("/comando/relatorio.pdf")
+    @requer_role("ADMIN", "PCP", "LIDER", "GESTAO")
+    def comando_relatorio_pdf():
+        import pdf_comando
+        ctx = _ctx_pdf_comando()
+        return _responder_pdf_comando(pdf_comando.gerar_comando(ctx, _dados_comando()), "resumo_executivo", ctx)
+
+    @app.route("/alertas/relatorio.pdf")
+    @requer_role("ADMIN", "PCP", "LIDER", "GESTAO")
+    def alertas_relatorio_pdf():
+        import pdf_comando
+        ctx = _ctx_pdf_comando()
+        return _responder_pdf_comando(pdf_comando.gerar_alertas(ctx, _dados_alertas()), "alertas_gargalos", ctx)
+
+    @app.route("/faturamento/relatorio.pdf")
+    @login_required
+    def faturamento_relatorio_pdf():
+        import pdf_comando
+        ctx = _ctx_pdf_comando()
+        ano, mes, cliente, regiao, vendedor = _args_faturamento()
+        dados = _dados_faturamento_projecao(ano, mes, cliente, regiao, vendedor)
+        return _responder_pdf_comando(pdf_comando.gerar_faturamento(ctx, dados), "faturamento_projecao", ctx)
+
+    @app.route("/relatorios/pacote-gerencial.pdf")
+    @requer_role("ADMIN", "PCP", "LIDER", "GESTAO")
+    def pacote_gerencial_pdf():
+        import pdf_comando
+        ctx = _ctx_pdf_comando()
+        meses, lt_estacao = _lt_estacao_args()
+        ano, mes, _, _, _ = _args_faturamento()
+        pdf = pdf_comando.gerar_pacote(
+            ctx, _dados_comando(), _dados_alertas(), _gaps_operacao(meses), lt_estacao, _dados_faturamento_projecao(ano, mes),
+        )
+        return _responder_pdf_comando(pdf, "pacote_gerencial", ctx)
 
     # ------------------------------------------------------------------
     # Relatórios (fase 12) — exportações sob demanda, sem agendamento
@@ -22274,7 +22713,7 @@ def register_routes(app):
     @login_required
     def relatorios():
         hoje = date.today()
-        return render_template("relatorios.html", hoje=hoje)
+        return render_template("relatorios.html", hoje=hoje, catalogo=_catalogo_relatorios())
 
     @app.route("/api/relatorio-diario")
     def api_relatorio_diario():

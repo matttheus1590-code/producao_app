@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Centro de Comando · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+{% set DEST = {
+  'listagem': url_for('dashboard'),
+  'alertas#atrasados': url_for('alertas') ~ '#atrasados',
+  'alertas#gargalos': url_for('alertas') ~ '#gargalos',
+  'painel#mini-risco': url_for('painel') ~ '#sec-risco',
+  'resultados': url_for('gestao_operacao_resultados'),
+  'kpis': url_for('kpis'),
+  'faturamento': url_for('faturamento'),
+  'logistica': url_for('gestao_operacao_logistica'),
+  'consulta': url_for('consulta_pedido'),
+} %}
+
+<div class="cc-topo">
+  <div>
+    <h4 class="mb-0">🎯 Centro de Comando</h4>
+    <div class="cc-sub">Gestão Produção + Gestão Operação em uma tela · {{ c.hoje.strftime('%d/%m/%Y') }} · atualizado às <span id="ccHora"></span></div>
+  </div>
+  <div class="cc-acoes">
+    <label class="form-check form-switch mb-0 small" title="Recarrega os números sozinho, a cada 2 minutos">
+      <input class="form-check-input" type="checkbox" id="ccAuto"> <span class="form-check-label">🔄 Auto-atualizar <span id="ccContagem" class="text-muted"></span></span>
+    </label>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('comando') }}">↻ Atualizar</a>
+    <div class="btn-group btn-group-sm">
+      <a class="btn btn-danger" href="{{ url_for('comando_relatorio_pdf') }}">📄 Resumo executivo (PDF)</a>
+      <button type="button" class="btn btn-danger dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-label="Mais relatórios"></button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{{ url_for('pacote_gerencial_pdf') }}">🗂️ Pacote gerencial completo</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('relatorios') }}">📥 Central de relatórios</a></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="cc-tiles">
+  {% for t in c.tiles %}
+  <a class="cc-tile cc-{{ t.cor }}" href="{{ DEST.get(t.href, '#') }}" title="Clique para ver o detalhe">
+    <span class="cc-dot"></span>
+    <div class="cc-tile-tit"><span>{{ t.emoji }}</span> {{ t.titulo }}</div>
+    <div class="cc-tile-val">{{ t.valor }}</div>
+    <div class="cc-tile-sub">{{ t.sub }}</div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-xl-4 col-lg-6">
+    <div class="cc-painel">
+      <h6><span>🏭 Gargalos por estação</span><a href="{{ url_for('alertas') }}#gargalos">ver todas →</a></h6>
+      {% for g in c.gargalos %}
+      <a class="cc-garg cc-{{ g.cor }}" href="{{ url_for('estacao_kanban', nome=g.nome) }}">
+        <span style="font-size:1.1rem">{{ g.emoji }}</span>
+        <div>
+          <div class="cc-garg-nome">{{ g.curto }}</div>
+          <div class="cc-barra" title="{{ g.risco_pct }}% dos itens abertos em risco de prazo"><span style="width: {{ [g.risco_pct, 100] | min }}%"></span></div>
+          <div class="cc-garg-meta">{{ g.abertos }} abertos · {{ g.atrasados }} atrasados · {{ g.em_risco }} em risco{% if g.valor_risco %} · {{ g.valor_risco | moeda_brl }}{% endif %}</div>
+        </div>
+        <div class="text-end">
+          <span class="cc-chip">{{ g.risco_pct }}%</span>
+          {% if g.cobertura is not none %}<div class="cc-garg-meta cc-{{ g.cap_cor }}" title="Quantas semanas de trabalho há na fila, no ritmo atual"><span style="color: var(--cc-cor)">{{ ('%.1f' | format(g.cobertura)).replace('.', ',') }} sem</span></div>{% endif %}
+        </div>
+      </a>
+      {% else %}
+      <div class="text-muted small py-3 text-center">Nenhuma estação com itens abertos. 🎉</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="col-xl-4 col-lg-6">
+    <div class="cc-painel">
+      <h6><span>🔴 Pedidos críticos</span><a href="{{ url_for('alertas') }}#atrasados">{{ c.resumo_atrasados.total }} atrasados →</a></h6>
+      {% for p in c.criticos %}
+      <a class="cc-crit cc-vermelho" href="{{ url_for('detalhe_pedido', pedido_id=p.id) }}">
+        <div class="cc-crit-dias">{{ p.dias_atraso }}d</div>
+        <div class="flex-grow-1" style="min-width:0">
+          <div class="cc-crit-tit">{{ p.pedido_venda }} · {{ p.cliente }}</div>
+          <div class="cc-crit-sub">{{ p.motivo_emoji }} {{ p.motivo_titulo }} · {{ p.valor | moeda_brl }} · {{ p.frete or '—' }}/{{ p.uf or '—' }}</div>
+          <div class="cc-crit-sub">{{ p.cenario.rotulo }}</div>
+        </div>
+      </a>
+      {% else %}
+      <div class="text-muted small py-3 text-center">Nenhum pedido atrasado. 🎉</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="col-xl-4">
+    <div class="cc-painel">
+      <h6><span>💡 O que fazer agora</span></h6>
+      {% for d in c.decisoes %}
+      <a class="cc-dec cc-{{ d.nivel }}" href="{{ DEST.get(d.href, '#') }}">
+        <span class="cc-dec-emoji">{{ d.emoji }}</span><span>{{ d.texto }}</span>
+      </a>
+      {% else %}
+      <div class="text-muted small py-3 text-center">Nenhuma ação urgente. Operação dentro do esperado. ✅</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="cc-painel">
+      <h6><span>📈 Carga das próximas semanas (itens abertos, projeção do PCP)</span></h6>
+      {% set maximo = ([c.carga.cargas | max if c.carga.cargas else 1, 1] | max) %}
+      <div class="cc-carga">
+        {% for n in c.carga.cargas %}
+        <div class="cc-carga-col"><b>{{ n }}</b><div class="cc-carga-barra" style="height: {{ (n / maximo * 80) | round | int }}%"></div>{{ c.carga.rotulos[loop.index0].titulo if c.carga.rotulos[loop.index0] else '' }}</div>
+        {% endfor %}
+      </div>
+      <div class="cc-garg-meta mt-2">Ritmo médio {{ c.carga.ritmo }} itens/semana · cobertura {{ c.carga.cobertura }} semanas · {{ c.carga.atrasados }} atrasados · {{ c.carga.sem_prev }} sem previsão.</div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="cc-painel">
+      <h6><span>🔗 Ir direto para</span></h6>
+      <div class="cc-atalhos">
+        <a class="cc-atalho" href="{{ url_for('alertas') }}">🚨 Alertas e Gargalos</a>
+        <a class="cc-atalho" href="{{ url_for('kpis') }}">⏱️ Lead Time e Gaps</a>
+        <a class="cc-atalho" href="{{ url_for('faturamento') }}">💵 Faturamento e Projeção</a>
+        <a class="cc-atalho" href="{{ url_for('painel') }}">🎛️ Painel completo</a>
+        <a class="cc-atalho" href="{{ url_for('gestao_operacao_listagem_geral') }}">📃 Operação 360</a>
+        <a class="cc-atalho" href="{{ url_for('gestao_operacao_logistica') }}">🚚 Expedição/Logística</a>
+        <a class="cc-atalho" href="{{ url_for('gestao_operacao_resultados') }}">📈 Resultados / OTD</a>
+        <a class="cc-atalho" href="{{ url_for('programacao_semana') }}">🗓️ Programação</a>
+        <a class="cc-atalho" href="{{ url_for('estacoes_lista') }}">🗂️ Estações</a>
+      </div>
+      <div class="cc-legenda">
+        Semáforo: <i style="background:#c0392b"></i>ação imediata <i style="background:#a87400"></i>atenção <i style="background:#198754"></i>dentro do esperado <i style="background:#6c757d"></i>sem dado.
+        Mesmas regras do Painel e de Gestão Operação.
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+  var d = new Date();
+  document.getElementById("ccHora").textContent = pad(d.getHours()) + ":" + pad(d.getMinutes());
+  var chk = document.getElementById("ccAuto"), cont = document.getElementById("ccContagem");
+  var SEG = 120, restante = SEG, timer = null;
+  var ler = function () { try { return localStorage.getItem("ccAuto") === "1"; } catch (e) { return false; } };
+  var gravar = function (v) { try { localStorage.setItem("ccAuto", v ? "1" : "0"); } catch (e) {} };
+  var tick = function () {
+    restante -= 1;
+    cont.textContent = "(" + restante + "s)";
+    if (restante <= 0) { window.location.reload(); }
+  };
+  var ligar = function (on) {
+    clearInterval(timer);
+    cont.textContent = "";
+    if (on) { restante = SEG; cont.textContent = "(" + restante + "s)"; timer = setInterval(tick, 1000); }
+  };
+  chk.checked = ler();
+  ligar(chk.checked);
+  chk.addEventListener("change", function () { gravar(chk.checked); ligar(chk.checked); });
+})();
+</script>
+{% endblock %}

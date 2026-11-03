@@ -73,27 +73,22 @@
           <span>🗓️ Programação</span>
         </a>
         {% if current_user.role != 'COMERCIAL_GERAL' %}
+        <a class="app-nav-link {% if request.endpoint == 'comando' %}active{% endif %}" href="{{ url_for('comando') }}">
+          <span>🎯 Centro de Comando</span>
+        </a>
+        <a class="app-nav-link {% if request.endpoint in ('alertas', 'gargalos') %}active{% endif %}" href="{{ url_for('alertas') }}">
+          <span>🚨 Alertas e Gargalos</span>
+        </a>
         <a class="app-nav-link {% if request.endpoint == 'kpis' %}active{% endif %}" href="{{ url_for('kpis') }}">
-          <span>📊 KPIs</span>
+          <span>⏱️ Lead Time e Gaps</span>
         </a>
         {% endif %}
-        {% if current_user.role != 'COMERCIAL_GERAL' %}
-        <a class="app-nav-link {% if request.endpoint == 'gargalos' %}active{% endif %}" href="{{ url_for('gargalos') }}">
-          <span>⚠️ Gargalos</span>
+        <a class="app-nav-link {% if request.endpoint in ('faturamento',) %}active{% endif %}" href="{{ url_for('faturamento') }}">
+          <span>💵 Faturamento e Projeção</span>
         </a>
-        {% endif %}
-        <a class="app-nav-link {% if request.endpoint == 'faturamento' %}active{% endif %}" href="{{ url_for('faturamento') }}">
-          <span>💵 Faturamento</span>
-        </a>
-
         {% if current_user.role != 'COMERCIAL_GERAL' %}
-        <a class="app-nav-link {% if request.endpoint == 'alertas' %}active{% endif %}" href="{{ url_for('alertas') }}">
-          <span>🔔 Alertas</span>
-        </a>
-        {% endif %}
-        {% if current_user.role != 'COMERCIAL_GERAL' %}
-        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('relatorio') %}active{% endif %}" href="{{ url_for('relatorios') }}">
-          <span>📥 Relatórios</span>
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('relatorio') or request.endpoint == 'pacote_gerencial_pdf' %}active{% endif %}" href="{{ url_for('relatorios') }}">
+          <span>📥 Central de Relatórios</span>
         </a>
         {% endif %}
 
