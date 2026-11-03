@@ -1,0 +1,22 @@
+{#- Opções do campo "Planejamento semanal (PCP)" organizadas por mês (pedido do
+    Bruno, 30/10/2026): cada mês é um grupo com 4 ou 5 semanas (a semana
+    seg-sex conta para o mês da quarta-feira). O valor gravado continua
+    "SEMANA NN / MÊS / ANO". Um valor antigo que não esteja na lista (ex.:
+    "SEMANA 05" de um mês que hoje tem 4 semanas) continua aparecendo, marcado
+    como "(antigo)", pra nunca sumir do campo ao editar. -#}
+{%- macro opcoes_semanas(grupos, selecionado, mostrar_antigo=True) -%}
+  {%- set ns = namespace(achou=False) -%}
+  {%- for g in grupos -%}
+  <optgroup label="{{ g.titulo }}">
+    {%- for s in g.semanas -%}
+    {%- if selecionado == s.valor -%}{%- set ns.achou = True -%}{%- endif %}
+    <option value="{{ s.valor }}" {% if selecionado == s.valor %}selected{% endif %}>{{ s.texto }}</option>
+    {%- endfor -%}
+  </optgroup>
+  {%- endfor -%}
+  {%- if mostrar_antigo and selecionado and not ns.achou %}
+  <optgroup label="Valor antigo">
+    <option value="{{ selecionado }}" selected>{{ selecionado }} (antigo)</option>
+  </optgroup>
+  {%- endif -%}
+{%- endmacro -%}

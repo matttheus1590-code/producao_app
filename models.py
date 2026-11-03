@@ -421,6 +421,73 @@ def gerar_semanas_pcp(meses_atras=1, meses_frente=6, hoje=None):
     return opcoes
 
 
+def _primeira_quarta(ano, mes):
+    d = date(ano, mes, 1)
+    return d + timedelta(days=(2 - d.weekday()) % 7)
+
+
+def domingo_semana_01(ano, mes):
+    """Domingo que abre a SEMANA 01 do planejamento PCP do mês.
+
+    Regra do Bruno (30/10/2026): a semana de trabalho (segunda a sexta)
+    pertence ao mês em que cai a QUARTA-FEIRA — i.e., o mês que tem 3 dos 5
+    dias úteis (seg-qua num mês e qui-sex no outro => mês da segunda/quarta).
+    Logo a semana 01 do mês é a que contém a 1ª quarta-feira do mês, e a
+    janela (domingo a sábado) começa 3 dias antes dessa quarta. Isso dá 4 ou
+    5 semanas por mês (nov/26 = 4, dez/26 = 5, jan/27 = 4, mar/27 = 5...)."""
+    return _primeira_quarta(ano, mes) - timedelta(days=3)
+
+
+def numero_semanas_pcp(ano, mes):
+    """4 ou 5: quantas quartas-feiras o mês tem (= quantas semanas PCP)."""
+    q = _primeira_quarta(ano, mes)
+    return 5 if q.day + 28 <= monthrange(ano, mes)[1] else 4
+
+
+def semanas_pcp_do_mes(ano, mes):
+    """[(n, domingo, sábado)] das semanas PCP oficiais do mês (regra da quarta;
+    semanas de domingo a sábado, pedido do Bruno 30/10/2026: 01/11 a 07/11 =
+    SEMANA 01/NOV, 29/11 a 05/12 = SEMANA 01/DEZ)."""
+    dom1 = domingo_semana_01(ano, mes)
+    return [
+        (n, dom1 + timedelta(days=7 * (n - 1)), dom1 + timedelta(days=7 * (n - 1) + 6))
+        for n in range(1, numero_semanas_pcp(ano, mes) + 1)
+    ]
+
+
+_MESES_EXT_PCP = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO",
+                  "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"]
+
+
+def semanas_pcp_agrupadas(inicio=(2026, 1), fim=(2027, 12), hoje=None):
+    """Lista do dropdown "Planejamento semanal (PCP)", organizada por mês:
+    [{"titulo": "NOVEMBRO/26 — 4 semanas", "semanas": [{"valor": "SEMANA 01 / NOV / 2026",
+    "texto": "Semana 01 · 02/11 a 06/11"}, ...]}, ...] em ordem cronológica.
+    `fim` se estende sozinho se hoje + 6 meses passar de dez/2027."""
+    hoje = hoje or date.today()
+    ano, mes = inicio
+    fa, fm = fim
+    lim = (hoje.year * 12 + hoje.month - 1) + 6
+    if lim > fa * 12 + fm - 1:
+        fa, fm = divmod(lim, 12)
+        fm += 1
+    grupos = []
+    while (ano, mes) <= (fa, fm):
+        sem = semanas_pcp_do_mes(ano, mes)
+        grupos.append({
+            "titulo": f"{_MESES_EXT_PCP[mes - 1]}/{str(ano)[2:]} — {len(sem)} semanas",
+            "semanas": [
+                {"valor": f"SEMANA {n:02d} / {_MESES_ABREV_PCP[mes - 1]} / {ano}",
+                 "texto": f"Semana {n:02d} · {ini.strftime('%d/%m')} a {fim_.strftime('%d/%m')}"}
+                for n, ini, fim_ in sem
+            ],
+        })
+        mes += 1
+        if mes > 12:
+            mes, ano = 1, ano + 1
+    return grupos
+
+
 def semaforo_prazo(liberacao_prevista, finalizado=False, hoje=None):
     """Retorna (cor, dias) comparando a liberação prevista com hoje.
 

@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from extensions import db, login_manager
 from models import (
+    _MESES_ABREV_PCP,
     ESTACOES,
     ESTACOES_GRUPOS_MONITORAMENTO,
     FRETE_OPCOES,
@@ -110,7 +111,9 @@ from models import (
     Usuario,
     VisitaReuniaoPD,
     gerar_semanas_pcp,
+    numero_semanas_pcp,
     rotulo_estacao,
+    semanas_pcp_agrupadas,
 )
 from permissoes import ROLES, ROLES_LABELS, pode_acessar_endpoint, pode_editar_estacao, requer_role, ve_pd_qualidade_custos
 
@@ -1577,6 +1580,9 @@ def create_app():
                 meses_atras=max(1, (date.today().year - 2026) * 12 + (date.today().month - 1)),
                 meses_frente=6,
             ),
+            # Pedido do Bruno (30/10/2026): lista do "Planejamento semanal (PCP)"
+            # organizada por mês (NOVEMBRO/26 — 4 semanas...), regra da quarta-feira.
+            GO_SEMANAS_PCP_GRUPOS=semanas_pcp_agrupadas(),
             GO_TIPO_PEDIDO_OPCOES=GO_TIPO_PEDIDO_OPCOES,
             GO_STATUS_PEDIDO_INFO_OPCOES=GO_STATUS_PEDIDO_INFO_OPCOES,
             GO_STATUS_PEDIDO_INFO_CORES=GO_STATUS_PEDIDO_INFO_CORES,
@@ -5733,8 +5739,13 @@ def _preview_semanal_pcp_painel(hoje=None):
     if not rotulos:
         return {"semanas": []}
 
-    semana_atual_num = -(-hoje.day // 7)
-    chave_atual = (hoje.year, hoje.month, semana_atual_num)
+    # semana PCP "atual" = a cuja janela (dom-sáb, regra da quarta-feira) contém hoje
+    semana_atual_num = None
+    for n_ in range(1, numero_semanas_pcp(hoje.year, hoje.month) + 1):
+        ini_ = _domingo_semana_01(hoje.year, hoje.month) + timedelta(days=7 * (n_ - 1))
+        if ini_ <= hoje <= ini_ + timedelta(days=6):
+            semana_atual_num = n_
+    chave_atual = (hoje.year, hoje.month, semana_atual_num) if semana_atual_num else None
 
     por_semana = _pedidos_pcp_por_semana(rotulos)
 
@@ -7248,7 +7259,7 @@ def _fim_semana_pcp(rotulo):
     if not chave or chave[0] == 9999 or chave[2] < 1:
         return None
     ano, mes, num = chave
-    if num <= 4:
+    if num <= numero_semanas_pcp(ano, mes):
         return _domingo_semana_01(ano, mes) + timedelta(days=7 * (num - 1) + 6)
     return date(ano, mes, monthrange(ano, mes)[1])
 
@@ -8148,7 +8159,7 @@ def _periodos_lt_painel(hoje):
 
     dom1 = _domingo_semana_01(ano, mes)
     janela = {}
-    for n in range(1, 5):
+    for n in range(1, numero_semanas_pcp(ano, mes) + 1):
         ini = dom1 + timedelta(days=7 * (n - 1))
         fim = min(ini + timedelta(days=6), mes_fim)
         janela[n] = (ini, fim)
@@ -8166,7 +8177,7 @@ def _periodos_lt_painel(hoje):
         periodos.append({
             "chave": f"q{n}", "tipo": "quinzena", "botao": f"{n}ª Quinz.", "titulo": f"{n}ª quinzena",
             "inicio": ini, "fim": fim, "curto": f"{mes_curto} · {n}ª QUINZ.",
-            "sub": f"planejamento PCP · {n}ª quinzena (semanas {' + '.join(f'{s:02d}' for s in sems if s <= 4 or ultimo >= 29)}) · {fmt(ini)} a {fmt(fim)}",
+            "sub": f"planejamento PCP · {n}ª quinzena (semanas {' + '.join(f'{s:02d}' for s in sems if s <= numero_semanas_pcp(ano, mes))}) · {fmt(ini)} a {fmt(fim)}",
             "rotulos": [_rot(s) for s in sems],
         })
     for p in periodos:
@@ -11155,7 +11166,7 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
     }
 
     semanas = []
-    for n in range(1, 5):
+    for n in range(1, numero_semanas_pcp(ano, mes) + 1):
         inicio_semana = domingo_semana_01 + timedelta(days=7 * (n - 1))
         fim_semana = inicio_semana + timedelta(days=6)
         # O rótulo PCP real é calculado a partir do dia do mês em que a
@@ -11163,8 +11174,10 @@ def _quadrantes_planejamento_semanal(filtros, hoje=None):
         # docstring. `inicio_semana.day` sempre cai dentro do mês corrente
         # pros 4 cards (a âncora está entre os dias 1-7, logo o início do
         # card 4 vai no máximo até o dia 28), então o índice é seguro.
-        bucket_num = -(-inicio_semana.day // 7)  # ceil(dia / 7)
-        rotulo = rotulos_semana[bucket_num - 1]
+        # Regra da quarta-feira (30/10/2026): a semana N do mês tem rótulo
+        # "SEMANA N / MÊS / ANO" do mês atual — direto, sem depender de
+        # dia/7 (a janela pode começar no fim do mês anterior, ex.: dez/26).
+        rotulo = f"SEMANA {n:02d} / {_MESES_ABREV_PCP[mes - 1]} / {ano}"
         semanas.append(
             {
                 "titulo": f"SEMANA {n:02d}",
@@ -17382,18 +17395,13 @@ def _agrupar_linhas_por_semana_pcp(linhas):
 
 
 def _domingo_semana_01(ano, mes):
-    """Âncora da "SEMANA 01" do mês: o primeiro domingo DENTRO do mês (ou o
-    próprio dia 1, se for domingo) — a MESMA regra dos quadrantes da Listagem
-    Geral (_quadrantes_planejamento_semanal; pedido do Bruno, 01/10/2026:
-    "semana 01: 04/10 a 10/10... semana 04: 25/10 a 31/10"). Fica sempre
-    entre os dias 1 e 7."""
-    primeiro_dia_mes = date(ano, mes, 1)
-    domingo_antes_ou_igual = primeiro_dia_mes - timedelta(days=(primeiro_dia_mes.weekday() + 1) % 7)
-    return (
-        domingo_antes_ou_igual + timedelta(days=7)
-        if primeiro_dia_mes.weekday() != 6
-        else domingo_antes_ou_igual
-    )
+    """Âncora da "SEMANA 01" do mês — regra do Bruno (30/10/2026): a semana
+    (seg-sex) pertence ao mês em que cai a QUARTA-FEIRA, então a semana 01 é a
+    que contém a 1ª quarta do mês (domingo 3 dias antes). Meses com 4 ou 5
+    quartas têm 4 ou 5 semanas (ver models.numero_semanas_pcp). Para
+    out/2026 e nov/2026 dá o mesmo de antes (04/10 e 01/11)."""
+    from models import domingo_semana_01
+    return domingo_semana_01(ano, mes)
 
 
 def _intervalo_calendario_semana_pcp(mes_ano, rotulo_semana):
@@ -17411,7 +17419,7 @@ def _intervalo_calendario_semana_pcp(mes_ano, rotulo_semana):
     m = re.search(r"SEMANA\s*(\d+)", (rotulo_semana or "").upper())
     if not m:
         return (None, None)
-    n = min(max(int(m.group(1)), 1), 4)
+    n = min(max(int(m.group(1)), 1), numero_semanas_pcp(ano, mes))
     inicio = _domingo_semana_01(ano, mes) + timedelta(days=7 * (n - 1))
     fim = inicio + timedelta(days=6)
     return (inicio, fim)
@@ -17426,16 +17434,17 @@ def _agrupar_linhas_por_quadrantes_pcp(linhas, mes_ano):
     definida ficam num grupo final à parte.
 
     Devolve [(titulo, periodo_txt, linhas)] já na ordem de exibição."""
-    por_semana = {1: [], 2: [], 3: [], 4: []}
+    n_sem = numero_semanas_pcp(*mes_ano)  # 4 ou 5 (regra da quarta-feira)
+    por_semana = {n: [] for n in range(1, n_sem + 1)}
     sem_semana = []
     for l in linhas:
         m = re.search(r"SEMANA\s*(\d+)", (l.planejamento_semanal or "").upper())
         if not m:
             sem_semana.append(l)
             continue
-        por_semana[min(max(int(m.group(1)), 1), 4)].append(l)
+        por_semana[min(max(int(m.group(1)), 1), n_sem)].append(l)
     grupos = []
-    for n in range(1, 5):
+    for n in range(1, n_sem + 1):
         inicio, fim = _intervalo_calendario_semana_pcp(mes_ano, f"SEMANA {n:02d}")
         grupos.append((f"SEMANA {n:02d}", f" ({inicio.strftime('%d/%m')} a {fim.strftime('%d/%m')})", por_semana[n]))
     if sem_semana:
@@ -17447,23 +17456,27 @@ def _numero_semana_linha(l):
     """Nº do quadrante (1-4; a SEMANA 05 soma na 04, igual ao relatório) ou 0
     quando a linha não tem semana de planejamento definida."""
     m = re.search(r"SEMANA\s*(\d+)", (l.planejamento_semanal or "").upper())
-    return min(max(int(m.group(1)), 1), 4) if m else 0
+    if not m:
+        return 0
+    mes_ano = _mes_ano_da_semana_pcp(l.planejamento_semanal)
+    teto = numero_semanas_pcp(*mes_ano) if mes_ano else 5
+    return min(max(int(m.group(1)), 1), teto)
 
 
-def _semanas_selecionadas(valores):
+def _semanas_selecionadas(valores, mes_ano=None):
     """Semanas marcadas no modal "Emitir relatório" (pedido do Bruno,
     28/10/2026: "incluir só o semanal, ex.: somente semana 04 outubro").
     `valores` = request.args.getlist("semana"). Devolve um set de nºs
     (0 = sem semana definida) ou None quando NÃO há recorte (nada marcado ou
-    todas marcadas) — nesse caso o relatório sai completo, como sempre."""
+    todas marcadas) — nesse caso o relatório sai completo, como sempre.
+    O mês pode ter 4 ou 5 semanas (regra da quarta-feira, 30/10/2026)."""
+    n_sem = numero_semanas_pcp(*mes_ano) if mes_ano else 4
     sel = set()
     for v in valores:
         v = (v or "").strip()
-        if v in ("0", "1", "2", "3", "4"):
-            sel.add(int(v))
-        elif v == "5":
-            sel.add(4)
-    if not sel or sel >= {0, 1, 2, 3, 4}:
+        if v.isdigit() and 0 <= int(v) <= 5:
+            sel.add(min(int(v), n_sem) if int(v) else 0)
+    if not sel or sel >= set(range(0, n_sem + 1)):
         return None
     return sel
 
@@ -17595,7 +17608,7 @@ def _contexto_painel_semanal_tela(args_originais, filtros):
     args.pop("sem_planejamento_semanal", None)
     query, _f = _filtrar_pedidos(args)
     linhas = _linhas_listagem_geral(query.all(), args)
-    semanas = _dados_painel_semanal_visual(linhas, mes_ano, {1, 2, 3, 4}, hoje)
+    semanas = _dados_painel_semanal_visual(linhas, mes_ano, set(range(1, numero_semanas_pcp(*mes_ano) + 1)), hoje)
     # semana aberta por padrão: a de hoje (se cair no mês), senão a 1ª com pedidos
     ativa = None
     for sem in semanas:
@@ -22307,7 +22320,7 @@ def register_routes(app):
         mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
         # Recorte por semana (Bruno, 28/10/2026): só as semanas marcadas do
         # mês do relatório — totais, gráficos e cabeçalho refletem o recorte.
-        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"))
+        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"), mes_ano)
         if semanas_sel is not None:
             linhas = [l for l in linhas if _numero_semana_linha(l) in semanas_sel]
             filtros = dict(filtros)
@@ -22357,7 +22370,7 @@ def register_routes(app):
         query, filtros = _filtrar_pedidos(args)
         linhas = _linhas_listagem_geral(query.all(), args)
         mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
-        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"))
+        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"), mes_ano)
         if semanas_sel is not None:
             linhas = [l for l in linhas if _numero_semana_linha(l) in semanas_sel]
         filtros = dict(filtros)
@@ -22386,7 +22399,7 @@ def register_routes(app):
         query, filtros = _filtrar_pedidos(args)
         linhas = _linhas_listagem_geral(query.all(), args)
         mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
-        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"))
+        semanas_sel = _semanas_selecionadas(request.args.getlist("semana"), mes_ano)
         if semanas_sel is not None:
             linhas = [l for l in linhas if _numero_semana_linha(l) in semanas_sel]
             filtros = dict(filtros)

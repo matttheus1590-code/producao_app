@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_opcoes_semanas_pcp.html" import opcoes_semanas %}
 {% from "_macros.html" import stat_card, sort_th, rdim_status_item %}
 {% block title %}Listagem · Gestão da Produção e Operação{% endblock %}
 {% block content %}
@@ -134,9 +135,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
         <label class="form-label small text-muted mb-1">🗓️ Planejamento semanal (PCP)</label>
         <select class="form-select form-select-sm" name="planejamento_semanal">
           <option value="">Todas as semanas</option>
-          {% for semana in GO_SEMANAS_PCP %}
-            <option value="{{ semana }}" {% if filtros.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
-          {% endfor %}
+          {{ opcoes_semanas(GO_SEMANAS_PCP_GRUPOS, filtros.planejamento_semanal) }}
         </select>
       </div>
       <div class="col-6 col-lg-2">
@@ -185,9 +184,9 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
   {% endif %}
 </div>
 <div class="row-quadrantes-pcp pcpq-bloco mb-4">
-  {# Linha 1: as 4 semanas do mês + fechamento do mês atual #}
+  {# Linha 1: as 4 ou 5 semanas do mês + fechamento do mês atual #}
   <div class="pcpq-wrap pcpq-linha-1">
-    <div class="pcpq-grupo" style="flex: 4 1 0;">
+    <div class="pcpq-grupo" style="flex: {{ quadrantes_pcp.semanas|length }} 1 0;">
       <div class="pcpq-grupo-tit">Semanas de {{ quadrantes_pcp.mes_atual.titulo|title }}</div>
       <div class="pcpq-cards">
         {% for semana in quadrantes_pcp.semanas %}
@@ -284,8 +283,8 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
         </div>
         <div class="modal-body">
           <p class="text-muted small">
-            Gera um PDF com os pedidos do mês escolhido nas <strong>4 semanas do Planejamento PCP</strong>
-            (mesmos períodos dos quadrantes da tela, ex.: Semana 01 = 04/10 a 10/10), com o faturamento e o nº
+            Gera um PDF com os pedidos do mês escolhido nas <strong>4 ou 5 semanas do Planejamento PCP</strong>
+            (mesmos períodos dos quadrantes da tela; semanas de domingo a sábado; a semana conta para o mês em que cai a quarta-feira), com o faturamento e o nº
             de pedidos de cada semana e o total do mês no fim. Marcando o backlog, o mês seguinte entra numa
             seção única (ex.: <em>Backlog novembro</em>).
           </p>
@@ -295,8 +294,8 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
 
           <label class="form-label small text-muted mb-1 mt-3">Semanas do mês incluídas</label>
           <div class="d-flex flex-wrap align-items-center gap-3" id="semanasPCPWrap">
-            {% for n in (1, 2, 3, 4) %}
-            <div class="form-check mb-0">
+            {% for n in (1, 2, 3, 4, 5) %}
+            <div class="form-check mb-0" {% if n == 5 %}id="semanaPCP5Wrap"{% endif %}>
               <input class="form-check-input js-semana-pcp" type="checkbox" name="semana" value="{{ n }}" id="semanaPCP{{ n }}" checked>
               <label class="form-check-label small" for="semanaPCP{{ n }}">Semana 0{{ n }}</label>
             </div>
@@ -308,8 +307,8 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
           </div>
           <div class="d-flex flex-wrap gap-1 mt-2 align-items-center">
             <span class="small text-muted me-1">Atalho:</span>
-            {% for n in (1, 2, 3, 4) %}
-            <button type="button" class="btn btn-sm btn-outline-secondary py-0 js-so-semana-pcp" data-semana="{{ n }}">Só 0{{ n }}</button>
+            {% for n in (1, 2, 3, 4, 5) %}
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0 js-so-semana-pcp" data-semana="{{ n }}" {% if n == 5 %}id="soSemanaPCP5"{% endif %}>Só 0{{ n }}</button>
             {% endfor %}
             <button type="button" class="btn btn-sm btn-outline-secondary py-0 js-so-semana-pcp" data-semana="todas">Todas</button>
           </div>
@@ -375,12 +374,33 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
 </div>
 
 <script>
+// Semana 05 só existe nos meses com 5 quartas-feiras (regra do Bruno, 30/10/2026).
+function semanasPCPDoMes(valor) {
+  var m = /^(\d{4})-(\d{2})$/.exec(valor || "");
+  if (!m) return 4;
+  var ano = +m[1], mes = +m[2], q = 0, ultimo = new Date(ano, mes, 0).getDate();
+  for (var d = 1; d <= ultimo; d++) { if (new Date(ano, mes - 1, d).getDay() === 3) q++; }
+  return q;
+}
+function ajustarSemana5PCP() {
+  var inp = document.querySelector('#semanasPCPWrap')?.closest('form')?.querySelector('input[name="planejamento_mensal"]');
+  var tem5 = semanasPCPDoMes(inp ? inp.value : "") >= 5;
+  var wrap = document.getElementById("semanaPCP5Wrap"), chk = document.getElementById("semanaPCP5"), so = document.getElementById("soSemanaPCP5");
+  if (!wrap || !chk) return;
+  wrap.style.display = tem5 ? "" : "none"; chk.disabled = !tem5;
+  if (so) so.style.display = tem5 ? "" : "none";
+}
+document.addEventListener("change", function (ev) {
+  if (ev.target && ev.target.name === "planejamento_mensal") ajustarSemana5PCP();
+});
+document.addEventListener("DOMContentLoaded", ajustarSemana5PCP);
+ajustarSemana5PCP();
 document.addEventListener("click", function (ev) {
   var b = ev.target.closest(".js-so-semana-pcp");
   if (!b) return;
   var alvo = b.dataset.semana;
   document.querySelectorAll("#semanasPCPWrap .js-semana-pcp").forEach(function (c) {
-    c.checked = (alvo === "todas") || (c.value === alvo);
+    c.checked = !c.disabled && ((alvo === "todas") || (c.value === alvo));
   });
 });
 </script>

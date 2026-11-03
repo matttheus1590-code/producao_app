@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_opcoes_semanas_pcp.html" import opcoes_semanas %}
 {% block title %}Pedido {{ pedido.pedido_venda or ("#" ~ pedido.id) }} · Gestão da Produção e Operação{% endblock %}
 {% block content %}
 
@@ -151,9 +152,7 @@
             <select class="form-select" name="planejamento_semanal">
               <option value="">—</option>
               {% set semana_atual = pedido.itens[0].planejamento_semanal if pedido.itens else '' %}
-              {% for semana in GO_SEMANAS_PCP %}
-                <option value="{{ semana }}" {% if semana_atual == semana %}selected{% endif %}>{{ semana }}</option>
-              {% endfor %}
+              {{ opcoes_semanas(GO_SEMANAS_PCP_GRUPOS, semana_atual) }}
             </select>
           </div>
         </div>

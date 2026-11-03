@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_opcoes_semanas_pcp.html" import opcoes_semanas %}
 {% from "_macros.html" import stat_card %}
 {% block title %}Gestão Operação · PCP · Gestão da Produção e Operação{% endblock %}
 {% block content %}
@@ -39,9 +40,7 @@
     <label class="form-label small text-muted mb-1">Planejamento semanal (PCP)</label>
     <select class="form-select" name="planejamento_semanal">
       <option value="">Todas as semanas</option>
-      {% for semana in GO_SEMANAS_PCP %}
-        <option value="{{ semana }}" {% if filtros.planejamento_semanal == semana %}selected{% endif %}>{{ semana }}</option>
-      {% endfor %}
+      {{ opcoes_semanas(GO_SEMANAS_PCP_GRUPOS, filtros.planejamento_semanal) }}
     </select>
   </div>
   <div class="col-md-2">
