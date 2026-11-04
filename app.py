@@ -13249,6 +13249,389 @@ def _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao):
     }
 
 
+# ---------------------------------------------------------------------------
+# Consulta Pedido — "visão do pedido" (pedido do Bruno, 04/11/2026): "melhore
+# essa tela e deixe mais intuitivo, prático, completo e dinâmico, ao ponto de
+# qualquer pessoa já enxergar de forma rápida todas as datas, projeções e o
+# atual cenário — todas as áreas terão acesso, principalmente o comercial".
+#
+# Tudo calculado ao vivo em cima do que já existe (Pedido/ItemPedido +
+# PedidoOperacao, casados por pedido_venda) — nada novo é gravado. Linguagem
+# pensada pro COMERCIAL: nada de custo, gargalo, dias parado ou outro dado
+# interno de PCP/Qualidade.
+# ---------------------------------------------------------------------------
+_MESES_CURTOS_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+
+
+def _fmt_data_curta(d):
+    """dd/mm/aaaa ou '—'."""
+    return d.strftime("%d/%m/%Y") if d else "—"
+
+
+def _quando_relativo(d, hoje):
+    """'hoje', 'amanhã', 'ontem', 'em 5 dias', 'há 3 dias' (dias corridos)."""
+    if d is None:
+        return ""
+    n = (d - hoje).days
+    if n == 0:
+        return "hoje"
+    if n == 1:
+        return "amanhã"
+    if n == -1:
+        return "ontem"
+    return f"em {n} dias" if n > 0 else f"há {-n} dias"
+
+
+def _fase_item_consulta(item):
+    """1 fila · 2 produção · 3 inspeção/embalagem · 4 liberado — pra mini
+    barra de progresso do item (mesmos sinais do acompanhamento do pedido)."""
+    if item.status_producao == "FINALIZADO":
+        return 4
+    if item.inicio_inspecao or item.termino_inspecao:
+        return 3
+    if item.inicio_producao or item.status_producao in ("ANDAMENTO", "EM TRATATIVA"):
+        return 2
+    return 1
+
+
+def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
+    """Dados da nova Consulta Pedido: veredito de prazo, datas-chave, barra de
+    tempo, linha do tempo, itens com projeção, logística e avisos.
+
+    Projeção de entrega (mesma regra da gestão de risco de prazos): liberação
+    prevista pelo PCP (a do ÚLTIMO item ainda em aberto; nunca no passado —
+    se a previsão venceu, a mais cedo possível é hoje) + frete rodoviário da
+    UF no CIF (cadastro Lead time Transportadora; pior caso). No FOB a
+    entrega é a própria liberação (o cliente retira). Depois de expedido, vale
+    a previsão de entrega da logística; entregue, a data real."""
+    p0 = pedidos[0] if pedidos else None
+    itens = sorted((i for p in pedidos for i in p.itens), key=lambda i: i.id)
+    abertos = [i for i in itens if i.status_producao != "FINALIZADO"]
+    n_itens, n_abertos = len(itens), len(abertos)
+
+    frete = (p0.frete if p0 else (go.frete if go else None)) or None
+    uf = ((p0.estado if p0 else (go.estado if go else None)) or "").strip().upper()
+    prazo = next((p.data_cliente for p in pedidos if p.data_cliente), None) or (go.go_data_solicitada_cliente_retira if go else None)
+    inclusao = (p0.data_inclusao_pedido if p0 else (go.data_inclusao_pedido if go else None))
+
+    # --- frete (só CIF soma dias; FOB = cliente retira) ---
+    frete_dias, frete_sem_cadastro = None, False
+    if frete == "CIF":
+        linha_lt = _mapa_lead_time_transportadora().get((uf, "Rodoviário"))
+        if linha_lt:
+            frete_dias = _lead_time_transporte_dias(linha_lt)
+        else:
+            frete_sem_cadastro = True
+    dias_frete = frete_dias or 0
+
+    # --- datas do pedido ---
+    entrega_real = (go.go_data_entregue_cliente or go.go_data_real_entrega) if go else None
+    expedido = go.go_data_pedido_expedido if go else None
+    prev_coleta = go.go_data_prevista_coleta if go else None
+    prev_entrega_go = go.go_data_prevista_entrega if go else None
+    nf_data = go.go_data_emissao_nf if go else None
+    nf_num = (go.go_numero_nf if go else None) or next((i.numero_nota_fiscal for i in itens if i.numero_nota_fiscal), None)
+    inicios = [i.inicio_producao for i in itens if i.inicio_producao]
+    inicio_producao = min(inicios) if inicios else None
+    termino_insp = [i.termino_inspecao for i in itens if i.termino_inspecao]
+    previstas = [i.liberacao_prevista for i in abertos if i.liberacao_prevista]
+    sem_prev = n_abertos - len(previstas)
+    efetiva = (liberacao_pcp or {}).get("efetiva") or (go.go_data_efetiva_liberacao_pcp if go else None)
+    if efetiva is None and itens and not abertos:
+        reais = [i.liberacao_real or i.liberacao_faturamento or i.termino_inspecao for i in itens]
+        reais = [r for r in reais if r]
+        efetiva = max(reais) if reais else None
+    previsao_pcp = max(previstas) if previstas else ((liberacao_pcp or {}).get("previsao") or (go.go_previsao_liberacao_pcp if go else None))
+    # "Liberado" = todos os itens liberados (ou, sem itens em Produção, a data
+    # efetiva de Operação). A "efetiva" derivada dos itens é a MAIS RECENTE
+    # entre os que já saíram — com item ainda em aberto, o pedido não está liberado.
+    liberado = (bool(itens) and not abertos) or (not itens and bool(efetiva))
+
+    # --- fase/projeção ---
+    if entrega_real:
+        fase, entrega = "entregue", entrega_real
+    elif expedido:
+        fase = "transporte"
+        entrega = prev_entrega_go or ((expedido + timedelta(days=frete_dias)) if frete_dias else None)
+    elif liberado:
+        fase = "liberado"
+        base = max(prev_coleta, hoje) if prev_coleta else hoje
+        entrega = base + timedelta(days=dias_frete)
+    elif previsao_pcp:
+        fase = "producao"
+        entrega = max(previsao_pcp, hoje) + timedelta(days=dias_frete)
+    else:
+        fase, entrega = "producao", None
+    folga = (prazo - entrega).days if (prazo and entrega) else None
+
+    # --- veredito ---
+    dias_prazo = (prazo - hoje).days if prazo else None
+    if fase == "entregue":
+        if prazo is None:
+            v = ("azul", "📬", "Entregue ao cliente", f"Entregue em {_fmt_data_curta(entrega)}. Sem prazo do cliente cadastrado para comparar.")
+        elif entrega <= prazo:
+            v = ("verde", "✅", "Entregue no prazo", f"Entregue em {_fmt_data_curta(entrega)} — {'no dia do prazo' if entrega == prazo else f'{folga} dia(s) antes do prazo'} ({_fmt_data_curta(prazo)}).")
+        else:
+            v = ("vermelho", "📬", f"Entregue com {-folga} dia(s) de atraso", f"Prazo do cliente era {_fmt_data_curta(prazo)}; entregue em {_fmt_data_curta(entrega)}.")
+    elif entrega is None:
+        if prazo and dias_prazo < 0:
+            v = ("vermelho", "⏰", "Prazo do cliente vencido, sem previsão", f"O prazo era {_fmt_data_curta(prazo)} (venceu há {-dias_prazo} dia(s)) e o PCP ainda não informou a previsão de liberação.")
+        else:
+            v = ("cinza", "🗓️", "Aguardando previsão do PCP", "Ainda não há previsão de liberação informada pelo PCP — a data de entrega será projetada assim que ela existir.")
+    elif prazo is None:
+        v = ("cinza", "🧮", f"Entrega projetada: {_fmt_data_curta(entrega)}", "Sem prazo do cliente cadastrado — não dá para medir folga.")
+    elif folga < 0:
+        v = ("vermelho", "🔴", f"Previsão {-folga} dia(s) depois do prazo do cliente",
+             f"Entrega projetada {_fmt_data_curta(entrega)} × prazo do cliente {_fmt_data_curta(prazo)}.")
+    elif folga <= RISCO_FOLGA_ALERTA_DIAS:
+        v = ("amarelo", "🟡", f"No prazo, mas apertado — folga de {folga} dia(s)",
+             f"Entrega projetada {_fmt_data_curta(entrega)} × prazo do cliente {_fmt_data_curta(prazo)}.")
+    else:
+        v = ("verde", "🟢", f"No prazo — folga de {folga} dia(s)",
+             f"Entrega projetada {_fmt_data_curta(entrega)} × prazo do cliente {_fmt_data_curta(prazo)}.")
+    # Previsão do PCP que já passou sem liberar: a projeção assume liberação
+    # HOJE (mais cedo possível), mas dizer "no prazo" sem ressalva seria
+    # otimista demais pro comercial — sobe pra "atenção" e explica.
+    previsao_vencida = fase == "producao" and previsao_pcp is not None and previsao_pcp < hoje
+    if previsao_vencida and v[0] == "verde":
+        v = ("amarelo", "🟡", "Previsão do PCP já passou — aguardando reprogramação",
+             f"A liberação estava prevista para {_fmt_data_curta(previsao_pcp)} ({_quando_relativo(previsao_pcp, hoje)}) e ainda não ocorreu. "
+             f"Se liberar hoje, a entrega projetada é {_fmt_data_curta(entrega)} (folga de {folga} dia(s) sobre o prazo de {_fmt_data_curta(prazo)}).")
+    veredito = {"cor": v[0], "emoji": v[1], "titulo": v[2], "texto": v[3], "folga": folga, "previsao_vencida": previsao_vencida}
+
+    # como a projeção foi montada (transparência pro comercial)
+    if fase == "entregue":
+        como = None
+    elif fase == "transporte":
+        como = (f"Expedido em {_fmt_data_curta(expedido)}"
+                + (f" · previsão de entrega informada pela logística: {_fmt_data_curta(prev_entrega_go)}" if prev_entrega_go
+                   else (f" + frete de {frete_dias} dia(s) até {uf}" if frete_dias else "")))
+    elif entrega is None:
+        como = None
+    else:
+        parte_lib = ("Liberado" if fase == "liberado" else "Liberação prevista pelo PCP") + \
+                    f" {_fmt_data_curta(efetiva if fase == 'liberado' and efetiva else (max(previsao_pcp, hoje) if previsao_pcp else hoje))}"
+        if frete == "CIF" and frete_dias:
+            como = f"{parte_lib} + frete de {frete_dias} dia(s) até {uf} (CIF) = {_fmt_data_curta(entrega)}"
+        elif frete == "CIF":
+            como = f"{parte_lib} — sem lead time de frete cadastrado para {uf or 'a UF'}, frete não somado"
+        else:
+            como = f"{parte_lib} — frete por conta do cliente (entrega = liberação)"
+
+    # --- datas-chave (5 cartões) ---
+    def tile(rotulo, emoji, data, estado, extra=None, cor=None):
+        return {"rotulo": rotulo, "emoji": emoji, "data": data, "estado": estado, "extra": extra, "cor": cor,
+                "quando": _quando_relativo(data, hoje) if data else ""}
+
+    cor_prazo = None
+    if prazo and fase != "entregue":
+        cor_prazo = "vermelho" if dias_prazo < 0 else ("amarelo" if dias_prazo <= 7 else None)
+    t_prazo = tile("Prazo do cliente", "🎯", prazo, "meta" if prazo else "faltando", None, cor_prazo)
+    if liberado:
+        t_lib = tile("Liberação PCP (real)", "✅", efetiva, "feito" if efetiva else "faltando", "todos os itens liberados" if itens and not abertos else None)
+    else:
+        extra_lib = (f"{n_abertos - sem_prev}/{n_abertos} itens com previsão" if previstas and sem_prev
+                     else (f"{n_itens - n_abertos}/{n_itens} itens já liberados" if n_itens > n_abertos else None))
+        cor_lib = "vermelho" if previsao_pcp and previsao_pcp < hoje else (
+            "vermelho" if previsao_pcp and prazo and previsao_pcp > prazo else None)
+        t_lib = tile("Liberação PCP (prevista)", "🗓️", previsao_pcp, "previsto" if previsao_pcp else "faltando", extra_lib, cor_lib)
+    if expedido:
+        t_exp = tile("Expedição (real)", "🚚", expedido, "feito", f"transportadora: {go.go_transportadora.nome}" if go and go.go_transportadora else None)
+    else:
+        t_exp = tile("Coleta/embarque (prevista)", "🚚", prev_coleta, "previsto" if prev_coleta else "faltando", None)
+    if fase == "entregue":
+        t_ent = tile("Entrega (real)", "📬", entrega, "feito", None, "verde" if (prazo is None or entrega <= prazo) else "vermelho")
+    else:
+        t_ent = tile("Entrega (projetada)", "📬", entrega, "previsto" if entrega else "faltando",
+                     (f"folga {folga}d" if folga is not None and folga >= 0 else (f"{-folga}d após o prazo" if folga is not None else None)),
+                     {"vermelho": "vermelho", "amarelo": "amarelo"}.get(veredito["cor"]))
+    t_inc = tile("Pedido incluído", "📝", inclusao, "feito" if inclusao else "faltando", None)
+    tiles = [t_inc, t_prazo, t_lib, t_exp, t_ent]
+
+    # --- barra de tempo (inclusão → ... → prazo/entrega), com marcador de hoje ---
+    marcos = []
+
+    def marco(chave, rotulo, data, cor):
+        if data:
+            marcos.append({"chave": chave, "rotulo": rotulo, "data": data, "cor": cor})
+
+    marco("inclusao", "Incluído", inclusao, "azul")
+    marco("hoje", "Hoje", hoje, "hoje")
+    marco("prazo", "Prazo cliente", prazo, cor_prazo or "meta")
+    marco("lib", "Liberação" + (" (real)" if liberado else " (prev.)"), efetiva if liberado else previsao_pcp, "verde" if liberado else "previsto")
+    marco("entrega", "Entrega" + (" (real)" if fase == "entregue" else " (proj.)"), entrega,
+          "verde" if fase == "entregue" else {"vermelho": "vermelho", "amarelo": "amarelo"}.get(veredito["cor"], "previsto"))
+    barra = None
+    if len(marcos) >= 2:
+        d_min = min(m["data"] for m in marcos)
+        d_max = max(m["data"] for m in marcos)
+        total = max((d_max - d_min).days, 1)
+        # marcadores na mesma data viram um só rótulo (junta os nomes)
+        por_data = {}
+        for m in marcos:
+            por_data.setdefault(m["data"], []).append(m)
+        pontos = []
+        for k, (d, ms) in enumerate(sorted(por_data.items())):
+            ms.sort(key=lambda m: ["inclusao", "hoje", "lib", "prazo", "entrega"].index(m["chave"]))
+            pontos.append({
+                "pos": round((d - d_min).days / total * 100, 1), "data": d,
+                "rotulo": " · ".join(m["rotulo"] for m in ms), "cor": ms[-1]["cor"] if ms[-1]["chave"] != "hoje" else "hoje",
+                "nivel": k % 2, "hoje": any(m["chave"] == "hoje" for m in ms),
+            })
+        pos_hoje = round((min(max(hoje, d_min), d_max) - d_min).days / total * 100, 1)
+        barra = {"pontos": pontos, "pos_hoje": pos_hoje, "dias_total": (d_max - d_min).days,
+                 "cor": {"vermelho": "vermelho", "amarelo": "amarelo", "verde": "verde"}.get(veredito["cor"], "azul")}
+
+    # --- linha do tempo vertical (marcos + previsões, com 'hoje') ---
+    ev = []
+
+    def add(data, emoji, titulo, detalhe=None, tipo="marco"):
+        if data:
+            ev.append({"data": data, "emoji": emoji, "titulo": titulo, "detalhe": detalhe, "tipo": tipo,
+                       "futuro": data > hoje, "atrasado": tipo == "previsto" and data < hoje})
+
+    add(inclusao, "📝", "Pedido incluído no sistema")
+    add(prazo, "🎯", "Prazo solicitado pelo cliente", None, "prazo")
+    add(inicio_producao, "🏭", "Início de produção", f"{sum(1 for i in itens if i.inicio_producao)}/{n_itens} item(ns) iniciado(s)" if n_itens > 1 else None)
+    if termino_insp and len(termino_insp) == n_itens:
+        add(max(termino_insp), "🔍", "Inspeção/embalagem concluída", "todos os itens" if n_itens > 1 else None)
+    elif termino_insp:
+        add(max(termino_insp), "🔍", "Inspeção/embalagem concluída em parte", f"{len(termino_insp)}/{n_itens} item(ns)")
+    if liberado:
+        add(efetiva, "✅", "Liberado pelo PCP")
+    elif previsao_pcp:
+        add(previsao_pcp, "🗓️", "Liberação prevista pelo PCP",
+            (f"{n_abertos - sem_prev}/{n_abertos} itens com previsão" if sem_prev and previstas else None), "previsto")
+    add(nf_data, "🧾", "Nota fiscal emitida", f"NF {nf_num}" if nf_num else None)
+    if not expedido:
+        add(prev_coleta, "🚚", "Coleta/embarque previsto", None, "previsto")
+    add(expedido, "🚚", "Pedido expedido", go.go_transportadora.nome if go and go.go_transportadora else None)
+    if go and go.go_data_real_entrega and go.go_data_entregue_cliente and go.go_data_real_entrega != go.go_data_entregue_cliente:
+        add(go.go_data_real_entrega, "🚛", "Chegada ao destino (transportadora)")
+    if fase == "entregue":
+        add(entrega, "🎉", "Entregue ao cliente")
+    elif entrega:
+        add(entrega, "📬", "Entrega projetada", como, "previsto")
+    ordem_tipo = {"marco": 0, "previsto": 1, "prazo": 2}
+    ev.sort(key=lambda e: (e["data"], ordem_tipo[e["tipo"]]))
+    linha_tempo, marcado = [], False
+    for e in ev:
+        if not marcado and e["data"] > hoje:
+            linha_tempo.append({"hoje": True, "data": hoje})
+            marcado = True
+        linha_tempo.append(e)
+    if not marcado:
+        linha_tempo.append({"hoje": True, "data": hoje})
+
+    # --- itens com progresso e projeção ---
+    linhas_itens = []
+    for i in itens:
+        fase_i = _fase_item_consulta(i)
+        lib_i = None
+        if i.status_producao == "FINALIZADO":
+            lib_i = i.liberacao_real or i.liberacao_faturamento or i.termino_inspecao
+            entrega_i, folga_i = None, None
+        else:
+            entrega_i = (max(i.liberacao_prevista, hoje) + timedelta(days=dias_frete)) if i.liberacao_prevista else None
+            folga_i = (prazo - entrega_i).days if (prazo and entrega_i) else None
+        linhas_itens.append({
+            "id": i.id, "produto": i.descricao_produto, "quantidade": i.quantidade,
+            "estacao": rotulo_estacao(i.estacao) if i.estacao else None,
+            "status": i.status_producao, "fase": fase_i,
+            "semana": i.planejamento_semanal, "inicio": i.inicio_producao, "termino_insp": i.termino_inspecao,
+            "liberacao_prevista": i.liberacao_prevista, "liberado_em": lib_i, "entrega_proj": entrega_i, "folga": folga_i,
+            "lead_time": i.lt_producao_dias, "nf": i.numero_nota_fiscal, "envio": i.data_envio,
+            "liberacao_atrasada": bool(i.liberacao_prevista and i.liberacao_prevista < hoje and i.status_producao != "FINALIZADO"),
+            "item_obj": i,
+        })
+
+    # --- avisos amigáveis (nada interno) ---
+    avisos = []
+    if fase not in ("entregue",) and prazo and dias_prazo < 0:
+        avisos.append(("vermelho", f"O prazo do cliente venceu há {-dias_prazo} dia(s) e o pedido ainda não foi entregue."))
+    if n_abertos and sem_prev and fase == "producao":
+        avisos.append(("amarelo", f"{sem_prev} de {n_abertos} item(ns) em aberto ainda sem previsão de liberação do PCP"
+                       + (" — a projeção considera só os que têm previsão." if previstas else ".")))
+    trat = [i for i in abertos if i.status_producao == "EM TRATATIVA"]
+    if trat:
+        avisos.append(("amarelo", f"{len(trat)} item(ns) em tratativa (aguardando resolução de uma pendência): "
+                       + ", ".join(i.descricao_produto for i in trat[:3]) + "."))
+    if frete_sem_cadastro:
+        avisos.append(("cinza", f"Sem lead time de frete cadastrado para {uf or 'a UF'} — o frete CIF não foi somado na projeção."))
+    if prazo is None and fase != "entregue":
+        avisos.append(("cinza", "Pedido sem prazo do cliente cadastrado — não dá para medir folga."))
+    if not pedidos:
+        avisos.append(("cinza", "Pedido ainda não lançado em Gestão Produção — sem itens, estação e previsão do PCP."))
+
+    # --- próximo marco ---
+    proximo = None
+    if fase == "producao":
+        if previsao_pcp and previsao_pcp < hoje:
+            proximo = ("🗓️", f"Próximo marco: liberação pelo PCP — a previsão de {_fmt_data_curta(previsao_pcp)} já passou; aguardando nova data")
+        elif previsao_pcp:
+            proximo = ("🗓️", f"Próximo marco: liberação pelo PCP, prevista para {_fmt_data_curta(previsao_pcp)} ({_quando_relativo(previsao_pcp, hoje)})")
+        else:
+            proximo = ("🗓️", "Próximo marco: o PCP informar a previsão de liberação")
+    elif fase == "liberado":
+        proximo = ("🚚", "Próximo marco: " + (f"coleta/embarque previsto para {_fmt_data_curta(prev_coleta)} ({_quando_relativo(prev_coleta, hoje)})" if prev_coleta else "agendar a coleta/embarque"))
+    elif fase == "transporte":
+        proximo = ("📬", "Próximo marco: " + (f"entrega prevista para {_fmt_data_curta(entrega)} ({_quando_relativo(entrega, hoje)})" if entrega else "confirmação de entrega"))
+
+    # --- progresso geral ---
+    liberados = n_itens - n_abertos
+    progresso = {"liberados": liberados, "total": n_itens, "pct": round(liberados / n_itens * 100) if n_itens else 0,
+                 "rotulo": "itens liberados", "texto": f"{liberados} / {n_itens}"}
+    if fase in ("entregue", "transporte"):
+        # A logística é a fonte mais recente: expedido/entregue = pedido todo liberado.
+        progresso.update(pct=100, rotulo="pedido entregue" if fase == "entregue" else "pedido expedido",
+                         texto="100%")
+
+    # --- datas por etapa do acompanhamento (1..5) ---
+    datas_etapas = {
+        1: (inclusao, None),
+        2: (inicio_producao, None),
+        3: (efetiva if liberado else None, previsao_pcp if not liberado else None),
+        4: (expedido, prev_coleta if not expedido else None),
+        5: (entrega_real, entrega if not entrega_real else None),
+    }
+
+    # --- última atualização registrada (histórico do pedido/itens) ---
+    ultima = None
+    ids = [p.id for p in pedidos]
+    if ids:
+        ultima_utc = db.session.query(func.max(HistoricoAlteracao.criado_em)).filter(HistoricoAlteracao.pedido_id.in_(ids)).scalar()
+        if ultima_utc:
+            ultima = ultima_utc - timedelta(hours=3)
+
+    # --- texto pronto pra copiar (WhatsApp/e-mail do comercial) ---
+    cliente = (p0.cliente if p0 else (go.cliente if go else "")) or ""
+    pv = (p0.pedido_venda if p0 else (go.pedido_venda if go else "")) or ""
+    linhas_txt = [f"Pedido {pv} — {cliente}", f"Situação: {veredito['titulo']}"]
+    if prazo:
+        linhas_txt.append(f"Prazo do cliente: {_fmt_data_curta(prazo)}")
+    if fase == "entregue":
+        linhas_txt.append(f"Entregue em: {_fmt_data_curta(entrega)}")
+    else:
+        if previsao_pcp and not liberado:
+            linhas_txt.append(f"Liberação prevista (PCP): {_fmt_data_curta(previsao_pcp)}"
+                              + (" (já passou — aguardando nova data)" if previsao_pcp < hoje else ""))
+        if entrega:
+            linhas_txt.append(f"Entrega projetada: {_fmt_data_curta(entrega)}")
+    if n_itens:
+        linhas_txt.append(f"Itens liberados: {liberados}/{n_itens}")
+    linhas_txt.append(f"Posição de {agora.strftime('%d/%m/%Y %H:%M')}")
+
+    return {
+        "hoje": hoje, "agora": agora, "fase": fase, "veredito": veredito, "como": como, "tiles": tiles, "barra": barra,
+        "linha_tempo": linha_tempo, "itens": linhas_itens, "avisos": avisos, "proximo": proximo, "progresso": progresso,
+        "datas_etapas": datas_etapas, "ultima_atualizacao": ultima, "resumo_texto": "\n".join(linhas_txt),
+        "prazo": prazo, "frete": frete, "uf": uf, "frete_dias": frete_dias, "n_abertos": n_abertos, "n_itens": n_itens,
+        "nf_num": nf_num, "nf_data": nf_data, "prev_coleta": prev_coleta, "expedido": expedido,
+        "prev_entrega_go": prev_entrega_go, "entrega_real": entrega_real, "efetiva": efetiva, "previsao_pcp": previsao_pcp,
+        "primeiro": p0, "inclusao": inclusao,
+    }
+
+
 def _buscar_pedidos_para_status(termo, limite=12):
     """Pedido do Bruno (01/09/2026): canal único de busca no topo do Painel —
     "sou o PCP, comercial me cobrou de um pedido" — digita o nº do pedido de
@@ -13271,7 +13654,7 @@ def _buscar_pedidos_para_status(termo, limite=12):
     candidatos = {}  # pedido_venda (trim) -> dict de exibição
 
     pedidos = (
-        Pedido.query.filter(
+        Pedido.query.options(selectinload(Pedido.itens)).filter(
             Pedido.pedido_venda.isnot(None),
             _pedido_venda_normalizado_sql(Pedido.pedido_venda) != "",
             or_(Pedido.pedido_venda.ilike(padrao), Pedido.cliente.ilike(padrao)),
@@ -13284,7 +13667,10 @@ def _buscar_pedidos_para_status(termo, limite=12):
         chave = _normalizar_pedido_venda(p.pedido_venda)
         if not chave or chave in candidatos:
             continue
-        candidatos[chave] = {"pedido_venda": chave, "cliente": p.cliente, "tem_producao": True}
+        candidatos[chave] = {
+            "pedido_venda": chave, "cliente": p.cliente, "tem_producao": True,
+            "status": p.status_producao, "prazo": p.data_cliente, "frete": p.frete,
+        }
 
     if len(candidatos) < limite:
         pedidos_operacao = (
@@ -21627,16 +22013,23 @@ def register_routes(app):
         if not chave:
             return "", 204
 
-        pedido = (
+        # Pode haver mais de uma linha de Pedido com o mesmo nº de pedido de
+        # venda (planilha antiga / pedido dividido) — a visão junta os itens
+        # de todas, em vez de só a primeira.
+        pedidos = (
             Pedido.query.options(selectinload(Pedido.itens))
             .filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda) == chave)
-            .first()
+            .order_by(Pedido.id)
+            .all()
         )
+        pedido = pedidos[0] if pedidos else None
         go = PedidoOperacao.query.filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave).first()
 
         if pedido is None and go is None:
             return render_template("_consulta_pedido_detalhe.html", nao_encontrado=True, pedido_venda=chave)
 
+        agora = _agora_brt()
+        hoje = agora.date()
         liberacao_pcp = _liberacao_pcp_por_pedido_venda([chave]).get(chave, {})
         data_cliente_producao = _data_cliente_por_pedido_venda([chave]).get(chave)
         situacao_entrega = _situacao_entrega_go(go, pedido)
@@ -21646,21 +22039,23 @@ def register_routes(app):
         # comercial (inclusão -> solicitado cliente) e prazo de operação
         # completa (inclusão -> liberação efetiva PCP) — ver _prazos_pedido.
         prazos = _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao)
+        visao = _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora)
 
         # Qualidade (RDIM) — pedido do Bruno (02/09/2026): ver o processo de
         # qualidade item a item dentro do pedido, na mesma tela que já une
         # Produção + Operação.
-        inspecoes_rdim = _inspecoes_rdim_por_item([i.id for i in pedido.itens]) if pedido else {}
+        todos_itens = [i for p in pedidos for i in p.itens]
+        inspecoes_rdim = _inspecoes_rdim_por_item([i.id for i in todos_itens]) if pedidos else {}
         resumo_rdim = _resumo_rdim_pedido(inspecoes_rdim.values())
 
         return render_template(
             "_consulta_pedido_detalhe.html",
-            pedido=pedido, go=go, pedido_venda=chave,
+            pedido=pedido, pedidos=pedidos, go=go, pedido_venda=chave,
             liberacao_pcp=liberacao_pcp, data_cliente_producao=data_cliente_producao,
             situacao_entrega=situacao_entrega, otd_pedido=otd_pedido,
             etapas=etapas, nao_encontrado=False,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
-            prazos=prazos,
+            prazos=prazos, v=visao, pedido_valor_total=sum(p.valor_total for p in pedidos),
         )
 
     @app.route("/consulta-pedido/planejamento")

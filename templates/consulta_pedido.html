@@ -13,8 +13,8 @@
   <div class="card-body py-4">
     <h5 class="mb-1"><i class="bi bi-search"></i> Digite o pedido ou o cliente</h5>
     <p class="text-muted small mb-3">
-      Mostra produção, PCP, logística e, principalmente, se o material já foi expedido ou entregue ao cliente —
-      tudo cruzado automaticamente pelo número do pedido de venda.
+      Veja em segundos o cenário do pedido: prazo do cliente, previsão do PCP, entrega projetada, itens, expedição e entrega —
+      tudo cruzado automaticamente pelo número do pedido de venda e recalculado a cada consulta.
     </p>
     <div class="position-relative" style="max-width: 640px;">
       <div class="input-group input-group-lg">
@@ -153,6 +153,26 @@
       }
     });
   }
+
+  // "Copiar resumo" do pedido aberto (o fragmento é injetado por innerHTML, então o
+  // clique é tratado por delegação): copia o texto pronto pra WhatsApp/e-mail.
+  document.addEventListener("click", function (e) {
+    const btn = e.target.closest(".js-copiar-resumo");
+    if (!btn) return;
+    const texto = btn.getAttribute("data-texto") || "";
+    const rotulo = btn.querySelector("span");
+    const feito = function () {
+      if (!rotulo) return;
+      const antes = rotulo.textContent;
+      rotulo.textContent = "Copiado!";
+      setTimeout(function () { rotulo.textContent = antes; }, 1800);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto).then(feito, function () { window.prompt("Copie o resumo:", texto); });
+    } else {
+      window.prompt("Copie o resumo:", texto);
+    }
+  });
 
   renderRecentes();
 
