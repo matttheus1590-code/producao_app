@@ -90,6 +90,7 @@ from models import (
     LeadTimeProducaoHistorico,
     LeadTimeTransportadora,
     RiscoPedidoOculto,
+    RiscoParadoOculto,
     SolicitacaoRevisaoPrazo,
     MateriaPrima,
     MateriaPrimaHistorico,
@@ -332,6 +333,7 @@ def _contexto_painel(args, ultima_visita=None):
     # Mini gestão de risco de prazos, FOB x CIF — pedido do Bruno
     # (16/09/2026), logo abaixo de "Últimos apontamentos de Qualidade".
     mini_risco_prazos = _mini_risco_prazos_painel()
+    risco_parados = _risco_parados_painel()
 
     # Detalhamento de Lead Time (chão de fábrica, total, fila de espera,
     # prazo comercial) — pedido do Bruno (16/09/2026), quadrante próprio.
@@ -408,6 +410,7 @@ def _contexto_painel(args, ultima_visita=None):
         resumo_mes_seguinte_pcp=resumo_mes_seguinte_pcp,
         resumo_mes_anterior_pcp=resumo_mes_anterior_pcp,
         mini_risco_prazos=mini_risco_prazos,
+        risco_parados=risco_parados,
         lead_time_agrupado=lead_time_agrupado,
         lead_time_medio=_lead_time_medio_dias(),
         otd=_otd_percentual(),
@@ -1015,6 +1018,52 @@ def _gerar_pdf_painel_diario(ctx):
             elementos.append(vazio(f"Nenhum pedido {frete} com risco de prazo nos próximos {max(RISCO_HORIZONTES)} dias."))
         elementos.append(Spacer(1, 2.5 * mm))
     elementos.append(Spacer(1, 1.5 * mm))
+
+    # ================= 10B. RISCO DE PARADOS =================
+    elementos += banner("hourglass", "10B. GESTÃO DE RISCO — PARADOS (PEDIDOS SEM MOVIMENTAÇÃO E OP/PRODUTO EM FILA E ESPERA)", "#6c757d",
+                        "Parado há 5, 10 e 20 dias ou mais (inclui quem já passou do horizonte), contado da última movimentação. "
+                        "Lista completa e decisões no relatório executivo de parados.")
+    parados = ctx.get("risco_parados") or _risco_parados_painel()
+    _rot_parado = {"critico": ("red_circle", "Prazo crítico"), "atencao": ("yellow_circle", "Prazo folgado"), "sem_prazo": ("hourglass", "Sem prazo")}
+
+    def _soma_parados(grupos, h, campo="total"):
+        return sum(g["horizontes"][h][campo] for g in grupos)
+
+    grupos_parados = (
+        ("Pedidos sem movimentação", [parados["pedidos"][k] for k in ("FOB", "CIF", "OUTROS")]),
+        ("OP/produto na fila", [parados["fila"]]),
+        ("OP/produto em espera", [parados["espera"]]),
+    )
+    linhas_pz = []
+    for nome, grupos in grupos_parados:
+        linhas_pz.append([T(nome, base_b)] + [
+            P(f'<b>{_soma_parados(grupos, h)}</b>' + (f' ({_soma_parados(grupos, h, "critico_total")} críticos)' if _soma_parados(grupos, h, "critico_total") else ""), centro)
+            for h in RISCO_HORIZONTES
+        ])
+    elementos.append(tabela(["Visão"] + [f"Parado há {h}d ou mais" for h in RISCO_HORIZONTES], linhas_pz, [30, 18, 18, 18], alin="LCCC"))
+    elementos.append(Spacer(1, 1.5 * mm))
+    topo_pz = []
+    for k in ("FOB", "CIF", "OUTROS"):
+        topo_pz += parados["pedidos"][k]["horizontes"][min(RISCO_HORIZONTES)]["linhas"]
+    topo_pz.sort(key=lambda l: (_PARADO_ORDEM_CLASSE[l["classe"]], -l["dias_parado"]))
+    linhas_tp = []
+    for l in topo_pz[:10]:
+        icone, rotulo = _rot_parado[l["classe"]]
+        linhas_tp.append([
+            P(f'{_icone_pdf(icone, 8)} {rotulo}', base), T(l["pedido_venda"] or "—"), T(l["cliente"]), T(l.get("frete") or "—", centro),
+            T(f'{l["dias_parado"]}d', centro), T(l["ultimo_mov"].strftime("%d/%m/%Y"), centro),
+            T(l["prazo_cliente"].strftime("%d/%m/%Y") if l.get("prazo_cliente") else "—", centro),
+            P(_formatar_moeda_br(l["valor"]), direita),
+        ])
+    if linhas_tp:
+        elementos.append(tabela(["Situação", "PV", "Cliente", "Frete", "Parado", "Última mov.", "Prazo cliente", "Valor aberto"],
+                                linhas_tp, [14, 8, 28, 6, 7, 11, 11, 13], alin="LLLCCCCR"))
+        total_pz = sum(parados["pedidos"][k]["horizontes"][min(RISCO_HORIZONTES)]["total"] for k in ("FOB", "CIF", "OUTROS"))
+        if len(linhas_tp) < total_pz:
+            elementos.append(P(f'Mostrando os {len(linhas_tp)} mais críticos de {total_pz} pedidos parados.', nota))
+    else:
+        elementos.append(vazio(f"Nenhum pedido parado há {min(RISCO_HORIZONTES)} dias ou mais."))
+    elementos.append(Spacer(1, 4 * mm))
 
     # ================= 11. PEDIDOS ATRASADOS =================
     elementos += banner("red_circle", "11. PEDIDOS ATRASADOS (MAIS RECENTES PRIMEIRO)", "#dc3545")
@@ -6516,6 +6565,267 @@ def _dados_gestao_risco_completa():
     }
 
 
+# ---------------------------------------------------------------------------
+# Gestão de risco de PARADOS (pedido do Bruno): "uma gestão de risco voltada
+# para pedidos parados sem movimentação a X dias. Mesmo formato: 5, 10, 20
+# dias. Mesma ideia também para OP/produto parado em fila e espera. Mantém o
+# mesmo raciocínio de data."
+#
+# Mesmo raciocínio de data da Mini gestão de risco de prazos: tudo recalculado
+# ao vivo a cada acesso, a partir de HOJE (horário de Brasília), e cada
+# horizonte inclui quem JÁ passou dele — "parado há 10 dias ou mais" também
+# traz o que está parado há 25. Movimentação = o que de fato anda a produção
+# (ver _MOVIMENTO_CAMPOS); ItemPedido.atualizado_em NÃO serve, porque qualquer
+# salvamento (importação, edição de custo) mexe nele.
+# ---------------------------------------------------------------------------
+RISCO_PARADO_PRAZO_PRESSAO_DIAS = 7  # mesma régua "Cliente ≤7d" do Risco por estação
+_MOVIMENTO_CAMPOS = {
+    "estacao": "mudou de estação",
+    "status_producao": "mudou o status",
+    "inicio_producao": "iniciou a produção",
+    "inicio_inspecao": "iniciou a inspeção",
+    "termino_inspecao": "terminou a inspeção",
+    "liberacao_faturamento": "liberou para faturamento",
+    "liberacao_real": "liberou o item",
+    "numero_nota_fiscal": "informou a nota fiscal",
+    "data_envio": "registrou o envio",
+}
+_MOVIMENTO_DATAS_ITEM = {
+    "inicio_producao": "início da produção",
+    "inicio_inspecao": "início da inspeção",
+    "termino_inspecao": "término da inspeção",
+    "liberacao_faturamento": "liberação p/ faturamento",
+    "liberacao_real": "liberação real",
+    "data_envio": "envio",
+}
+
+
+def _movimentos_itens(hoje):
+    """{item_id: (data, descrição)} com a ÚLTIMA movimentação real de cada
+    item: o mais recente entre as mudanças de progresso gravadas no histórico
+    (data em horário de Brasília) e as datas de progresso já preenchidas no
+    item (início de produção, inspeção, liberação, envio…) que não estejam no
+    futuro. Item sem nenhum dos dois não entra (cai na data de inclusão do
+    pedido, mais adiante)."""
+    mov = {}
+
+    def _anota(item_id, data, desc):
+        if data is None or data > hoje:
+            return
+        atual = mov.get(item_id)
+        if atual is None or data >= atual[0]:
+            mov[item_id] = (data, desc)
+
+    linhas = (
+        db.session.query(
+            HistoricoAlteracao.entidade_id, HistoricoAlteracao.campo,
+            HistoricoAlteracao.valor_novo, HistoricoAlteracao.criado_em,
+        )
+        .filter(HistoricoAlteracao.entidade_tipo == "item_pedido", HistoricoAlteracao.campo.in_(list(_MOVIMENTO_CAMPOS)))
+        .order_by(HistoricoAlteracao.criado_em)
+        .all()
+    )
+    for item_id, campo, valor, criado_em in linhas:
+        if criado_em is None:
+            continue
+        txt = _MOVIMENTO_CAMPOS[campo]
+        if campo in ("estacao", "status_producao") and valor:
+            txt += f" para {valor}"
+        _anota(item_id, (criado_em - timedelta(hours=3)).date(), txt)
+    colunas = [getattr(ItemPedido, c) for c in _MOVIMENTO_DATAS_ITEM]
+    for item_id, *datas in db.session.query(ItemPedido.id, *colunas).all():
+        for campo, d in zip(_MOVIMENTO_DATAS_ITEM, datas):
+            if d is not None:
+                _anota(item_id, d, f"{_MOVIMENTO_DATAS_ITEM[campo]} em {d.strftime('%d/%m/%Y')}")
+    return mov
+
+
+def _onde_parado(itens_abertos):
+    """'Montagem · PENDENTE (2) · Teste · ANDAMENTO' — onde estão os itens em aberto."""
+    contagem = {}
+    for i in itens_abertos:
+        chave = f"{rotulo_estacao(i.estacao) if i.estacao else 'Sem estação'} · {i.status_producao or 'PENDENTE'}"
+        contagem[chave] = contagem.get(chave, 0) + 1
+    partes = [f"{k} ({n})" if n > 1 else k for k, n in sorted(contagem.items(), key=lambda kv: -kv[1])]
+    return " | ".join(partes[:3]) + (f" | +{len(partes) - 3}" if len(partes) > 3 else "")
+
+
+def _classe_parado(prazo, hoje):
+    """crítico = prazo do cliente vencido ou nos próximos 7 dias; atenção =
+    parado, mas com prazo mais folgado; sem_prazo = sem prazo do cliente."""
+    if prazo is None:
+        return "sem_prazo", None
+    dias = (prazo - hoje).days
+    return ("critico" if dias <= RISCO_PARADO_PRAZO_PRESSAO_DIAS else "atencao"), dias
+
+
+_PARADO_ORDEM_CLASSE = {"critico": 0, "atencao": 1, "sem_prazo": 2}
+
+
+def _horizontes_parados(linhas, limite):
+    """Agrupa linhas (cada uma com dias_parado e classe) nos horizontes
+    5/10/20: parado há X dias OU MAIS (inclui quem já passou do horizonte,
+    como o "inclui os já vencidos" da gestão de prazos)."""
+    horizontes = {}
+    for h in RISCO_HORIZONTES:
+        do_h = [l for l in linhas if l["dias_parado"] >= h]
+        conta = lambda c: sum(1 for l in do_h if l["classe"] == c)  # noqa: E731
+        horizontes[h] = {
+            "total": len(do_h),
+            "critico_total": conta("critico"),
+            "atencao_total": conta("atencao"),
+            "sem_prazo_total": conta("sem_prazo"),
+            "valor_total": round(sum(l["valor"] for l in do_h), 2),
+            "linhas": do_h[:limite],
+        }
+    return horizontes
+
+
+def _risco_parados_painel(limite=6):
+    """Gestão de risco de PARADOS do Painel.
+
+    - "pedidos": pedido em aberto (algum item não finalizado) sem NENHUMA
+      movimentação em qualquer item há X dias — última movimentação = a mais
+      recente entre as dos itens (ver _movimentos_itens) e a data de inclusão
+      do pedido. Colunas FOB x CIF (e "outros/sem frete", se houver).
+    - "fila": OP/produto PENDENTE (na fila, produção não iniciada) há X dias.
+    - "espera": OP/produto EM TRATATIVA (espera — travado aguardando
+      resolução) há X dias.
+    Em OP/produto, "há X dias" conta da última movimentação do item (ou da
+    entrada do pedido, se nunca se mexeu). Ocultos (RiscoParadoOculto) ficam
+    fora de cards e totais, reexibíveis a qualquer momento."""
+    hoje = date.today()
+    mov = _movimentos_itens(hoje)
+    ocultos = {(o.tipo, o.ref_id): o for o in RiscoParadoOculto.query.all()}
+    abertos = Pedido.itens.any(ItemPedido.status_producao != "FINALIZADO")
+    pedidos = Pedido.query.options(selectinload(Pedido.itens)).filter(abertos).all()
+
+    linhas_pedido = {"FOB": [], "CIF": [], "OUTROS": []}
+    linhas_fila, linhas_espera = [], []
+    sem_referencia = {"pedido": 0, "item": 0}
+    for p in pedidos:
+        itens_abertos = [i for i in p.itens if i.status_producao != "FINALIZADO"]
+        movs_itens = [mov[i.id] for i in p.itens if i.id in mov]
+        ultimo_item = max(movs_itens, key=lambda m: m[0]) if movs_itens else None
+        entrada = p.data_inclusao_pedido
+        mov_entrada = (entrada, f"entrada do pedido em {entrada.strftime('%d/%m/%Y')}") if entrada else None
+        candidatos = [m for m in (ultimo_item, mov_entrada) if m]
+        classe, dias_prazo = _classe_parado(p.data_cliente, hoje)
+
+        # ---- pedido inteiro ----
+        if not candidatos:
+            sem_referencia["pedido"] += 1
+        elif ("pedido", p.id) not in ocultos:
+            data_mov, desc_mov = max(candidatos, key=lambda m: m[0])
+            dias = (hoje - data_mov).days
+            onde = _onde_parado(itens_abertos)
+            if classe == "critico":
+                sug = "Destravar agora ou pedir revisão de prazo ao comercial."
+            elif classe == "atencao":
+                sug = "Destravar antes que o prazo aperte; se não der, replanejar com o comercial."
+            else:
+                sug = "Cadastrar o prazo do cliente e definir quem destrava."
+            chave = p.frete if p.frete in ("FOB", "CIF") else "OUTROS"
+            linhas_pedido[chave].append({
+                "id": p.id, "pedido_venda": p.pedido_venda, "cliente": p.cliente, "frete": p.frete,
+                "uf": (p.estado or "").strip().upper(), "classe": classe, "dias_parado": dias,
+                "ultimo_mov": data_mov, "ultimo_mov_desc": desc_mov, "onde": onde,
+                "prazo_cliente": p.data_cliente, "dias_ate_prazo": dias_prazo,
+                "valor": round(sum(i.valor_total for i in itens_abertos), 2),
+                "itens_abertos": len(itens_abertos), "itens_total": len(p.itens),
+                "vendedor": p.vendedor, "sugestao": sug,
+            })
+
+        # ---- OP/produto em fila e espera ----
+        for it in itens_abertos:
+            status = it.status_producao or "PENDENTE"
+            if status not in ("PENDENTE", "EM TRATATIVA") or ("item", it.id) in ocultos:
+                continue
+            c_item = [m for m in (mov.get(it.id), mov_entrada) if m]
+            if not c_item:
+                sem_referencia["item"] += 1
+                continue
+            data_mov, desc_mov = max(c_item, key=lambda m: m[0])
+            dias = (hoje - data_mov).days
+            est = rotulo_estacao(it.estacao) if it.estacao else "sem estação"
+            if status == "PENDENTE":
+                sug = ("Programar a entrada em produção agora ou replanejar com o comercial." if classe == "critico"
+                       else "Programar a entrada em produção ou replanejar.")
+            else:
+                sug = "Cobrar a resolução do responsável ou escalar."
+            linha = {
+                "id": it.id, "pedido_id": p.id, "pedido_venda": p.pedido_venda, "cliente": p.cliente,
+                "produto": it.descricao_produto, "quantidade": it.quantidade, "estacao": est,
+                "status": status, "classe": classe, "dias_parado": dias,
+                "ultimo_mov": data_mov, "ultimo_mov_desc": desc_mov,
+                "prazo_cliente": p.data_cliente, "dias_ate_prazo": dias_prazo,
+                "liberacao_prevista": it.liberacao_prevista, "valor": it.valor_total,
+                "frete": p.frete, "sugestao": sug,
+            }
+            (linhas_fila if status == "PENDENTE" else linhas_espera).append(linha)
+
+    def _ordena(ls):
+        ls.sort(key=lambda l: (_PARADO_ORDEM_CLASSE[l["classe"]], -l["dias_parado"],
+                               l["dias_ate_prazo"] if l["dias_ate_prazo"] is not None else 9999))
+        return ls
+
+    resultado = {
+        "hoje": hoje,
+        "pedidos": {
+            chave: {"horizontes": _horizontes_parados(_ordena(ls), limite), "abertos": len(ls)}
+            for chave, ls in linhas_pedido.items()
+        },
+        "fila": {"horizontes": _horizontes_parados(_ordena(linhas_fila), limite), "abertos": len(linhas_fila)},
+        "espera": {"horizontes": _horizontes_parados(_ordena(linhas_espera), limite), "abertos": len(linhas_espera)},
+        "sem_referencia": sem_referencia,
+    }
+
+    por_id = {p.id: p for p in pedidos}
+    itens_por_id = {i.id: (i, p) for p in pedidos for i in p.itens}
+    lista_ocultos = []
+    for (tipo, ref_id), o in sorted(ocultos.items(), key=lambda kv: kv[1].oculto_em or datetime.min, reverse=True):
+        if tipo == "pedido":
+            ped = por_id.get(ref_id) or db.session.get(Pedido, ref_id)
+            if ped is None:
+                continue
+            titulo = f"{ped.pedido_venda or ped.id} · {ped.cliente}"
+        else:
+            par = itens_por_id.get(ref_id)
+            if par is None:
+                it = db.session.get(ItemPedido, ref_id)
+                if it is None:
+                    continue
+                par = (it, it.pedido)
+            it, ped = par
+            titulo = f"{ped.pedido_venda or ped.id} · {ped.cliente} · {it.descricao_produto}"
+        lista_ocultos.append({
+            "tipo": tipo, "ref_id": ref_id, "pedido_id": ped.id, "titulo": titulo, "motivo": o.motivo,
+            "oculto_por": o.oculto_por,
+            "quando": (o.oculto_em - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M") if o.oculto_em else None,
+        })
+    resultado["ocultos"] = lista_ocultos
+    return resultado
+
+
+def _dados_gestao_parados_completa():
+    """Dados do relatório executivo (PDF) da gestão de risco de parados:
+    MESMA base do Painel (horizonte de 5 dias, que contém 10 e 20), sem o
+    limite de cards."""
+    r = _risco_parados_painel(limite=100000)
+    menor = min(RISCO_HORIZONTES)
+    pedidos = []
+    for chave in ("FOB", "CIF", "OUTROS"):
+        pedidos += r["pedidos"][chave]["horizontes"][menor]["linhas"]
+    pedidos.sort(key=lambda l: (_PARADO_ORDEM_CLASSE[l["classe"]], -l["dias_parado"]))
+    return {
+        "hoje": r["hoje"], "horizontes": RISCO_HORIZONTES, "pressao_dias": RISCO_PARADO_PRAZO_PRESSAO_DIAS,
+        "pedidos": pedidos,
+        "fila": r["fila"]["horizontes"][menor]["linhas"],
+        "espera": r["espera"]["horizontes"][menor]["linhas"],
+        "ocultos": r["ocultos"], "sem_referencia": r["sem_referencia"],
+    }
+
+
 def _parse_data_iso(valor):
     """'YYYY-MM-DD' (input type=date) -> date, ou None se vazio/inválido."""
     try:
@@ -6802,6 +7112,7 @@ def _capacidade_estacoes_painel(hoje=None, semanas_hist=8, semanas_proj=4):
 
 _HIST_CAMPOS_LABEL = {
     "risco_prazo_oculto": "Gestão de risco de prazos (ocultar/reexibir)",
+    "risco_parado_oculto": "Gestão de risco de parados (ocultar/reexibir)",
     "revisao_prazo_solicitada": "Revisão de prazo (PCP → comercial)",
     "cliente": "Cliente", "prioridade": "Prioridade", "vendedor": "Vendedor", "frete": "Frete",
     "obs": "Observações", "cnpj": "CNPJ", "cidade": "Cidade", "estado": "Estado", "pais": "País",
@@ -10710,6 +11021,13 @@ def _dados_comando(hoje=None):
     if n_prazo["atraso"]:
         decisoes.append({"emoji": "🛡️", "nivel": "vermelho", "href": "painel#mini-risco",
                          "texto": f'{n_prazo["atraso"]} pedido(s) com atraso projetado: pedir revisão de prazo ao comercial.'})
+    parados = _risco_parados_painel(limite=0)
+    n_ped_parados = sum(parados["pedidos"][k]["horizontes"][10]["total"] for k in ("FOB", "CIF", "OUTROS"))
+    n_ped_parados_crit = sum(parados["pedidos"][k]["horizontes"][10]["critico_total"] for k in ("FOB", "CIF", "OUTROS"))
+    if n_ped_parados:
+        decisoes.append({"emoji": "⏸️", "nivel": "vermelho" if n_ped_parados_crit else "amarelo", "href": "painel#parados",
+                         "texto": f'Destravar {n_ped_parados} pedido(s) sem movimentação há 10+ dias'
+                                  + (f' ({n_ped_parados_crit} com prazo do cliente crítico).' if n_ped_parados_crit else '.')})
     if valor_pend:
         decisoes.append({"emoji": "💵", "nivel": "amarelo", "href": "faturamento",
                          "texto": f'Liberar faturamento: {_moeda_curta(valor_pend)} previstos e ainda não faturados ({len(pend)} itens).'})
@@ -10882,6 +11200,7 @@ def _catalogo_relatorios():
             {"emoji": "🗂️", "titulo": "Pacote gerencial completo", "desc": "Resumo + Alertas e Gargalos + Lead Time e Gaps + Faturamento e Projeção em um único PDF.", "fmt": [("PDF", "pacote_gerencial_pdf")]},
             {"emoji": "🎛️", "titulo": "Painel diário da operação", "desc": "Todo o Painel de Gestão por área.", "fmt": [("PDF", "painel_relatorio_pdf"), ("PowerPoint", "painel_apresentacao_pptx")]},
             {"emoji": "🛡️", "titulo": "Gestão de risco de prazos", "desc": "FOB x CIF, horizontes de 5/10/20 dias, decisões recomendadas.", "fmt": [("PDF", "painel_risco_prazos_relatorio_pdf")]},
+            {"emoji": "⏸️", "titulo": "Gestão de risco de parados", "desc": "Pedidos sem movimentação e OP/produto em fila e espera, 5/10/20 dias.", "fmt": [("PDF", "painel_parados_relatorio_pdf")]},
         ]},
         {"area": "🚨 Alertas e produção", "cor": "danger", "itens": [
             {"emoji": "🚨", "titulo": "Alertas e Gargalos", "desc": "Atrasados com causa e ação, vencendo, estações críticas e faturamento atrasado.", "fmt": [("PDF", "alertas_relatorio_pdf"), ("Excel", "relatorio_gargalos_xlsx"), ("CSV", "relatorio_gargalos_csv")]},
@@ -21506,6 +21825,72 @@ def register_routes(app):
             db.session.commit()
             flash(f"Pedido {(pedido.pedido_venda if pedido else None) or pedido_id} voltou à gestão de risco.", "success")
         return redirect(url_for("painel") + "#sec-risco")
+
+    def _parado_alvo(tipo, ref_id):
+        """(objeto, pedido, título, redirect) de um pedido/item do risco de parados."""
+        if tipo == "pedido":
+            obj = db.session.get(Pedido, ref_id)
+            return obj, obj, (f"{obj.pedido_venda or obj.id} · {obj.cliente}" if obj else "")
+        if tipo == "item":
+            obj = db.session.get(ItemPedido, ref_id)
+            ped = obj.pedido if obj else None
+            return obj, ped, (f"{ped.pedido_venda or ped.id} · {ped.cliente} · {obj.descricao_produto}" if obj and ped else "")
+        return None, None, ""
+
+    @app.route("/painel/risco-parados/<tipo>/<int:ref_id>/ocultar", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def painel_parados_ocultar(tipo, ref_id):
+        """Oculta um pedido (tipo=pedido) ou OP/produto (tipo=item) da gestão
+        de risco de parados do Painel. Reversível (Ocultos > Reexibir)."""
+        destino = url_for("painel") + ("#sec-parados" if tipo == "pedido" else "#sec-fila-espera")
+        obj, ped, titulo = _parado_alvo(tipo, ref_id)
+        if obj is None or ped is None:
+            flash("Registro não encontrado.", "danger")
+            return redirect(destino)
+        motivo = (request.form.get("motivo") or "").strip()[:500] or None
+        if RiscoParadoOculto.query.filter_by(tipo=tipo, ref_id=ref_id).first() is None:
+            db.session.add(RiscoParadoOculto(tipo=tipo, ref_id=ref_id, oculto_por=current_user.nome, motivo=motivo))
+            db.session.add(HistoricoAlteracao(
+                entidade_tipo="pedido" if tipo == "pedido" else "item_pedido", entidade_id=ref_id, pedido_id=ped.id,
+                usuario_id=current_user.id, usuario_nome=current_user.nome,
+                campo="risco_parado_oculto", valor_anterior="Visível", valor_novo="Oculto" + (f" · {motivo}" if motivo else ""),
+            ))
+            db.session.commit()
+        flash(f"{titulo} ocultado da gestão de parados. Dá pra reexibir em “Ocultos”, logo abaixo.", "info")
+        return redirect(destino)
+
+    @app.route("/painel/risco-parados/<tipo>/<int:ref_id>/reexibir", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def painel_parados_reexibir(tipo, ref_id):
+        """Volta a mostrar na gestão de risco de parados um pedido/OP antes ocultado."""
+        destino = url_for("painel") + ("#sec-parados" if tipo == "pedido" else "#sec-fila-espera")
+        oculto = RiscoParadoOculto.query.filter_by(tipo=tipo, ref_id=ref_id).first()
+        if oculto is not None:
+            _obj, ped, titulo = _parado_alvo(tipo, ref_id)
+            db.session.add(HistoricoAlteracao(
+                entidade_tipo="pedido" if tipo == "pedido" else "item_pedido", entidade_id=ref_id,
+                pedido_id=ped.id if ped else None,
+                usuario_id=current_user.id, usuario_nome=current_user.nome,
+                campo="risco_parado_oculto", valor_anterior="Oculto", valor_novo="Visível",
+            ))
+            db.session.delete(oculto)
+            db.session.commit()
+            flash(f"{titulo or 'Registro'} voltou à gestão de parados.", "success")
+        return redirect(destino)
+
+    @app.route("/painel/risco-parados/relatorio.pdf")
+    @login_required
+    def painel_parados_relatorio_pdf():
+        """Relatório executivo (PDF) da gestão de risco de parados: pedidos
+        sem movimentação e OP/produto em fila e espera, 5/10/20 dias."""
+        import pdf_parados
+        agora = _agora_brt()
+        pdf = pdf_parados.gerar(
+            _dados_gestao_parados_completa(), agora, _ESPELHO_LOGO_PATH, _icone_pdf, _formatar_moeda_br)
+        resposta = Response(pdf, mimetype="application/pdf")
+        resposta.headers["Content-Disposition"] = (
+            f"attachment; filename=gestao_risco_parados_{agora.strftime('%Y-%m-%d_%H%M')}.pdf")
+        return resposta
 
     @app.route("/painel/risco-prazos/relatorio.pdf")
     @login_required

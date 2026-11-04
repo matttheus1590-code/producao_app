@@ -2355,3 +2355,23 @@ class RiscoPedidoOculto(db.Model):
     motivo = db.Column(db.Text, nullable=True)
 
     pedido = db.relationship("Pedido", backref=db.backref("risco_oculto", uselist=False, cascade="all, delete-orphan"))
+
+
+class RiscoParadoOculto(db.Model):
+    """Pedido ou OP/produto OCULTO da gestão de risco de PARADOS do Painel
+    (pedido do Bruno: pedidos sem movimentação e OP/produto parado em fila e
+    espera, 5/10/20 dias). tipo = "pedido" | "item"; ref_id = id do Pedido ou
+    do ItemPedido. 1 linha por (tipo, ref_id); reexibir apaga a linha.
+    Histórico fica em HistoricoAlteracao ("risco_parado_oculto").
+
+    Tabela NOVA — criada sozinha pelo db.create_all() no startup."""
+
+    __tablename__ = "risco_parados_ocultos"
+    __table_args__ = (db.UniqueConstraint("tipo", "ref_id", name="uq_risco_parado_oculto"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    tipo = db.Column(db.String(10), nullable=False)
+    ref_id = db.Column(db.Integer, nullable=False, index=True)
+    oculto_em = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    oculto_por = db.Column(db.String(120), nullable=True)
+    motivo = db.Column(db.Text, nullable=True)

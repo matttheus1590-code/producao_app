@@ -4072,3 +4072,10 @@ button.pw-kpi-lib.ativo { box-shadow: inset 0 -4px 0 #198754; }
 .cc-rel-desc { font-size: .8rem; color: #6c757d; flex-grow: 1; }
 .cc-rel-fmt { display: flex; flex-wrap: wrap; gap: .4rem; }
 .cc-rel-destaque { border-color: #b6d0fb; background: #f5f9ff; }
+
+
+/* Gestão de risco de PARADOS (Painel): chip de dias parado, escala 5/10/20. */
+.parado-dias { display: inline-block; font-size: .7rem; font-weight: 600; padding: .15rem .45rem; border-radius: 999px; white-space: nowrap; }
+.parado-dias-5 { background: #e9ecef; color: #495057; }
+.parado-dias-10 { background: #fff3cd; color: #7a5a00; }
+.parado-dias-20 { background: #f8d7da; color: #842029; }

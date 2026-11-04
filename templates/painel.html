@@ -478,6 +478,258 @@ document.addEventListener("click", function (ev) {
 </script>
 {% endif %}
 
+{# ===== Gestão de risco de PARADOS (Bruno): pedidos sem movimentação e OP/produto em fila e espera,
+   5/10/20 dias — mesmo formato e mesma lógica de data da Mini gestão de risco de prazos. ===== #}
+{% set RP = risco_parados %}
+{% macro badge_prazo(classe) -%}
+{% if classe == 'critico' %}<span class="badge bg-danger">Prazo crítico</span>
+{%- elif classe == 'atencao' %}<span class="badge bg-warning text-dark">Prazo folgado</span>
+{%- else %}<span class="badge bg-secondary">Sem prazo</span>{% endif %}
+{%- endmacro %}
+{% macro txt_prazo(l) -%}
+{% if l.prazo_cliente %}Prazo cliente: <strong>{{ l.prazo_cliente.strftime("%d/%m/%Y") }}</strong>
+({% if l.dias_ate_prazo < 0 %}venceu há {{ -l.dias_ate_prazo }}d{% elif l.dias_ate_prazo == 0 %}vence hoje{% else %}em {{ l.dias_ate_prazo }}d{% endif %}){% else %}Sem prazo do cliente cadastrado{% endif %}
+{%- endmacro %}
+{% macro chip_dias(l) -%}
+<span class="parado-dias {{ 'parado-dias-20' if l.dias_parado >= 20 else ('parado-dias-10' if l.dias_parado >= 10 else 'parado-dias-5') }}" title="Dias sem movimentação">⏸️ {{ l.dias_parado }}d parado</span>
+{%- endmacro %}
+{% macro btn_ocultar(tipo, ref_id, titulo) -%}
+{% if pode_apontar_revisao %}
+<button type="button" class="btn-close js-ocultar-parado flex-shrink-0" style="font-size:.65rem"
+        title="Ocultar da gestão de parados" aria-label="Ocultar da gestão de parados"
+        data-bs-toggle="modal" data-bs-target="#modalOcultarParado"
+        data-action="{{ url_for('painel_parados_ocultar', tipo=tipo, ref_id=ref_id) }}"
+        data-titulo="{{ titulo }}"></button>
+{% endif %}
+{%- endmacro %}
+{% macro card_pedido_parado(l) %}
+<div class="risco-prazo-card">
+  <div class="d-flex align-items-start gap-2">
+    <a href="{{ url_for('detalhe_pedido', pedido_id=l.id) }}" class="text-decoration-none text-reset d-block flex-grow-1">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <span class="fw-semibold">{{ l.pedido_venda or "—" }} · {{ l.cliente }}</span>
+        <span class="d-flex gap-1 flex-wrap justify-content-end">{{ chip_dias(l) }}{{ badge_prazo(l.classe) }}</span>
+      </div>
+      <div class="small text-muted">Última movimentação: <strong>{{ l.ultimo_mov.strftime("%d/%m/%Y") }}</strong> — {{ l.ultimo_mov_desc }}</div>
+      <div class="small text-muted">Onde está: {{ l.onde }} · {{ l.itens_abertos }}/{{ l.itens_total }} itens abertos{% if l.uf %} · {{ l.uf }}{% endif %}</div>
+      <div class="small text-muted">{{ txt_prazo(l) }} · {{ l.valor | moeda_brl }} em aberto</div>
+      <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ l.sugestao }}</div>
+    </a>
+    {{ btn_ocultar('pedido', l.id, (l.pedido_venda or l.id)|string ~ ' · ' ~ l.cliente) }}
+  </div>
+</div>
+{% endmacro %}
+{% macro card_item_parado(l) %}
+<div class="risco-prazo-card">
+  <div class="d-flex align-items-start gap-2">
+    <a href="{{ url_for('detalhe_pedido', pedido_id=l.pedido_id) }}" class="text-decoration-none text-reset d-block flex-grow-1">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <span class="fw-semibold">{{ l.pedido_venda or "—" }} · {{ l.cliente }}</span>
+        <span class="d-flex gap-1 flex-wrap justify-content-end">{{ chip_dias(l) }}{{ badge_prazo(l.classe) }}</span>
+      </div>
+      <div class="small"><strong>{{ l.produto }}</strong> · {{ ('%g' | format(l.quantidade)) if l.quantidade is not none else '—' }} un · {{ l.estacao }}</div>
+      <div class="small text-muted">Última movimentação: <strong>{{ l.ultimo_mov.strftime("%d/%m/%Y") }}</strong> — {{ l.ultimo_mov_desc }}</div>
+      <div class="small text-muted">{{ txt_prazo(l) }} · liberação PCP: {{ l.liberacao_prevista.strftime("%d/%m/%Y") if l.liberacao_prevista else "sem previsão" }}</div>
+      <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ l.sugestao }}</div>
+    </a>
+    {{ btn_ocultar('item', l.id, (l.pedido_venda or l.pedido_id)|string ~ ' · ' ~ l.cliente ~ ' · ' ~ l.produto) }}
+  </div>
+</div>
+{% endmacro %}
+{% macro seletor_parados(grupo_id) %}
+<div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+  <span class="small text-muted">Parado há:</span>
+  <div class="btn-group btn-group-sm" role="group" id="{{ grupo_id }}" data-parado-grupo>
+    {% for h in (5, 10, 20) %}
+    <button type="button" class="btn btn-outline-secondary{{ ' active' if h == 10 else '' }}" data-hz="{{ h }}">{{ h }} dias ou mais</button>
+    {% endfor %}
+  </div>
+  <span class="small text-muted">inclui os que já passaram do horizonte · conta da última movimentação · recalculado a cada acesso</span>
+</div>
+{% endmacro %}
+{% macro badges_parados(d, rotulo) %}
+<div class="d-flex flex-wrap gap-1 mb-1">
+  <span class="badge bg-danger">🔴 {{ d.critico_total if d else 0 }} com prazo crítico</span>
+  <span class="badge bg-warning text-dark">🟡 {{ d.atencao_total if d else 0 }} com prazo folgado</span>
+  <span class="badge bg-secondary">⚪ {{ d.sem_prazo_total if d else 0 }} sem prazo</span>
+  {% if d and d.total %}<span class="badge bg-light text-dark border">{{ d.valor_total | moeda_brl }}</span>{% endif %}
+</div>
+{% endmacro %}
+
+<div class="card pn-sec pn-t-amber" id="sec-parados" data-sec="parados">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">
+        ⏸️ <i class="bi bi-pause-circle"></i> Gestão de risco — pedidos parados sem movimentação
+      </h6>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="text-muted small">Última movimentação de qualquer item × hoje · prazo do cliente como urgência</span>
+        <a href="{{ url_for('painel_parados_relatorio_pdf') }}" class="btn btn-sm btn-outline-danger"><i class="bi bi-file-earmark-pdf"></i> Relatório executivo (PDF)</a>
+      </div>
+    </div>
+    {{ seletor_parados('paradosPedidosHz') }}
+    <div class="row g-3">
+      {% set colunas = [("FOB", "FOB"), ("CIF", "CIF")] %}
+      {% if RP.pedidos.OUTROS.abertos %}{% set colunas = colunas + [("OUTROS", "Outros / sem frete")] %}{% endif %}
+      {% for chave, rotulo in colunas %}
+      {% set dados = RP.pedidos[chave] %}
+      <div class="{{ 'col-md-6' if colunas|length == 2 else 'col-lg-4' }}">
+        <div class="border rounded p-2 h-100">
+          <div class="fw-semibold mb-1">{{ rotulo }} <span class="text-muted small fw-normal">· {{ dados.abertos }} pedido(s) em aberto</span></div>
+          {% for h in (5, 10, 20) %}
+          {% set d = dados.horizontes[h] %}
+          <div class="parado-hz" data-hz="{{ h }}"{% if h != 10 %} style="display:none"{% endif %}>
+            {{ badges_parados(d, rotulo) }}
+            {% if d.total %}
+            <div class="d-flex flex-column gap-2 mt-2">
+              {% for l in d.linhas %}{{ card_pedido_parado(l) }}{% endfor %}
+            </div>
+            {% if d.total > d.linhas|length %}<p class="text-muted small mt-2 mb-0">Mostrando os {{ d.linhas|length }} mais críticos de {{ d.total }} · lista completa no PDF.</p>{% endif %}
+            {% else %}
+            <p class="text-muted small mb-0 mt-2">Nenhum pedido {{ rotulo }} parado há {{ h }} dias ou mais 🎉</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% set ocultos_p = RP.ocultos | selectattr("tipo", "equalto", "pedido") | list %}
+    {% if ocultos_p %}
+    <details class="mt-3 small">
+      <summary class="text-muted" style="cursor:pointer"><i class="bi bi-eye-slash"></i> {{ ocultos_p|length }} pedido(s) oculto(s) da gestão de parados</summary>
+      <div class="mt-2 d-flex flex-column gap-1">
+        {% for o in ocultos_p %}
+        <div class="d-flex justify-content-between align-items-center gap-2 border rounded px-2 py-1">
+          <div>
+            <a href="{{ url_for('detalhe_pedido', pedido_id=o.pedido_id) }}" class="fw-semibold text-decoration-none">{{ o.titulo }}</a>
+            <div class="text-muted">Ocultado em {{ o.quando or "—" }} por {{ o.oculto_por or "—" }}{% if o.motivo %} — “{{ o.motivo }}”{% endif %}</div>
+          </div>
+          {% if pode_apontar_revisao %}
+          <form method="post" action="{{ url_for('painel_parados_reexibir', tipo=o.tipo, ref_id=o.ref_id) }}">
+            <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i> Reexibir</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if RP.sem_referencia.pedido %}<p class="text-muted small mt-2 mb-0"><i class="bi bi-info-circle"></i> {{ RP.sem_referencia.pedido }} pedido(s) em aberto sem data de inclusão nem movimentação — não entram na análise.</p>{% endif %}
+  </div>
+</div>
+
+<div class="card pn-sec pn-t-amber" id="sec-fila-espera" data-sec="fila-espera">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">
+        ⏳ <i class="bi bi-hourglass-split"></i> Gestão de risco — OP/produto parado em fila e espera
+      </h6>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="text-muted small">Fila = pendente, sem iniciar · Espera = em tratativa</span>
+        <a href="{{ url_for('painel_parados_relatorio_pdf') }}" class="btn btn-sm btn-outline-danger"><i class="bi bi-file-earmark-pdf"></i> Relatório executivo (PDF)</a>
+      </div>
+    </div>
+    {{ seletor_parados('paradosItensHz') }}
+    <div class="row g-3">
+      {% for chave, rotulo, sub in [("fila", "⏳ Fila", "OP/produto pendente, ainda sem iniciar a produção"), ("espera", "🤝 Espera", "OP/produto em tratativa, aguardando resolução")] %}
+      {% set dados = RP[chave] %}
+      <div class="col-md-6">
+        <div class="border rounded p-2 h-100">
+          <div class="fw-semibold mb-1">{{ rotulo }} <span class="text-muted small fw-normal">· {{ sub }} · {{ dados.abertos }} no total</span></div>
+          {% for h in (5, 10, 20) %}
+          {% set d = dados.horizontes[h] %}
+          <div class="parado-hz" data-hz="{{ h }}"{% if h != 10 %} style="display:none"{% endif %}>
+            {{ badges_parados(d, rotulo) }}
+            {% if d.total %}
+            <div class="d-flex flex-column gap-2 mt-2">
+              {% for l in d.linhas %}{{ card_item_parado(l) }}{% endfor %}
+            </div>
+            {% if d.total > d.linhas|length %}<p class="text-muted small mt-2 mb-0">Mostrando os {{ d.linhas|length }} mais críticos de {{ d.total }} · lista completa no PDF.</p>{% endif %}
+            {% else %}
+            <p class="text-muted small mb-0 mt-2">Nenhuma OP/produto {{ 'na fila' if chave == 'fila' else 'em espera' }} há {{ h }} dias ou mais 🎉</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% set ocultos_i = RP.ocultos | selectattr("tipo", "equalto", "item") | list %}
+    {% if ocultos_i %}
+    <details class="mt-3 small">
+      <summary class="text-muted" style="cursor:pointer"><i class="bi bi-eye-slash"></i> {{ ocultos_i|length }} OP/produto oculto(s) da gestão de parados</summary>
+      <div class="mt-2 d-flex flex-column gap-1">
+        {% for o in ocultos_i %}
+        <div class="d-flex justify-content-between align-items-center gap-2 border rounded px-2 py-1">
+          <div>
+            <a href="{{ url_for('detalhe_pedido', pedido_id=o.pedido_id) }}" class="fw-semibold text-decoration-none">{{ o.titulo }}</a>
+            <div class="text-muted">Ocultado em {{ o.quando or "—" }} por {{ o.oculto_por or "—" }}{% if o.motivo %} — “{{ o.motivo }}”{% endif %}</div>
+          </div>
+          {% if pode_apontar_revisao %}
+          <form method="post" action="{{ url_for('painel_parados_reexibir', tipo=o.tipo, ref_id=o.ref_id) }}">
+            <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i> Reexibir</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if RP.sem_referencia.item %}<p class="text-muted small mt-2 mb-0"><i class="bi bi-info-circle"></i> {{ RP.sem_referencia.item }} OP/produto sem data de referência — não entram na análise.</p>{% endif %}
+  </div>
+</div>
+<script>
+(function () {
+  document.querySelectorAll("[data-parado-grupo]").forEach(function (grp) {
+    var card = grp.closest(".card");
+    var chave = "painel_parados_hz_" + grp.id;
+    function aplicar(h) {
+      card.querySelectorAll(".parado-hz").forEach(function (el) {
+        el.style.display = el.dataset.hz === String(h) ? "" : "none";
+      });
+      grp.querySelectorAll("button").forEach(function (b) { b.classList.toggle("active", b.dataset.hz === String(h)); });
+      try { localStorage.setItem(chave, String(h)); } catch (e) {}
+    }
+    grp.addEventListener("click", function (ev) {
+      var b = ev.target.closest("button[data-hz]"); if (b) aplicar(b.dataset.hz);
+    });
+    try { var s = localStorage.getItem(chave); if (s) aplicar(s); } catch (e) {}
+  });
+})();
+</script>
+{% if pode_apontar_revisao %}
+<div class="modal fade" id="modalOcultarParado" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" id="formOcultarParado" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-eye-slash"></i> Ocultar da gestão de parados</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2"><strong id="ocultarParadoTitulo">—</strong></p>
+        <p class="small text-muted">Use para o que está parado de propósito (ex.: pedido aguardando o cliente, item em pausa contratual). Deixa de aparecer nos cards, nos totais e no PDF. Dá para reexibir a qualquer momento em “Ocultos”.</p>
+        <label class="form-label" for="ocultarParadoMotivo">Motivo (opcional)</label>
+        <textarea class="form-control" name="motivo" id="ocultarParadoMotivo" rows="2" maxlength="500" placeholder="Ex.: aguardando liberação do cliente"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-eye-slash"></i> Ocultar</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+document.addEventListener("click", function (ev) {
+  var b = ev.target.closest(".js-ocultar-parado");
+  if (!b) return;
+  document.getElementById("formOcultarParado").action = b.dataset.action;
+  document.getElementById("ocultarParadoTitulo").textContent = b.dataset.titulo || "—";
+  document.getElementById("ocultarParadoMotivo").value = "";
+});
+</script>
+{% endif %}
+
 <div class="card pn-sec pn-t-green" id="sec-pedidos" data-sec="pedidos">
   <div class="card-body">
     {# Quadrante dividido em dois (pedido do Bruno, 30/10/2026): à esquerda o que já
