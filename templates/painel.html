@@ -376,7 +376,12 @@
           {% endfor %}
         </div>
         {% else %}
-        <p class="text-muted small mb-0">Nenhum pedido liberado pelo PCP ainda (liberado = todos os itens com liberação efetiva).</p>
+        <p class="text-muted small mb-0">Nenhum pedido liberado pelo PCP até hoje (liberado = todos os itens com liberação efetiva).</p>
+        {% endif %}
+        {% if liberacoes_futuras_pcp %}
+        <p class="text-muted small mt-2 mb-0" title="Liberação real digitada com data posterior a hoje: só entra na lista quando a data chegar (ou corrija a data na Programação).">
+          <i class="bi bi-calendar-event"></i> {{ liberacoes_futuras_pcp }} pedido(s) com liberação efetiva em data futura não aparecem aqui até a data chegar.
+        </p>
         {% endif %}
       </div>
     </div>

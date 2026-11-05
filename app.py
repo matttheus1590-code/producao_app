@@ -389,7 +389,9 @@ def _contexto_painel(args, ultima_visita=None):
     # visita" do feed de Qualidade acima.
     pedidos_recentes_producao = _pedidos_recentes_producao(desde=ultima_visita)
     novos_pedidos_producao = sum(1 for e in pedidos_recentes_producao if e["novo"])
-    pedidos_liberados_pcp = _pedidos_liberados_pcp_recentes(hoje=hoje)
+    meta_lib_pcp = {}
+    pedidos_liberados_pcp = _pedidos_liberados_pcp_recentes(hoje=hoje, meta=meta_lib_pcp)
+    liberacoes_futuras_pcp = _contar_liberacoes_futuras_pcp(hoje)
     atualizacoes_pd = _atualizacoes_recentes_pd(desde=ultima_visita)
     novas_atualizacoes_pd = sum(1 for e in atualizacoes_pd if e["novo"])
 
@@ -435,6 +437,7 @@ def _contexto_painel(args, ultima_visita=None):
         novos_apontamentos=novos_apontamentos,
         pedidos_recentes_producao=pedidos_recentes_producao,
         pedidos_liberados_pcp=pedidos_liberados_pcp,
+        liberacoes_futuras_pcp=liberacoes_futuras_pcp,
         novos_pedidos_producao=novos_pedidos_producao,
         atualizacoes_pd=atualizacoes_pd,
         novas_atualizacoes_pd=novas_atualizacoes_pd,
@@ -9522,19 +9525,30 @@ def _pedidos_recentes_producao(desde=None, limite=10):
     return eventos
 
 
-def _pedidos_liberados_pcp_recentes(limite=10, hoje=None):
+def _pedidos_liberados_pcp_recentes(limite=10, hoje=None, meta=None):
     """Últimos pedidos LIBERADOS pelo PCP, mais recentes primeiro — pedido do
     Bruno (30/10/2026): o quadrante "Últimos pedidos incluídos" do Painel
     ganha ao lado "últimos pedidos liberados pelo PCP, já com a data de
     liberação efetiva". Critério idêntico ao do verde da Listagem Geral e do
     resumo do mês: pedido liberado = TODOS os itens com "Liberação real"
     preenchida; a data mostrada é a mais recente entre os itens (a do
-    fechamento da liberação do pedido). Desempate pela ordem de cadastro."""
+    fechamento da liberação do pedido). Desempate pela ordem de cadastro.
+
+    Correção (05/11/2026, "não está atualizando os últimos pedidos
+    liberados"): "Liberação real" é digitada à mão e às vezes recebe uma data
+    FUTURA (ex.: 25/11 em pleno 05/11). Ordenando só por data, esses pedidos
+    ficavam fixos no topo (rotulados "hoje") e empurravam para fora da lista
+    as liberações que realmente acabaram de acontecer. Agora só entra quem
+    tem liberação efetiva até hoje; os com data futura ficam de fora e são
+    contados em `meta["futuros"]` (o Painel avisa quantos são)."""
     hoje = hoje or _agora_brt().date()
+    if meta is None:
+        meta = {}
+    meta["futuros"] = 0
     ids_candidatos = [
         r[0] for r in (
             db.session.query(ItemPedido.pedido_id)
-            .filter(ItemPedido.liberacao_real.isnot(None))
+            .filter(ItemPedido.liberacao_real.isnot(None), ItemPedido.liberacao_real <= hoje)
             .order_by(ItemPedido.liberacao_real.desc())
             .limit(600)
             .all()
@@ -9552,7 +9566,11 @@ def _pedidos_liberados_pcp_recentes(limite=10, hoje=None):
     for p in pedidos:
         if not p.itens or any(not i.liberacao_real for i in p.itens):
             continue
-        liberados.append((max(i.liberacao_real for i in p.itens), p))
+        data_max = max(i.liberacao_real for i in p.itens)
+        if data_max > hoje:
+            meta["futuros"] += 1
+            continue
+        liberados.append((data_max, p))
     liberados.sort(key=lambda t: (t[0], t[1].id), reverse=True)
 
     eventos = []
@@ -9585,6 +9603,22 @@ def _pedidos_liberados_pcp_recentes(limite=10, hoje=None):
             "link": url_for("detalhe_pedido", pedido_id=p.id),
         })
     return eventos
+
+
+def _contar_liberacoes_futuras_pcp(hoje):
+    """Pedidos cujos itens estão todos com "Liberação real" preenchida, mas a
+    data efetiva mais recente é FUTURA (digitada adiantada). Não entram em
+    "Últimos pedidos liberados pelo PCP"; o Painel só avisa quantos são."""
+    ids = list(dict.fromkeys(
+        r[0] for r in db.session.query(ItemPedido.pedido_id).filter(ItemPedido.liberacao_real > hoje).all()
+    ))
+    if not ids:
+        return 0
+    n = 0
+    for p in Pedido.query.options(selectinload(Pedido.itens)).filter(Pedido.id.in_(ids)).all():
+        if p.itens and all(i.liberacao_real for i in p.itens) and max(i.liberacao_real for i in p.itens) > hoje:
+            n += 1
+    return n
 
 
 def _janela_utc_do_dia_brt(dia_brt):
