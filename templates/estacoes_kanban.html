@@ -224,9 +224,15 @@
         {% set mat = materiais_por_item[item.id] %}
         {% set pcp_i = pcp_por_item.get(item.id, {"mes": "sem", "sem": ""}) %}
         <div class="kanban-item border-start border-3 border-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" data-mes="{{ pcp_i.mes }}" data-sem="{{ pcp_i.sem }}">
-          <div class="kanban-item-titulo">{{ item.descricao_produto }}</div>
+          {% set qtd_txt = item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade %}
+          <div class="kanban-item-topo">
+            <div class="kanban-item-titulo">{{ item.descricao_produto }}</div>
+            <div class="kanban-item-qtd" title="Quantidade de peças deste item">
+              <span class="kanban-item-qtd-num">{{ qtd_txt | string | replace(".", ",") }}</span>
+              <span class="kanban-item-qtd-un">{{ "peça" if item.quantidade == 1 else "peças" }}</span>
+            </div>
+          </div>
           <div class="kanban-item-meta">
-            <span><i class="bi bi-box-seam"></i>{{ item.quantidade | int if item.quantidade == item.quantidade | int else item.quantidade }} peça(s)</span>
             <span><i class="bi bi-calendar-plus"></i>Incluído {{ pedido.data_inclusao_pedido.strftime("%d/%m/%Y") if pedido.data_inclusao_pedido else "—" }}</span>
             <span><i class="bi bi-calendar-event"></i>Solicitado {{ pedido.data_cliente.strftime("%d/%m/%Y") if pedido.data_cliente else "—" }}</span>
             <span class="{% if cor == 'vermelho' %}text-danger fw-semibold{% elif cor == 'amarelo' %}text-warning fw-semibold{% endif %}">

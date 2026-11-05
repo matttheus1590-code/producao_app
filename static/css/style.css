@@ -995,21 +995,63 @@ body.col-resizing-ativo {
   border-top: none;
 }
 
+.kanban-item-topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+
 .kanban-item-titulo {
-  font-weight: 600;
-  font-size: 0.8rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 0.95rem;
   line-height: 1.25;
-  margin-bottom: 0.25rem;
+  color: #1f2a37;
+}
+
+/* Quantidade em destaque (pedido do Bruno, 05/11/2026): número grande à
+   direita do nome do produto, para bater o olho. */
+.kanban-item-qtd {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.1rem;
+  padding: 0.2rem 0.5rem;
+  background: #eef4ff;
+  border: 1px solid #cddcf7;
+  border-radius: 0.5rem;
+  line-height: 1;
+}
+
+.kanban-item-qtd-num {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #0d3b8c;
+  font-variant-numeric: tabular-nums;
+}
+
+.kanban-item-qtd-un {
+  margin-top: 0.15rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #4a6ba8;
 }
 
 .kanban-item-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.1rem 0.65rem;
-  font-size: 0.7rem;
-  color: #6b7685;
-  margin-bottom: 0.35rem;
+  gap: 0.15rem 0.7rem;
+  font-size: 0.76rem;
+  color: #5b6573;
+  margin-bottom: 0.4rem;
 }
 
 .kanban-item-meta i {
