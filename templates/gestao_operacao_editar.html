@@ -24,6 +24,18 @@
     </ul>
 
     <form method="post">
+      {% if logistica_info and secao in ('logistica', 'resultados') %}
+      <div class="alert alert-info d-flex gap-2 align-items-start py-2 mb-3">
+        <i class="bi bi-link-45deg fs-4"></i>
+        <div class="small">
+          <div class="fw-semibold">Dados de expedição e transporte vêm da Logística</div>
+          Origem: Logística · atualizado em {{ logistica_info.atualizado_em.strftime("%d/%m/%Y %H:%M") if logistica_info.atualizado_em else "—" }}.
+          Estes campos ficam somente para leitura aqui — para corrigir, ajuste na Logística.
+          {% if logistica_info.remessas and logistica_info.remessas.total > 1 %}<div>{{ logistica_info.remessas.entregues }} de {{ logistica_info.remessas.total }} remessas entregues.</div>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+
       {% if secao == 'comercial' %}
       <div class="card p-4 shadow-sm mb-4 go-bloco-comercial">
         <h6 class="text-uppercase small mb-3 go-bloco-titulo"><i class="bi bi-briefcase"></i> Comercial</h6>
@@ -129,19 +141,19 @@
         <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">Data emissão NF</label>
-            <input type="date" class="form-control" name="go_data_emissao_nf" value="{{ pedido.go_data_emissao_nf or '' }}">
+            <input type="date" class="form-control" name="go_data_emissao_nf" {{ 'disabled' if 'go_data_emissao_nf' in travados else '' }} value="{{ pedido.go_data_emissao_nf or '' }}">
           </div>
           <div class="col-md-3">
             <label class="form-label">Nº da NF</label>
-            <input type="text" class="form-control" name="go_numero_nf" value="{{ pedido.go_numero_nf or '' }}">
+            <input type="text" class="form-control" name="go_numero_nf" {{ 'disabled' if 'go_numero_nf' in travados else '' }} value="{{ pedido.go_numero_nf or '' }}">
           </div>
           <div class="col-md-3">
             <label class="form-label">Valor NF emitida</label>
-            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_valor_nf_emitida" value="{{ pedido.go_valor_nf_emitida|br_num if pedido.go_valor_nf_emitida is not none else '' }}" placeholder="0,00">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_valor_nf_emitida" {{ 'disabled' if 'go_valor_nf_emitida' in travados else '' }} value="{{ pedido.go_valor_nf_emitida|br_num if pedido.go_valor_nf_emitida is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-3">
             <label class="form-label">Transportadora</label>
-            <select class="form-select" name="go_transportadora_id">
+            <select class="form-select" name="go_transportadora_id" {{ 'disabled' if 'go_transportadora_id' in travados else '' }}>
               <option value="">—</option>
               {% for t in transportadoras %}
                 <option value="{{ t.id }}" {% if pedido.go_transportadora_id == t.id %}selected{% endif %}>{{ t.nome }}</option>
@@ -155,22 +167,22 @@
         <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">📅 Expectativa de Coleta/Embarque</label>
-            <input type="date" class="form-control" name="go_data_prevista_coleta" value="{{ pedido.go_data_prevista_coleta or '' }}">
+            <input type="date" class="form-control" name="go_data_prevista_coleta" {{ 'disabled' if 'go_data_prevista_coleta' in travados else '' }} value="{{ pedido.go_data_prevista_coleta or '' }}">
             <div class="form-text">Se essa data passar sem "Data real de Coleta/Embarque" preenchida, o Kanban conta atraso automaticamente.</div>
           </div>
           <div class="col-md-3">
             <label class="form-label">📦 Data Real de Coleta/Embarque</label>
-            <input type="date" class="form-control" name="go_data_pedido_expedido" value="{{ pedido.go_data_pedido_expedido or '' }}">
+            <input type="date" class="form-control" name="go_data_pedido_expedido" {{ 'disabled' if 'go_data_pedido_expedido' in travados else '' }} value="{{ pedido.go_data_pedido_expedido or '' }}">
             <div class="form-text">Mesma data do botão "Marcar como expedido" no Kanban Expedição — preencher aqui tem o mesmo efeito.</div>
           </div>
           <div class="col-md-3">
             <label class="form-label">📅 Expectativa de Chegada no Cliente</label>
-            <input type="date" class="form-control" name="go_data_prevista_entrega" value="{{ pedido.go_data_prevista_entrega or '' }}">
+            <input type="date" class="form-control" name="go_data_prevista_entrega" {{ 'disabled' if 'go_data_prevista_entrega' in travados else '' }} value="{{ pedido.go_data_prevista_entrega or '' }}">
             <div class="form-text">Comparada com "Data entregue cliente" (aba Resultados) pra calcular atraso de entrega.</div>
           </div>
           <div class="col-md-3">
             <label class="form-label">🏁 Data Real de Chegada no Cliente</label>
-            <input type="date" class="form-control" name="go_data_entregue_cliente" value="{{ pedido.go_data_entregue_cliente or '' }}">
+            <input type="date" class="form-control" name="go_data_entregue_cliente" {{ 'disabled' if 'go_data_entregue_cliente' in travados else '' }} value="{{ pedido.go_data_entregue_cliente or '' }}">
             <div class="form-text">Mesmo campo "Data entregue cliente" da aba Resultados (é o dado que fecha o OTD) — editável aqui também, sem duplicar.</div>
           </div>
         </div>
@@ -179,20 +191,20 @@
         <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">Data real entrega/coleta (transportadora)</label>
-            <input type="date" class="form-control" name="go_data_real_entrega" value="{{ pedido.go_data_real_entrega or '' }}">
+            <input type="date" class="form-control" name="go_data_real_entrega" {{ 'disabled' if 'go_data_real_entrega' in travados else '' }} value="{{ pedido.go_data_real_entrega or '' }}">
             <div class="form-text">Confirmação da TRANSPORTADORA (pode ser antes da chegada de fato ao cliente, comum em exportação) — alimenta só o "Lead time de frete"; não é usada no atraso de entrega nem no OTD.</div>
           </div>
           <div class="col-md-3">
             <label class="form-label">Custo frete previsto</label>
-            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_previsto" value="{{ pedido.go_custo_frete_previsto|br_num if pedido.go_custo_frete_previsto is not none else '' }}" placeholder="0,00">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_previsto" {{ 'disabled' if 'go_custo_frete_previsto' in travados else '' }} value="{{ pedido.go_custo_frete_previsto|br_num if pedido.go_custo_frete_previsto is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-3">
             <label class="form-label">Custo frete final</label>
-            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_final" value="{{ pedido.go_custo_frete_final|br_num if pedido.go_custo_frete_final is not none else '' }}" placeholder="0,00">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_final" {{ 'disabled' if 'go_custo_frete_final' in travados else '' }} value="{{ pedido.go_custo_frete_final|br_num if pedido.go_custo_frete_final is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-3">
             <label class="form-label">Custo frete sobre a nota (%)</label>
-            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_sobre_nota" value="{{ pedido.go_custo_frete_sobre_nota|br_num if pedido.go_custo_frete_sobre_nota is not none else '' }}" placeholder="0,00">
+            <input type="text" inputmode="decimal" autocomplete="off" data-br="moeda" class="form-control" name="go_custo_frete_sobre_nota" {{ 'disabled' if 'go_custo_frete_sobre_nota' in travados else '' }} value="{{ pedido.go_custo_frete_sobre_nota|br_num if pedido.go_custo_frete_sobre_nota is not none else '' }}" placeholder="0,00">
           </div>
           <div class="col-md-12">
             <label class="form-label">Observação/Pendência</label>
@@ -225,7 +237,7 @@
           </div>
           <div class="col-md-3">
             <label class="form-label">Data entregue cliente</label>
-            <input type="date" class="form-control" name="go_data_entregue_cliente" value="{{ pedido.go_data_entregue_cliente or '' }}">
+            <input type="date" class="form-control" name="go_data_entregue_cliente" {{ 'disabled' if 'go_data_entregue_cliente' in travados else '' }} value="{{ pedido.go_data_entregue_cliente or '' }}">
           </div>
           <div class="col-md-3">
             <label class="form-label">Status final (alinhamento)</label>

@@ -228,6 +228,13 @@
         {{ linha_logi((go.go_data_real_entrega is not none) or (go.go_data_entregue_cliente is not none), "Chegada ao destino", (dt(go.go_data_real_entrega) if go.go_data_real_entrega else ("prevista " ~ dt(go.go_data_prevista_entrega) if go.go_data_prevista_entrega else "—"))) }}
         {{ linha_logi(go.go_data_entregue_cliente is not none, "Entregue ao cliente", (dt(go.go_data_entregue_cliente) if go.go_data_entregue_cliente else "aguardando")) }}
       </ul>
+      {% if logistica_info %}
+      <div class="small text-muted mt-1"><i class="bi bi-link-45deg"></i> Origem: <b>Logística</b>{% if logistica_info.atualizado_em %} · atualizado em {{ logistica_info.atualizado_em.strftime("%d/%m/%Y %H:%M") }}{% endif %}{% if logistica_info.status %} · {{ logistica_info.status }}{% endif %}</div>
+      {% if logistica_info.remessas and logistica_info.remessas.total > 1 %}
+      <div class="small mt-1"><i class="bi bi-boxes"></i> <b>{{ logistica_info.remessas.entregues }} de {{ logistica_info.remessas.total }}</b> remessas entregues · {{ logistica_info.remessas.expedidas }} de {{ logistica_info.remessas.total }} expedidas</div>
+      {% endif %}
+      {% if logistica_erro %}<div class="small text-warning mt-1"><i class="bi bi-exclamation-triangle"></i> Logística indisponível agora — mostrando o último dado recebido.</div>{% endif %}
+      {% endif %}
       <div class="cp-duplo mt-2">
         <div class="alert alert-{{ situacao_entrega.cor }} d-flex align-items-center gap-2 py-2 mb-2">
           <i class="bi {{ situacao_entrega.icone }} fs-5"></i>

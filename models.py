@@ -2375,3 +2375,45 @@ class RiscoParadoOculto(db.Model):
     oculto_em = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     oculto_por = db.Column(db.String(120), nullable=True)
     motivo = db.Column(db.Text, nullable=True)
+
+
+class LogisticaSync(db.Model):
+    """Último dado recebido da Logística (API v1) para cada pedido de venda.
+
+    Uma linha por pedido (chave = nº do pedido de venda normalizado, o mesmo
+    critério que liga Produção e Operação). Guarda o JSON recebido — inclusive
+    as remessas, para exibir "2 de 3 entregues" — e quando a Logística o
+    alterou/quando o site o recebeu. Se existe linha (e não está cancelada), os
+    campos de expedição/transporte do pedido ficam SOMENTE LEITURA no site."""
+
+    __tablename__ = "logistica_sync"
+
+    id = db.Column(db.Integer, primary_key=True)
+    pedido_venda_norm = db.Column(db.String(60), unique=True, nullable=False, index=True)
+    pedido_venda_logistica = db.Column(db.String(60), nullable=True)
+    payload_json = db.Column(db.Text, nullable=False)
+    atualizado_em_origem = db.Column(db.DateTime, nullable=True)  # UTC — quando a Logística alterou
+    sincronizado_em = db.Column(db.DateTime, default=datetime.utcnow)  # UTC — quando o site recebeu
+    cancelado = db.Column(db.Boolean, nullable=False, default=False)
+    # True quando já foi gravado em pelo menos um PedidoOperacao (senão é tentado de novo
+    # a cada sincronização — o pedido pode ser lançado no site depois de a Logística avisar).
+    aplicado = db.Column(db.Boolean, nullable=False, default=False)
+
+
+class LogisticaSyncEstado(db.Model):
+    """Linha única (id=1) com o estado da sincronização: cursor incremental,
+    última tentativa/sucesso/erro e "reserva" (lease) para só um worker do
+    servidor sincronizar por vez."""
+
+    __tablename__ = "logistica_sync_estado"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cursor_atualizado_desde = db.Column(db.String(40), nullable=True)  # ISO UTC
+    ultima_tentativa = db.Column(db.DateTime, nullable=True)
+    ultimo_sucesso = db.Column(db.DateTime, nullable=True)
+    ultimo_erro = db.Column(db.Text, nullable=True)
+    ultimo_erro_em = db.Column(db.DateTime, nullable=True)
+    lease_ate = db.Column(db.DateTime, nullable=True)
+    ult_recebidos = db.Column(db.Integer, nullable=True)
+    ult_aplicados = db.Column(db.Integer, nullable=True)
+    ult_sem_pedido = db.Column(db.Integer, nullable=True)

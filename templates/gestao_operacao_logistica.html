@@ -27,7 +27,15 @@
     </div>
   </div>
 </div>
-<p class="text-muted small mb-3">Emissão de nota fiscal, expedição e entrega de cada pedido.</p>
+<p class="text-muted small mb-3">Emissão de nota fiscal, expedição e entrega de cada pedido.
+  {% if logistica_st.configurado and current_user.role in ('ADMIN', 'PCP') %}
+  <a href="{{ url_for('integracao_logistica') }}" class="ms-2"><i class="bi bi-plug"></i> Integração com a Logística:
+    {% if logistica_st.ultimo_erro %}<span class="text-warning">indisponível</span>{% else %}<span class="text-success">ativa</span>{% endif %}
+    · última sincronização {{ logistica_st.ultimo_sucesso.strftime("%d/%m %H:%M") if logistica_st.ultimo_sucesso else "—" }}</a>
+  {% elif current_user.role in ('ADMIN', 'PCP') %}
+  <a href="{{ url_for('integracao_logistica') }}" class="ms-2 text-muted"><i class="bi bi-plug"></i> Integração com a Logística (desligada)</a>
+  {% endif %}
+</p>
 
 {% set endpoint_limpar = "gestao_operacao_logistica" %}
 <form method="get">

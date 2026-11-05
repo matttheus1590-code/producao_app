@@ -1,8 +1,11 @@
 import csv
 import io
+import json
 import math
 import os
 import re
+import threading
+import time
 import unicodedata
 from calendar import monthrange
 from datetime import date, datetime, timedelta
@@ -18,6 +21,7 @@ from sqlalchemy import and_, case, extract, false, func, inspect, not_, or_, tex
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
+import logistica_api
 from extensions import db, login_manager
 from models import (
     _MESES_ABREV_PCP,
@@ -91,6 +95,8 @@ from models import (
     LeadTimeTransportadora,
     RiscoPedidoOculto,
     RiscoParadoOculto,
+    LogisticaSync,
+    LogisticaSyncEstado,
     SolicitacaoRevisaoPrazo,
     MateriaPrima,
     MateriaPrimaHistorico,
@@ -9619,6 +9625,321 @@ def _contar_liberacoes_futuras_pcp(hoje):
         if p.itens and all(i.liberacao_real for i in p.itens) and max(i.liberacao_real for i in p.itens) > hoje:
             n += 1
     return n
+
+
+# ----------------------------------------------------------------------------
+# Integração com o site da LOGÍSTICA (API v1, somente leitura) — ver
+# logistica_api.py e briefing_api_logistica.md. A Logística é a fonte oficial de
+# tudo que é expedição e transporte; este site só recebe e mostra. Só passa a
+# valer quando LOGISTICA_API_URL e LOGISTICA_API_TOKEN estiverem configuradas.
+# ----------------------------------------------------------------------------
+LOGISTICA_USUARIO_HISTORICO = "Logística (API)"
+_LOGISTICA_CAMPOS_VALOR = tuple(c for c in logistica_api.CAMPOS_CONTROLADOS if c != "go_transportadora_nome")
+
+
+def _logistica_registro(pedido_venda):
+    """Último dado da Logística para ESTE pedido/parte (None se a integração
+    está desligada, a Logística não conhece o pedido, a parte ainda não existe
+    lá ou o pedido foi cancelado). É ele que trava a digitação manual dos
+    campos de expedição/transporte. A chave na Logística é o nº base ("931");
+    as partes ("931/1") vêm em remessas[]."""
+    if not logistica_api.configurado():
+        return None
+    base = logistica_api.base_do_pedido(pedido_venda)
+    if not base:
+        return None
+    reg = LogisticaSync.query.filter_by(pedido_venda_norm=base).first()
+    if reg is None or reg.cancelado:
+        return None
+    try:
+        payload = json.loads(reg.payload_json)
+    except ValueError:
+        return None
+    if logistica_api.mapear(payload, parte=logistica_api.normalizar_pedido(pedido_venda)) is None:
+        return None
+    return reg
+
+
+def _po_da_logistica(base):
+    """PedidoOperacao do nº base e de todas as suas partes ("931", "931/1"...)."""
+    col = _pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda)
+    candidatos = PedidoOperacao.query.filter(or_(col == base, col.like(base + "/%"))).all()
+    return [po for po in candidatos if logistica_api.base_do_pedido(po.pedido_venda) == base]
+
+
+def _logistica_info(reg):
+    """Dicionário pronto pra tela (origem, horários em BRT, remessas) a partir de uma linha LogisticaSync."""
+    if reg is None:
+        return None
+    try:
+        payload = json.loads(reg.payload_json)
+    except ValueError:
+        payload = {}
+    def brt(d):
+        return (d - timedelta(hours=3)) if d else None
+    return {
+        "atualizado_em": brt(reg.atualizado_em_origem),
+        "sincronizado_em": brt(reg.sincronizado_em),
+        "status": payload.get("status_logistica"),
+        "remessas": logistica_api.resumo_remessas(payload),
+        "pedido_venda": reg.pedido_venda_logistica,
+    }
+
+
+def _logistica_transportadora_id(nome):
+    if not nome:
+        return None
+    t = Transportadora.query.filter(func.lower(Transportadora.nome) == nome.strip().lower()).first()
+    if t is None:
+        t = Transportadora(nome=nome.strip()[:120], ativo=True)
+        db.session.add(t)
+        db.session.flush()
+    return t.id
+
+
+def _logistica_aplicar_payload(payload, agora=None):
+    """Grava no site o dado de UM pedido vindo da Logística. Devolve
+    "aplicado" | "sem_pedido" | "antigo" | "ignorado". Não dá commit.
+
+    Regras: valor novo da Logística sempre vence; campo que vem vazio só limpa o
+    valor do site se a própria Logística já tinha mandado valor antes (dado
+    antigo digitado à mão não é apagado por um "vazio" inicial)."""
+    agora = agora or datetime.utcnow()
+    pv = (payload.get("pedido_venda") or "")
+    pv = str(pv).strip()
+    chave = logistica_api.base_do_pedido(pv)
+    if not chave:
+        return "ignorado"
+    origem_em = logistica_api.parse_instante(payload.get("atualizado_em"))
+    reg = LogisticaSync.query.filter_by(pedido_venda_norm=chave).first()
+    payload_anterior = {}
+    if reg is not None:
+        if origem_em and reg.atualizado_em_origem and origem_em < reg.atualizado_em_origem:
+            return "antigo"
+        try:
+            payload_anterior = json.loads(reg.payload_json)
+        except ValueError:
+            payload_anterior = {}
+    else:
+        reg = LogisticaSync(pedido_venda_norm=chave)
+        db.session.add(reg)
+    reg.pedido_venda_logistica = pv[:60]
+    reg.payload_json = json.dumps(payload, ensure_ascii=False)
+    reg.atualizado_em_origem = origem_em
+    reg.sincronizado_em = agora
+    reg.cancelado = bool(payload.get("cancelado"))
+
+    po_lista = _po_da_logistica(chave)
+    if not po_lista:
+        reg.aplicado = False
+        return "sem_pedido"
+    if reg.cancelado:
+        reg.aplicado = True
+        return "aplicado"  # pedido cancelado na Logística: guarda o aviso, não mexe nos campos
+
+    atualizou_algum = False
+    for po in po_lista:
+        parte = logistica_api.normalizar_pedido(po.pedido_venda)
+        novos = logistica_api.mapear(payload, parte=parte)
+        if novos is None:
+            continue  # a Logística ainda não tem dado desta parte
+        atualizou_algum = True
+        anterior = logistica_api.mapear(payload_anterior, parte=parte) if payload_anterior else None
+        anterior = anterior or {}
+        antes = {c: getattr(po, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
+        for campo in _LOGISTICA_CAMPOS_VALOR:
+            novo = novos.get(campo)
+            if novo is None and anterior.get(campo) is None:
+                continue  # nada novo e nada que a Logística já tenha mandado antes
+            if getattr(po, campo) != novo:
+                setattr(po, campo, novo)
+        nome_transp = novos.get("go_transportadora_nome")
+        if nome_transp:
+            tid = _logistica_transportadora_id(nome_transp)
+            if po.go_transportadora_id != tid:
+                po.go_transportadora_id = tid
+        elif anterior.get("go_transportadora_nome"):
+            po.go_transportadora_id = None
+        depois = {c: getattr(po, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
+        for campo in CAMPOS_HISTORICO_GESTAO_OPERACAO:
+            if antes[campo] != depois[campo]:
+                db.session.add(HistoricoAlteracao(
+                    entidade_tipo="pedido_operacao", entidade_id=po.id, pedido_id=None,
+                    usuario_id=None, usuario_nome=LOGISTICA_USUARIO_HISTORICO, campo=campo,
+                    valor_anterior=None if antes[campo] is None else str(antes[campo]),
+                    valor_novo=None if depois[campo] is None else str(depois[campo]),
+                ))
+    reg.aplicado = atualizou_algum
+    return "aplicado" if atualizou_algum else "sem_pedido"
+
+
+def _logistica_estado():
+    est = db.session.get(LogisticaSyncEstado, 1)
+    if est is None:
+        est = LogisticaSyncEstado(id=1)
+        db.session.add(est)
+        db.session.flush()
+    return est
+
+
+def _logistica_sincronizar(forcar=False):
+    """Sincronização incremental com a Logística. Seguro para vários workers
+    (reserva no banco). Nunca levanta exceção: falha vira `ultimo_erro` e o
+    site segue com o último dado recebido. Devolve dict de resultado."""
+    if not logistica_api.configurado():
+        return {"ok": False, "motivo": "nao_configurado"}
+    agora = datetime.utcnow()
+    est = _logistica_estado()
+    if not forcar and est.ultima_tentativa and (agora - est.ultima_tentativa) < timedelta(minutes=logistica_api.intervalo_sync_minutos()):
+        db.session.rollback()
+        return {"ok": True, "motivo": "recente"}
+    # reserva (lease): só um worker sincroniza por vez
+    reservado = db.session.query(LogisticaSyncEstado).filter(
+        LogisticaSyncEstado.id == 1,
+        or_(LogisticaSyncEstado.lease_ate.is_(None), LogisticaSyncEstado.lease_ate < agora),
+    ).update({"lease_ate": agora + timedelta(minutes=3)}, synchronize_session=False)
+    db.session.commit()
+    if not reservado:
+        return {"ok": True, "motivo": "em_andamento"}
+    resultado = {"ok": False}
+    try:
+        est = _logistica_estado()
+        est.ultima_tentativa = agora
+        desde = est.cursor_atualizado_desde
+        if desde:
+            try:  # sobreposição de 2 min: pega o que chegou "colado" no limite
+                desde = (datetime.fromisoformat(desde) - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                desde = None
+        db.session.commit()
+        lote = logistica_api.buscar_mudancas(desde)
+        cont = {"aplicado": 0, "sem_pedido": 0, "antigo": 0, "ignorado": 0, "erro": 0}
+        maior = None
+        for p in lote:
+            try:
+                with db.session.begin_nested():
+                    cont[_logistica_aplicar_payload(p, agora)] += 1
+            except Exception:  # um pedido defeituoso não derruba os demais
+                cont["erro"] += 1
+            dt = logistica_api.parse_instante(p.get("atualizado_em"))
+            if dt and (maior is None or dt > maior):
+                maior = dt
+        # pedidos que a Logística já tinha avisado mas ainda não existiam no site
+        for reg in LogisticaSync.query.filter_by(aplicado=False, cancelado=False).all():
+            try:
+                with db.session.begin_nested():
+                    if _logistica_aplicar_payload(json.loads(reg.payload_json), agora) == "aplicado":
+                        cont["aplicado"] += 1
+            except Exception:
+                cont["erro"] += 1
+        est = _logistica_estado()
+        est.ultimo_sucesso = agora
+        est.ultimo_erro = None
+        if maior:
+            est.cursor_atualizado_desde = maior.strftime("%Y-%m-%dT%H:%M:%S")
+        est.ult_recebidos = len(lote)
+        est.ult_aplicados = cont["aplicado"]
+        est.ult_sem_pedido = cont["sem_pedido"]
+        db.session.commit()
+        resultado = {"ok": True, "recebidos": len(lote), **cont}
+    except logistica_api.LogisticaErro as e:
+        db.session.rollback()
+        est = _logistica_estado()
+        est.ultimo_erro = str(e)[:500]
+        est.ultimo_erro_em = datetime.utcnow()
+        db.session.commit()
+        resultado = {"ok": False, "erro": str(e)}
+    except Exception as e:  # qualquer outro problema também só vira registro
+        db.session.rollback()
+        est = _logistica_estado()
+        est.ultimo_erro = ("Erro inesperado: %s" % e)[:500]
+        est.ultimo_erro_em = datetime.utcnow()
+        db.session.commit()
+        resultado = {"ok": False, "erro": str(e)}
+    finally:
+        db.session.query(LogisticaSyncEstado).filter(LogisticaSyncEstado.id == 1).update(
+            {"lease_ate": None}, synchronize_session=False)
+        db.session.commit()
+    return resultado
+
+
+def _logistica_status_resumo():
+    """Estado da integração para as telas (horários em BRT)."""
+    est = db.session.get(LogisticaSyncEstado, 1)
+    brt = lambda d: (d - timedelta(hours=3)) if d else None
+    return {
+        "configurado": logistica_api.configurado(),
+        "url": logistica_api.url_base(),
+        "intervalo_min": logistica_api.intervalo_sync_minutos(),
+        "ultimo_sucesso": brt(est.ultimo_sucesso) if est else None,
+        "ultima_tentativa": brt(est.ultima_tentativa) if est else None,
+        "ultimo_erro": est.ultimo_erro if est else None,
+        "ultimo_erro_em": brt(est.ultimo_erro_em) if est else None,
+        "recebidos": est.ult_recebidos if est else None,
+        "aplicados": est.ult_aplicados if est else None,
+        "sem_pedido": est.ult_sem_pedido if est else None,
+        "n_pedidos": LogisticaSync.query.filter_by(cancelado=False).count(),
+        "n_pendentes": LogisticaSync.query.filter_by(cancelado=False, aplicado=False).count(),
+        "n_cancelados": LogisticaSync.query.filter_by(cancelado=True).count(),
+    }
+
+
+def _logistica_atualizar_pedido(pedido_venda, max_idade_seg=120):
+    """Consulta Pedido: dado fresco de UM pedido (timeout curto). Se a
+    Logística estiver fora do ar, segue com o último dado recebido.
+    Devolve (info_para_tela, erro_texto_ou_None)."""
+    if not logistica_api.configurado():
+        return None, None
+    chave = logistica_api.base_do_pedido(pedido_venda)
+    if not chave:
+        return None, None
+    erro = None
+    reg = LogisticaSync.query.filter_by(pedido_venda_norm=chave).first()
+    idade_ok = reg is not None and reg.sincronizado_em and (datetime.utcnow() - reg.sincronizado_em).total_seconds() < max_idade_seg
+    if not idade_ok:
+        try:
+            # sempre pelo nº base: a resposta já traz todas as partes (remessas)
+            payload = logistica_api.buscar_pedido(chave, timeout=3)
+            if payload:
+                payload.setdefault("pedido_venda", chave)
+                _logistica_aplicar_payload(payload)
+                db.session.commit()
+        except logistica_api.LogisticaNaoEncontrado:
+            pass
+        except logistica_api.LogisticaErro as e:
+            db.session.rollback()
+            erro = str(e)
+    reg = _logistica_registro(pedido_venda)  # só se a Logística já tem dado DESTA parte
+    if reg is None:
+        return None, erro
+    return _logistica_info(reg), erro
+
+
+_logistica_ult_verificacao = {"t": 0.0}
+
+
+def _logistica_disparar_em_segundo_plano(app):
+    """Chamado a cada requisição (barato): no máximo 1x/minuto por processo,
+    verifica se já passou o intervalo e, se sim, sincroniza numa thread — nunca
+    atrasa a página de quem está navegando."""
+    if not logistica_api.configurado():
+        return
+    agora = time.time()
+    if agora - _logistica_ult_verificacao["t"] < 60:
+        return
+    _logistica_ult_verificacao["t"] = agora
+
+    def _trabalho():
+        with app.app_context():
+            try:
+                _logistica_sincronizar()
+            except Exception:
+                db.session.rollback()
+            finally:
+                db.session.remove()
+
+    threading.Thread(target=_trabalho, daemon=True, name="logistica-sync").start()
+
 
 
 def _janela_utc_do_dia_brt(dia_brt):
@@ -21974,6 +22295,14 @@ def _registrar_revisao_materia_prima(mp, valor_anterior, valor_novo, motivo):
 
 def register_routes(app):
     @app.before_request
+    def _logistica_sincronizacao_automatica():
+        """Integração com a Logística: sincroniza sozinha a cada poucos
+        minutos (em segundo plano). Sem configuração, não faz nada."""
+        if request.endpoint == "static":
+            return
+        _logistica_disparar_em_segundo_plano(app)
+
+    @app.before_request
     def _restringir_acesso_por_papel():
         """Papel PD (Líder de P&D): só pode acessar P&D + visualização de
         Gestão Produção > Estações — ver ENDPOINTS_PERMITIDOS_PD em
@@ -22057,6 +22386,10 @@ def register_routes(app):
             .all()
         )
         pedido = pedidos[0] if pedidos else None
+        # Integração com a Logística: dado fresco deste pedido ANTES dos
+        # cálculos abaixo (se a Logística estiver fora do ar, segue com o
+        # último dado recebido).
+        logistica_info, logistica_erro = _logistica_atualizar_pedido(request.args.get("pedido_venda", ""))
         go = PedidoOperacao.query.filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave).first()
 
         if pedido is None and go is None:
@@ -22074,7 +22407,6 @@ def register_routes(app):
         # completa (inclusão -> liberação efetiva PCP) — ver _prazos_pedido.
         prazos = _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao)
         visao = _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora)
-
         # Qualidade (RDIM) — pedido do Bruno (02/09/2026): ver o processo de
         # qualidade item a item dentro do pedido, na mesma tela que já une
         # Produção + Operação.
@@ -22090,6 +22422,7 @@ def register_routes(app):
             etapas=etapas, nao_encontrado=False,
             inspecoes_rdim=inspecoes_rdim, resumo_rdim=resumo_rdim,
             prazos=prazos, v=visao, pedido_valor_total=sum(p.valor_total for p in pedidos),
+            logistica_info=logistica_info, logistica_erro=logistica_erro,
         )
 
     @app.route("/consulta-pedido/planejamento")
@@ -24403,6 +24736,28 @@ def register_routes(app):
     # gestao_operacao_editar (fallback manual pra pedido ainda não lançado
     # em Produção).
 
+    @app.route("/integracoes/logistica")
+    @requer_role("ADMIN", "PCP")
+    def integracao_logistica():
+        """Estado da integração com o site da Logística (só leitura) — quando
+        sincronizou, se houve erro, quantos pedidos vêm de lá."""
+        return render_template("integracao_logistica.html", st=_logistica_status_resumo())
+
+    @app.route("/integracoes/logistica/sincronizar", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def integracao_logistica_sincronizar():
+        if not logistica_api.configurado():
+            flash("Integração com a Logística ainda não configurada.", "warning")
+            return redirect(url_for("integracao_logistica"))
+        r = _logistica_sincronizar(forcar=True)
+        if r.get("ok"):
+            flash(f"Sincronizado: {r.get('recebidos', 0)} pedido(s) recebido(s) da Logística.", "success")
+        elif r.get("motivo") == "em_andamento":
+            flash("Já existe uma sincronização em andamento — tente de novo em instantes.", "info")
+        else:
+            flash("Não foi possível sincronizar agora — o site segue com o último dado recebido.", "warning")
+        return redirect(url_for("integracao_logistica"))
+
     @app.route("/gestao-operacao/logistica")
     @login_required
     def gestao_operacao_logistica():
@@ -24426,6 +24781,7 @@ def register_routes(app):
             kanban_expedicao=kanban_expedicao,
             painel_operacao_logistica=painel_operacao_logistica,
             semaforo_por_pedido=semaforo_por_pedido,
+            logistica_st=_logistica_status_resumo(),
         )
 
     @app.route("/gestao-operacao/logistica/relatorio.xlsx")
@@ -24464,6 +24820,10 @@ def register_routes(app):
         if pedido is None:
             flash("Pedido não encontrado.", "danger")
             return redirect(url_for("gestao_operacao_logistica"))
+
+        if _logistica_registro(pedido.pedido_venda) is not None:
+            flash("A expedição deste pedido vem da Logística — ela não é marcada aqui.", "warning")
+            return redirect(request.referrer or url_for("gestao_operacao_logistica"))
 
         antes = {"go_data_pedido_expedido": pedido.go_data_pedido_expedido}
         pedido.go_data_pedido_expedido = date.today()
@@ -24719,6 +25079,10 @@ def register_routes(app):
                     c for c in campos_secao
                     if not (c == "go_data_solicitada_entrega" and data_cliente_real)
                 ]
+            # Integração com a Logística: os campos de expedição/transporte
+            # deste pedido vêm da Logística — nunca são lidos do formulário.
+            if _logistica_registro(pedido.pedido_venda) is not None:
+                campos_secao = [c for c in campos_secao if c not in logistica_api.CAMPOS_TRAVADOS_FORM]
             campos_historico = [c for c in campos_secao if c in CAMPOS_HISTORICO_GESTAO_OPERACAO]
             antes = {c: getattr(pedido, c) for c in campos_historico}
 
@@ -24743,6 +25107,7 @@ def register_routes(app):
         status_real = _status_producao_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
         liberacao_real = _liberacao_pcp_por_pedido_venda([pedido.pedido_venda]).get(chave_pv) or {}
         data_cliente_real = _data_cliente_por_pedido_venda([pedido.pedido_venda]).get(chave_pv)
+        reg_logistica = _logistica_registro(pedido.pedido_venda)
         # OTD calculado (pedido do Bruno, 23/09/2026: "otd totalmente
         # automático") — pro badge somente-leitura da aba Resultados/OTD.
         otd_calculado = _otd_status_pedido(pedido, _comprometida_otd(pedido, data_cliente_real))
@@ -24752,6 +25117,8 @@ def register_routes(app):
             secao=secao, GO_SECOES=GO_SECOES, GO_SECAO_ENDPOINT=GO_SECAO_ENDPOINT, GO_SECAO_LABEL=GO_SECAO_LABEL,
             status_real=status_real, liberacao_real=liberacao_real, data_cliente_real=data_cliente_real,
             otd_calculado=otd_calculado,
+            travados=(set(logistica_api.CAMPOS_TRAVADOS_FORM) if reg_logistica is not None else set()),
+            logistica_info=_logistica_info(reg_logistica),
         )
 
     # ------------------------------------------------------------------

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Integração com a Logística · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+{% macro dh(d) %}{{ d.strftime("%d/%m/%Y %H:%M") if d else "—" }}{% endmacro %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-9">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h4 class="mb-0"><i class="bi bi-plug"></i> Integração com a Logística</h4>
+      <a href="{{ url_for('gestao_operacao_logistica') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Logística / NF</a>
+    </div>
+    <p class="text-muted small">
+      A Logística é a fonte oficial de tudo que é expedição e transporte. Este site só <strong>lê</strong> esses dados
+      (nunca escreve neles), liga os pedidos pelo <strong>nº do pedido de venda</strong> e mostra para todas as áreas.
+    </p>
+
+    {% if not st.configurado %}
+    <div class="alert alert-secondary d-flex gap-2 align-items-start">
+      <i class="bi bi-toggle-off fs-4"></i>
+      <div>
+        <div class="fw-semibold">Integração desligada</div>
+        <div class="small">Nada muda no site enquanto ela estiver desligada. Para ligar, cadastre nas configurações do servidor
+        (variáveis de ambiente) o endereço do site da Logística em <code>LOGISTICA_API_URL</code> e a chave secreta em
+        <code>LOGISTICA_API_TOKEN</code>. A chave fica só no servidor — nunca no código.</div>
+      </div>
+    </div>
+    {% else %}
+    <div class="alert alert-{{ 'warning' if st.ultimo_erro else 'success' }} d-flex gap-2 align-items-start">
+      <i class="bi {{ 'bi-exclamation-triangle' if st.ultimo_erro else 'bi-check-circle' }} fs-4"></i>
+      <div>
+        <div class="fw-semibold">{% if st.ultimo_erro %}Logística indisponível no momento — o site segue com o último dado recebido{% else %}Integração ativa{% endif %}</div>
+        <div class="small">Endereço: <code>{{ st.url }}</code> · sincroniza sozinha a cada {{ st.intervalo_min }} min.</div>
+        {% if st.ultimo_erro %}<div class="small mt-1">Último erro ({{ dh(st.ultimo_erro_em) }}): {{ st.ultimo_erro }}</div>{% endif %}
+      </div>
+    </div>
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-3"><div class="card p-3"><div class="text-muted small">Última sincronização</div><div class="fw-semibold">{{ dh(st.ultimo_sucesso) }}</div></div></div>
+      <div class="col-6 col-md-3"><div class="card p-3"><div class="text-muted small">Pedidos vindos da Logística</div><div class="fw-semibold fs-5">{{ st.n_pedidos }}</div></div></div>
+      <div class="col-6 col-md-3"><div class="card p-3"><div class="text-muted small">Aguardando o pedido no site</div><div class="fw-semibold fs-5">{{ st.n_pendentes }}</div><div class="small text-muted">Logística avisou, mas o pedido ainda não está em Gestão Operação.</div></div></div>
+      <div class="col-6 col-md-3"><div class="card p-3"><div class="text-muted small">Última rodada</div><div class="fw-semibold">{{ st.recebidos if st.recebidos is not none else "—" }} recebido(s)</div><div class="small text-muted">{{ st.aplicados if st.aplicados is not none else "—" }} aplicado(s)</div></div></div>
+    </div>
+    <form method="post" action="{{ url_for('integracao_logistica_sincronizar') }}">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-arrow-repeat"></i> Sincronizar agora</button>
+    </form>
+    {% endif %}
+
+    <hr class="my-4">
+    <div class="small text-muted">
+      <div class="fw-semibold text-body mb-1">Como funciona</div>
+      Nos pedidos que a Logística informa, os campos de expedição e transporte (NF, coleta, expedição, chegada, entrega, transportadora e frete)
+      ficam <strong>somente leitura</strong>, com a origem e a hora da última atualização. Pedidos que a Logística ainda não conhece continuam
+      como estão. Se a Logística cair, o site continua funcionando com o último dado recebido.
+    </div>
+  </div>
+</div>
+{% endblock %}
