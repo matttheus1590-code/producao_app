@@ -1,422 +1,539 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat_card %}
 {% block title %}Gestão Operação · Operação 360 · Gestão da Produção e Operação{% endblock %}
-{% block content %}
 
-{% include "_gestao_operacao_subnav.html" with context %}
+{# R$ 1.234,56 #}
+{% macro brl(v) %}R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endmacro %}
+
+{# Campos ocultos pra manter a seleção da Central (etapa/situação/qualidade/ordem) ao enviar um formulário GET. #}
+{% macro ocultos_central(fc) %}
+  {% for v in fc.etapa %}<input type="hidden" name="etapa" value="{{ v }}">{% endfor %}
+  {% for v in fc.situacao %}<input type="hidden" name="situacao" value="{{ v }}">{% endfor %}
+  {% if fc.qualidade %}<input type="hidden" name="qualidade" value="{{ fc.qualidade }}">{% endif %}
+  {% if fc.ordem %}<input type="hidden" name="ordem" value="{{ fc.ordem }}">{% endif %}
+{% endmacro %}
+
+{% macro lista_grupo(itens, modo_tv) %}
+  {% for g in itens %}
+    {% if g.url and not modo_tv %}<a class="op-grupo-linha" href="{{ g.url }}" title="Filtrar a tabela por: {{ g.rotulo }}">{% else %}<div class="op-grupo-linha">{% endif %}
+      <span class="op-grupo-rotulo">{{ g.rotulo }}</span>
+      <div class="op-barra" title="{{ g.valor_fmt }} em aberto"><span style="width: {{ g.pct }}%"></span></div>
+      <span class="op-grupo-num">{{ g.total }}
+        {% if g.atrasados %}<span class="op-pill op-pill-danger">{{ g.atrasados }}</span>{% endif %}
+        {% if g.risco %}<span class="op-pill op-pill-warning">{{ g.risco }}</span>{% endif %}</span>
+    {% if g.url and not modo_tv %}</a>{% else %}</div>{% endif %}
+  {% else %}
+    <div class="text-muted small py-3 text-center">Sem pedidos em aberto neste recorte.</div>
+  {% endfor %}
+{% endmacro %}
+
+{# Bloco da Central de Comando (KPIs + pipeline + fila + agrupamentos). Em modo TV, versão ampliada sem tabela. #}
+{% macro bloco_central(central, modo_tv) %}
+  <section>
+    <div class="op-secao-titulo"><i class="bi bi-speedometer2"></i> Indicadores da operação {% if not modo_tv %}<span class="fw-normal text-lowercase">· clique num card pra filtrar a tabela</span>{% endif %}</div>
+    <div class="op-kpis">
+      {% for k in central.kpis %}
+        {% if k.url and not modo_tv %}<a class="op-kpi op-kpi-{{ k.cor }} {% if k.ativo %}op-kpi-ativo{% endif %}" href="{{ k.url }}">
+        {% else %}<div class="op-kpi op-kpi-{{ k.cor }}">{% endif %}
+          <div class="op-kpi-titulo"><i class="bi {{ k.icone }}"></i> {{ k.titulo }}</div>
+          <div class="op-kpi-valor {% if k.chave == 'atrasados' and k.valor %}op-piscar{% endif %}">{{ k.valor }}</div>
+          <div class="op-kpi-sufixo">{{ k.sufixo or "&nbsp;"|safe }}</div>
+        {% if k.url and not modo_tv %}</a>{% else %}</div>{% endif %}
+      {% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <div class="op-secao-titulo"><i class="bi bi-diagram-3"></i> Pipeline operacional · ponta a ponta {% if not modo_tv %}<span class="fw-normal text-lowercase">· clique numa etapa pra ver só os pedidos dela</span>{% endif %}</div>
+    <div class="op-pipeline">
+      {% for e in central.pipeline %}
+      <div class="op-etapa {% if e.ativo %}op-etapa-ativa{% endif %}" style="--op-cor: {{ e.cor }}">
+        <div class="op-etapa-topo"><i class="bi {{ e.icone }}"></i><span class="op-etapa-num">{{ e.idx }}</span></div>
+        <div class="op-etapa-total">{{ e.total }}</div>
+        <div class="op-etapa-label">
+          {% if modo_tv %}{{ e.label }}{% else %}<a class="stretched-link text-decoration-none text-reset" href="{{ e.url }}" title="{{ e.descricao }} Responsável: {{ e.area }}.">{{ e.label }}</a>{% endif %}
+        </div>
+        <div class="op-etapa-valor">{{ e.valor_fmt }}</div>
+        <div class="op-etapa-alertas">
+          {% if e.atrasados %}
+            {% if modo_tv %}<span class="op-pill op-pill-danger">{{ e.atrasados }} atrasado(s)</span>
+            {% else %}<a class="op-pill op-pill-danger" href="{{ e.url_atrasados }}" title="Ver só os atrasados desta etapa">{{ e.atrasados }} atrasado(s)</a>{% endif %}
+          {% endif %}
+          {% if e.risco %}<span class="op-pill op-pill-warning" title="Prazo ao cliente em até 3 dias">{{ e.risco }} em risco</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="row g-3">
+    <div class="col-lg-7">
+      <div class="op-painel">
+        <div class="op-secao-titulo"><i class="bi bi-lightning-charge-fill text-danger"></i> Fila de ação · o que resolver primeiro
+          <span class="ms-auto fw-normal text-lowercase">{{ central.fila_total }} pedido(s) atrasado(s)/em risco</span></div>
+        {% if central.fila_acao %}
+        <ul class="op-fila">
+          {% for f in (central.fila_acao[:8] if modo_tv else central.fila_acao) %}
+          <li>
+            {% if modo_tv %}<div class="op-fila-item">{% else %}<a class="op-fila-item" href="{{ url_for('consulta_pedido', pedido_venda=f.pedido) }}" title="Abrir a consulta completa do pedido">{% endif %}
+              <div class="op-fila-dias op-fila-dias-{{ 'danger' if f.situacao == 'atrasado' else 'warning' }}">
+                {% if f.situacao == 'atrasado' %}+{{ f.dias }}<small>dias</small>{% else %}<i class="bi bi-hourglass-split"></i><small>risco</small>{% endif %}
+              </div>
+              <div class="min-w-0">
+                <div class="op-fila-titulo">{{ f.pedido }} · {{ f.cliente }}{% if f.uf %} <span class="text-muted fw-normal">({{ f.uf }})</span>{% endif %}</div>
+                <div class="op-fila-motivo">{{ f.motivo }} · <span class="op-etapa-chip" style="--op-cor: {{ f.etapa_cor }}">{{ f.etapa_emoji }} {{ f.etapa_label }}</span> <span class="ms-1">resp.: {{ f.area }}</span></div>
+              </div>
+              <div class="op-fila-valor">{{ f.valor_fmt }}</div>
+            {% if modo_tv %}</div>{% else %}</a>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% if central.fila_total > (8 if modo_tv else 12) %}
+          <div class="text-muted small mt-2">+ {{ central.fila_total - (8 if modo_tv else 12) }} outro(s) — use o card “Atrasados” acima pra ver todos na tabela.</div>
+        {% endif %}
+        {% else %}
+          <div class="text-success py-4 text-center"><i class="bi bi-check-circle-fill fs-3"></i><div class="fw-semibold mt-1">Nenhum pedido atrasado ou em risco neste recorte.</div></div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="col-lg-5" id="op-agrupamentos">
+      <div class="op-painel">
+        <div class="op-secao-titulo"><i class="bi bi-bar-chart-steps"></i> Carteira em aberto · agrupamentos</div>
+        {% if modo_tv %}
+          <div class="fw-semibold small mb-1">Por cliente</div>{{ lista_grupo(central.grupos.cliente[:5], modo_tv) }}
+          <div class="fw-semibold small mt-3 mb-1">Por região</div>{{ lista_grupo(central.grupos.regiao[:5], modo_tv) }}
+        {% else %}
+        <ul class="nav nav-pills nav-fill small mb-2" role="tablist" id="op-tabs-grupo">
+          <li class="nav-item"><button class="nav-link active py-1" data-bs-toggle="pill" data-bs-target="#op-g-cliente" type="button">Cliente</button></li>
+          <li class="nav-item"><button class="nav-link py-1" data-bs-toggle="pill" data-bs-target="#op-g-regiao" type="button">Região</button></li>
+          <li class="nav-item"><button class="nav-link py-1" data-bs-toggle="pill" data-bs-target="#op-g-frete" type="button">Frete</button></li>
+          <li class="nav-item"><button class="nav-link py-1" data-bs-toggle="pill" data-bs-target="#op-g-semana" type="button">Semana PCP</button></li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="op-g-cliente">{{ lista_grupo(central.grupos.cliente, modo_tv) }}</div>
+          <div class="tab-pane fade" id="op-g-regiao">{{ lista_grupo(central.grupos.regiao, modo_tv) }}</div>
+          <div class="tab-pane fade" id="op-g-frete">{{ lista_grupo(central.grupos.frete, modo_tv) }}</div>
+          <div class="tab-pane fade" id="op-g-semana">{{ lista_grupo(central.grupos.semana, modo_tv) }}</div>
+        </div>
+        <div class="text-muted small mt-2">Barra = nº de pedidos em aberto · <span class="op-pill op-pill-danger">N</span> atrasados · <span class="op-pill op-pill-warning">N</span> em risco · clique pra filtrar.</div>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+{% endmacro %}
+
+{% block content %}
+{% set ncols = 24 if ve_pd_qualidade_custos else 22 %}
+
+{% if not modo_tv %}{% include "_gestao_operacao_subnav.html" with context %}{% endif %}
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-  <h4 class="mb-0"><i class="bi bi-list-ul"></i> Operação 360</h4>
-  <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
+  <div>
+    <h4 class="mb-0"><i class="bi bi-speedometer2"></i> Operação 360 {% if modo_tv %}<span class="badge text-bg-dark align-middle fs-6">Modo TV</span>{% endif %}</h4>
+    <div class="text-muted small">Central de comando · Comercial → Produção/PCP → Qualidade → Faturamento → Expedição → Logística → Cliente · atualizado em {{ atualizado_em }}</div>
+  </div>
+  <div class="d-flex align-items-center flex-wrap gap-2">
+    {% if modo_tv %}
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Operação 360 · Modo TV"><i class="bi bi-arrows-fullscreen"></i> Tela cheia</button>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_sem_tv }}"><i class="bi bi-x-lg"></i> Sair do modo TV</a>
+    {% else %}
+      <a class="btn btn-outline-dark btn-sm" href="{{ url_tv }}" title="Painel grande para TV do chão de fábrica — atualiza sozinho a cada minuto"><i class="bi bi-tv"></i> Modo TV</a>
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Operação 360" title="Abre a central inteira em tela cheia (Esc para sair)">
+        <i class="bi bi-arrows-fullscreen"></i> Tela cheia
+      </button>
+      <div class="dropdown">
+        <button class="btn btn-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+          <i class="bi bi-file-earmark-bar-graph"></i> Relatórios
+        </button>
+        <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 21rem;">
+          <label class="small text-muted mb-1" for="periodo-relatorio-select"><strong>Planejamento PCP / Emissão de NF de:</strong></label>
+          <select id="periodo-relatorio-select" class="form-select form-select-sm mb-2">
+            <option value="todos" {% if tipo_periodo_relatorio == "todos" %}selected{% endif %}>Todos os períodos</option>
+            {% for grupo in opcoes_periodo %}
+              <optgroup label="{{ grupo.ano }}">
+                {% for item in grupo.itens %}
+                  <option value="{{ item.valor }}" {% if item.valor == periodo_relatorio %}selected{% endif %}>{{ item.label }}</option>
+                {% endfor %}
+              </optgroup>
+            {% endfor %}
+          </select>
+          <div class="d-flex gap-2">
+            <a data-relatorio-base="{{ url_for('gestao_operacao_listagem_geral_pdf', **filtros_url) }}" href="{{ url_for('gestao_operacao_listagem_geral_pdf', periodo=periodo_relatorio, **filtros_url) }}" class="btn btn-primary btn-sm flex-fill"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+            <a data-relatorio-base="{{ url_for('gestao_operacao_listagem_geral_xlsx', **filtros_url) }}" href="{{ url_for('gestao_operacao_listagem_geral_xlsx', periodo=periodo_relatorio, **filtros_url) }}" class="btn btn-outline-success btn-sm flex-fill"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+          </div>
+          <div class="text-muted small mt-2"><i class="bi bi-info-circle"></i> O período escolhe só o recorte de Planejamento PCP/Emissão de NF do relatório. Os filtros e a seleção feita na tela (etapa, situação) valem para o PDF e o Excel.</div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
 </div>
 
+{% if not modo_tv %}
 <div class="card mb-3">
   <div class="card-body py-2">
-    <form method="get" class="d-flex align-items-center flex-wrap gap-2">
-      {% for chave, valor in filtros.items() %}
-        <input type="hidden" name="{{ chave }}" value="{{ valor }}">
-      {% endfor %}
-      <label class="small text-muted mb-0 me-1" for="periodo-relatorio-select">
-        <i class="bi bi-file-earmark-bar-graph"></i> <strong>Relatório Gerencial</strong> — Planejamento PCP / Emissão de NF de:
-      </label>
-      <select id="periodo-relatorio-select" name="periodo" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
-        <option value="todos" {% if tipo_periodo_relatorio == "todos" %}selected{% endif %}>Todos os períodos</option>
-        {% for grupo in opcoes_periodo %}
-          <optgroup label="{{ grupo.ano }}">
-            {% for item in grupo.itens %}
-              <option value="{{ item.valor }}" {% if item.valor == periodo_relatorio %}selected{% endif %}>{{ item.label }}</option>
-            {% endfor %}
-          </optgroup>
-        {% endfor %}
-      </select>
-      <noscript><button class="btn btn-sm btn-primary" type="submit">Ir</button></noscript>
-      <a href="{{ url_for('gestao_operacao_listagem_geral_xlsx', periodo=periodo_relatorio, **filtros) }}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-file-earmark-excel"></i> Excel
-      </a>
-      <a href="{{ url_for('gestao_operacao_listagem_geral_pdf', periodo=periodo_relatorio, **filtros) }}" class="btn btn-primary btn-sm">
-        <i class="bi bi-file-earmark-pdf"></i> Gerar PDF completo
-      </a>
-      <span class="text-muted small w-100 mt-1">
-        <i class="bi bi-info-circle"></i> O período acima escolhe só o mês/trimestre/ano do relatório PDF/Excel (Planejamento PCP e Emissão de NF) — os filtros abaixo continuam controlando a tabela e o painel desta tela normalmente.
-      </span>
-    </form>
-  </div>
-</div>
-
-<p class="text-muted small mb-3">
-  Visão de ponta a ponta do pedido — inclusão, solicitação, produção, expedição e entrega, com os 3 lead times e o
-  OTD. Passe o mouse (ou toque, no celular) em cima do <strong>nome do cliente</strong> pra ver os produtos e
-  quantidades já preenchidos em Gestão Produção pelo PCP — a lista casa pelo nº de pedido de venda; se o pedido
-  ainda não foi lançado em Gestão Produção (ou o número não bate), aparece "Sem itens em Gestão Produção". Passe o
-  mouse em cima do <strong>Estado</strong> pra ver cidade e país.
-</p>
-
-{% set endpoint_limpar = "gestao_operacao_listagem_geral" %}
-<form method="get">
-  {% include "_gestao_operacao_filtros.html" %}
-</form>
-
-<div class="card mb-3">
-  <div class="card-body">
-    <div class="text-muted small mb-2">
-      <i class="bi bi-graph-up"></i> Painel dinâmico — valores, faturamento e lead time médio (Produção e Operação) do conjunto filtrado acima ({{ painel_operacao_360.dinamico.total_pedidos }} pedido(s))
-    </div>
-    <div class="row g-2">
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("Valor total pedidos", "R$ " ~ "{:,.2f}".format(painel_operacao_360.dinamico.valor_total).replace(",", "X").replace(".", ",").replace("X", "."), sufixo=painel_operacao_360.dinamico.n_valor ~ " pedido(s) com valor") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("Faturamento (NF emitida)", "R$ " ~ "{:,.2f}".format(painel_operacao_360.dinamico.faturamento_total).replace(",", "X").replace(".", ",").replace("X", "."), sufixo=painel_operacao_360.dinamico.n_faturamento ~ " NF(s) emitida(s)") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("LT comercial médio", (painel_operacao_360.dinamico.lead_comercial_medio ~ " dias") if painel_operacao_360.dinamico.lead_comercial_medio is not none else "—", sufixo="Solicitada − inclusão") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("LT produção médio", (painel_operacao_360.dinamico.lead_producao_medio ~ " dias") if painel_operacao_360.dinamico.lead_producao_medio is not none else "—", sufixo="Conclusão − inclusão") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("LT operação médio", (painel_operacao_360.dinamico.lead_operacao_medio ~ " dias") if painel_operacao_360.dinamico.lead_operacao_medio is not none else "—", sufixo="Real entrega − inclusão") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card(painel_operacao_360.nf_mes.titulo, painel_operacao_360.nf_mes.total, link=url_for('gestao_operacao_listagem_geral', **painel_operacao_360.nf_mes.filtros_link), ativo=painel_operacao_360.nf_mes.ativo, cor="info") }}
-      </div>
+    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#op-filtros" aria-expanded="{{ 'true' if filtros_painel_ativos else 'false' }}">
+      <i class="bi bi-funnel"></i> Filtros {% if filtros_painel_ativos %}<span class="badge text-bg-primary">ativos</span>{% endif %}
+    </button>
+    <span class="text-muted small ms-2">Período, região, NF, expedição, entrega, frete, OTD…</span>
+    <div class="collapse {% if filtros_painel_ativos %}show{% endif %} mt-2" id="op-filtros">
+      {% set endpoint_limpar = "gestao_operacao_listagem_geral" %}
+      <form method="get">
+        {{ ocultos_central(fc) }}
+        {% include "_gestao_operacao_filtros.html" %}
+      </form>
     </div>
   </div>
 </div>
+{% endif %}
 
-<div class="card mb-3">
-  <div class="card-body">
-    <h6 class="text-uppercase text-muted small mb-2"><i class="bi bi-funnel"></i> Pipeline operacional — onde os pedidos estão travados</h6>
-    <canvas id="graficoPipelineOperacional" height="90"></canvas>
-  </div>
+{% if filtros_central_ativos and not modo_tv %}
+<div class="op-filtro-ativo mb-3">
+  <i class="bi bi-funnel-fill text-primary"></i>
+  <span>Mostrando
+    {% if fc.etapa %}
+      etapa{{ "s" if fc.etapa|length > 1 }}: <strong>{% for v in fc.etapa %}{{ etapas_operacao[v|int - 1].emoji }} {{ etapas_operacao[v|int - 1].label }}{{ ", " if not loop.last }}{% endfor %}</strong>
+    {% endif %}
+    {% if fc.situacao %}
+      {{ " · " if fc.etapa }}situação: <strong>{% for v in fc.situacao %}{{ "Em aberto" if v == "aberto" else situacoes_operacao[v].label }}{{ ", " if not loop.last }}{% endfor %}</strong>
+    {% endif %}
+    {% if fc.qualidade %}{{ " · " if (fc.etapa or fc.situacao) }}<strong>com desvio de Qualidade</strong>{% endif %}
+    — {{ total_filtrado }} pedido(s)
+  </span>
+  <a class="btn btn-sm btn-outline-primary ms-auto" href="{{ central.url_limpar_central }}"><i class="bi bi-x-circle"></i> Limpar seleção</a>
 </div>
+{% endif %}
 
-<div class="d-flex justify-content-end align-items-center gap-2 mb-2">
-  <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#operacao360Wrap" data-tela-cheia-titulo="Operação 360" title="Abre a listagem em tela cheia (Esc para sair)">
-    <i class="bi bi-arrows-fullscreen"></i> Tela cheia
-  </button>
-  <button type="button" id="btnResetLargurasOperacao360" class="btn btn-outline-secondary btn-sm" title="Redefinir a largura de todas as colunas para o padrão">
-    <i class="bi bi-arrows-angle-contract"></i> Redefinir colunas
-  </button>
-</div>
-<p class="text-muted small mb-2">
-  <i class="bi bi-arrows"></i> Dica: arraste a borda direita de qualquer coluna pra ajustar a largura — o site lembra do ajuste da próxima vez que você abrir esta tela. Linha vermelha = pendente produção OU entregue fora do prazo (OTD "Não"). Linha verde = entrega realizada dentro do prazo.
-</p>
+<div class="op-tudo {% if modo_tv %}op-tv{% endif %}" id="op360Tudo">
+  {{ bloco_central(central, modo_tv) }}
 
-<div class="table-responsive tabela-listagem-geral-wrap" id="operacao360Wrap">
-  <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral tabela-operacao-360" id="tabelaOperacao360">
-    <colgroup>
-      <col style="width:85px">
-      <col style="width:180px">
-      <col style="width:132px">
-      <col style="width:90px">
-      <col style="width:90px">
-      <col style="width:92px">
-      <col style="width:98px">
-      <col style="width:80px">
-      <col style="width:92px">
-      <col style="width:90px">
-      <col style="width:90px">
-      <col style="width:62px">
-      <col style="width:62px">
-      <col style="width:62px">
-      <col style="width:110px">
-      <col style="width:64px">
-      <col style="width:100px">
-      <col style="width:110px">
-      <col style="width:56px">
-      <col style="width:52px">
-      {% if ve_pd_qualidade_custos %}<col style="width:96px">{% endif %}
-      <col style="width:115px">
-      <col style="width:54px">
-    </colgroup>
-    <thead class="table-light">
-      <tr>
-        <th>Pedido</th>
-        <th>Cliente</th>
-        <th>Status pedido</th>
-        <th>Data inclusão</th>
-        <th>Data solicitada</th>
-        <th>Expectativa PCP</th>
-        <th>Conclusão produção</th>
-        <th>Nº NF</th>
-        <th>Emissão NF</th>
-        <th>Expedido em</th>
-        <th>Real entrega</th>
-        <th title="Lead time comercial: Data solicitada − Data inclusão">LT comercial</th>
-        <th title="Lead time produção: Conclusão produção − Data inclusão">LT produção</th>
-        <th title="Lead time operação: Real entrega − Data inclusão">LT operação</th>
-        <th title="Positivo = entregue depois do solicitado (atraso); negativo = antes (antecipação)">Dias atraso/antecip.</th>
-        <th>OTD</th>
-        <th>Valor pedido</th>
-        <th>Custo produção real</th>
-        <th>Frete</th>
-        <th>Estado</th>
-        {% if ve_pd_qualidade_custos %}<th>Qualidade</th>{% endif %}
-        <th>Semanal PCP</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for p in pedidos %}
-      {% set chave_pv = p.pedido_venda | normalizar_pedido_venda %}
-      {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
-      {% set rdim = rdim_por_pedido_venda.get(chave_pv) %}
-      {% set m = metricas_operacao_360.get(p.id, {}) %}
-      <tr class="{% if m.otd_status == 'NAO' %}linha-op360-pendente{% elif m.status_pedido_idx == 5 %}linha-op360-entregue{% elif m.status_pedido_idx == 1 %}linha-op360-pendente{% endif %}">
-        <td>{{ (p.pedido_venda | normalizar_pedido_venda) or "—" }}</td>
-        <td>
-          <div class="go-itens-wrap">
-            <span class="go-itens-badge {% if not itens %}go-itens-badge-vazio{% endif %}" title="{{ p.cliente }}">
-              {{ p.cliente }}
-              {% if itens %}
-                <i class="bi bi-box-seam"></i>
-              {% else %}
-                <i class="bi bi-dash-circle"></i>
-              {% endif %}
-            </span>
-            <div class="go-itens-popover">
-              <div class="go-itens-popover-titulo">
-                <i class="bi bi-box-seam"></i> Itens em Gestão Produção
-              </div>
-              {% for item in itens %}
-              <div class="go-itens-popover-item">
-                <div class="fw-semibold">{{ item.descricao_produto }}</div>
-                <div class="text-muted">
-                  Qtd: {{ item.quantidade }}
-                  {% if item.estacao %} · {{ item.estacao }}{% endif %}
-                  · <span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span>
+  {% if not modo_tv %}
+  <section>
+    <div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-1">
+      <div class="op-secao-titulo mb-0"><i class="bi bi-table"></i> Pedidos · {{ total_filtrado }} no recorte</div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <div class="btn-group btn-group-sm" role="group" aria-label="Ordenação">
+          <a class="btn {{ 'btn-dark' if not fc.ordem else 'btn-outline-dark' }}" href="{{ urls_ordem.recentes }}">Mais recentes</a>
+          <a class="btn {{ 'btn-dark' if fc.ordem == 'prioridade' else 'btn-outline-dark' }}" href="{{ urls_ordem.prioridade }}" title="Atrasados primeiro, do maior atraso pro menor">Prioridade</a>
+        </div>
+        <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#operacao360Wrap" data-tela-cheia-titulo="Operação 360 · Pedidos" title="Abre só a tabela em tela cheia (Esc para sair)">
+          <i class="bi bi-arrows-fullscreen"></i> Só a tabela
+        </button>
+        <button type="button" id="btnResetLargurasOperacao360" class="btn btn-outline-secondary btn-sm" title="Redefinir a largura de todas as colunas para o padrão">
+          <i class="bi bi-arrows-angle-contract"></i> Redefinir colunas
+        </button>
+      </div>
+    </div>
+    <p class="text-muted small mb-2">
+      <i class="bi bi-info-circle"></i> Passe o mouse (ou toque) no <strong>cliente</strong> pra ver os produtos já lançados pelo PCP e no <strong>estado</strong> pra ver cidade e país.
+      Arraste a borda de uma coluna pra ajustar a largura — o site lembra. Linha <span class="badge" style="background:#f8d7da;color:#842029">vermelha</span> = atrasado ou entregue fora do prazo ·
+      <span class="badge" style="background:#fff3cd;color:#664d03">amarela</span> = prazo ao cliente em até 3 dias · <span class="badge" style="background:#7ee495;color:#0a3622">verde</span> = entregue no prazo.
+    </p>
+
+    <div class="table-responsive tabela-listagem-geral-wrap" id="operacao360Wrap">
+      <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral tabela-operacao-360" id="tabelaOperacao360">
+        <colgroup>
+          <col style="width:85px">
+          <col style="width:180px">
+          <col style="width:150px">
+          <col style="width:165px">
+          <col style="width:90px">
+          <col style="width:90px">
+          <col style="width:92px">
+          <col style="width:98px">
+          <col style="width:115px">
+          {% if ve_pd_qualidade_custos %}<col style="width:96px">{% endif %}
+          <col style="width:118px">
+          {% if ve_pd_qualidade_custos %}<col style="width:118px">{% endif %}
+          <col style="width:80px">
+          <col style="width:92px">
+          <col style="width:90px">
+          <col style="width:56px">
+          <col style="width:52px">
+          <col style="width:90px">
+          <col style="width:62px">
+          <col style="width:62px">
+          <col style="width:62px">
+          <col style="width:110px">
+          <col style="width:64px">
+          <col style="width:54px">
+        </colgroup>
+        <thead class="table-light">
+          <tr class="op-grupos-cab">
+            <th colspan="4" class="op-g-ident">Identificação</th>
+            <th colspan="2" class="op-g-comercial">Comercial</th>
+            <th colspan="{{ 4 if ve_pd_qualidade_custos else 3 }}" class="op-g-prod">Produção / PCP{% if ve_pd_qualidade_custos %} · Qualidade{% endif %}</th>
+            <th colspan="{{ 4 if ve_pd_qualidade_custos else 3 }}" class="op-g-fin">Financeiro / Faturamento</th>
+            <th colspan="3" class="op-g-exped">Expedição / Logística</th>
+            <th colspan="6" class="op-g-result">Entrega / Resultado</th>
+            <th class="op-g-acao"></th>
+          </tr>
+          <tr>
+            <th>Pedido</th>
+            <th>Cliente</th>
+            <th>Etapa</th>
+            <th>Situação</th>
+            <th>Data inclusão</th>
+            <th>Data solicitada</th>
+            <th>Expectativa PCP</th>
+            <th>Conclusão produção</th>
+            <th>Semanal PCP</th>
+            {% if ve_pd_qualidade_custos %}<th>Qualidade</th>{% endif %}
+            <th>Valor pedido</th>
+            {% if ve_pd_qualidade_custos %}<th>Custo produção real</th>{% endif %}
+            <th>Nº NF</th>
+            <th>Emissão NF</th>
+            <th>Expedido em</th>
+            <th>Frete</th>
+            <th>Estado</th>
+            <th>Real entrega</th>
+            <th title="Lead time comercial: Data solicitada − Data inclusão">LT comercial</th>
+            <th title="Lead time produção: Conclusão produção − Data inclusão">LT produção</th>
+            <th title="Lead time operação: Real entrega − Data inclusão">LT operação</th>
+            <th title="Positivo = entregue depois do solicitado (atraso); negativo = antes (antecipação)">Dias atraso/antecip.</th>
+            <th>OTD</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in pedidos %}
+          {% set chave_pv = p.pedido_venda | normalizar_pedido_venda %}
+          {% set itens = itens_por_pedido_venda.get(chave_pv, []) %}
+          {% set rdim = rdim_por_pedido_venda.get(chave_pv) %}
+          {% set m = metricas_operacao_360.get(p.id, {}) %}
+          {% set i = info_operacao.get(p.id, {}) %}
+          {% set et = etapas_operacao[(i.etapa or 1) - 1] %}
+          <tr class="{% if i.situacao == 'atrasado' or m.otd_status == 'NAO' %}linha-op-atrasado{% elif i.situacao == 'risco' %}linha-op-risco{% elif i.etapa == 7 %}linha-op360-entregue{% endif %}">
+            <td>{{ (p.pedido_venda | normalizar_pedido_venda) or "—" }}</td>
+            <td>
+              <div class="go-itens-wrap">
+                <span class="go-itens-badge {% if not itens %}go-itens-badge-vazio{% endif %}" title="{{ p.cliente }}">
+                  {{ p.cliente }}
+                  {% if itens %}<i class="bi bi-box-seam"></i>{% else %}<i class="bi bi-dash-circle"></i>{% endif %}
+                </span>
+                <div class="go-itens-popover">
+                  <div class="go-itens-popover-titulo"><i class="bi bi-box-seam"></i> Itens em Gestão Produção</div>
+                  {% for item in itens %}
+                  <div class="go-itens-popover-item">
+                    <div class="fw-semibold">{{ item.descricao_produto }}</div>
+                    <div class="text-muted">
+                      Qtd: {{ item.quantidade }}
+                      {% if item.estacao %} · {{ item.estacao }}{% endif %}
+                      · <span class="badge bg-{{ STATUS_CORES.get(item.status_producao, 'secondary') }}">{{ item.status_producao }}</span>
+                    </div>
+                  </div>
+                  {% else %}
+                  <div class="text-muted small">Sem itens em Gestão Produção (nº de pedido de venda não bate com nenhum pedido lançado lá, ou o pedido ainda não foi lançado).</div>
+                  {% endfor %}
                 </div>
               </div>
-              {% else %}
-              <div class="text-muted small">Sem itens em Gestão Produção (nº de pedido de venda não bate com nenhum pedido lançado lá, ou o pedido ainda não foi lançado).</div>
-              {% endfor %}
-            </div>
-          </div>
-        </td>
-        <td>
-          <span class="badge bg-light text-dark border" title="{{ m.status_pedido_descricao }}">
-            {{ m.status_pedido_emoji }} {{ m.status_pedido_label }}
-          </span>
-        </td>
-        <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
-        <td title="{{ 'Automático — direto da Data do cliente em Gestão Produção' if m.solicitada_automatica else '' }}">{{ m.solicitada.strftime("%d/%m/%Y") if m.solicitada else "—" }}</td>
-        <td title="{{ 'Automático — direto da Liberação prevista em Gestão Produção' if m.expectativa_pcp_automatica else '' }}">{{ m.expectativa_pcp.strftime("%d/%m/%Y") if m.expectativa_pcp else "—" }}</td>
-        <td title="{{ 'Automático — direto da Liberação real em Gestão Produção' if m.conclusao_producao_automatica else '' }}">{{ m.conclusao_producao.strftime("%d/%m/%Y") if m.conclusao_producao else "—" }}</td>
-        <td class="text-truncate" title="{{ p.go_numero_nf or '' }}">{{ p.go_numero_nf or "—" }}</td>
-        <td>{{ p.go_data_emissao_nf.strftime("%d/%m/%Y") if p.go_data_emissao_nf else "—" }}</td>
-        <td>{{ p.go_data_pedido_expedido.strftime("%d/%m/%Y") if p.go_data_pedido_expedido else "—" }}</td>
-        <td>{{ p.go_data_entregue_cliente.strftime("%d/%m/%Y") if p.go_data_entregue_cliente else "—" }}</td>
-        <td>{{ (m.lead_comercial_dias ~ "d") if m.lead_comercial_dias is not none else "—" }}</td>
-        <td>{{ (m.lead_producao_dias ~ "d") if m.lead_producao_dias is not none else "—" }}</td>
-        <td>{{ (m.lead_operacao_dias ~ "d") if m.lead_operacao_dias is not none else "—" }}</td>
-        <td>
-          {% set dias_atraso = m.otd_dias %}
-          {% if dias_atraso is none %}—
-          {% elif dias_atraso > 0 %}<span class="text-danger">{{ dias_atraso }}d atraso</span>
-          {% elif dias_atraso < 0 %}<span class="text-success">{{ -dias_atraso }}d antecipado</span>
-          {% else %}no dia{% endif %}
-        </td>
-        <td>
-          {% if m.otd_status == "SIM" %}
-            <span class="badge bg-success">SIM</span>
-          {% elif m.otd_status == "NAO" %}
-            <span class="badge bg-danger">NÃO</span>
+            </td>
+            <td><span class="op-etapa-chip" style="--op-cor: {{ et.cor }}" title="{{ et.descricao }} Responsável: {{ et.area }}.">{{ et.emoji }} {{ et.label }}</span></td>
+            <td class="op-sit">
+              {% set sit = situacoes_operacao[i.situacao or 'ok'] %}
+              <span class="badge text-bg-{{ sit.cor }}" title="{{ i.motivos | join(' · ') if i.motivos else (i.motivo or '') }}">
+                <i class="bi {{ sit.icone }}"></i> {{ sit.label }}{% if i.situacao == 'atrasado' %} +{{ i.dias_atraso }}d{% endif %}
+              </span>
+              {% if i.motivo and i.situacao in ('atrasado', 'risco') %}<div class="op-sit-motivo text-muted">{{ i.motivo }}</div>{% endif %}
+            </td>
+            <td>{{ p.data_inclusao_pedido.strftime("%d/%m/%Y") if p.data_inclusao_pedido else "—" }}</td>
+            <td title="{{ 'Automático — direto da Data do cliente em Gestão Produção' if m.solicitada_automatica else '' }}">{{ m.solicitada.strftime("%d/%m/%Y") if m.solicitada else "—" }}</td>
+            <td title="{{ 'Automático — direto da Liberação prevista em Gestão Produção' if m.expectativa_pcp_automatica else '' }}">{{ m.expectativa_pcp.strftime("%d/%m/%Y") if m.expectativa_pcp else "—" }}</td>
+            <td title="{{ 'Automático — direto da Liberação real em Gestão Produção' if m.conclusao_producao_automatica else '' }}">{{ m.conclusao_producao.strftime("%d/%m/%Y") if m.conclusao_producao else "—" }}</td>
+            <td class="text-truncate" title="{{ 'Automático — direto do Planejamento semanal em Gestão Produção' if m.termino_semanal_automatico else (m.termino_semanal or '') }}">{{ m.termino_semanal or "—" }}</td>
+            {% if ve_pd_qualidade_custos %}
+            <td>
+              {% if rdim and rdim.reprovadas + rdim.com_desvio > 0 %}
+                <a href="{{ url_for('rdim_lista', busca=p.pedido_venda, resultado=['REPROVADO', 'APROVADO_COM_DESVIO']) }}"
+                   class="badge bg-warning text-dark text-decoration-none"
+                   title="{{ rdim.reprovadas }} reprovada(s), {{ rdim.com_desvio }} aprovada(s) c/ desvio, de {{ rdim.total }} inspeção(ões) — clique para ver o contexto completo">
+                  <i class="bi bi-exclamation-triangle"></i> {{ rdim.reprovadas + rdim.com_desvio }} c/ desvio
+                </a>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            {% endif %}
+            <td>{% if p.go_valor_pedido_operacao is not none %}{{ brl(p.go_valor_pedido_operacao) }}{% else %}—{% endif %}</td>
+            {% if ve_pd_qualidade_custos %}
+            <td>{% if p.go_custo_producao_real is not none %}{{ brl(p.go_custo_producao_real) }}{% else %}—{% endif %}</td>
+            {% endif %}
+            <td class="text-truncate" title="{{ p.go_numero_nf or '' }}">{{ p.go_numero_nf or "—" }}</td>
+            <td>{{ p.go_data_emissao_nf.strftime("%d/%m/%Y") if p.go_data_emissao_nf else "—" }}</td>
+            <td>{{ p.go_data_pedido_expedido.strftime("%d/%m/%Y") if p.go_data_pedido_expedido else "—" }}</td>
+            <td>{{ p.frete or "—" }}</td>
+            <td title="{{ p.cidade or '' }}{% if p.cidade and p.pais %} · {% endif %}{{ p.pais or '' }}">{{ p.estado or "—" }}</td>
+            <td>{{ p.go_data_entregue_cliente.strftime("%d/%m/%Y") if p.go_data_entregue_cliente else "—" }}</td>
+            <td>{{ (m.lead_comercial_dias ~ "d") if m.lead_comercial_dias is not none else "—" }}</td>
+            <td>{{ (m.lead_producao_dias ~ "d") if m.lead_producao_dias is not none else "—" }}</td>
+            <td>{{ (m.lead_operacao_dias ~ "d") if m.lead_operacao_dias is not none else "—" }}</td>
+            <td>
+              {% set dias_atraso = m.otd_dias %}
+              {% if dias_atraso is none %}—
+              {% elif dias_atraso > 0 %}<span class="text-danger">{{ dias_atraso }}d atraso</span>
+              {% elif dias_atraso < 0 %}<span class="text-success">{{ -dias_atraso }}d antecipado</span>
+              {% else %}no dia{% endif %}
+            </td>
+            <td>
+              {% if m.otd_status == "SIM" %}<span class="badge bg-success">SIM</span>
+              {% elif m.otd_status == "NAO" %}<span class="badge bg-danger">NÃO</span>
+              {% else %}<span class="badge bg-secondary" title="OTD ainda não registrado">—</span>{% endif %}
+            </td>
+            <td class="text-end text-nowrap">
+              <a href="{{ url_for('consulta_pedido', pedido_venda=chave_pv) }}" class="btn btn-sm btn-outline-secondary" title="Consulta completa do pedido"><i class="bi bi-search"></i></a>
+              {% if current_user.role in ('ADMIN', 'PCP') %}
+              <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary" title="Editar">
+                <i class="bi bi-pencil-square"></i>
+              </a>
+              {% endif %}
+            </td>
+          </tr>
           {% else %}
-            <span class="badge bg-secondary" title="OTD ainda não registrado">—</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if p.go_valor_pedido_operacao is not none %}
-            R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
-          {% else %}—{% endif %}
-        </td>
-        <td>
-          {% if p.go_custo_producao_real is not none %}
-            R$ {{ "{:,.2f}".format(p.go_custo_producao_real).replace(",", "X").replace(".", ",").replace("X", ".") }}
-          {% else %}—{% endif %}
-        </td>
-        <td>{{ p.frete or "—" }}</td>
-        <td title="{{ p.cidade or '' }}{% if p.cidade and p.pais %} · {% endif %}{{ p.pais or '' }}">{{ p.estado or "—" }}</td>
-        {% if ve_pd_qualidade_custos %}
-        <td>
-          {% if rdim and rdim.reprovadas + rdim.com_desvio > 0 %}
-            <a href="{{ url_for('rdim_lista', busca=p.pedido_venda, resultado=['REPROVADO', 'APROVADO_COM_DESVIO']) }}"
-               class="badge bg-warning text-dark text-decoration-none"
-               title="{{ rdim.reprovadas }} reprovada(s), {{ rdim.com_desvio }} aprovada(s) c/ desvio, de {{ rdim.total }} inspeção(ões) — clique para ver o contexto completo">
-              <i class="bi bi-exclamation-triangle"></i> {{ rdim.reprovadas + rdim.com_desvio }} c/ desvio
-            </a>
-          {% else %}
-            <span class="text-muted">—</span>
-          {% endif %}
-        </td>
-        {% endif %}
-        <td class="text-truncate" title="{{ 'Automático — direto do Planejamento semanal em Gestão Produção' if m.termino_semanal_automatico else (m.termino_semanal or '') }}">{{ m.termino_semanal or "—" }}</td>
-        <td class="text-end">
-          {% if current_user.role in ('ADMIN', 'PCP') %}
-          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='comercial') }}" class="btn btn-sm btn-outline-primary" title="Editar">
-            <i class="bi bi-pencil-square"></i>
-          </a>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="{{ 23 if ve_pd_qualidade_custos else 22 }}" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+          <tr><td colspan="{{ ncols }}" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
 
-{% if total_paginas > 1 %}
-<nav class="d-flex justify-content-center">
-  <ul class="pagination">
-    {% for pg in range(1, total_paginas + 1) %}
-      <li class="page-item {% if pg == page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('gestao_operacao_listagem_geral', page=pg, **filtros) }}">{{ pg }}</a>
-      </li>
-    {% endfor %}
-  </ul>
-</nav>
-{% endif %}
+    {% if total_paginas > 1 %}
+    <nav class="d-flex justify-content-center mt-2">
+      <ul class="pagination pagination-sm mb-0">
+        {% for pg in range(1, total_paginas + 1) %}
+          {% if pg == 1 or pg == total_paginas or (pg - page)|abs <= 2 %}
+            <li class="page-item {% if pg == page %}active{% endif %}">
+              <a class="page-link" href="{{ url_for('gestao_operacao_listagem_geral', page=pg, **filtros_url) }}">{{ pg }}</a>
+            </li>
+          {% elif (pg - page)|abs == 3 %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
 
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
 <script>
 (function () {
-  Chart.defaults.color = "#495057";
-  Chart.defaults.font.size = 12;
-
-  // Pipeline por etapa (pedido do Bruno, 29/09/2026: camada visual) — mesma
-  // classificação de 5 etapas do badge "Status pedido" de cada linha, só
-  // agregada. Cor de cada barra reaproveita a MESMA cor de cada etapa (ver
-  // _ETAPAS_ACOMPANHAMENTO_PEDIDO em app.py), pra bater com o badge da
-  // tabela abaixo.
-  const pipeline = {{ painel_operacao_360.pipeline | tojson }};
-  const elPipeline = document.getElementById("graficoPipelineOperacional");
-  if (elPipeline && pipeline.length) {
-    new Chart(elPipeline, {
-      type: "bar",
-      data: {
-        labels: pipeline.map(function (p) { return p.emoji + " " + p.label; }),
-        datasets: [{
-          label: "Pedidos",
-          data: pipeline.map(function (p) { return p.total; }),
-          backgroundColor: pipeline.map(function (p) { return p.cor; }),
-        }],
-      },
-      options: {
-        indexAxis: "y",
-        plugins: { legend: { display: false } },
-        scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
-      },
-    });
+  // Relatórios: o período escolhido só altera o link do PDF/Excel (sem recarregar a tela).
+  const sel = document.getElementById("periodo-relatorio-select");
+  if (sel) {
+    const links = Array.from(document.querySelectorAll("[data-relatorio-base]"));
+    function atualizar() {
+      links.forEach(function (a) {
+        const base = a.getAttribute("data-relatorio-base");
+        a.setAttribute("href", base + (base.indexOf("?") >= 0 ? "&" : "?") + "periodo=" + encodeURIComponent(sel.value));
+      });
+    }
+    sel.addEventListener("change", atualizar);
+    atualizar();
   }
 })();
-</script>
-<script>
+
+{% if modo_tv %}
 (function () {
-  // Larguras de coluna ajustáveis na Operação 360 (pedido do Bruno,
-  // 10/09/2026: "quero que todas as colunas sejam ajustáveis na largura, e
-  // ao máximo você maximize as colunas em campo de visão só") — MESMO
-  // mecanismo já usado na Listagem Geral de Gestão Produção (ver
-  // dashboard.html), só com id/chave de localStorage próprios pra não
-  // conflitar com aquela tabela.
-  const CHAVE_LARGURAS = "4pipe_operacao360_colWidths_v1";
+  // Modo TV: atualiza os números sozinho a cada 60s SEM recarregar a página
+  // (assim a tela cheia não é perdida) e entra em "tela cheia" ao abrir.
+  const INTERVALO_MS = 60000;
+  function atualizar() {
+    fetch(window.location.href, { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+      .then(function (html) {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const novo = doc.getElementById("op360Tudo");
+        const atual = document.getElementById("op360Tudo");
+        if (novo && atual) { atual.innerHTML = novo.innerHTML; }
+      })
+      .catch(function () { /* sem rede: tenta de novo no próximo ciclo */ });
+  }
+  setInterval(atualizar, INTERVALO_MS);
+  document.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      if (!document.querySelector(".tela-cheia-overlay")) {
+        const b = document.querySelector('[data-tela-cheia-alvo="#op360Tudo"]');
+        if (b) b.click();
+      }
+    }, 300);
+  });
+})();
+{% else %}
+(function () {
+  // Larguras de coluna ajustáveis (pedido do Bruno, 10/09/2026) — MESMO
+  // mecanismo da Listagem Geral de Gestão Produção, chave própria. v2: a
+  // ordem das colunas mudou com o redesenho da Central de Comando.
+  const CHAVE_LARGURAS = "4pipe_operacao360_colWidths_v2";
   const LARGURA_MINIMA = 42;
 
   const tabela = document.getElementById("tabelaOperacao360");
   if (!tabela) return;
   const colgroup = tabela.querySelector("colgroup");
   const cols = colgroup ? Array.from(colgroup.children) : [];
-  const thsCabecalho = Array.from(tabela.querySelectorAll("thead th"));
-  const largurasPadrao = cols.map(function(col) { return parseInt(col.style.width, 10) || 100; });
+  // Só a ÚLTIMA linha do cabeçalho tem 1 <th> por coluna (a de cima é de grupos).
+  const linhasCab = tabela.querySelectorAll("thead tr");
+  const thsCabecalho = Array.from(linhasCab[linhasCab.length - 1].querySelectorAll("th"));
+  const largurasPadrao = cols.map(function (col) { return parseInt(col.style.width, 10) || 100; });
 
   function carregarLargurasSalvas() {
     try {
       const salvo = JSON.parse(localStorage.getItem(CHAVE_LARGURAS) || "null");
       if (Array.isArray(salvo) && salvo.length === cols.length) {
-        salvo.forEach(function(w, i) {
-          if (typeof w === "number" && w >= LARGURA_MINIMA) {
-            cols[i].style.width = w + "px";
-          }
+        salvo.forEach(function (w, i) {
+          if (typeof w === "number" && w >= LARGURA_MINIMA) cols[i].style.width = w + "px";
         });
       }
-    } catch (e) {
-      // localStorage indisponível (ex.: modo privado) — segue com o padrão, sem quebrar a tela.
-    }
+    } catch (e) { /* sem storage: segue com o padrão */ }
   }
-
   function salvarLargurasAtuais() {
     try {
-      const larguras = cols.map(function(col) { return parseInt(col.style.width, 10) || 100; });
-      localStorage.setItem(CHAVE_LARGURAS, JSON.stringify(larguras));
-    } catch (e) {
-      // sem storage disponível — ajuste continua funcionando só nesta visita.
-    }
+      localStorage.setItem(CHAVE_LARGURAS, JSON.stringify(cols.map(function (c) { return parseInt(c.style.width, 10) || 100; })));
+    } catch (e) { /* ajuste vale só nesta visita */ }
   }
-
   function redefinirLarguras() {
-    cols.forEach(function(col, i) { col.style.width = largurasPadrao[i] + "px"; });
+    cols.forEach(function (col, i) { col.style.width = largurasPadrao[i] + "px"; });
     try { localStorage.removeItem(CHAVE_LARGURAS); } catch (e) {}
   }
 
   carregarLargurasSalvas();
 
-  thsCabecalho.forEach(function(th, index) {
+  thsCabecalho.forEach(function (th, index) {
     if (!cols[index]) return;
     th.classList.add("th-redimensionavel");
     const alca = document.createElement("div");
     alca.className = "col-resize-handle";
     th.appendChild(alca);
-
-    let arrastando = false;
-    let xInicial = 0;
-    let larguraInicial = 0;
-
-    alca.addEventListener("pointerdown", function(e) {
-      arrastando = true;
-      xInicial = e.clientX;
+    let arrastando = false, xInicial = 0, larguraInicial = 0;
+    alca.addEventListener("pointerdown", function (e) {
+      arrastando = true; xInicial = e.clientX;
       larguraInicial = cols[index].getBoundingClientRect().width;
       alca.classList.add("resizing");
       document.body.classList.add("col-resizing-ativo");
       alca.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
-
-    alca.addEventListener("pointermove", function(e) {
+    alca.addEventListener("pointermove", function (e) {
       if (!arrastando) return;
-      const novaLargura = Math.max(LARGURA_MINIMA, larguraInicial + (e.clientX - xInicial));
-      cols[index].style.width = novaLargura + "px";
+      cols[index].style.width = Math.max(LARGURA_MINIMA, larguraInicial + (e.clientX - xInicial)) + "px";
     });
-
-    function finalizarArraste(e) {
+    function finalizar() {
       if (!arrastando) return;
       arrastando = false;
       alca.classList.remove("resizing");
       document.body.classList.remove("col-resizing-ativo");
       salvarLargurasAtuais();
     }
-
-    alca.addEventListener("pointerup", finalizarArraste);
-    alca.addEventListener("pointercancel", finalizarArraste);
+    alca.addEventListener("pointerup", finalizar);
+    alca.addEventListener("pointercancel", finalizar);
   });
 
   const btnReset = document.getElementById("btnResetLargurasOperacao360");
-  if (btnReset) {
-    btnReset.addEventListener("click", redefinirLarguras);
-  }
+  if (btnReset) btnReset.addEventListener("click", redefinirLarguras);
 })();
 
 (function () {
   // O popover não pode ficar só no CSS (:hover) porque mora dentro de um
-  // contêiner com rolagem (.tabela-listagem-geral-wrap) — na prática, todo
-  // navegador ignora "overflow-y: visible" quando overflow-x já é "auto" no
-  // mesmo elemento, cortando o popover das últimas linhas da tabela. Por
-  // isso o JS calcula a posição em coordenadas de TELA (getBoundingClientRect)
-  // e usa position:fixed, o que escapa desse recorte.
+  // contêiner com rolagem (.tabela-listagem-geral-wrap) — o JS calcula a
+  // posição em coordenadas de TELA e usa position:fixed pra escapar do recorte.
   const MARGEM = 8;
-
   function posicionarEExibir(wrap) {
     const gatilho = wrap.querySelector('.go-itens-badge');
     const pop = wrap.querySelector('.go-itens-popover');
@@ -424,37 +541,22 @@
     const rectGatilho = gatilho.getBoundingClientRect();
     pop.style.display = 'block';
     const rectPop = pop.getBoundingClientRect();
-
     let left = rectGatilho.left;
-    if (left + rectPop.width > window.innerWidth - MARGEM) {
-      left = Math.max(MARGEM, window.innerWidth - rectPop.width - MARGEM);
-    }
+    if (left + rectPop.width > window.innerWidth - MARGEM) left = Math.max(MARGEM, window.innerWidth - rectPop.width - MARGEM);
     let top = rectGatilho.bottom + 4;
-    if (top + rectPop.height > window.innerHeight - MARGEM) {
-      // não cabe embaixo do gatilho -- mostra em cima dele
-      top = Math.max(MARGEM, rectGatilho.top - rectPop.height - 4);
-    }
+    if (top + rectPop.height > window.innerHeight - MARGEM) top = Math.max(MARGEM, rectGatilho.top - rectPop.height - 4);
     pop.style.left = left + 'px';
     pop.style.top = top + 'px';
   }
-
-  // Pequeno atraso pra esconder: sem isso, o mouse "sair" do gatilho (uma
-  // faixa de texto pequena) pra entrar no próprio popover (renderizado um
-  // pouco abaixo) contaria como mouseleave e fecharia antes da pessoa
-  // conseguir ler ou mover o mouse até o painel.
   function agendarEsconder(wrap) {
-    if (wrap.classList.contains('go-itens-aberto')) return; // clicado, fica preso aberto
+    if (wrap.classList.contains('go-itens-aberto')) return;
     clearTimeout(wrap._goItensTimer);
     wrap._goItensTimer = setTimeout(function () {
       const pop = wrap.querySelector('.go-itens-popover');
       if (pop) pop.style.display = 'none';
     }, 150);
   }
-
-  function cancelarEsconder(wrap) {
-    clearTimeout(wrap._goItensTimer);
-  }
-
+  function cancelarEsconder(wrap) { clearTimeout(wrap._goItensTimer); }
   function esconderTudoAberto() {
     document.querySelectorAll('.go-itens-wrap.go-itens-aberto').forEach(function (wrap) {
       wrap.classList.remove('go-itens-aberto');
@@ -462,7 +564,6 @@
       if (pop) pop.style.display = 'none';
     });
   }
-
   document.querySelectorAll('.go-itens-wrap').forEach(function (wrap) {
     const pop = wrap.querySelector('.go-itens-popover');
     wrap.addEventListener('mouseenter', function () { cancelarEsconder(wrap); posicionarEExibir(wrap); });
@@ -472,9 +573,6 @@
       pop.addEventListener('mouseleave', function () { agendarEsconder(wrap); });
     }
   });
-
-  // Clique "prende" aberto (útil em touch/mobile, onde não existe hover) até
-  // clicar em outro lugar da página.
   document.addEventListener('click', function (e) {
     const wrap = e.target.closest('.go-itens-wrap');
     document.querySelectorAll('.go-itens-wrap.go-itens-aberto').forEach(function (aberto) {
@@ -486,19 +584,12 @@
     });
     if (wrap) {
       wrap.classList.toggle('go-itens-aberto');
-      if (wrap.classList.contains('go-itens-aberto')) {
-        posicionarEExibir(wrap);
-      } else {
-        const pop = wrap.querySelector('.go-itens-popover');
-        if (pop) pop.style.display = 'none';
-      }
+      if (wrap.classList.contains('go-itens-aberto')) posicionarEExibir(wrap);
+      else { const pop = wrap.querySelector('.go-itens-popover'); if (pop) pop.style.display = 'none'; }
     }
   });
-
-  // Popover é position:fixed (coordenadas de tela) — se a página rolar
-  // enquanto ele está aberto, ele ficaria "flutuando" longe do gatilho, então
-  // fecha nesse caso.
   window.addEventListener('scroll', esconderTudoAberto, true);
 })();
+{% endif %}
 </script>
 {% endblock %}

@@ -13407,6 +13407,407 @@ def _painel_operacao_360(filtros, pedidos_filtrados, metricas_filtrados):
     }
 
 
+# ---------------------------------------------------------------------------
+# Operação 360 — CENTRAL DE COMANDO (pedido do Bruno, 06/11/2026, Fase 1 do
+# redesenho do grupo Operação: "layout no mesmo raciocínio da listagem geral...
+# cards, kpis, painéis dinâmicos, pipeline operacional clicável... nível
+# gerente de operação — Produção, PCP, Expedição, Logística e Qualidade se
+# conversando").
+#
+# Tudo calculado ao vivo a partir do que já existe (PedidoOperacao + Pedido/
+# ItemPedido casados por pedido_venda + RDIM) — NADA novo é gravado, então não
+# interfere em nenhum dado nem na sincronização com a Logística.
+#
+# Pipeline de ponta a ponta em 7 etapas (decisão do Bruno): Comercial ->
+# Produção/PCP -> Inspeção/Qualidade -> Faturamento (NF) -> Expedição -> Em
+# transporte -> Entregue. A classificação das etapas 5-7 usa os mesmos sinais
+# das 5 etapas antigas de "Acompanhamento do pedido" (entrega/expedição),
+# só que abrindo "Inspeção / Expedição" em 3 passos (inspeção, faturamento,
+# expedição) e "Pendente produção" em Comercial x Produção.
+# ---------------------------------------------------------------------------
+_ETAPAS_OPERACAO = [
+    {"idx": 1, "chave": "comercial", "label": "Comercial", "area": "Comercial / PCP", "emoji": "📥", "icone": "bi-receipt",
+     "cor": "#4263eb", "descricao": "Pedido recebido, aguardando o início da produção."},
+    {"idx": 2, "chave": "producao", "label": "Produção / PCP", "area": "Produção / PCP", "emoji": "⚙️", "icone": "bi-gear-wide-connected",
+     "cor": "#12b886", "descricao": "Pedido em produção na fábrica."},
+    {"idx": 3, "chave": "inspecao", "label": "Inspeção / Qualidade", "area": "Qualidade", "emoji": "🔍", "icone": "bi-clipboard2-check",
+     "cor": "#f59f00", "descricao": "Produção concluída, em inspeção final."},
+    {"idx": 4, "chave": "faturamento", "label": "Faturamento (NF)", "area": "Faturamento", "emoji": "🧾", "icone": "bi-receipt-cutoff",
+     "cor": "#e8590c", "descricao": "Liberado pelo PCP, aguardando emissão da nota fiscal."},
+    {"idx": 5, "chave": "expedicao", "label": "Expedição", "area": "Expedição", "emoji": "📦", "icone": "bi-box-seam",
+     "cor": "#7048e8", "descricao": "Nota emitida, aguardando coleta / saída da fábrica."},
+    {"idx": 6, "chave": "transporte", "label": "Em transporte", "area": "Logística", "emoji": "🚚", "icone": "bi-truck",
+     "cor": "#1c7ed6", "descricao": "Saiu da fábrica, a caminho do cliente."},
+    {"idx": 7, "chave": "entregue", "label": "Entregue", "area": "Cliente", "emoji": "✅", "icone": "bi-check2-circle",
+     "cor": "#2f9e44", "descricao": "Entrega realizada ao cliente."},
+]
+
+# Situação do pedido (semáforo). "aberto" só existe como valor de FILTRO
+# (todos que ainda não foram entregues), nunca como situação de um pedido.
+_SITUACOES_OPERACAO = {
+    "atrasado": {"label": "Atrasado", "cor": "danger", "icone": "bi-exclamation-octagon-fill"},
+    "risco": {"label": "Em risco", "cor": "warning", "icone": "bi-exclamation-triangle-fill"},
+    "ok": {"label": "No prazo", "cor": "success", "icone": "bi-check-circle-fill"},
+    "concluido": {"label": "Concluído", "cor": "secondary", "icone": "bi-flag-fill"},
+}
+_SITUACOES_FILTRO_OPERACAO = set(_SITUACOES_OPERACAO) | {"aberto"}
+
+# Pedido com prazo ao cliente vencendo em até N dias entra como "em risco".
+_RISCO_PRAZO_DIAS_OPERACAO = 3
+# Liberado pelo PCP / NF emitida há N dias ou mais sem andar = atrasado.
+_PARADO_LIMITE_DIAS_OPERACAO = 2
+
+
+def _hoje_brt():
+    """Data de hoje no fuso de Brasília — o servidor roda em UTC, e depois
+    das 21h o `date.today()` já viraria o dia seguinte, marcando pedido como
+    atrasado um dia antes da hora."""
+    return _agora_brt().date()
+
+
+def _classificar_pedidos_operacao(pedidos, metricas, pedidos_producao_por_pv, data_cliente_por_pv, rdim_por_pv=None, hoje=None):
+    """Classifica cada PedidoOperacao em etapa (1-7) + situação (atrasado/
+    risco/ok/concluido), com o MOTIVO em linguagem de chão de fábrica e os
+    dias de atraso — base de tudo na Central de Comando (pipeline, KPIs, fila
+    de ação, filtros clicáveis, linha da tabela). Devolve
+    {PedidoOperacao.id: dict}. `metricas` é o retorno de
+    _metricas_operacao_360 pro MESMO conjunto (reaproveita datas ao vivo de
+    Produção, sem recalcular)."""
+    hoje = hoje or _hoje_brt()
+    rdim_por_pv = rdim_por_pv or {}
+    resultado = {}
+    for p in pedidos:
+        chave = _normalizar_pedido_venda(p.pedido_venda)
+        m = metricas.get(p.id, {})
+        pp = pedidos_producao_por_pv.get(chave)
+        itens = list(pp.itens) if pp is not None else []
+        comprometida = _comprometida_otd(p, data_cliente_por_pv.get(chave))
+        conclusao = m.get("conclusao_producao")
+        expectativa = m.get("expectativa_pcp")
+
+        entregue = bool(p.go_data_entregue_cliente or p.go_data_real_entrega)
+        expedido = bool(p.go_data_pedido_expedido)
+        tem_nf = bool(p.go_numero_nf or p.go_data_emissao_nf)
+        liberado = bool(conclusao) or (pp is not None and pp.status_producao == "FINALIZADO")
+        em_inspecao = any(i.inicio_inspecao or i.termino_inspecao for i in itens)
+        em_producao = pp is not None and (
+            any(i.inicio_producao for i in itens) or pp.status_producao in ("ANDAMENTO", "EM TRATATIVA")
+        )
+
+        if entregue:
+            etapa = 7
+        elif expedido:
+            etapa = 6
+        elif tem_nf:
+            etapa = 5
+        elif liberado:
+            etapa = 4
+        elif em_inspecao:
+            etapa = 3
+        elif em_producao:
+            etapa = 2
+        else:
+            etapa = 1
+
+        motivos = []  # (dias, texto)
+        if etapa < 7:
+            if comprometida and comprometida < hoje:
+                d = (hoje - comprometida).days
+                motivos.append((d, f"Prazo ao cliente vencido há {d} d"))
+            if etapa <= 3 and expectativa and expectativa < hoje and not conclusao:
+                d = (hoje - expectativa).days
+                motivos.append((d, f"Previsão do PCP vencida há {d} d"))
+            if etapa == 4 and conclusao and (hoje - conclusao).days >= _PARADO_LIMITE_DIAS_OPERACAO:
+                d = (hoje - conclusao).days
+                motivos.append((d, f"Liberado pelo PCP há {d} d sem NF"))
+            if etapa == 5:
+                if p.go_data_prevista_coleta and p.go_data_prevista_coleta < hoje:
+                    d = (hoje - p.go_data_prevista_coleta).days
+                    motivos.append((d, f"Coleta prevista vencida há {d} d"))
+                elif not p.go_data_prevista_coleta and p.go_data_emissao_nf and (hoje - p.go_data_emissao_nf).days >= _PARADO_LIMITE_DIAS_OPERACAO:
+                    d = (hoje - p.go_data_emissao_nf).days
+                    motivos.append((d, f"NF emitida há {d} d sem expedição"))
+            if etapa == 6 and p.go_data_prevista_entrega and p.go_data_prevista_entrega < hoje:
+                d = (hoje - p.go_data_prevista_entrega).days
+                motivos.append((d, f"Entrega prevista vencida há {d} d"))
+        motivos.sort(key=lambda x: -x[0])
+
+        dias_atraso = motivos[0][0] if motivos else 0
+        motivo = motivos[0][1] if motivos else ""
+        if etapa == 7:
+            situacao = "concluido"
+            if m.get("otd_status") == "NAO":
+                motivo = f"Entregue com {m.get('otd_dias')} d de atraso"
+        elif motivos:
+            situacao = "atrasado"
+        else:
+            situacao = "ok"
+            if comprometida and etapa <= 5:
+                d_prazo = (comprometida - hoje).days
+                if 0 <= d_prazo <= _RISCO_PRAZO_DIAS_OPERACAO:
+                    situacao = "risco"
+                    motivo = "Prazo ao cliente vence hoje" if d_prazo == 0 else f"Prazo ao cliente em {d_prazo} d"
+
+        rdim = rdim_por_pv.get(chave) or {}
+        resultado[p.id] = {
+            "etapa": etapa,
+            "situacao": situacao,
+            "dias_atraso": dias_atraso,
+            "motivo": motivo,
+            "motivos": [t for _, t in motivos],
+            "comprometida": comprometida,
+            "desvio_qualidade": (rdim.get("reprovadas", 0) + rdim.get("com_desvio", 0)) > 0,
+        }
+    return resultado
+
+
+def _parse_filtros_central(args, ve_qualidade):
+    """Filtros clicáveis da Central de Comando (etapa/situação/qualidade/
+    ordem) — ficam FORA de _filtrar_pedidos_operacao de propósito: a etapa e
+    a situação dependem de dados de Produção/RDIM em Python, e o pipeline/
+    KPIs precisam continuar mostrando a contagem de TODAS as etapas mesmo
+    quando uma delas está selecionada (senão clicar numa etapa faria as
+    outras sumirem). `qualidade` só vale pra perfis que enxergam Qualidade."""
+    etapas = [v for v in _getlist_seguro(args, "etapa") if v in {"1", "2", "3", "4", "5", "6", "7"}]
+    situacoes = [v for v in _getlist_seguro(args, "situacao") if v in _SITUACOES_FILTRO_OPERACAO]
+    qualidade = "desvio" if (ve_qualidade and (args.get("qualidade") or "").strip() == "desvio") else ""
+    ordem = "prioridade" if (args.get("ordem") or "").strip() == "prioridade" else ""
+    return {"etapa": etapas, "situacao": situacoes, "qualidade": qualidade, "ordem": ordem}
+
+
+def _aplicar_filtros_central(pedidos, info, fc):
+    """Aplica etapa/situação/qualidade (e ordem por prioridade) sobre a lista
+    de pedidos já filtrada pelo painel de filtros — ver _parse_filtros_central."""
+    etapas = {int(v) for v in fc["etapa"]}
+    situacoes = set(fc["situacao"])
+    filtrados = []
+    for p in pedidos:
+        i = info.get(p.id)
+        if not i:
+            continue
+        if etapas and i["etapa"] not in etapas:
+            continue
+        if situacoes:
+            ok_sit = i["situacao"] in situacoes or ("aberto" in situacoes and i["etapa"] < 7)
+            if not ok_sit:
+                continue
+        if fc["qualidade"] == "desvio" and not i["desvio_qualidade"]:
+            continue
+        filtrados.append(p)
+    if fc["ordem"] == "prioridade":
+        rank = {"atrasado": 0, "risco": 1, "ok": 2, "concluido": 3}
+        filtrados.sort(key=lambda p: (rank[info[p.id]["situacao"]], -info[p.id]["dias_atraso"]))
+    return filtrados
+
+
+def _params_url_operacao(filtros, fc, **overrides):
+    """Monta os parâmetros de URL (sem vazios, sem `page`) combinando os
+    filtros do painel + os da Central, com `overrides` por cima — usado pra
+    gerar os links clicáveis (cards do pipeline, KPIs, grupos, chips)."""
+    base = dict(filtros)
+    base.update(fc)
+    base.update(overrides)
+    limpo = {}
+    for k, v in base.items():
+        if k == "page":
+            continue
+        if isinstance(v, (list, tuple, set)):
+            v = [x for x in v if x not in (None, "")]
+        if v in (None, "", []):
+            continue
+        limpo[k] = v
+    return limpo
+
+
+def _central_operacao_360(pedidos, info, metricas, painel_dinamico, filtros, fc, ve_qualidade):
+    """Central de Comando: pipeline de 7 etapas, KPIs, fila de ação e painéis
+    de agrupamento sobre o conjunto BASE (filtros do painel de filtros, mas
+    SEM etapa/situação/qualidade — assim o pipeline continua completo ao
+    clicar numa etapa). Cada card já vem com `url` (clique filtra a tabela) e
+    `ativo`."""
+    endpoint = "gestao_operacao_listagem_geral"
+
+    def url(**kw):
+        kw.setdefault("etapa", [])
+        kw.setdefault("situacao", [])
+        return url_for(endpoint, **_params_url_operacao(filtros, fc, **kw))
+
+    etapas_sel = fc["etapa"]
+    situacoes_sel = fc["situacao"]
+
+    # --- pipeline ---------------------------------------------------------
+    pipe = {e["idx"]: {"total": 0, "valor": 0.0, "atrasados": 0, "risco": 0} for e in _ETAPAS_OPERACAO}
+    # --- KPIs / grupos ----------------------------------------------------
+    abertos = atrasados = risco = a_expedir = transporte = entregues = 0
+    valor_abertos = valor_atrasados = valor_a_expedir = 0.0
+    soma_dias_atraso = 0
+    otd_sim = otd_nao = 0
+    com_desvio = 0
+    fila = []
+    grupos = {"cliente": {}, "regiao": {}, "frete": {}, "semana": {}}
+
+    def acumula(grupo, rotulo, i, valor, filtro_link):
+        g = grupos[grupo].setdefault(rotulo, {"rotulo": rotulo, "total": 0, "atrasados": 0, "risco": 0, "valor": 0.0, "filtro": filtro_link})
+        g["total"] += 1
+        g["valor"] += valor
+        if i["situacao"] == "atrasado":
+            g["atrasados"] += 1
+        elif i["situacao"] == "risco":
+            g["risco"] += 1
+
+    for p in pedidos:
+        i = info[p.id]
+        m = metricas.get(p.id, {})
+        valor = p.go_valor_pedido_operacao or 0.0
+        e = pipe[i["etapa"]]
+        e["total"] += 1
+        e["valor"] += valor
+        if i["situacao"] == "atrasado":
+            e["atrasados"] += 1
+        elif i["situacao"] == "risco":
+            e["risco"] += 1
+
+        if ve_qualidade and i["desvio_qualidade"]:
+            com_desvio += 1
+
+        if i["etapa"] == 7:
+            entregues += 1
+            if m.get("otd_status") == "SIM":
+                otd_sim += 1
+            elif m.get("otd_status") == "NAO":
+                otd_nao += 1
+            continue
+
+        abertos += 1
+        valor_abertos += valor
+        if i["etapa"] in (4, 5):
+            a_expedir += 1
+            valor_a_expedir += valor
+        if i["etapa"] == 6:
+            transporte += 1
+        if i["situacao"] == "atrasado":
+            atrasados += 1
+            valor_atrasados += valor
+            soma_dias_atraso += i["dias_atraso"]
+            fila.append((i["dias_atraso"], valor, p, i))
+        elif i["situacao"] == "risco":
+            risco += 1
+            fila.append((-1, valor, p, i))
+
+        # Agrupamentos da carteira EM ABERTO.
+        acumula("cliente", (p.cliente or "—").strip() or "—", i, valor, {"cliente": (p.cliente or "").strip()})
+        uf = (p.estado or "").strip().upper()
+        regiao = REGIAO_POR_UF.get(uf)
+        acumula("regiao", regiao or "Não identificada", i, valor, {"regiao": regiao} if regiao else None)
+        frete_txt = (p.frete or "").strip().upper()
+        if frete_txt in FRETE_OPCOES:
+            acumula("frete", frete_txt, i, valor, {"frete": [frete_txt]})
+        else:
+            acumula("frete", "Não informado", i, valor, {"frete": ["NAO_INFORMADO"]})
+        if m.get("termino_semanal") and m.get("termino_semanal_automatico"):
+            acumula("semana", m["termino_semanal"], i, valor, {"planejamento_semanal": m["termino_semanal"]})
+        else:
+            acumula("semana", "Sem semana definida", i, valor, None)
+
+    pipeline = []
+    for et in _ETAPAS_OPERACAO:
+        d = pipe[et["idx"]]
+        so_esta = etapas_sel == [str(et["idx"])] and not situacoes_sel
+        pipeline.append({
+            **et, **d,
+            "valor_fmt": _fmt_brl_curto(d["valor"]),
+            "ativo": str(et["idx"]) in etapas_sel,
+            "url": url(etapa=[] if so_esta else [str(et["idx"])]),
+            "url_atrasados": url(etapa=[str(et["idx"])], situacao=["atrasado"]),
+        })
+
+    pct_otd = round(100.0 * otd_sim / (otd_sim + otd_nao), 1) if (otd_sim + otd_nao) else None
+
+    def kpi(chave, titulo, valor, cor, icone, sufixo=None, destino=None, ativo=False, **extra):
+        return {"chave": chave, "titulo": titulo, "valor": valor, "cor": cor, "icone": icone,
+                "sufixo": sufixo, "url": destino, "ativo": ativo, **extra}
+
+    sit_aberto = situacoes_sel == ["aberto"] and not etapas_sel
+    kpis = [
+        kpi("abertos", "Carteira em aberto", abertos, "primary", "bi-collection",
+            sufixo=_fmt_brl_curto(valor_abertos), destino=url(situacao=["aberto"]), ativo=sit_aberto),
+        kpi("atrasados", "Atrasados", atrasados, "danger", "bi-exclamation-octagon-fill",
+            sufixo=(_fmt_brl_curto(valor_atrasados) + " parados") if atrasados else "nenhum atraso",
+            destino=url(situacao=["atrasado"]), ativo=situacoes_sel == ["atrasado"] and not etapas_sel),
+        kpi("risco", f"Em risco (≤ {_RISCO_PRAZO_DIAS_OPERACAO} d)", risco, "warning", "bi-exclamation-triangle-fill",
+            sufixo="prazo ao cliente chegando", destino=url(situacao=["risco"]),
+            ativo=situacoes_sel == ["risco"] and not etapas_sel),
+        kpi("a_expedir", "A faturar / expedir", a_expedir, "purple", "bi-box-seam",
+            sufixo=_fmt_brl_curto(valor_a_expedir), destino=url(etapa=["4", "5"]),
+            ativo=sorted(etapas_sel) == ["4", "5"]),
+        kpi("transporte", "Em transporte", transporte, "info", "bi-truck",
+            sufixo="a caminho do cliente", destino=url(etapa=["6"]), ativo=etapas_sel == ["6"] and not situacoes_sel),
+        kpi("entregues", "Entregues", entregues, "success", "bi-check2-circle",
+            sufixo=(f"OTD {str(pct_otd).replace('.', ',')}%" if pct_otd is not None else "OTD sem base"),
+            destino=url(etapa=["7"]), ativo=etapas_sel == ["7"] and not situacoes_sel),
+        kpi("faturamento", "Faturamento (NF)", _fmt_brl_curto(painel_dinamico.get("faturamento_total") or 0.0), "dark", "bi-cash-coin",
+            sufixo=f"{painel_dinamico.get('n_faturamento') or 0} NF(s) emitida(s)"),
+        kpi("lt", "LT operação médio",
+            (f"{str(painel_dinamico['lead_operacao_medio']).replace('.', ',')} d" if painel_dinamico.get("lead_operacao_medio") is not None else "—"),
+            "secondary", "bi-stopwatch", sufixo="inclusão → entrega"),
+    ]
+    if ve_qualidade:
+        kpis.append(kpi("qualidade", "Qualidade c/ desvio", com_desvio, "warning", "bi-shield-exclamation",
+                        sufixo="pedidos com reprovação/desvio",
+                        destino=url_for(endpoint, **_params_url_operacao(filtros, fc, qualidade="" if fc["qualidade"] else "desvio", etapa=etapas_sel, situacao=situacoes_sel)),
+                        ativo=bool(fc["qualidade"])))
+
+    # --- fila de ação: atrasados (mais atrasado primeiro) e depois em risco -
+    fila.sort(key=lambda x: (-x[0], -x[1]))
+    fila_acao = []
+    for _, valor, p, i in fila[:12]:
+        et = _ETAPAS_OPERACAO[i["etapa"] - 1]
+        fila_acao.append({
+            "id": p.id, "pedido": _normalizar_pedido_venda(p.pedido_venda) or "—", "cliente": p.cliente, "uf": (p.estado or "").strip().upper(),
+            "etapa_label": et["label"], "etapa_cor": et["cor"], "etapa_emoji": et["emoji"], "area": et["area"],
+            "situacao": i["situacao"], "dias": i["dias_atraso"], "motivo": i["motivo"], "valor": valor,
+            "valor_fmt": _fmt_brl_curto(valor),
+        })
+
+    def lista_grupo(nome, limite):
+        itens = sorted(grupos[nome].values(), key=lambda g: (-g["atrasados"], -g["total"], -g["valor"]))[:limite]
+        maximo = max([g["total"] for g in itens] or [1])
+        for g in itens:
+            g["pct"] = round(100.0 * g["total"] / maximo)
+            g["valor_fmt"] = _fmt_brl_curto(g["valor"])
+            g["url"] = url_for(endpoint, **_params_url_operacao(filtros, fc, **g["filtro"])) if g["filtro"] else None
+        return itens
+
+    return {
+        "pipeline": pipeline,
+        "kpis": kpis,
+        "fila_acao": fila_acao,
+        "fila_total": len(fila),
+        "grupos": {
+            "cliente": lista_grupo("cliente", 10),
+            "regiao": lista_grupo("regiao", 10),
+            "frete": lista_grupo("frete", 10),
+            "semana": lista_grupo("semana", 10),
+        },
+        "totais": {
+            "pedidos": len(pedidos), "abertos": abertos, "atrasados": atrasados, "risco": risco,
+            "entregues": entregues, "otd": pct_otd,
+            "media_dias_atraso": round(soma_dias_atraso / atrasados, 1) if atrasados else None,
+        },
+        "url_limpar_central": url(qualidade=""),
+    }
+
+
+def _fmt_brl_curto(valor):
+    """R$ compacto pra cards (R$ 1,2 mi / R$ 350 mil / R$ 980)."""
+    v = float(valor or 0)
+    if abs(v) >= 1_000_000:
+        return "R$ " + f"{v / 1_000_000:.1f}".replace(".", ",") + " mi"
+    if abs(v) >= 10_000:
+        return "R$ " + f"{v / 1_000:.0f} mil"
+    return "R$ " + f"{v:,.0f}".replace(",", ".")
+
+
 def _prevista_x_realizada(prevista, real):
     """Compara PREVISTO x REALIZADO pra um par de datas — mesma função
     reaproveitada pros 2 momentos da feature Expedição/Logística (23/09/2026,
@@ -16009,6 +16410,12 @@ def _dados_relatorio_operacao_360(args):
     pedidos_producao = _pedidos_producao_por_pedido_venda(pedidos_venda)
     rdim = _rdim_resumo_por_pedido_venda(pedidos_venda)
     metricas = _metricas_operacao_360(pedidos, liberacao_pcp, data_cliente, pedidos_producao)
+    # Seleção clicada na Central de Comando (etapa/situação/qualidade) —
+    # Excel/PDF acompanham EXATAMENTE o que está na tela.
+    fc = _parse_filtros_central(args, ve_pd_qualidade_custos(current_user))
+    if fc["etapa"] or fc["situacao"] or fc["qualidade"] or fc["ordem"]:
+        info = _classificar_pedidos_operacao(pedidos, metricas, pedidos_producao, data_cliente, rdim)
+        pedidos = _aplicar_filtros_central(pedidos, info, fc)
     painel = _painel_operacao_360(filtros, pedidos, metricas)
 
     tipo_p, ano_p, valor_p, periodo_label = _parse_periodo(args.get("periodo", ""))
@@ -24750,10 +25157,10 @@ def register_routes(app):
             flash("Integração com a Logística ainda não configurada.", "warning")
             return redirect(url_for("integracao_logistica"))
         r = _logistica_sincronizar(forcar=True)
-        if r.get("ok"):
+        if r.get("motivo") == "em_andamento":
+            flash("Já existe uma sincronização em andamento — espere 1 minuto e recarregue esta página.", "info")
+        elif r.get("ok"):
             flash(f"Sincronizado: {r.get('recebidos', 0)} pedido(s) recebido(s) da Logística.", "success")
-        elif r.get("motivo") == "em_andamento":
-            flash("Já existe uma sincronização em andamento — tente de novo em instantes.", "info")
         else:
             flash("Não foi possível sincronizar agora — o site segue com o último dado recebido.", "warning")
         return redirect(url_for("integracao_logistica"))
@@ -24946,46 +25353,52 @@ def register_routes(app):
         mostra os produtos/quantidades já preenchidos em Gestão Produção pelo
         PCP, casando pelo nº de pedido de venda — sem criar nenhum vínculo
         real entre as duas tabelas."""
-        pedidos, page, total_paginas, total_filtrado, filtros, query_operacao = _linhas_gestao_operacao(request.args)
-        itens_por_pedido_venda = _itens_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
-        # Qualidade (RDIM) — pedido do Bruno (02/09/2026): indicador simples
-        # (pedido-level, sem granularidade de item/estação) de "contém
-        # desvio" nesta listagem.
-        rdim_por_pedido_venda = _rdim_resumo_por_pedido_venda([p.pedido_venda for p in pedidos])
-        # "Data solic. cliente" também acompanha ao vivo a "Data do cliente"
-        # de Gestão Produção — pedido do Bruno (03/09/2026).
-        data_cliente_por_pedido_venda = _data_cliente_por_pedido_venda([p.pedido_venda for p in pedidos])
-        # "Data conclusão produção"/"Semanal planejamento PCP" também
-        # acompanham ao vivo a Liberação real/Planejamento semanal de Gestão
-        # Produção — pedido do Bruno (10/09/2026, "Operação 360").
-        liberacao_pcp_por_pedido_venda = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
-        # "Status pedido" (coluna com emoji, pedido do Bruno 10/09/2026)
-        # reaproveita _indice_etapa_pedido, que precisa do Pedido inteiro
-        # (não só os itens já resumidos acima) — ver
-        # _pedidos_producao_por_pedido_venda.
-        pedidos_producao_por_pedido_venda = _pedidos_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
-        # Datas/lead times/OTD/status da "Operação 360" — ver _metricas_operacao_360.
-        # (calculado só pra página atual — o que aparece na tabela).
+        # Central de Comando (Fase 1 do redesenho do grupo Operação, pedido do
+        # Bruno 06/11/2026). Em vez de paginar na query, carrega o conjunto
+        # filtrado INTEIRO (o painel de filtros continua igual) — a etapa, a
+        # situação (atrasado/risco/ok) e o pipeline dependem de Produção/RDIM
+        # casados por pedido_venda, que só se resolve em Python. O custo é o
+        # mesmo que o painel dinâmico já pagava antes (recalculava tudo pro
+        # conjunto completo a cada carregamento).
+        ve_qual = ve_pd_qualidade_custos(current_user)
+        query_base, filtros = _filtrar_pedidos_operacao(request.args)
+        fc = _parse_filtros_central(request.args, ve_qual)
+        todos = query_base.all()
+        pedidos_venda_todos = [p.pedido_venda for p in todos]
+        liberacao_pcp_completo = _liberacao_pcp_por_pedido_venda(pedidos_venda_todos)
+        data_cliente_completo = _data_cliente_por_pedido_venda(pedidos_venda_todos)
+        pedidos_producao_completo = _pedidos_producao_por_pedido_venda(pedidos_venda_todos)
         metricas_operacao_360 = _metricas_operacao_360(
-            pedidos, liberacao_pcp_por_pedido_venda, data_cliente_por_pedido_venda, pedidos_producao_por_pedido_venda,
+            todos, liberacao_pcp_completo, data_cliente_completo, pedidos_producao_completo,
         )
-
-        # Quadrante "NFs emitidas no mês" + painel dinâmico de valores/
-        # faturamento/lead time (pedido do Bruno, 10/09/2026) — no lugar dos
-        # quadrantes semanais/mensais de PCP, que saíram desta tela e
-        # continuam só na Listagem Geral de Produção, como já estabelecido.
-        # Precisa do conjunto TOTAL filtrado (não só a página atual), por
-        # isso recalcula liberação PCP/data cliente/Pedido de Produção pra
-        # TODOS os pedidos filtrados — ver _painel_operacao_360.
-        pedidos_filtrados_completo = query_operacao.all()
-        pedidos_venda_completo = [p.pedido_venda for p in pedidos_filtrados_completo]
-        liberacao_pcp_completo = _liberacao_pcp_por_pedido_venda(pedidos_venda_completo)
-        data_cliente_completo = _data_cliente_por_pedido_venda(pedidos_venda_completo)
-        pedidos_producao_completo = _pedidos_producao_por_pedido_venda(pedidos_venda_completo)
-        metricas_completo = _metricas_operacao_360(
-            pedidos_filtrados_completo, liberacao_pcp_completo, data_cliente_completo, pedidos_producao_completo,
+        # Qualidade (RDIM) — indicador pedido-level; só pra quem enxerga
+        # Qualidade (COMERCIAL/COMERCIAL_GERAL nunca recebem esse dado).
+        rdim_por_pedido_venda = _rdim_resumo_por_pedido_venda(pedidos_venda_todos) if ve_qual else {}
+        painel_operacao_360 = _painel_operacao_360(filtros, todos, metricas_operacao_360)
+        info_operacao = _classificar_pedidos_operacao(
+            todos, metricas_operacao_360, pedidos_producao_completo, data_cliente_completo, rdim_por_pedido_venda,
         )
-        painel_operacao_360 = _painel_operacao_360(filtros, pedidos_filtrados_completo, metricas_completo)
+        central = _central_operacao_360(
+            todos, info_operacao, metricas_operacao_360, painel_operacao_360["dinamico"], filtros, fc, ve_qual,
+        )
+        selecionados = _aplicar_filtros_central(todos, info_operacao, fc)
+        total_filtrado = len(selecionados)
+        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = min(max(request.args.get("page", 1, type=int) or 1, 1), total_paginas)
+        pedidos = selecionados[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+        # Itens/quantidades do popover do cliente: só da página atual.
+        itens_por_pedido_venda = _itens_producao_por_pedido_venda([p.pedido_venda for p in pedidos])
+        data_cliente_por_pedido_venda = data_cliente_completo
+        filtros_url = _params_url_operacao(filtros, fc)
+        filtros_painel_ativos = bool(_params_url_operacao(filtros, {}))
+        urls_ordem = {
+            "prioridade": url_for("gestao_operacao_listagem_geral", **_params_url_operacao(filtros, fc, ordem="prioridade")),
+            "recentes": url_for("gestao_operacao_listagem_geral", **_params_url_operacao(filtros, fc, ordem="")),
+        }
+        url_sem_tv = url_for("gestao_operacao_listagem_geral", **filtros_url)
+        url_tv = url_for("gestao_operacao_listagem_geral", tv=1, **filtros_url)
+        filtros_central_ativos = bool(fc["etapa"] or fc["situacao"] or fc["qualidade"])
+        modo_tv = request.args.get("tv") == "1"
 
         # Mês/período do Relatório Gerencial em PDF (pedido do Bruno,
         # 29/09/2026: "relatorio... mes a mes selecionavel" pro relatório
@@ -25010,6 +25423,11 @@ def register_routes(app):
             data_cliente_por_pedido_venda=data_cliente_por_pedido_venda,
             metricas_operacao_360=metricas_operacao_360,
             painel_operacao_360=painel_operacao_360,
+            info_operacao=info_operacao, central=central, fc=fc, filtros_url=filtros_url,
+            filtros_painel_ativos=filtros_painel_ativos, urls_ordem=urls_ordem, url_sem_tv=url_sem_tv, url_tv=url_tv,
+            filtros_central_ativos=filtros_central_ativos, modo_tv=modo_tv,
+            etapas_operacao=_ETAPAS_OPERACAO, situacoes_operacao=_SITUACOES_OPERACAO,
+            atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"),
             periodo_relatorio=periodo_relatorio_str, tipo_periodo_relatorio=tipo_periodo_relatorio,
             periodo_relatorio_label=periodo_relatorio_label, opcoes_periodo=_opcoes_periodo(),
         )

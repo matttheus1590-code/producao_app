@@ -4268,3 +4268,156 @@ button.pw-kpi-lib.ativo { box-shadow: inset 0 -4px 0 #198754; }
   .cp-hero-emoji { font-size: 1.7rem; }
   .cp-tile-data { font-size: 1rem; }
 }
+
+/* =====================================================================
+   Operação 360 — CENTRAL DE COMANDO (Fase 1 do redesenho do grupo Operação,
+   pedido do Bruno, 06/11/2026). Prefixo .op- . Tela clara; cores de etapa
+   vêm da variável --op-cor de cada card (definida inline, vem de
+   _ETAPAS_OPERACAO em app.py).
+===================================================================== */
+.op-tudo { display: flex; flex-direction: column; gap: 1rem; }
+.tela-cheia-corpo > .op-tudo.tela-cheia-ativa { height: 100%; overflow: auto; padding: 0.25rem 0.25rem 1rem; }
+
+.op-secao-titulo {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--bs-secondary-color); margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.4rem;
+}
+
+/* KPIs ------------------------------------------------------------ */
+.op-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.6rem; }
+.op-kpi {
+  --op-kpi-cor: #495057;
+  display: block; text-decoration: none; color: inherit; background: #fff;
+  border: 1px solid var(--bs-border-color); border-top: 3px solid var(--op-kpi-cor);
+  border-radius: 0.6rem; padding: 0.6rem 0.75rem; position: relative;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+a.op-kpi:hover { transform: translateY(-2px); box-shadow: 0 0.35rem 0.9rem rgba(0,0,0,.12); color: inherit; }
+.op-kpi-ativo { box-shadow: 0 0 0 2px var(--op-kpi-cor) inset; background: rgba(0,0,0,.02); }
+.op-kpi-titulo { font-size: 0.72rem; font-weight: 600; color: var(--bs-secondary-color); display: flex; align-items: center; gap: .3rem; white-space: nowrap; }
+.op-kpi-titulo i { color: var(--op-kpi-cor); font-size: 0.9rem; }
+.op-kpi-valor { font-size: 1.65rem; font-weight: 700; line-height: 1.15; color: var(--op-kpi-cor); font-variant-numeric: tabular-nums; }
+.op-kpi-sufixo { font-size: 0.72rem; color: var(--bs-secondary-color); }
+.op-kpi-primary { --op-kpi-cor: #0d6efd; }
+.op-kpi-danger { --op-kpi-cor: #dc3545; }
+.op-kpi-warning { --op-kpi-cor: #e67700; }
+.op-kpi-purple { --op-kpi-cor: #7048e8; }
+.op-kpi-info { --op-kpi-cor: #1c7ed6; }
+.op-kpi-success { --op-kpi-cor: #2f9e44; }
+.op-kpi-dark { --op-kpi-cor: #343a40; }
+.op-kpi-secondary { --op-kpi-cor: #6c757d; }
+.op-kpi-danger .op-kpi-valor.op-piscar { animation: op-pulso 1.6s infinite; }
+@keyframes op-pulso { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* Pipeline --------------------------------------------------------- */
+.op-pipeline { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5rem; }
+.op-etapa {
+  --op-cor: #4263eb;
+  position: relative; background: #fff; border: 1px solid var(--bs-border-color); border-top: 4px solid var(--op-cor);
+  border-radius: 0.6rem; padding: 0.55rem 0.65rem 0.5rem; text-align: left;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.op-etapa:hover { transform: translateY(-2px); box-shadow: 0 0.35rem 0.9rem rgba(0,0,0,.12); }
+.op-etapa:not(:last-child)::after {
+  content: "\F285"; font-family: "bootstrap-icons"; position: absolute; right: -0.62rem; top: 50%;
+  transform: translateY(-50%); color: var(--bs-secondary-color); font-size: 0.8rem; z-index: 3; pointer-events: none;
+  background: #f4f6f9; border-radius: 50%; line-height: 1;
+}
+.op-etapa-ativa { box-shadow: 0 0 0 2px var(--op-cor) inset; background: color-mix(in srgb, var(--op-cor) 8%, #fff); }
+.op-etapa-topo { display: flex; align-items: center; justify-content: space-between; color: var(--op-cor); font-size: 1.05rem; }
+.op-etapa-num { font-size: 0.65rem; font-weight: 700; background: var(--op-cor); color: #fff; border-radius: 50%; width: 1.15rem; height: 1.15rem; display: inline-flex; align-items: center; justify-content: center; }
+.op-etapa-total { font-size: 1.9rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.op-etapa-label { font-size: 0.78rem; font-weight: 600; line-height: 1.2; min-height: 1.9em; }
+.op-etapa-valor { font-size: 0.72rem; color: var(--bs-secondary-color); }
+.op-etapa-alertas { margin-top: 0.3rem; min-height: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.25rem; position: relative; z-index: 4; }
+.op-pill { display: inline-block; font-size: 0.66rem; font-weight: 700; border-radius: 999px; padding: 0.08rem 0.45rem; text-decoration: none; }
+.op-pill-danger { background: #f8d7da; color: #b02a37; }
+.op-pill-warning { background: #fff0c2; color: #8a5a00; }
+a.op-pill:hover { filter: brightness(.95); }
+
+/* Fila de ação + agrupamentos ---------------------------------------- */
+.op-painel { background: #fff; border: 1px solid var(--bs-border-color); border-radius: 0.6rem; padding: 0.75rem 0.85rem; height: 100%; }
+.op-fila { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.op-fila-item { display: grid; grid-template-columns: 3.4rem 1fr auto; gap: 0.6rem; align-items: center; padding: 0.4rem 0.5rem; border-radius: 0.5rem; border: 1px solid var(--bs-border-color); text-decoration: none; color: inherit; }
+a.op-fila-item:hover { background: rgba(0,0,0,.03); color: inherit; }
+.op-fila-dias { text-align: center; border-radius: 0.45rem; font-weight: 700; font-size: 0.95rem; line-height: 1.1; padding: 0.3rem 0.1rem; }
+.op-fila-dias small { display: block; font-size: 0.6rem; font-weight: 600; opacity: .85; }
+.op-fila-dias-danger { background: #f8d7da; color: #b02a37; }
+.op-fila-dias-warning { background: #fff0c2; color: #8a5a00; }
+.op-fila-titulo { font-weight: 600; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.op-fila-motivo { font-size: 0.74rem; color: var(--bs-secondary-color); }
+.op-fila-valor { font-size: 0.78rem; font-weight: 600; text-align: right; white-space: nowrap; }
+.op-etapa-chip { display: inline-flex; align-items: center; gap: .25rem; font-size: 0.68rem; font-weight: 600; border: 1px solid var(--op-cor, #adb5bd); color: var(--op-cor, #495057); border-radius: 999px; padding: 0 0.45rem; background: #fff; white-space: nowrap; }
+
+.op-grupo-linha { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 0.6rem; align-items: center; padding: 0.3rem 0; border-bottom: 1px dashed var(--bs-border-color); font-size: 0.8rem; text-decoration: none; color: inherit; }
+a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
+.op-grupo-rotulo { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.op-barra { height: 0.55rem; background: #e9ecef; border-radius: 999px; overflow: hidden; }
+.op-barra > span { display: block; height: 100%; background: #4263eb; border-radius: 999px; }
+.op-grupo-num { font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 0.75rem; text-align: right; }
+
+/* Barra de seleção ativa -------------------------------------------- */
+.op-filtro-ativo { background: #e7f1ff; border: 1px solid #b6d4fe; border-radius: 0.6rem; padding: 0.4rem 0.75rem; font-size: 0.82rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+
+/* Tabela: cabeçalho agrupado e linhas por situação ---------------------- */
+.tabela-operacao-360 thead tr.op-grupos-cab th {
+  text-align: center; font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase;
+  color: #fff; border-bottom: 0; padding: 0.25rem 0.3rem;
+}
+.op-g-ident { background: #343a40; }
+.op-g-comercial { background: #4263eb; }
+.op-g-prod { background: #12b886; }
+.op-g-fin { background: #e8590c; }
+.op-g-exped { background: #7048e8; }
+.op-g-result { background: #2f9e44; }
+.op-g-acao { background: #adb5bd; }
+.tabela-operacao-360 > tbody > tr.linha-op-atrasado > * { --bs-table-bg: #f8d7da; background-color: #f8d7da; }
+.tabela-operacao-360.table-hover > tbody > tr.linha-op-atrasado:hover > * { --bs-table-bg: #f1aeb5; background-color: #f1aeb5; }
+.tabela-operacao-360 > tbody > tr.linha-op-risco > * { --bs-table-bg: #fff3cd; background-color: #fff3cd; }
+.tabela-operacao-360.table-hover > tbody > tr.linha-op-risco:hover > * { --bs-table-bg: #ffe69c; background-color: #ffe69c; }
+
+/* Modo TV (chão de fábrica) -------------------------------------------- */
+.op-tv .op-kpi-valor { font-size: 2.6rem; }
+.op-tv .op-kpi-titulo { font-size: 0.95rem; }
+.op-tv .op-kpi-sufixo { font-size: 0.9rem; }
+.op-tv .op-etapa-total { font-size: 3.4rem; }
+.op-tv .op-etapa-label { font-size: 1.05rem; }
+.op-tv .op-etapa-valor { font-size: 0.95rem; }
+.op-tv .op-pill { font-size: 0.9rem; }
+.op-tv .op-fila-titulo { font-size: 1.15rem; }
+.op-tv .op-fila-motivo { font-size: 1rem; }
+.op-tv .op-fila-valor { font-size: 1.05rem; }
+.op-tv .op-fila-dias { font-size: 1.4rem; }
+.op-tv .op-grupo-linha { font-size: 1.05rem; }
+.op-tv .op-secao-titulo { font-size: 0.95rem; }
+
+@media (max-width: 1199.98px) {
+  .op-pipeline { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .op-etapa:not(:last-child)::after { display: none; }
+}
+@media (max-width: 767.98px) {
+  .op-pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .op-fila-item { grid-template-columns: 3rem 1fr; }
+  .op-fila-valor { display: none; }
+}
+
+/* Operação 360 — acabamentos (cabeçalho agrupado precisa vencer o fundo
+   claro/sticky padrão da tabela; 2ª linha do cabeçalho gruda abaixo da 1ª). */
+.tabela-operacao-360 thead tr.op-grupos-cab th { color: #fff; box-shadow: none; }
+.tabela-operacao-360 thead tr.op-grupos-cab th.op-g-ident { background-color: #343a40; }
+.tabela-operacao-360 thead tr.op-grupos-cab th.op-g-comercial { background-color: #4263eb; }
+.tabela-operacao-360 thead tr.op-grupos-cab th.op-g-prod { background-color: #12b886; }
+.tabela-operacao-360 thead tr.op-grupos-cab th.op-g-fin { background-color: #e8590c; }
+.tabela-operacao-360 thead tr.op-grupos-cab th.op-g-exped { background-color: #7048e8; }
+.tabela-operacao-360 thead tr.op-grupos-cab th.op-g-result { background-color: #2f9e44; }
+.tabela-operacao-360 thead tr.op-grupos-cab th.op-g-acao { background-color: #adb5bd; }
+.tabela-operacao-360 thead tr:nth-child(2) th { top: 1.6rem; }
+.tabela-operacao-360 td.op-sit { white-space: normal; overflow: visible; }
+.tabela-operacao-360 .op-sit-motivo { font-size: 0.7rem; line-height: 1.1; margin-top: 0.15rem; }
+.op-tv .op-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.op-tv .op-kpi-titulo { white-space: normal; }
+.op-tv .op-kpi-valor { font-size: 2.3rem; white-space: nowrap; }
+@media (min-width: 1200px) {
+  .op-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .op-tv .op-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
