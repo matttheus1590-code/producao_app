@@ -307,6 +307,51 @@
 </div>
 {% endmacro %}
 
+{# Aviso de material expedido (pedido do Bruno, 06/11/2026): sai da Data Real de Coleta/Embarque — o mesmo campo que a integração com a Logística preenche sozinha. #}
+{% set EX = expedidos_recentes %}
+<div class="card pn-sec pn-t-purple" id="sec-expedidos" data-sec="expedidos">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="text-uppercase text-muted small mb-0">🚚 <i class="bi bi-box-arrow-right"></i> Material expedido · hoje e ontem
+        <span class="badge {{ 'text-bg-success' if EX.hoje else 'text-bg-secondary' }} ms-1">{{ EX.hoje|length }} hoje</span>
+        <span class="badge text-bg-light border ms-1">{{ EX.ontem|length }} ontem</span>
+      </h6>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="text-muted small">
+          {% if EX.logistica_ok %}<i class="bi bi-arrow-repeat"></i> sincronizado com a Logística em {{ EX.ultimo_sync.strftime('%d/%m %H:%M') }}{% else %}baixa pela data de embarque{% endif %}
+        </span>
+        <a href="{{ url_for('gestao_operacao_kanban_expedicao') }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-kanban"></i> Ver parados na expedição</a>
+      </div>
+    </div>
+    {% if EX.total %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Quando</th><th>Pedido</th><th>Cliente</th><th>Transportadora</th><th>Frete</th><th>NF</th><th class="text-end">Valor</th><th>Coleta</th></tr></thead>
+        <tbody>
+        {% for grupo, itens, data_ref in (('Hoje', EX.hoje, EX.data_hoje), ('Ontem', EX.ontem, EX.data_ontem)) %}
+          {% for i in itens %}
+          <tr class="{{ 'table-success' if grupo == 'Hoje' }}">
+            <td class="text-nowrap"><strong>{{ grupo }}</strong> <span class="text-muted small">{{ data_ref.strftime('%d/%m') }}</span></td>
+            <td><a href="{{ url_for('consulta_pedido', pedido_venda=i.pedido_venda) }}" class="fw-semibold text-decoration-none">{{ i.pedido_venda }}</a>
+              {% if i.via_logistica %}<i class="bi bi-arrow-repeat text-muted" title="Baixa vinda da Logística"></i>{% endif %}</td>
+            <td class="text-truncate" style="max-width: 14rem;" title="{{ i.cliente }}">{{ i.cliente }}</td>
+            <td>{{ i.transportadora or '—' }}</td>
+            <td>{{ i.frete_tipo if i.frete_tipo != 'NI' else '—' }}</td>
+            <td>{{ i.numero_nf or '—' }}</td>
+            <td class="text-end">{% if i.valor %}R$ {{ "{:,.2f}".format(i.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}{% else %}—{% endif %}</td>
+            <td>{% if i.prevista_coleta %}{% if i.atraso_coleta.status == 'atrasado' %}<span class="text-danger small">saiu {{ i.atraso_coleta.dias }}d após o previsto</span>{% else %}<span class="text-success small">no prazo</span>{% endif %}{% else %}<span class="text-muted small">sem previsão</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-muted small"><i class="bi bi-info-circle"></i> Nenhum material expedido hoje nem ontem.</div>
+    {% endif %}
+  </div>
+</div>
+
 <div class="card pn-sec pn-t-green" id="sec-pedidos" data-sec="pedidos">
   <div class="card-body">
     {# Quadrante dividido em dois (pedido do Bruno, 30/10/2026): à esquerda o que já

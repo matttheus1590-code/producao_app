@@ -45,6 +45,9 @@
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_logistica' %}active{% endif %}" href="{{ url_for('gestao_operacao_logistica') }}">
           <span>🚚 Expedição/Logística</span>
         </a>
+        <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_kanban_expedicao' %}active{% endif %}" href="{{ url_for('gestao_operacao_kanban_expedicao') }}">
+          <span>🗂️ Kanban Expedição</span>
+        </a>
         <a class="app-nav-link {% if request.endpoint == 'gestao_operacao_resultados' %}active{% endif %}" href="{{ url_for('gestao_operacao_resultados') }}">
           <span>📈 Resultados</span>
         </a>

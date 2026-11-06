@@ -4437,3 +4437,54 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 .op-grafico.op-grafico-sm { height: 190px; }
 .op-tv .op-grafico { height: 38vh; }
 .op-tv .op-rank td, .op-tv .op-rank th { font-size: 1.15rem; }
+
+/* ===== Kanban Expedição — parados (Fase extra, 06/11/2026) ===== */
+.kp-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; align-items: start; }
+@media (max-width: 991px) { .kp-board { grid-template-columns: 1fr; } }
+.kp-coluna { --kp-cor: #2f9e44; --kp-bg: #ebfbee; background: var(--kp-bg); border: 1px solid var(--bs-border-color); border-top: 4px solid var(--kp-cor); border-radius: .6rem; padding: .55rem; min-height: 8rem; }
+.kp-col-amarelo { --kp-cor: #f08c00; --kp-bg: #fff9db; }
+.kp-col-vermelho { --kp-cor: #e03131; --kp-bg: #fff0f0; }
+.kp-coluna-topo { display: flex; justify-content: space-between; align-items: flex-end; gap: .5rem; margin-bottom: .5rem; }
+.kp-coluna-titulo { font-weight: 700; font-size: .95rem; color: #212529; }
+.kp-coluna-titulo small { display: block; font-weight: 500; font-size: .72rem; color: var(--bs-secondary-color); }
+.kp-coluna-totais { text-align: right; line-height: 1.1; }
+.kp-coluna-n { display: block; font-size: 1.7rem; font-weight: 800; color: var(--kp-cor); }
+.kp-coluna-valor { font-size: .7rem; color: var(--bs-secondary-color); }
+.kp-coluna-corpo { display: flex; flex-direction: column; gap: .5rem; max-height: 70vh; overflow-y: auto; padding-right: 2px; }
+.kp-vazio { text-align: center; color: var(--bs-secondary-color); font-size: .8rem; padding: 1rem 0; }
+.kp-card { background: #fff; border: 1px solid var(--bs-border-color); border-left: 5px solid var(--kp-cor); border-radius: .5rem; padding: .5rem .6rem; font-size: .8rem; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.kp-card.kp-verde { border-left-color: #2f9e44; }
+.kp-card.kp-amarelo { border-left-color: #f08c00; }
+.kp-card.kp-vermelho { border-left-color: #e03131; }
+.kp-card.kp-muito-critico { background: #fff5f5; box-shadow: 0 0 0 2px #e03131 inset; }
+.kp-card-topo { display: flex; justify-content: space-between; align-items: center; gap: .4rem; }
+.kp-pedido { font-weight: 800; font-size: .95rem; }
+.kp-dias { font-weight: 700; font-size: .75rem; border-radius: 999px; padding: .1rem .5rem; white-space: nowrap; }
+.kp-dias-verde { background: #d3f9d8; color: #2b8a3e; }
+.kp-dias-amarelo { background: #ffec99; color: #8a5a00; }
+.kp-dias-vermelho { background: #e03131; color: #fff; }
+.kp-cliente { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kp-selos { display: flex; flex-wrap: wrap; gap: .25rem; margin: .25rem 0; }
+.kp-selo { font-size: .68rem; font-weight: 700; border-radius: .3rem; padding: .05rem .4rem; background: #e9ecef; color: #495057; }
+.kp-frete-cif { background: #343a40; color: #fff; }
+.kp-frete-fob { background: #868e96; color: #fff; }
+.kp-frete-ni { background: #f1f3f5; color: #868e96; }
+.kp-selo-nf { background: #7048e8; color: #fff; }
+.kp-selo-sem-nf { background: #fff3bf; color: #8a5a00; }
+.kp-selo-critico { background: #e03131; color: #fff; }
+.kp-linha { color: var(--bs-secondary-color); font-size: .74rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kp-rodape { display: flex; justify-content: space-between; align-items: center; margin-top: .3rem; gap: .4rem; }
+.kp-valor { font-weight: 700; }
+.kp-acoes { display: inline-flex; align-items: center; gap: .25rem; }
+.kp-matriz td a { text-decoration: none; font-weight: 700; }
+.kp-linha-ativa { background: rgba(13,110,253,.07); }
+.kp-roxo { color: #7048e8; }
+.kp-bolinha { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; vertical-align: middle; }
+.kp-b-verde { background: #2f9e44; } .kp-b-amarelo { background: #f08c00; } .kp-b-vermelho { background: #e03131; }
+.btn-purple-ativo { background: #7048e8; border-color: #7048e8; color: #fff; }
+.btn-purple-ativo:hover { background: #5f3dc4; color: #fff; }
+.op-tv .kp-coluna-corpo { max-height: none; overflow: visible; }
+.op-tv .kp-card { font-size: 1.05rem; } .op-tv .kp-pedido { font-size: 1.3rem; } .op-tv .kp-dias { font-size: 1rem; }
+.op-tv .kp-selo { font-size: .9rem; } .op-tv .kp-linha { font-size: 1rem; } .op-tv .kp-coluna-n { font-size: 2.6rem; }
+.op-tv .kp-coluna-titulo { font-size: 1.3rem; } .op-tv .kp-coluna-valor { font-size: .95rem; }
+@media (min-width: 1200px) { .kp-sete .op-kpis { grid-template-columns: repeat(7, minmax(0, 1fr)); } .op-tv.op-tudo .kp-sete .op-kpis, .op-tv .kp-sete .op-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }

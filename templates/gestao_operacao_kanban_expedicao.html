@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · Kanban Expedição · Gestão da Produção e Operação{% endblock %}
+
+{% from "_op_central_macros.html" import brl, kpis %}
+
+{% macro card_pedido(c, modo_tv) %}
+  <div class="kp-card kp-{{ c.sem }} {% if c.muito_critico %}kp-muito-critico{% endif %}">
+    <div class="kp-card-topo">
+      <span class="kp-pedido">{{ c.pedido_venda }}</span>
+      <span class="kp-dias kp-dias-{{ c.sem }}" title="Parado na expedição desde a liberação efetiva do PCP em {{ c.liberacao.strftime('%d/%m/%Y') }}">
+        <i class="bi bi-clock-history"></i> {{ c.dias }} dia{{ '' if c.dias == 1 else 's' }}
+      </span>
+    </div>
+    <div class="kp-cliente" title="{{ c.cliente }}">{{ c.cliente }}</div>
+    <div class="kp-selos">
+      <span class="kp-selo kp-frete-{{ c.frete_tipo|lower }}">{{ c.frete_tipo if c.frete_tipo != 'NI' else 'Frete ?' }}</span>
+      {% if c.tem_nf %}
+        <span class="kp-selo kp-selo-nf" title="NF emitida{% if c.data_nf %} em {{ c.data_nf.strftime('%d/%m/%Y') }}{% endif %}"><i class="bi bi-receipt"></i> NF {{ c.numero_nf or 'emitida' }}{% if c.dias_nf is not none %} · {{ c.dias_nf }}d{% endif %}</span>
+      {% else %}
+        <span class="kp-selo kp-selo-sem-nf"><i class="bi bi-hourglass-split"></i> sem NF</span>
+      {% endif %}
+      {% if c.muito_critico %}<span class="kp-selo kp-selo-critico">+10 dias</span>{% endif %}
+    </div>
+    <div class="kp-linha"><i class="bi bi-truck"></i> {{ c.transportadora or 'Sem transportadora' }}</div>
+    <div class="kp-linha {% if c.atraso_coleta.status in ('atrasado', 'atrasando') %}text-danger fw-semibold{% endif %}">
+      <i class="bi bi-calendar-event"></i>
+      {% if c.prevista_coleta %}Coleta prevista {{ c.prevista_coleta.strftime('%d/%m') }}{% if c.atraso_coleta.status in ('atrasado', 'atrasando') %} · {{ c.atraso_coleta.dias }}d de atraso{% endif %}{% else %}Sem coleta prevista{% endif %}
+    </div>
+    <div class="kp-rodape">
+      <span class="kp-valor">{{ brl(c.valor) if c.valor else '—' }}</span>
+      {% if not modo_tv %}
+      <span class="kp-acoes">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('consulta_pedido', pedido_venda=c.pedido_venda) }}" title="Consulta completa do pedido"><i class="bi bi-search"></i></a>
+        {% if current_user.role in ('ADMIN', 'PCP') %}
+          {% if c.via_logistica %}
+            <span class="badge text-bg-light border" title="A expedição deste pedido vem da Logística — a baixa é feita lá e aparece aqui sozinha"><i class="bi bi-arrow-repeat"></i> via Logística</span>
+          {% else %}
+            <form method="post" action="{{ url_for('gestao_operacao_marcar_expedido', pedido_id=c.id) }}" class="d-inline" onsubmit="return confirm('Marcar o pedido {{ c.pedido_venda }} como expedido hoje?');">
+              <button class="btn btn-sm btn-outline-success" type="submit" title="Dar baixa: marcar como expedido hoje"><i class="bi bi-box-arrow-right"></i> Expedir</button>
+            </form>
+          {% endif %}
+        {% endif %}
+      </span>
+      {% endif %}
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro bloco_central(k, modo_tv) %}
+  <div class="kp-sete">{{ kpis(k, modo_tv, "Parados na expedição") }}</div>
+
+  <section class="row g-3">
+    <div class="col-lg-6">
+      <div class="op-painel">
+        <div class="op-secao-titulo"><i class="bi bi-grid-3x3-gap"></i> Cruzamento · tipo de frete × nota fiscal {% if not modo_tv %}<span class="ms-auto fw-normal text-lowercase">clique num número pra filtrar</span>{% endif %}</div>
+        <div class="table-responsive">
+          <table class="op-rank kp-matriz">
+            <thead><tr><th>Frete</th><th class="text-end">Parados</th><th class="text-end">Sem NF</th><th class="text-end">Com NF</th><th class="text-end">Críticos</th><th class="text-end">Mais antigo</th></tr></thead>
+            <tbody>
+            {% for m in k.matriz %}
+              <tr class="{{ 'kp-linha-ativa' if m.ativo }}">
+                <td><strong>{{ m.rotulo }}</strong> <span class="text-muted small">{{ brl(m.valor) }}</span></td>
+                <td class="text-end">{% if modo_tv %}{{ m.total }}{% else %}<a href="{{ m.url_total }}">{{ m.total }}</a>{% endif %}</td>
+                <td class="text-end">{% if m.sem_nf %}{% if modo_tv %}{{ m.sem_nf }}{% else %}<a href="{{ m.url_sem }}">{{ m.sem_nf }}</a>{% endif %}{% else %}—{% endif %}</td>
+                <td class="text-end">{% if m.com_nf %}{% if modo_tv %}<strong class="kp-roxo">{{ m.com_nf }}</strong>{% else %}<a href="{{ m.url_com }}" class="kp-roxo fw-bold">{{ m.com_nf }}</a>{% endif %}{% else %}—{% endif %}</td>
+                <td class="text-end">{% if m.criticos %}<span class="op-pill op-pill-danger">{{ m.criticos }}</span>{% else %}—{% endif %}</td>
+                <td class="text-end">{{ (m.antigo ~ ' d') if m.antigo is not none else '—' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-center text-muted py-3">Nenhum pedido parado na expedição.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="op-painel">
+        <div class="op-secao-titulo"><i class="bi bi-info-circle"></i> Como ler este quadro</div>
+        <ul class="small mb-0 ps-3">
+          <li>Pedido <strong>liberado pelo PCP</strong> e <strong>sem data de embarque</strong> = o material está na expedição.</li>
+          <li>Os dias contam da <strong>liberação efetiva</strong> até hoje.</li>
+          <li><span class="kp-bolinha kp-b-verde"></span> 0 a 1 dia · <span class="kp-bolinha kp-b-amarelo"></span> 2 a 4 dias · <span class="kp-bolinha kp-b-vermelho"></span> 5 dias ou mais.</li>
+          <li>Selo <span class="kp-selo kp-selo-nf"><i class="bi bi-receipt"></i> NF</span> roxo = nota já emitida: está pronto pra sair e esperando coleta.</li>
+          <li>Quando o embarque é registrado (na Logística ou aqui em <em>Expedir</em>), o pedido sai do quadro sozinho.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="op-secao-titulo"><i class="bi bi-kanban"></i> Quadro · {{ k.total_visiveis }} pedido(s){% if k.filtros_ativos %} no filtro (de {{ k.total_base }}){% endif %}</div>
+    <div class="kp-board">
+      {% for col in k.colunas %}
+      <div class="kp-coluna kp-col-{{ col.chave }}" id="col-{{ col.chave }}">
+        <div class="kp-coluna-topo">
+          <div class="kp-coluna-titulo">{{ col.emoji }} {{ col.titulo }} <small>{{ col.faixa }}</small></div>
+          <div class="kp-coluna-totais"><span class="kp-coluna-n">{{ col.total }}</span><span class="kp-coluna-valor">{{ brl(col.valor) }}{% if col.com_nf %} · {{ col.com_nf }} c/ NF{% endif %}</span></div>
+        </div>
+        <div class="kp-coluna-corpo">
+          {% for c in (col.cards[:8] if modo_tv else col.cards) %}{{ card_pedido(c, modo_tv) }}{% else %}
+            <div class="kp-vazio">Nenhum pedido aqui.</div>
+          {% endfor %}
+          {% if modo_tv and col.cards|length > 8 %}<div class="kp-vazio">+ {{ col.cards|length - 8 }} pedido(s)</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+{% endmacro %}
+
+{% block content %}
+{% if not modo_tv %}{% include "_gestao_operacao_subnav.html" with context %}{% endif %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-kanban"></i> Kanban · Parados na Expedição {% if modo_tv %}<span class="badge text-bg-dark align-middle fs-6">Modo TV</span>{% endif %}</h4>
+    <div class="text-muted small">
+      Material já liberado pelo PCP e ainda sem embarque · atualizado em {{ atualizado_em }}
+      {% if logistica_st.configurado %}· Logística sincronizada {% if logistica_st.ultimo_sucesso %}em {{ logistica_st.ultimo_sucesso.strftime('%d/%m %H:%M') }}{% else %}(aguardando 1ª sincronização){% endif %}{% endif %}
+    </div>
+  </div>
+  <div class="d-flex align-items-center flex-wrap gap-2">
+    {% if modo_tv %}
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Kanban · Parados na Expedição"><i class="bi bi-arrows-fullscreen"></i> Tela cheia</button>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_sem_tv }}"><i class="bi bi-x-lg"></i> Sair do modo TV</a>
+    {% else %}
+      <a class="btn btn-outline-dark btn-sm" href="{{ url_tv }}" title="Painel grande para TV — atualiza sozinho"><i class="bi bi-tv"></i> Modo TV</a>
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Kanban · Parados na Expedição" title="Abre o quadro inteiro em tela cheia (Esc para sair)"><i class="bi bi-arrows-fullscreen"></i> Tela cheia</button>
+    {% endif %}
+  </div>
+</div>
+
+{% if not modo_tv %}
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="d-flex align-items-center flex-wrap gap-2 m-0">
+      <span class="small text-muted"><i class="bi bi-funnel"></i> Ver:</span>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Tipo de frete">
+        {% set f = k.filtros %}
+        <a class="btn {{ 'btn-dark' if not f.frete else 'btn-outline-dark' }}" href="{{ url_for('gestao_operacao_kanban_expedicao', nf=f.nf or None, q=f.q or None) }}">Todos os fretes</a>
+        <a class="btn {{ 'btn-dark' if f.frete == 'CIF' else 'btn-outline-dark' }}" href="{{ url_for('gestao_operacao_kanban_expedicao', frete='CIF', nf=f.nf or None, q=f.q or None) }}">CIF</a>
+        <a class="btn {{ 'btn-dark' if f.frete == 'FOB' else 'btn-outline-dark' }}" href="{{ url_for('gestao_operacao_kanban_expedicao', frete='FOB', nf=f.nf or None, q=f.q or None) }}">FOB</a>
+      </div>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Nota fiscal">
+        <a class="btn {{ 'btn-purple-ativo' if not f.nf else 'btn-outline-secondary' }}" href="{{ url_for('gestao_operacao_kanban_expedicao', frete=f.frete or None, q=f.q or None) }}">Com e sem NF</a>
+        <a class="btn {{ 'btn-purple-ativo' if f.nf == 'com' else 'btn-outline-secondary' }}" href="{{ url_for('gestao_operacao_kanban_expedicao', frete=f.frete or None, nf='com', q=f.q or None) }}"><i class="bi bi-receipt"></i> Com NF emitida</a>
+        <a class="btn {{ 'btn-purple-ativo' if f.nf == 'sem' else 'btn-outline-secondary' }}" href="{{ url_for('gestao_operacao_kanban_expedicao', frete=f.frete or None, nf='sem', q=f.q or None) }}">Sem NF</a>
+      </div>
+      {% if f.frete %}<input type="hidden" name="frete" value="{{ f.frete }}">{% endif %}
+      {% if f.nf %}<input type="hidden" name="nf" value="{{ f.nf }}">{% endif %}
+      <div class="input-group input-group-sm ms-auto" style="max-width: 18rem;">
+        <input type="search" name="q" value="{{ f.q }}" class="form-control" placeholder="Pedido ou cliente…">
+        <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-search"></i></button>
+      </div>
+      {% if k.filtros_ativos %}<a class="btn btn-sm btn-outline-primary" href="{{ k.url_limpar }}"><i class="bi bi-x-circle"></i> Limpar filtros</a>{% endif %}
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="op-tudo {% if modo_tv %}op-tv{% endif %}" id="op360Tudo">
+  {{ bloco_central(k, modo_tv) }}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if modo_tv %}
+<script>
+(function () {
+  // Modo TV: atualiza os números sozinho a cada 60s SEM recarregar a página (a tela cheia não se perde).
+  function atualizar() {
+    fetch(window.location.href, { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+      .then(function (html) {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const novo = doc.getElementById("op360Tudo");
+        const atual = document.getElementById("op360Tudo");
+        if (novo && atual) atual.innerHTML = novo.innerHTML;
+      })
+      .catch(function () {});
+  }
+  setInterval(atualizar, 60000);
+  document.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      if (!document.querySelector(".tela-cheia-overlay")) {
+        const b = document.querySelector('[data-tela-cheia-alvo="#op360Tudo"]');
+        if (b) b.click();
+      }
+    }, 300);
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

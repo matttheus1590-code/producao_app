@@ -419,6 +419,7 @@ def _contexto_painel(args, ultima_visita=None):
         resumo_mes_anterior_pcp=resumo_mes_anterior_pcp,
         mini_risco_prazos=mini_risco_prazos,
         risco_parados=risco_parados,
+        expedidos_recentes=_expedidos_recentes_painel(),
         lead_time_agrupado=lead_time_agrupado,
         lead_time_medio=_lead_time_medio_dias(),
         otd=_otd_percentual(),
@@ -14361,6 +14362,208 @@ def _kanban_expedicao():
     return colunas
 
 
+# ---------------------------------------------------------------------------
+# Kanban "Parados na Expedição" + aviso de expedidos no Painel (pedido do
+# Bruno, 06/11/2026). Regra de negócio dele: pedido com Liberação Efetiva do
+# PCP e SEM data de expedição/embarque = o material está fisicamente na
+# Expedição. O Kanban mede há quantos dias ele está lá (a partir da liberação
+# efetiva) e cruza com tipo de frete (CIF/FOB) e com a NF emitida.
+# ---------------------------------------------------------------------------
+_KANBAN_COLUNAS_PARADOS = [
+    {"chave": "verde", "titulo": "Recém-liberados", "faixa": "0 a 1 dia", "emoji": "🟢"},
+    {"chave": "amarelo", "titulo": "Atenção", "faixa": "2 a 4 dias", "emoji": "🟡"},
+    {"chave": "vermelho", "titulo": "Críticos", "faixa": "5 dias ou mais", "emoji": "🔴"},
+]
+_KANBAN_DIAS_MUITO_CRITICO = 10
+_FRETE_ROTULOS = {"CIF": "CIF", "FOB": "FOB", "NI": "Frete não informado"}
+
+
+def _frete_tipo(frete):
+    """Normaliza o texto livre de frete do pedido em CIF / FOB / NI."""
+    t = (frete or "").strip().upper()
+    if "CIF" in t:
+        return "CIF"
+    if "FOB" in t:
+        return "FOB"
+    return "NI"
+
+
+def _parse_filtros_kanban_parados(args):
+    frete = (args.get("frete") or "").strip().upper()
+    nf = (args.get("nf") or "").strip().lower()
+    return {
+        "frete": frete if frete in ("CIF", "FOB", "NI") else "",
+        "nf": nf if nf in ("com", "sem") else "",
+        "q": (args.get("q") or "").strip(),
+    }
+
+
+def _kanban_parados_expedicao(args, hoje=None):
+    """Todos os pedidos parados na Expedição + visão cruzada.
+
+    "Parado" = ainda não chegou no cliente, tem Liberação Efetiva (a mesma
+    fonte do Kanban antigo: Produção manda, senão o campo digitado em
+    Operação) e NÃO tem Data Real de Coleta/Embarque. Dias parado = hoje −
+    liberação efetiva (semáforo próprio: _semaforo_dias_parado)."""
+    hoje = hoje or _hoje_brt()
+    filtros = _parse_filtros_kanban_parados(args)
+    candidatos = PedidoOperacao.query.filter(
+        PedidoOperacao.go_data_entregue_cliente.is_(None),
+        PedidoOperacao.go_data_pedido_expedido.is_(None),
+    ).all()
+    liberacao_pcp = _liberacao_pcp_por_pedido_venda([go.pedido_venda for go in candidatos])
+    sincronizados = set()
+    if logistica_api.configurado():
+        sincronizados = {r[0] for r in db.session.query(LogisticaSync.pedido_venda_norm).filter_by(cancelado=False).all()}
+
+    base = []
+    for go in candidatos:
+        chave = _normalizar_pedido_venda(go.pedido_venda)
+        liberacao = (liberacao_pcp.get(chave) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
+        if not liberacao:
+            continue  # ainda não saiu da produção: não está na Expedição
+        dias = max((hoje - liberacao).days, 0)
+        tem_nf = bool(go.go_numero_nf or go.go_data_emissao_nf)
+        base_log = logistica_api.base_do_pedido(go.pedido_venda) if sincronizados else None
+        base.append({
+            "id": go.id,
+            "pedido_venda": chave or go.pedido_venda or str(go.id),
+            "cliente": go.cliente,
+            "vendedor": go.vendedor,
+            "liberacao": liberacao,
+            "dias": dias,
+            "sem": _semaforo_dias_parado(dias),
+            "muito_critico": dias >= _KANBAN_DIAS_MUITO_CRITICO,
+            "valor": go.go_valor_pedido_operacao or 0.0,
+            "frete_tipo": _frete_tipo(go.frete),
+            "tem_nf": tem_nf,
+            "numero_nf": go.go_numero_nf,
+            "data_nf": go.go_data_emissao_nf,
+            "dias_nf": (hoje - go.go_data_emissao_nf).days if go.go_data_emissao_nf else None,
+            "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
+            "prevista_coleta": go.go_data_prevista_coleta,
+            "atraso_coleta": _prevista_x_realizada(go.go_data_prevista_coleta, None),
+            "observacao": go.go_obs_operacao,
+            "via_logistica": bool(base_log and base_log in sincronizados),
+        })
+
+    def url(**kw):
+        params = {k: v for k, v in {**filtros, **kw}.items() if v}
+        if args.get("tv") == "1" and "tv" not in kw:
+            params["tv"] = 1
+        return url_for("gestao_operacao_kanban_expedicao", **params)
+
+    def alterna(campo, valor):
+        return url(**{campo: "" if filtros[campo] == valor else valor})
+
+    def soma(lista):
+        return {"n": len(lista), "valor": sum(c["valor"] for c in lista)}
+
+    cif = [c for c in base if c["frete_tipo"] == "CIF"]
+    fob = [c for c in base if c["frete_tipo"] == "FOB"]
+    com_nf = [c for c in base if c["tem_nf"]]
+    sem_nf = [c for c in base if not c["tem_nf"]]
+    criticos = [c for c in base if c["sem"] == "vermelho"]
+    mais_antigo = max(base, key=lambda c: c["dias"]) if base else None
+    sel_frete, sel_nf = filtros["frete"], filtros["nf"]
+
+    cor_sem = {"verde": "success", "amarelo": "warning", "vermelho": "danger"}
+    kpis = [
+        {"chave": "total", "titulo": "Parados na expedição", "valor": len(base), "sufixo": _fmt_brl_curto(soma(base)["valor"]) + " em pedidos",
+         "cor": "primary", "icone": "bi-box-seam", "url": url(frete="", nf=""), "ativo": not sel_frete and not sel_nf},
+        {"chave": "criticos", "titulo": "Críticos · 5 dias ou +", "valor": len(criticos), "sufixo": _fmt_brl_curto(soma(criticos)["valor"]) + " parados",
+         "cor": "danger" if criticos else "success", "icone": "bi-exclamation-octagon", "url": "#col-vermelho", "ativo": False},
+        {"chave": "cif", "titulo": "Parados CIF", "valor": len(cif), "sufixo": _fmt_brl_curto(soma(cif)["valor"]),
+         "cor": "dark", "icone": "bi-truck", "url": alterna("frete", "CIF"), "ativo": sel_frete == "CIF"},
+        {"chave": "fob", "titulo": "Parados FOB", "valor": len(fob), "sufixo": _fmt_brl_curto(soma(fob)["valor"]),
+         "cor": "secondary", "icone": "bi-person-walking", "url": alterna("frete", "FOB"), "ativo": sel_frete == "FOB"},
+        {"chave": "com_nf", "titulo": "Com NF emitida", "valor": len(com_nf), "sufixo": _fmt_brl_curto(soma(com_nf)["valor"]) + " prontos pra sair",
+         "cor": "purple", "icone": "bi-receipt", "url": alterna("nf", "com"), "ativo": sel_nf == "com"},
+        {"chave": "sem_nf", "titulo": "Sem NF (faturar)", "valor": len(sem_nf), "sufixo": _fmt_brl_curto(soma(sem_nf)["valor"]),
+         "cor": "warning" if sem_nf else "success", "icone": "bi-hourglass-split", "url": alterna("nf", "sem"), "ativo": sel_nf == "sem"},
+        {"chave": "antigo", "titulo": "Mais antigo parado", "valor": f"{mais_antigo['dias']} d" if mais_antigo else "—",
+         "sufixo": (f"pedido {mais_antigo['pedido_venda']}" if mais_antigo else "nenhum parado"),
+         "cor": cor_sem.get(mais_antigo["sem"], "success") if mais_antigo else "success", "icone": "bi-clock-history", "url": "#col-vermelho", "ativo": False},
+    ]
+
+    matriz = []
+    for tipo in ("CIF", "FOB", "NI"):
+        linha = [c for c in base if c["frete_tipo"] == tipo]
+        if not linha and tipo == "NI":
+            continue
+        com = [c for c in linha if c["tem_nf"]]
+        sem = [c for c in linha if not c["tem_nf"]]
+        antigo = max(linha, key=lambda c: c["dias"]) if linha else None
+        matriz.append({
+            "tipo": tipo, "rotulo": _FRETE_ROTULOS[tipo], "total": len(linha), "valor": soma(linha)["valor"],
+            "com_nf": len(com), "sem_nf": len(sem),
+            "criticos": sum(1 for c in linha if c["sem"] == "vermelho"),
+            "antigo": antigo["dias"] if antigo else None,
+            "url_total": url(frete=tipo, nf=""), "url_com": url(frete=tipo, nf="com"), "url_sem": url(frete=tipo, nf="sem"),
+            "ativo": sel_frete == tipo,
+        })
+
+    q = filtros["q"].lower()
+    visiveis = [
+        c for c in base
+        if (not sel_frete or c["frete_tipo"] == sel_frete)
+        and (not sel_nf or (c["tem_nf"] if sel_nf == "com" else not c["tem_nf"]))
+        and (not q or q in (c["pedido_venda"] or "").lower() or q in (c["cliente"] or "").lower())
+    ]
+    colunas = []
+    for col in _KANBAN_COLUNAS_PARADOS:
+        cards = sorted((c for c in visiveis if c["sem"] == col["chave"]), key=lambda c: (-c["dias"], -c["valor"]))
+        colunas.append({**col, "cards": cards, "total": len(cards), "valor": soma(cards)["valor"],
+                        "com_nf": sum(1 for c in cards if c["tem_nf"])})
+    return {
+        "filtros": filtros, "kpis": kpis, "matriz": matriz, "colunas": colunas,
+        "total_base": len(base), "total_visiveis": len(visiveis),
+        "filtros_ativos": bool(sel_frete or sel_nf or q),
+        "url_limpar": url(frete="", nf="", q=""),
+    }
+
+
+def _expedidos_recentes_painel(hoje=None):
+    """Aviso do Painel: o que saiu da Expedição hoje e ontem, a partir da Data
+    Real de Coleta/Embarque (go_data_pedido_expedido) — o mesmo campo que a
+    integração com a Logística preenche sozinha. `via_logistica` marca o que
+    veio de lá (somente leitura no site)."""
+    hoje = hoje or _hoje_brt()
+    ontem = hoje - timedelta(days=1)
+    pedidos = (PedidoOperacao.query
+               .filter(PedidoOperacao.go_data_pedido_expedido.in_([hoje, ontem]))
+               .order_by(PedidoOperacao.go_data_pedido_expedido.desc(), PedidoOperacao.cliente).all())
+    sincronizados = set()
+    if logistica_api.configurado():
+        sincronizados = {r[0] for r in db.session.query(LogisticaSync.pedido_venda_norm).filter_by(cancelado=False).all()}
+    dias = {"hoje": [], "ontem": []}
+    for go in pedidos:
+        base_log = logistica_api.base_do_pedido(go.pedido_venda) if sincronizados else None
+        item = {
+            "id": go.id,
+            "pedido_venda": _normalizar_pedido_venda(go.pedido_venda) or go.pedido_venda or str(go.id),
+            "cliente": go.cliente,
+            "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
+            "frete_tipo": _frete_tipo(go.frete),
+            "numero_nf": go.go_numero_nf,
+            "valor": go.go_valor_pedido_operacao or 0.0,
+            "prevista_coleta": go.go_data_prevista_coleta,
+            "atraso_coleta": _prevista_x_realizada(go.go_data_prevista_coleta, go.go_data_pedido_expedido),
+            "prevista_entrega": go.go_data_prevista_entrega,
+            "via_logistica": bool(base_log and base_log in sincronizados),
+        }
+        dias["hoje" if go.go_data_pedido_expedido == hoje else "ontem"].append(item)
+    st = _logistica_status_resumo()
+    return {
+        "hoje": dias["hoje"], "ontem": dias["ontem"],
+        "total": len(dias["hoje"]) + len(dias["ontem"]),
+        "valor_hoje": sum(i["valor"] for i in dias["hoje"]),
+        "logistica_ok": bool(st["configurado"] and st["ultimo_sucesso"]),
+        "ultimo_sync": st["ultimo_sucesso"],
+        "data_hoje": hoje, "data_ontem": ontem,
+    }
+
+
 def _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao):
     """Pedido do Bruno (09/09/2026, tela Consulta Pedido): 2 lead times em
     dias corridos, sempre calculados a partir da Data de inclusão do
@@ -25627,6 +25830,27 @@ def register_routes(app):
         _dados_relatorio_expedicao_diario/_gerar_pdf_expedicao_diario."""
         linhas = _dados_relatorio_expedicao_diario()
         return _gerar_pdf_expedicao_diario(linhas)
+
+    @app.route("/gestao-operacao/kanban-expedicao")
+    @login_required
+    def gestao_operacao_kanban_expedicao():
+        """Kanban "Parados na Expedição" (pedido do Bruno, 06/11/2026): todo
+        pedido com Liberação Efetiva do PCP e sem data de embarque está na
+        Expedição; colunas por TEMPO PARADO (verde 0-1d, amarelo 2-4d,
+        vermelho 5d+), cruzado com CIF/FOB e NF emitida. Modo TV (?tv=1)
+        com atualização automática, igual às outras telas do grupo."""
+        dados = _kanban_parados_expedicao(request.args)
+        modo_tv = request.args.get("tv") == "1"
+        params = {k: v for k, v in dados["filtros"].items() if v}
+        return render_template(
+            "gestao_operacao_kanban_expedicao.html",
+            k=dados, modo_tv=modo_tv,
+            url_tv=url_for("gestao_operacao_kanban_expedicao", tv=1, **params),
+            url_sem_tv=url_for("gestao_operacao_kanban_expedicao", **params),
+            atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"),
+            logistica_st=_logistica_status_resumo(),
+            hoje=_hoje_brt(),
+        )
 
     @app.route("/gestao-operacao/<int:pedido_id>/marcar-expedido", methods=["POST"])
     @requer_role("ADMIN", "PCP")
