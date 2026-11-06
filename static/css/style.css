@@ -4421,3 +4421,13 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
   .op-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .op-tv .op-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
+@media (min-width: 1200px) {
+  .op-pipeline-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .op-pipeline-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.tabela-operacao-360 thead tr.op-grupos-cab th.op-g-log { background-color: #1c7ed6; }
+.op-rank { width: 100%; font-size: 0.8rem; }
+.op-rank th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bs-secondary-color); font-weight: 700; border-bottom: 1px solid var(--bs-border-color); padding: .25rem .35rem; }
+.op-rank td { padding: .3rem .35rem; border-bottom: 1px dashed var(--bs-border-color); font-variant-numeric: tabular-nums; }
+.op-rank td:first-child { font-weight: 600; }
+.op-tv .op-rank { font-size: 1.05rem; }

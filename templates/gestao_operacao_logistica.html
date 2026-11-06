@@ -1,195 +1,300 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat_card %}
-{% block title %}Gestão Operação · Logística / NF · Gestão da Produção e Operação{% endblock %}
+{% block title %}Gestão Operação · Expedição / Logística · Gestão da Produção e Operação{% endblock %}
+
+{% from "_op_central_macros.html" import brl, ocultos_central, kpis, pipeline, fila, agrupamentos, barra_selecao %}
+
+{# Ranking de transportadoras (pedidos, entregas no prazo, lead time, atrasos em aberto). #}
+{% macro ranking(central, modo_tv) %}
+  <div class="op-painel">
+    <div class="op-secao-titulo"><i class="bi bi-trophy"></i> Desempenho por transportadora <span class="ms-auto fw-normal text-lowercase">ordenado por atrasos em aberto</span></div>
+    {% if central.ranking %}
+    <div class="table-responsive">
+      <table class="op-rank">
+        <thead><tr><th>Transportadora</th><th class="text-end">Pedidos</th><th class="text-end">Em trânsito</th><th class="text-end">Entregues</th><th class="text-end">No prazo</th><th class="text-end">Lead time</th><th class="text-end">Atrasos</th></tr></thead>
+        <tbody>
+          {% for r in (central.ranking[:5] if modo_tv else central.ranking) %}
+          <tr>
+            <td>{% if modo_tv %}{{ r.nome }}{% else %}<a href="{{ r.url }}" class="text-decoration-none text-reset" title="Ver só os pedidos desta transportadora">{{ r.nome }}</a>{% endif %}</td>
+            <td class="text-end">{{ r.pedidos }}</td>
+            <td class="text-end">{{ r.em_transito }}</td>
+            <td class="text-end">{{ r.entregues }}</td>
+            <td class="text-end">{% if r.pct_prazo is not none %}<span class="{{ 'text-success' if r.pct_prazo >= 90 else ('text-warning' if r.pct_prazo >= 70 else 'text-danger') }} fw-semibold">{{ r.pct_prazo|string|replace('.', ',') }}%</span>{% else %}—{% endif %}</td>
+            <td class="text-end">{{ (r.lt_medio|string|replace('.', ',') ~ " d") if r.lt_medio is not none else "—" }}</td>
+            <td class="text-end">{% if r.atrasados %}<span class="op-pill op-pill-danger">{{ r.atrasados }}</span>{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="text-muted small py-3 text-center">Nenhum pedido com transportadora cadastrada neste recorte.</div>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{% macro bloco_central(central, modo_tv) %}
+  {{ kpis(central, modo_tv, "Indicadores da expedição") }}
+  {{ pipeline(central, modo_tv, "Fluxo da expedição · da fábrica ao cliente") }}
+  <section class="row g-3">
+    <div class="col-lg-7">{{ fila(central, modo_tv, "Fila de ação · expedição e transporte", "pedido(s) atrasado(s)/em risco") }}</div>
+    <div class="col-lg-5">
+      {{ agrupamentos([
+        ("transportadora", "Transportadora", central.grupos.transportadora),
+        ("regiao", "Região", central.grupos.regiao),
+        ("uf", "UF", central.grupos.uf),
+        ("frete", "Frete", central.grupos.frete)], modo_tv, "Carteira em logística · agrupamentos") }}
+    </div>
+  </section>
+  <section>{{ ranking(central, modo_tv) }}</section>
+{% endmacro %}
+
 {% block content %}
+{% set ncols = 20 if ve_pd_qualidade_custos else 18 %}
 
-{% include "_gestao_operacao_subnav.html" with context %}
+{% if not modo_tv %}{% include "_gestao_operacao_subnav.html" with context %}{% endif %}
 
-{# Kanban Expedição (cards visuais) removido a pedido do Bruno (28/09/2026) — o
-   acompanhamento desses pedidos passa a ser feito pela Operação 360. O total
-   "Aguardando expedição" do painel dinâmico abaixo continua calculado do
-   mesmo jeito (soma aguardando_nf + aguardando_coleta), só não vira mais
-   cards aqui. #}
-{% set _go_kanban_total = (kanban_expedicao.aguardando_nf|length) + (kanban_expedicao.aguardando_coleta|length) %}
-{% set SEMAFORO_LABEL_LOGISTICA = {"vermelho": "Atrasado", "amarelo": "Alerta de atraso", "verde": "Entregue no prazo", "cinza": "Sem sinal de atraso"} %}
-
-<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-  <h4 class="mb-0"><i class="bi bi-truck"></i> Logística / Nota Fiscal</h4>
-  <div class="d-flex align-items-center gap-2">
-    <span class="text-muted small">{{ total_filtrado }} pedido(s)</span>
-    <div class="d-flex gap-2">
-      <a href="{{ url_for('gestao_operacao_logistica_xlsx', **filtros) }}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-file-earmark-excel"></i> Excel
-      </a>
-      <a href="{{ url_for('gestao_operacao_logistica_pdf', **filtros) }}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-file-earmark-pdf"></i> PDF
-      </a>
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-truck"></i> Expedição / Logística {% if modo_tv %}<span class="badge text-bg-dark align-middle fs-6">Modo TV</span>{% endif %}</h4>
+    <div class="text-muted small">Central de expedição · Faturamento → Coleta → Transporte → Entrega · atualizado em {{ atualizado_em }}
+      {% if not modo_tv %}
+        {% if logistica_st.configurado and current_user.role in ('ADMIN', 'PCP') %}
+        · <a href="{{ url_for('integracao_logistica') }}"><i class="bi bi-plug"></i> Integração com a Logística:
+          {% if logistica_st.ultimo_erro %}<span class="text-warning">indisponível</span>{% else %}<span class="text-success">ativa</span>{% endif %}
+          · última sincronização {{ logistica_st.ultimo_sucesso.strftime("%d/%m %H:%M") if logistica_st.ultimo_sucesso else "—" }}</a>
+        {% elif current_user.role in ('ADMIN', 'PCP') %}
+        · <a href="{{ url_for('integracao_logistica') }}" class="text-muted"><i class="bi bi-plug"></i> Integração com a Logística (desligada)</a>
+        {% endif %}
+      {% endif %}
     </div>
   </div>
-</div>
-<p class="text-muted small mb-3">Emissão de nota fiscal, expedição e entrega de cada pedido.
-  {% if logistica_st.configurado and current_user.role in ('ADMIN', 'PCP') %}
-  <a href="{{ url_for('integracao_logistica') }}" class="ms-2"><i class="bi bi-plug"></i> Integração com a Logística:
-    {% if logistica_st.ultimo_erro %}<span class="text-warning">indisponível</span>{% else %}<span class="text-success">ativa</span>{% endif %}
-    · última sincronização {{ logistica_st.ultimo_sucesso.strftime("%d/%m %H:%M") if logistica_st.ultimo_sucesso else "—" }}</a>
-  {% elif current_user.role in ('ADMIN', 'PCP') %}
-  <a href="{{ url_for('integracao_logistica') }}" class="ms-2 text-muted"><i class="bi bi-plug"></i> Integração com a Logística (desligada)</a>
-  {% endif %}
-</p>
-
-{% set endpoint_limpar = "gestao_operacao_logistica" %}
-<form method="get">
-  {% include "_gestao_operacao_filtros.html" %}
-</form>
-
-<div class="card mb-3">
-  <div class="card-body">
-    <div class="text-muted small mb-2">
-      <i class="bi bi-graph-up"></i> Painel dinâmico — expedição e frete do conjunto filtrado acima ({{ painel_operacao_logistica.total_pedidos }} pedido(s))
-    </div>
-    <div class="row g-2 mb-3">
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("Aguardando expedição", _go_kanban_total, sufixo="pedido(s), site inteiro") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("Lead time médio de frete", (painel_operacao_logistica.lead_time_frete_medio ~ "d") if painel_operacao_logistica.lead_time_frete_medio is not none else "—", sufixo=painel_operacao_logistica.n_lead_time_frete ~ " pedido(s) com as 2 datas") }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("NFs emitidas no recorte", painel_operacao_logistica.nfs_emitidas) }}
-      </div>
-      <div class="col-6 col-md-4 col-lg-2">
-        {{ stat_card("Expedidos, sem confirmação de entrega", painel_operacao_logistica.em_transito, sufixo="em trânsito") }}
-      </div>
-    </div>
-
-    <div class="d-flex flex-wrap gap-2 mb-3">
-      <span class="badge rounded-pill text-bg-secondary py-2 px-3">
-        <i class="bi bi-hourglass-split"></i> Aguardando NF: {{ kanban_expedicao.aguardando_nf|length }}
-      </span>
-      <span class="badge rounded-pill text-bg-info py-2 px-3">
-        <i class="bi bi-box-seam"></i> Aguardando coleta: {{ kanban_expedicao.aguardando_coleta|length }}
-      </span>
-      <span class="badge rounded-pill text-bg-success py-2 px-3">
-        <i class="bi bi-truck"></i> Expedido hoje: {{ kanban_expedicao.expedido_hoje|length }}
-      </span>
-      <span class="text-muted small align-self-center">(site inteiro, não segue o filtro acima — ver Operação 360 pra detalhe por pedido)</span>
-    </div>
-
-    <div class="row g-3">
-      <div class="col-lg-6">
-        <h6 class="text-muted small mb-2">Distribuição de Lead Time de frete</h6>
-        <canvas id="graficoLeadTimeFrete" height="140"></canvas>
-      </div>
-      <div class="col-lg-6">
-        <h6 class="text-muted small mb-2">Lead time médio de frete por região</h6>
-        {% if painel_operacao_logistica.lead_time_frete_por_regiao %}
-          <canvas id="graficoLeadTimeRegiao" height="140"></canvas>
-        {% else %}
-          <p class="text-muted small mb-0">Sem pedidos com lead time de frete e estado preenchido no recorte atual.</p>
-        {% endif %}
-      </div>
-    </div>
-
-    {% if painel_operacao_logistica.lead_time_frete_por_uf %}
-    <div class="row g-3 mt-1">
-      <div class="col-12">
-        <h6 class="text-muted small mb-2">Lead time médio de frete por UF <span class="fw-normal">(do mais lento pro mais rápido, só UFs com dado no recorte)</span></h6>
-        <div class="table-responsive">
-          <table class="table table-sm table-hover align-middle bg-white mb-0">
-            <thead class="table-light">
-              <tr>
-                <th>UF</th>
-                <th>Região</th>
-                <th>Lead time médio</th>
-                <th>Pedido(s) com dado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for linha in painel_operacao_logistica.lead_time_frete_por_uf %}
-              <tr>
-                <td>{{ linha.uf }}</td>
-                <td>{{ linha.regiao }}</td>
-                <td>{{ linha.media }}d</td>
-                <td>{{ linha.total }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+  <div class="d-flex align-items-center flex-wrap gap-2">
+    {% if modo_tv %}
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Expedição / Logística · Modo TV"><i class="bi bi-arrows-fullscreen"></i> Tela cheia</button>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_sem_tv }}"><i class="bi bi-x-lg"></i> Sair do modo TV</a>
+    {% else %}
+      <a class="btn btn-outline-dark btn-sm" href="{{ url_tv }}" title="Painel grande para TV da expedição — atualiza sozinho a cada minuto"><i class="bi bi-tv"></i> Modo TV</a>
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Expedição / Logística" title="Abre a central inteira em tela cheia (Esc para sair)">
+        <i class="bi bi-arrows-fullscreen"></i> Tela cheia
+      </button>
+      <div class="dropdown">
+        <button class="btn btn-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-file-earmark-bar-graph"></i> Relatórios
+        </button>
+        <div class="dropdown-menu dropdown-menu-end p-2" style="min-width: 19rem;">
+          <a class="dropdown-item" href="{{ url_for('gestao_operacao_logistica_pdf', **filtros_url) }}"><i class="bi bi-file-earmark-pdf"></i> PDF da tela (com a seleção atual)</a>
+          <a class="dropdown-item" href="{{ url_for('gestao_operacao_logistica_xlsx', **filtros_url) }}"><i class="bi bi-file-earmark-excel"></i> Excel da tela (com a seleção atual)</a>
+          <a class="dropdown-item" href="{{ url_for('gestao_operacao_relatorio_expedicao_pdf') }}"><i class="bi bi-clipboard-check"></i> Relatório diário da Expedição (PDF · 1 página)</a>
         </div>
       </div>
-    </div>
     {% endif %}
   </div>
 </div>
 
-<p class="text-muted small mb-2">
-  <i class="bi bi-palette"></i> Linha colorida pelo prazo:
-  <span class="badge text-bg-danger">Atrasado</span>
-  <span class="badge text-bg-warning text-dark">Alerta de atraso</span>
-  <span class="badge" style="background-color:#7ee495;color:#000;">Entregue no prazo</span>
-  <span class="badge text-bg-light text-dark border">Sem sinal de atraso</span>
-</p>
-<div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white tabela-logistica">
-    <thead class="table-warning">
-      <tr>
-        <th>Pedido</th>
-        <th>Cliente</th>
-        <th>Nº NF</th>
-        <th>Emissão NF</th>
-        <th>Prevista coleta</th>
-        <th>Expedido em</th>
-        <th>Transportadora</th>
-        <th>Prevista entrega</th>
-        <th>Real entrega</th>
-        <th>Lead time frete</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for p in pedidos %}
-      {% set _sem = semaforo_por_pedido.get(p.id, "cinza") %}
-      <tr class="linha-logistica-{{ _sem }}" title="{{ SEMAFORO_LABEL_LOGISTICA.get(_sem, _sem) }}">
-        <td>{{ p.pedido_venda or "—" }}</td>
-        <td>{{ p.cliente }}</td>
-        <td>{{ p.go_numero_nf or "—" }}</td>
-        <td>{{ p.go_data_emissao_nf.strftime("%d/%m/%Y") if p.go_data_emissao_nf else "—" }}</td>
-        <td>{{ p.go_data_prevista_coleta.strftime("%d/%m/%Y") if p.go_data_prevista_coleta else "—" }}</td>
-        <td>{{ p.go_data_pedido_expedido.strftime("%d/%m/%Y") if p.go_data_pedido_expedido else "—" }}</td>
-        <td>{{ p.go_transportadora.nome if p.go_transportadora else "—" }}</td>
-        <td>{{ p.go_data_prevista_entrega.strftime("%d/%m/%Y") if p.go_data_prevista_entrega else "—" }}</td>
-        <td>{{ p.go_data_real_entrega.strftime("%d/%m/%Y") if p.go_data_real_entrega else "—" }}</td>
-        <td>{{ p.go_lead_time_frete_dias ~ "d" if p.go_lead_time_frete_dias is not none else "—" }}</td>
-        <td class="text-end">
-          {% if current_user.role in ('ADMIN', 'PCP') %}
-          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='logistica') }}" class="btn btn-sm btn-outline-primary" title="Editar Logística">
-            <i class="bi bi-pencil-square"></i>
-          </a>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="11" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% if not modo_tv %}
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#op-filtros" aria-expanded="{{ 'true' if filtros_painel_ativos else 'false' }}">
+      <i class="bi bi-funnel"></i> Filtros {% if filtros_painel_ativos %}<span class="badge text-bg-primary">ativos</span>{% endif %}
+    </button>
+    <span class="text-muted small ms-2">Período, região, transportadora, NF, expedição, entrega, frete…</span>
+    <div class="collapse {% if filtros_painel_ativos %}show{% endif %} mt-2" id="op-filtros">
+      {% set endpoint_limpar = "gestao_operacao_logistica" %}
+      <form method="get">
+        {{ ocultos_central(fc) }}
+        {% include "_gestao_operacao_filtros.html" %}
+      </form>
+    </div>
+  </div>
 </div>
-
-{% if total_paginas > 1 %}
-<nav class="d-flex justify-content-center">
-  <ul class="pagination">
-    {% for pg in range(1, total_paginas + 1) %}
-      <li class="page-item {% if pg == page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('gestao_operacao_logistica', page=pg, **filtros) }}">{{ pg }}</a>
-      </li>
-    {% endfor %}
-  </ul>
-</nav>
 {% endif %}
 
+{% if filtros_central_ativos and not modo_tv %}
+{{ barra_selecao(fc, etapas_operacao, situacoes_operacao, total_filtrado, central.url_limpar_central) }}
+{% endif %}
+
+<div class="op-tudo {% if modo_tv %}op-tv{% endif %}" id="op360Tudo">
+  {{ bloco_central(central, modo_tv) }}
+
+  {% if not modo_tv %}
+  <section>
+    <details class="op-painel">
+      <summary class="op-secao-titulo mb-0" style="cursor:pointer"><i class="bi bi-graph-up"></i> Desempenho de frete · lead time por faixa, região e UF <span class="fw-normal text-lowercase">(clique pra abrir)</span></summary>
+      <div class="row g-3 mt-1">
+        <div class="col-lg-6">
+          <h6 class="text-muted small mb-2">Distribuição de lead time de frete</h6>
+          <canvas id="graficoLeadTimeFrete" height="140"></canvas>
+        </div>
+        <div class="col-lg-6">
+          <h6 class="text-muted small mb-2">Lead time médio de frete por região</h6>
+          {% if painel_operacao_logistica.lead_time_frete_por_regiao %}
+            <canvas id="graficoLeadTimeRegiao" height="140"></canvas>
+          {% else %}
+            <p class="text-muted small mb-0">Sem pedidos com lead time de frete e estado preenchido no recorte atual.</p>
+          {% endif %}
+        </div>
+      </div>
+      {% if painel_operacao_logistica.lead_time_frete_por_uf %}
+      <h6 class="text-muted small mt-3 mb-2">Lead time médio de frete por UF <span class="fw-normal">(do mais lento pro mais rápido)</span></h6>
+      <div class="table-responsive">
+        <table class="op-rank">
+          <thead><tr><th>UF</th><th>Região</th><th class="text-end">Lead time médio</th><th class="text-end">Pedido(s) com dado</th></tr></thead>
+          <tbody>
+            {% for linha in painel_operacao_logistica.lead_time_frete_por_uf %}
+            <tr><td>{{ linha.uf }}</td><td>{{ linha.regiao }}</td><td class="text-end">{{ linha.media }}d</td><td class="text-end">{{ linha.total }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </details>
+  </section>
+
+  <section>
+    <div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-1">
+      <div class="op-secao-titulo mb-0"><i class="bi bi-table"></i> Pedidos · {{ total_filtrado }} no recorte</div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <div class="btn-group btn-group-sm" role="group" aria-label="Ordenação">
+          <a class="btn {{ 'btn-dark' if not fc.ordem else 'btn-outline-dark' }}" href="{{ urls_ordem.recentes }}">Mais recentes</a>
+          <a class="btn {{ 'btn-dark' if fc.ordem == 'prioridade' else 'btn-outline-dark' }}" href="{{ urls_ordem.prioridade }}" title="Atrasados primeiro, do maior atraso pro menor">Prioridade</a>
+        </div>
+        <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#logisticaWrap" data-tela-cheia-titulo="Expedição / Logística · Pedidos" title="Abre só a tabela em tela cheia (Esc para sair)">
+          <i class="bi bi-arrows-fullscreen"></i> Só a tabela
+        </button>
+      </div>
+    </div>
+    <p class="text-muted small mb-2">
+      <i class="bi bi-info-circle"></i> Situação pela ótica da expedição: atrasado = NF/coleta/entrega vencida; "na fábrica" = ainda não chegou na expedição. Linha
+      <span class="badge" style="background:#f8d7da;color:#842029">vermelha</span> = atrasado ou entregue fora do prazo ·
+      <span class="badge" style="background:#fff3cd;color:#664d03">amarela</span> = prazo ao cliente em até 3 dias · <span class="badge" style="background:#7ee495;color:#0a3622">verde</span> = entregue no prazo.
+      Os dados de expedição e transporte vêm da Logística quando a integração está ativa.
+    </p>
+
+    <div class="table-responsive tabela-listagem-geral-wrap" id="logisticaWrap">
+      <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral tabela-operacao-360">
+        <colgroup>
+          <col style="width:85px"><col style="width:170px"><col style="width:140px"><col style="width:165px">
+          <col style="width:85px"><col style="width:92px"><col style="width:108px">
+          <col style="width:100px"><col style="width:92px"><col style="width:92px">
+          <col style="width:140px"><col style="width:70px"><col style="width:50px"><col style="width:100px"><col style="width:100px"><col style="width:92px"><col style="width:76px">
+          {% if ve_pd_qualidade_custos %}<col style="width:108px"><col style="width:108px">{% endif %}
+          <col style="width:90px">
+        </colgroup>
+        <thead class="table-light">
+          <tr class="op-grupos-cab">
+            <th colspan="4" class="op-g-ident">Identificação</th>
+            <th colspan="3" class="op-g-fin">Faturamento</th>
+            <th colspan="3" class="op-g-exped">Coleta / Embarque</th>
+            <th colspan="7" class="op-g-log">Transporte / Entrega</th>
+            {% if ve_pd_qualidade_custos %}<th colspan="2" class="op-g-prod">Frete (custo)</th>{% endif %}
+            <th class="op-g-acao"></th>
+          </tr>
+          <tr>
+            <th>Pedido</th><th>Cliente</th><th>Etapa</th><th>Situação</th>
+            <th>Nº NF</th><th>Emissão NF</th><th>Valor NF</th>
+            <th>Prevista coleta</th><th>Expedido em</th><th title="Previsto x realizado da coleta">Desvio coleta</th>
+            <th>Transportadora</th><th>Frete</th><th>UF</th><th>Prevista entrega</th><th>Real entrega</th><th title="Previsto x realizado da entrega">Desvio entrega</th><th>LT frete</th>
+            {% if ve_pd_qualidade_custos %}<th>Previsto</th><th>Final</th>{% endif %}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in pedidos %}
+          {% set i = info_operacao.get(p.id, {}) %}
+          {% set et = etapas_operacao[(i.etapa or 1) - 1] %}
+          {% set sit = situacoes_operacao[i.situacao or 'ok'] %}
+          {% set dv = desvios_por_pedido.get(p.id) %}
+          <tr class="{% if i.situacao == 'atrasado' or i.fora_prazo %}linha-op-atrasado{% elif i.situacao == 'risco' %}linha-op-risco{% elif i.etapa == 7 %}linha-op360-entregue{% endif %}">
+            <td>{{ (p.pedido_venda | normalizar_pedido_venda) or "—" }}</td>
+            <td class="text-truncate" title="{{ p.cliente }}">{{ p.cliente }}</td>
+            <td><span class="op-etapa-chip" style="--op-cor: {{ et.cor }}" title="{{ et.descricao }}">{{ et.emoji }} {{ et.label }}</span></td>
+            <td class="op-sit">
+              <span class="badge text-bg-{{ sit.cor }}{{ ' border' if i.situacao == 'fabrica' }}" title="{{ i.motivos | join(' · ') if i.motivos else (i.motivo or '') }}">
+                <i class="bi {{ sit.icone }}"></i> {{ sit.label }}{% if i.situacao == 'atrasado' %} +{{ i.dias_atraso }}d{% endif %}
+              </span>
+              {% if i.motivo and i.situacao in ('atrasado', 'risco') or i.fora_prazo %}<div class="op-sit-motivo text-muted">{{ i.motivo }}</div>{% endif %}
+            </td>
+            <td class="text-truncate" title="{{ p.go_numero_nf or '' }}">{{ p.go_numero_nf or "—" }}</td>
+            <td>{{ p.go_data_emissao_nf.strftime("%d/%m/%Y") if p.go_data_emissao_nf else "—" }}</td>
+            <td>{% if p.go_valor_nf_emitida is not none %}{{ brl(p.go_valor_nf_emitida) }}{% else %}—{% endif %}</td>
+            <td>{{ p.go_data_prevista_coleta.strftime("%d/%m/%Y") if p.go_data_prevista_coleta else "—" }}</td>
+            <td>{{ p.go_data_pedido_expedido.strftime("%d/%m/%Y") if p.go_data_pedido_expedido else "—" }}</td>
+            <td class="{{ dv.coleta[1] }}">{{ dv.coleta[0] }}</td>
+            <td class="text-truncate" title="{{ nomes_transp.get(p.go_transportadora_id, '') }}">{{ nomes_transp.get(p.go_transportadora_id) or "—" }}</td>
+            <td>{{ p.frete or "—" }}</td>
+            <td title="{{ p.cidade or '' }}">{{ p.estado or "—" }}</td>
+            <td>{{ p.go_data_prevista_entrega.strftime("%d/%m/%Y") if p.go_data_prevista_entrega else "—" }}</td>
+            {% set real_e = p.go_data_real_entrega or p.go_data_entregue_cliente %}
+            <td>{{ real_e.strftime("%d/%m/%Y") if real_e else "—" }}</td>
+            <td class="{{ dv.entrega[1] }}">{{ dv.entrega[0] }}</td>
+            <td>{{ p.go_lead_time_frete_dias ~ "d" if p.go_lead_time_frete_dias is not none else "—" }}</td>
+            {% if ve_pd_qualidade_custos %}
+            <td>{% if p.go_custo_frete_previsto is not none %}{{ brl(p.go_custo_frete_previsto) }}{% else %}—{% endif %}</td>
+            <td>{% if p.go_custo_frete_final is not none %}{{ brl(p.go_custo_frete_final) }}{% else %}—{% endif %}</td>
+            {% endif %}
+            <td class="text-end text-nowrap">
+              <a href="{{ url_for('consulta_pedido', pedido_venda=(p.pedido_venda | normalizar_pedido_venda)) }}" class="btn btn-sm btn-outline-secondary" title="Consulta completa do pedido"><i class="bi bi-search"></i></a>
+              {% if current_user.role in ('ADMIN', 'PCP') %}
+              <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='logistica') }}" class="btn btn-sm btn-outline-primary" title="Editar Logística"><i class="bi bi-pencil-square"></i></a>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="{{ ncols }}" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if total_paginas > 1 %}
+    <nav class="d-flex justify-content-center mt-2">
+      <ul class="pagination pagination-sm mb-0">
+        {% for pg in range(1, total_paginas + 1) %}
+          {% if pg == 1 or pg == total_paginas or (pg - page)|abs <= 2 %}
+            <li class="page-item {% if pg == page %}active{% endif %}">
+              <a class="page-link" href="{{ url_for('gestao_operacao_logistica', page=pg, **filtros_url) }}">{{ pg }}</a>
+            </li>
+          {% elif (pg - page)|abs == 3 %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
 {% endblock %}
 
 {% block scripts %}
+{% if modo_tv %}
+<script>
+(function () {
+  // Modo TV: atualiza os números sozinho a cada 60s SEM recarregar a página
+  // (assim a tela cheia não é perdida) e entra em "tela cheia" ao abrir.
+  function atualizar() {
+    fetch(window.location.href, { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+      .then(function (html) {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const novo = doc.getElementById("op360Tudo");
+        const atual = document.getElementById("op360Tudo");
+        if (novo && atual) { atual.innerHTML = novo.innerHTML; }
+      })
+      .catch(function () { /* sem rede: tenta de novo no próximo ciclo */ });
+  }
+  setInterval(atualizar, 60000);
+  document.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      if (!document.querySelector(".tela-cheia-overlay")) {
+        const b = document.querySelector('[data-tela-cheia-alvo="#op360Tudo"]');
+        if (b) b.click();
+      }
+    }, 300);
+  });
+})();
+</script>
+{% else %}
 <script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
 <script>
 (function () {
@@ -197,52 +302,44 @@
   Chart.defaults.font.size = 12;
 
   const leadTimeFreteFaixas = {{ painel_operacao_logistica.lead_time_frete_faixas | tojson }};
-  new Chart(document.getElementById("graficoLeadTimeFrete"), {
-    type: "bar",
-    data: {
-      labels: leadTimeFreteFaixas.map(function (f) { return f.faixa; }),
-      datasets: [{
-        label: "Pedidos",
-        data: leadTimeFreteFaixas.map(function (f) { return f.total; }),
-        backgroundColor: "#6f42c1",
-      }],
-    },
-    options: {
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
-    },
-  });
-
-  const leadTimeFretePorRegiao = {{ painel_operacao_logistica.lead_time_frete_por_regiao | tojson }};
-  const elGraficoRegiao = document.getElementById("graficoLeadTimeRegiao");
-  if (elGraficoRegiao && leadTimeFretePorRegiao.length) {
-    new Chart(elGraficoRegiao, {
+  const elFaixas = document.getElementById("graficoLeadTimeFrete");
+  // O gráfico só é desenhado quando o painel recolhível é aberto (canvas escondido não tem tamanho).
+  let desenhado = false;
+  function desenhar() {
+    if (desenhado) return;
+    desenhado = true;
+    new Chart(elFaixas, {
       type: "bar",
       data: {
-        labels: leadTimeFretePorRegiao.map(function (r) { return r.regiao; }),
-        datasets: [{
-          label: "Lead time médio (dias)",
-          data: leadTimeFretePorRegiao.map(function (r) { return r.media; }),
-          backgroundColor: "#0d6efd",
-        }],
+        labels: leadTimeFreteFaixas.map(function (f) { return f.faixa; }),
+        datasets: [{ label: "Pedidos", data: leadTimeFreteFaixas.map(function (f) { return f.total; }), backgroundColor: "#6f42c1" }],
       },
-      options: {
-        indexAxis: "y",
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: function (ctx) {
-                const r = leadTimeFretePorRegiao[ctx.dataIndex];
-                return r.media + "d de média (" + r.total + " pedido(s))";
-              },
-            },
-          },
-        },
-        scales: { x: { beginAtZero: true, title: { display: true, text: "dias" } } },
-      },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
     });
+
+    const leadTimeFretePorRegiao = {{ painel_operacao_logistica.lead_time_frete_por_regiao | tojson }};
+    const elGraficoRegiao = document.getElementById("graficoLeadTimeRegiao");
+    if (elGraficoRegiao && leadTimeFretePorRegiao.length) {
+      new Chart(elGraficoRegiao, {
+        type: "bar",
+        data: {
+          labels: leadTimeFretePorRegiao.map(function (r) { return r.regiao; }),
+          datasets: [{ label: "Lead time médio (dias)", data: leadTimeFretePorRegiao.map(function (r) { return r.media; }), backgroundColor: "#0d6efd" }],
+        },
+        options: {
+          indexAxis: "y",
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (ctx) {
+            const r = leadTimeFretePorRegiao[ctx.dataIndex];
+            return r.media + "d de média (" + r.total + " pedido(s))";
+          } } } },
+          scales: { x: { beginAtZero: true, title: { display: true, text: "dias" } } },
+        },
+      });
+    }
   }
+  const det = elFaixas ? elFaixas.closest("details") : null;
+  if (det) det.addEventListener("toggle", function () { if (det.open) desenhar(); });
 })();
 </script>
+{% endif %}
 {% endblock %}

@@ -12794,7 +12794,15 @@ def _filtrar_pedidos_operacao(args):
     expedicao_fim = args.get("expedicao_fim", "").strip()
     entrega_inicio = args.get("entrega_inicio", "").strip()
     entrega_fim = args.get("entrega_fim", "").strip()
+    # Transportadora (Fase 2 do redesenho do grupo Operação, 06/11/2026): id de
+    # Transportadora — usado pelos cards de agrupamento clicáveis da tela
+    # Expedição/Logística. Valor inválido (não numérico) é ignorado.
+    transportadora = args.get("transportadora", "").strip()
+    if not transportadora.isdigit():
+        transportadora = ""
 
+    if transportadora:
+        query = query.filter(PedidoOperacao.go_transportadora_id == int(transportadora))
     if cliente:
         query = query.filter(PedidoOperacao.cliente.ilike(f"%{cliente}%"))
     if vendedor:
@@ -12938,6 +12946,7 @@ def _filtrar_pedidos_operacao(args):
         nf_data_inicio=nf_data_inicio, nf_data_fim=nf_data_fim,
         expedicao_inicio=expedicao_inicio, expedicao_fim=expedicao_fim,
         entrega_inicio=entrega_inicio, entrega_fim=entrega_fim,
+        transportadora=transportadora,
     )
     return query, filtros
 
@@ -13449,6 +13458,8 @@ _SITUACOES_OPERACAO = {
     "risco": {"label": "Em risco", "cor": "warning", "icone": "bi-exclamation-triangle-fill"},
     "ok": {"label": "No prazo", "cor": "success", "icone": "bi-check-circle-fill"},
     "concluido": {"label": "Concluído", "cor": "secondary", "icone": "bi-flag-fill"},
+    # Só na tela Expedição/Logística: pedido que ainda não chegou na expedição.
+    "fabrica": {"label": "Na fábrica", "cor": "light", "icone": "bi-building"},
 }
 _SITUACOES_FILTRO_OPERACAO = set(_SITUACOES_OPERACAO) | {"aberto"}
 
@@ -13509,28 +13520,31 @@ def _classificar_pedidos_operacao(pedidos, metricas, pedidos_producao_por_pv, da
         else:
             etapa = 1
 
-        motivos = []  # (dias, texto)
+        motivos = []  # (dias, texto, tipo) — tipo: prazo | pcp | fatura | coleta | entrega
         if etapa < 7:
             if comprometida and comprometida < hoje:
                 d = (hoje - comprometida).days
-                motivos.append((d, f"Prazo ao cliente vencido há {d} d"))
+                motivos.append((d, f"Prazo ao cliente vencido há {d} d", "prazo"))
             if etapa <= 3 and expectativa and expectativa < hoje and not conclusao:
                 d = (hoje - expectativa).days
-                motivos.append((d, f"Previsão do PCP vencida há {d} d"))
+                motivos.append((d, f"Previsão do PCP vencida há {d} d", "pcp"))
             if etapa == 4 and conclusao and (hoje - conclusao).days >= _PARADO_LIMITE_DIAS_OPERACAO:
                 d = (hoje - conclusao).days
-                motivos.append((d, f"Liberado pelo PCP há {d} d sem NF"))
+                motivos.append((d, f"Liberado pelo PCP há {d} d sem NF", "fatura"))
             if etapa == 5:
                 if p.go_data_prevista_coleta and p.go_data_prevista_coleta < hoje:
                     d = (hoje - p.go_data_prevista_coleta).days
-                    motivos.append((d, f"Coleta prevista vencida há {d} d"))
+                    motivos.append((d, f"Coleta prevista vencida há {d} d", "coleta"))
                 elif not p.go_data_prevista_coleta and p.go_data_emissao_nf and (hoje - p.go_data_emissao_nf).days >= _PARADO_LIMITE_DIAS_OPERACAO:
                     d = (hoje - p.go_data_emissao_nf).days
-                    motivos.append((d, f"NF emitida há {d} d sem expedição"))
+                    motivos.append((d, f"NF emitida há {d} d sem expedição", "coleta"))
             if etapa == 6 and p.go_data_prevista_entrega and p.go_data_prevista_entrega < hoje:
                 d = (hoje - p.go_data_prevista_entrega).days
-                motivos.append((d, f"Entrega prevista vencida há {d} d"))
+                motivos.append((d, f"Entrega prevista vencida há {d} d", "entrega"))
         motivos.sort(key=lambda x: -x[0])
+        # Atraso LOGÍSTICO (fatura/coleta/entrega) — usado pela tela Expedição/
+        # Logística, que não quer tratar "prazo ao cliente vencido" como falha dela.
+        mot_log = [x for x in motivos if x[2] in ("fatura", "coleta", "entrega")]
 
         dias_atraso = motivos[0][0] if motivos else 0
         motivo = motivos[0][1] if motivos else ""
@@ -13554,7 +13568,9 @@ def _classificar_pedidos_operacao(pedidos, metricas, pedidos_producao_por_pv, da
             "situacao": situacao,
             "dias_atraso": dias_atraso,
             "motivo": motivo,
-            "motivos": [t for _, t in motivos],
+            "motivos": [t for _, t, _tipo in motivos],
+            "dias_logistica": mot_log[0][0] if mot_log else 0,
+            "motivo_logistica": mot_log[0][1] if mot_log else "",
             "comprometida": comprometida,
             "desvio_qualidade": (rdim.get("reprovadas", 0) + rdim.get("com_desvio", 0)) > 0,
         }
@@ -13595,7 +13611,7 @@ def _aplicar_filtros_central(pedidos, info, fc):
             continue
         filtrados.append(p)
     if fc["ordem"] == "prioridade":
-        rank = {"atrasado": 0, "risco": 1, "ok": 2, "concluido": 3}
+        rank = {"atrasado": 0, "risco": 1, "ok": 2, "fabrica": 3, "concluido": 4}
         filtrados.sort(key=lambda p: (rank[info[p.id]["situacao"]], -info[p.id]["dias_atraso"]))
     return filtrados
 
@@ -13714,7 +13730,7 @@ def _central_operacao_360(pedidos, info, metricas, painel_dinamico, filtros, fc,
         d = pipe[et["idx"]]
         so_esta = etapas_sel == [str(et["idx"])] and not situacoes_sel
         pipeline.append({
-            **et, **d,
+            **et, **d, "num": et["idx"],
             "valor_fmt": _fmt_brl_curto(d["valor"]),
             "ativo": str(et["idx"]) in etapas_sel,
             "url": url(etapa=[] if so_esta else [str(et["idx"])]),
@@ -13806,6 +13822,297 @@ def _fmt_brl_curto(valor):
     if abs(v) >= 10_000:
         return "R$ " + f"{v / 1_000:.0f} mil"
     return "R$ " + f"{v:,.0f}".replace(",", ".")
+
+
+# ---------------------------------------------------------------------------
+# Expedição / Logística — CENTRAL DE EXPEDIÇÃO (Fase 2 do redesenho do grupo
+# Operação, pedido do Bruno, 06/11/2026). Mesma classificação de etapas da
+# Operação 360 (_classificar_pedidos_operacao) — assim as duas telas nunca
+# divergem —, só que aqui a "situação" olha só o que é da Logística/Expedição
+# (faturar, coletar, entregar), sem culpar a Expedição por "prazo ao cliente
+# vencido" que nasceu na produção. Nada novo é gravado.
+# ---------------------------------------------------------------------------
+_ETAPAS_LOGISTICA = [
+    {"num": "1-3", "chave": "fabrica", "etapas": [1, 2, 3], "label": "Na fábrica", "area": "Produção / PCP / Qualidade",
+     "icone": "bi-building", "cor": "#868e96", "descricao": "Ainda não chegou na expedição (comercial, produção ou inspeção)."},
+    {"num": 4, "chave": "faturamento", "etapas": [4], "label": "Aguardando NF", "area": "Faturamento",
+     "icone": "bi-receipt-cutoff", "cor": "#e8590c", "descricao": "Liberado pelo PCP, aguardando a emissão da nota fiscal."},
+    {"num": 5, "chave": "coleta", "etapas": [5], "label": "Aguardando coleta", "area": "Expedição",
+     "icone": "bi-box-seam", "cor": "#7048e8", "descricao": "Nota emitida, aguardando a coleta / saída da fábrica."},
+    {"num": 6, "chave": "transporte", "etapas": [6], "label": "Em transporte", "area": "Transportadora",
+     "icone": "bi-truck", "cor": "#1c7ed6", "descricao": "Saiu da fábrica, a caminho do cliente."},
+    {"num": 7, "chave": "entregue", "etapas": [7], "label": "Entregue", "area": "Cliente",
+     "icone": "bi-check2-circle", "cor": "#2f9e44", "descricao": "Entrega realizada ao cliente."},
+]
+
+
+def _situacoes_logisticas(pedidos, info):
+    """Devolve {id: info} igual a _classificar_pedidos_operacao, mas com
+    `situacao`/`dias_atraso`/`motivo` da ótica LOGÍSTICA: etapa 1-3 = "fabrica"
+    (não é da expedição ainda); 4-6 = atrasado só por atraso de faturar/
+    coletar/entregar (risco = prazo ao cliente em até 3 dias); 7 = concluído,
+    marcando `fora_prazo` quando a entrega real passou da prevista."""
+    saida = {}
+    for p in pedidos:
+        i = info[p.id]
+        etapa = i["etapa"]
+        novo = dict(i, fora_prazo=False, atraso_entrega=None)
+        if etapa <= 3:
+            novo.update(situacao="fabrica", dias_atraso=0, motivo="Ainda na fábrica")
+        elif etapa == 7:
+            prev = p.go_data_prevista_entrega
+            real = p.go_data_real_entrega or p.go_data_entregue_cliente
+            atraso = (real - prev).days if (prev and real) else None
+            novo.update(situacao="concluido", dias_atraso=max(atraso, 0) if atraso else 0,
+                        motivo=f"Entregue com {atraso} d de atraso" if (atraso or 0) > 0 else "",
+                        fora_prazo=(atraso or 0) > 0, atraso_entrega=atraso)
+        elif i["dias_logistica"]:
+            novo.update(situacao="atrasado", dias_atraso=i["dias_logistica"], motivo=i["motivo_logistica"])
+        else:
+            sit = "risco" if i["situacao"] == "risco" else "ok"
+            novo.update(situacao=sit, dias_atraso=0, motivo=i["motivo"] if sit == "risco" else "")
+        saida[p.id] = novo
+    return saida
+
+
+def _contexto_logistica(pedidos):
+    """Métricas + classificação logística de um conjunto de pedidos (usado
+    pela tela e pelos relatórios)."""
+    pv = [p.pedido_venda for p in pedidos]
+    liberacao = _liberacao_pcp_por_pedido_venda(pv)
+    data_cliente = _data_cliente_por_pedido_venda(pv)
+    pedidos_producao = _pedidos_producao_por_pedido_venda(pv)
+    metricas = _metricas_operacao_360(pedidos, liberacao, data_cliente, pedidos_producao)
+    info = _classificar_pedidos_operacao(pedidos, metricas, pedidos_producao, data_cliente, {})
+    return metricas, _situacoes_logisticas(pedidos, info)
+
+
+def _central_logistica(pedidos, info, painel_log, filtros, fc, ve_custos, hoje=None):
+    """Pipeline de expedição (5 cards), KPIs, fila de ação, agrupamentos da
+    carteira em transição (etapas 4-6) e ranking por transportadora — sobre o
+    conjunto BASE (filtros do painel, sem etapa/situação)."""
+    hoje = hoje or _hoje_brt()
+    endpoint = "gestao_operacao_logistica"
+
+    def url(**kw):
+        kw.setdefault("etapa", [])
+        kw.setdefault("situacao", [])
+        return url_for(endpoint, **_params_url_operacao(filtros, fc, **kw))
+
+    etapas_sel = sorted(fc["etapa"])
+    situacoes_sel = fc["situacao"]
+    nomes_transp = {t.id: t.nome for t in Transportadora.query.all()}
+
+    por_etapa = {e["chave"]: {"total": 0, "valor": 0.0, "atrasados": 0, "risco": 0, "max_dias": 0} for e in _ETAPAS_LOGISTICA}
+    chave_da_etapa = {n: e["chave"] for e in _ETAPAS_LOGISTICA for n in e["etapas"]}
+    ag_nf = ag_coleta = transp = 0
+    valor_ag = 0.0
+    atrasos_fatura = atrasos_coleta = atrasos_entrega = 0
+    expedidos_hoje = 0
+    entregas_com_prev = entregas_no_prazo = 0
+    custo_prev = custo_final = 0.0
+    fila = []
+    grupos = {"transportadora": {}, "regiao": {}, "frete": {}, "uf": {}}
+    rank = {}
+
+    def acumula(grupo, rotulo, i, valor, filtro_link):
+        g = grupos[grupo].setdefault(rotulo, {"rotulo": rotulo, "total": 0, "atrasados": 0, "risco": 0, "valor": 0.0, "filtro": filtro_link})
+        g["total"] += 1
+        g["valor"] += valor
+        if i["situacao"] == "atrasado":
+            g["atrasados"] += 1
+        elif i["situacao"] == "risco":
+            g["risco"] += 1
+
+    for p in pedidos:
+        i = info[p.id]
+        etapa = i["etapa"]
+        valor = p.go_valor_pedido_operacao or 0.0
+        pe = por_etapa[chave_da_etapa[etapa]]
+        pe["total"] += 1
+        pe["valor"] += valor
+        if i["situacao"] == "atrasado":
+            pe["atrasados"] += 1
+            pe["max_dias"] = max(pe["max_dias"], i["dias_atraso"])
+        elif i["situacao"] == "risco":
+            pe["risco"] += 1
+        if p.go_data_pedido_expedido == hoje:
+            expedidos_hoje += 1
+        if p.go_custo_frete_previsto:
+            custo_prev += p.go_custo_frete_previsto
+        if p.go_custo_frete_final:
+            custo_final += p.go_custo_frete_final
+
+        nome_t = nomes_transp.get(p.go_transportadora_id) if p.go_transportadora_id else None
+        # ranking de transportadoras (todas as etapas, só quem tem transportadora)
+        if p.go_transportadora_id:
+            r = rank.setdefault(p.go_transportadora_id, {"id": p.go_transportadora_id, "nome": nome_t or f"#{p.go_transportadora_id}",
+                                                          "pedidos": 0, "entregues": 0, "no_prazo": 0, "com_prev": 0,
+                                                          "soma_lt": 0, "n_lt": 0, "em_transito": 0, "atrasados": 0})
+            r["pedidos"] += 1
+            if etapa == 7:
+                r["entregues"] += 1
+                real = p.go_data_real_entrega or p.go_data_entregue_cliente
+                if p.go_data_prevista_entrega and real:
+                    r["com_prev"] += 1
+                    if real <= p.go_data_prevista_entrega:
+                        r["no_prazo"] += 1
+                lt = p.go_lead_time_frete_dias
+                if lt is not None:
+                    r["soma_lt"] += lt
+                    r["n_lt"] += 1
+            elif etapa == 6:
+                r["em_transito"] += 1
+            if i["situacao"] == "atrasado" and etapa in (4, 5, 6):
+                r["atrasados"] += 1
+
+        if etapa == 7:
+            real = p.go_data_real_entrega or p.go_data_entregue_cliente
+            if p.go_data_prevista_entrega and real:
+                entregas_com_prev += 1
+                if real <= p.go_data_prevista_entrega:
+                    entregas_no_prazo += 1
+            continue
+        if etapa <= 3:
+            continue
+
+        # ---- carteira na logística (etapas 4-6)
+        if etapa == 4:
+            ag_nf += 1
+            valor_ag += valor
+        elif etapa == 5:
+            ag_coleta += 1
+            valor_ag += valor
+        else:
+            transp += 1
+        if i["situacao"] == "atrasado":
+            if etapa == 4:
+                atrasos_fatura += 1
+            elif etapa == 5:
+                atrasos_coleta += 1
+            else:
+                atrasos_entrega += 1
+            fila.append((i["dias_atraso"], valor, p, i))
+        elif i["situacao"] == "risco":
+            fila.append((-1, valor, p, i))
+
+        acumula("transportadora", nome_t or "Sem transportadora", i, valor,
+                {"transportadora": str(p.go_transportadora_id)} if p.go_transportadora_id else None)
+        uf = (p.estado or "").strip().upper()
+        regiao = REGIAO_POR_UF.get(uf)
+        acumula("regiao", regiao or "Não identificada", i, valor, {"regiao": regiao} if regiao else None)
+        acumula("uf", uf or "—", i, valor, None)
+        frete_txt = (p.frete or "").strip().upper()
+        if frete_txt in FRETE_OPCOES:
+            acumula("frete", frete_txt, i, valor, {"frete": [frete_txt]})
+        else:
+            acumula("frete", "Não informado", i, valor, {"frete": ["NAO_INFORMADO"]})
+
+    pipeline = []
+    for e in _ETAPAS_LOGISTICA:
+        d = por_etapa[e["chave"]]
+        ets = [str(n) for n in e["etapas"]]
+        so_esta = etapas_sel == sorted(ets) and not situacoes_sel
+        pipeline.append({
+            **e, "idx": e["num"], **d, "valor_fmt": _fmt_brl_curto(d["valor"]),
+            "ativo": etapas_sel == sorted(ets),
+            "url": url(etapa=[] if so_esta else ets),
+            "url_atrasados": url(etapa=ets, situacao=["atrasado"]),
+        })
+
+    atrasados_total = atrasos_fatura + atrasos_coleta + atrasos_entrega
+    pct_prazo = round(100.0 * entregas_no_prazo / entregas_com_prev, 1) if entregas_com_prev else None
+    lt_medio = painel_log.get("lead_time_frete_medio")
+    hoje_iso = hoje.isoformat()
+
+    def kpi(chave, titulo, valor, cor, icone, sufixo=None, destino=None, ativo=False):
+        return {"chave": chave, "titulo": titulo, "valor": valor, "cor": cor, "icone": icone, "sufixo": sufixo, "url": destino, "ativo": ativo}
+
+    kpis = [
+        kpi("ag_nf", "Aguardando NF", ag_nf, "warning", "bi-receipt-cutoff",
+            sufixo=f"{atrasos_fatura} atrasado(s)" if atrasos_fatura else "dentro do prazo",
+            destino=url(etapa=["4"]), ativo=etapas_sel == ["4"]),
+        kpi("ag_coleta", "Aguardando coleta", ag_coleta, "purple", "bi-box-seam",
+            sufixo=f"{atrasos_coleta} atrasado(s)" if atrasos_coleta else "dentro do prazo",
+            destino=url(etapa=["5"]), ativo=etapas_sel == ["5"]),
+        kpi("transporte", "Em transporte", transp, "info", "bi-truck",
+            sufixo=f"{atrasos_entrega} com entrega vencida" if atrasos_entrega else "nenhuma entrega vencida",
+            destino=url(etapa=["6"]), ativo=etapas_sel == ["6"]),
+        kpi("atrasados", "Atrasos logísticos", atrasados_total, "danger", "bi-exclamation-octagon-fill",
+            sufixo=f"{atrasos_fatura} NF · {atrasos_coleta} coleta · {atrasos_entrega} entrega" if atrasados_total else "nenhum atraso",
+            destino=url(etapa=["4", "5", "6"], situacao=["atrasado"]),
+            ativo=situacoes_sel == ["atrasado"] and etapas_sel == ["4", "5", "6"]),
+        kpi("hoje", "Expedidos hoje", expedidos_hoje, "success", "bi-box-arrow-up-right", sufixo="saíram da fábrica hoje",
+            destino=url_for(endpoint, **_params_url_operacao(filtros, fc, etapa=[], situacao=[], expedicao_inicio=hoje_iso, expedicao_fim=hoje_iso))),
+        kpi("no_prazo", "Entregas no prazo", (f"{str(pct_prazo).replace('.', ',')}%" if pct_prazo is not None else "—"), "success", "bi-bullseye",
+            sufixo=(f"{entregas_no_prazo} de {entregas_com_prev} entregas" if entregas_com_prev else "sem prazo previsto"),
+            destino=url(etapa=["7"]), ativo=etapas_sel == ["7"]),
+        kpi("lt", "Lead time de frete", (f"{str(lt_medio).replace('.', ',')} d" if lt_medio is not None else "—"), "secondary", "bi-stopwatch",
+            sufixo="expedição → entrega"),
+    ]
+    if ve_custos:
+        kpis.append(kpi("frete", "Custo de frete", _fmt_brl_curto(custo_final), "dark", "bi-cash-coin",
+                        sufixo=f"previsto {_fmt_brl_curto(custo_prev)}"))
+
+    fila.sort(key=lambda x: (-x[0], -x[1]))
+    fila_acao = []
+    for _, valor, p, i in fila[:12]:
+        et = _ETAPAS_OPERACAO[i["etapa"] - 1]
+        partes = []
+        if p.go_transportadora_id and nomes_transp.get(p.go_transportadora_id):
+            partes.append(nomes_transp[p.go_transportadora_id])
+        if p.go_numero_nf:
+            partes.append(f"NF {p.go_numero_nf}")
+        fila_acao.append({
+            "id": p.id, "pedido": _normalizar_pedido_venda(p.pedido_venda) or "—", "cliente": p.cliente,
+            "uf": (p.estado or "").strip().upper(), "etapa_label": et["label"], "etapa_cor": et["cor"], "etapa_emoji": et["emoji"],
+            "area": et["area"] if i["etapa"] != 6 else "Transportadora", "situacao": i["situacao"], "dias": i["dias_atraso"],
+            "motivo": i["motivo"], "valor": valor, "valor_fmt": _fmt_brl_curto(valor), "extra": " · ".join(partes),
+        })
+
+    def lista_grupo(nome, limite):
+        itens = sorted(grupos[nome].values(), key=lambda g: (-g["atrasados"], -g["total"], -g["valor"]))[:limite]
+        maximo = max([g["total"] for g in itens] or [1])
+        for g in itens:
+            g["pct"] = round(100.0 * g["total"] / maximo)
+            g["valor_fmt"] = _fmt_brl_curto(g["valor"])
+            g["url"] = url_for(endpoint, **_params_url_operacao(filtros, fc, **g["filtro"])) if g["filtro"] else None
+        return itens
+
+    ranking = []
+    for r in rank.values():
+        ranking.append({
+            **r,
+            "pct_prazo": round(100.0 * r["no_prazo"] / r["com_prev"], 1) if r["com_prev"] else None,
+            "lt_medio": round(r["soma_lt"] / r["n_lt"], 1) if r["n_lt"] else None,
+            "url": url_for(endpoint, **_params_url_operacao(filtros, fc, transportadora=str(r["id"]))),
+        })
+    ranking.sort(key=lambda r: (-(r["atrasados"]), -r["pedidos"]))
+
+    return {
+        "pipeline": pipeline, "kpis": kpis, "fila_acao": fila_acao, "fila_total": len(fila),
+        "grupos": {k: lista_grupo(k, 10) for k in grupos},
+        "ranking": ranking[:10],
+        "totais": {"atrasados": atrasados_total, "ag_nf": ag_nf, "ag_coleta": ag_coleta, "transporte": transp,
+                   "pct_prazo": pct_prazo},
+        "url_limpar_central": url(qualidade=""),
+    }
+
+
+def _desvios_logisticos(p, hoje=None):
+    """Previsto x realizado de coleta e entrega de UM pedido (texto curto pra
+    célula da tabela) — reaproveita _prevista_x_realizada."""
+    def texto(r):
+        if r["status"] == "sem_previsao":
+            return ("—", "")
+        if r["status"] == "no_prazo":
+            return ("no prazo", "text-success") if r["dias"] == 0 else ("a vencer", "text-muted")
+        if r["status"] == "atrasando":
+            return (f"{r['dias']} d vencido", "text-danger fw-semibold")
+        return (f"+{r['dias']} d", "text-danger")
+    coleta = _prevista_x_realizada(p.go_data_prevista_coleta, p.go_data_pedido_expedido)
+    entrega = _prevista_x_realizada(p.go_data_prevista_entrega, p.go_data_real_entrega or p.go_data_entregue_cliente)
+    return {"coleta": texto(coleta), "entrega": texto(entrega)}
 
 
 def _prevista_x_realizada(prevista, real):
@@ -16816,6 +17123,12 @@ _COLUNAS_EXPORT_LOGISTICA = [
 def _dados_relatorio_logistica(args):
     query, filtros = _filtrar_pedidos_operacao(args)
     pedidos = query.all()
+    # Seleção clicada na Central de Expedição (etapa/situação) — Excel/PDF
+    # acompanham exatamente o que está na tela.
+    fc = _parse_filtros_central(args, False)
+    if fc["etapa"] or fc["situacao"] or fc["ordem"]:
+        _, info_log = _contexto_logistica(pedidos)
+        pedidos = _aplicar_filtros_central(pedidos, info_log, fc)
     painel = _painel_operacao_logistica(pedidos)
     kanban = _kanban_expedicao()
     # "Aguardando expedição" no resumo do relatório = quem ainda não foi
@@ -25168,26 +25481,46 @@ def register_routes(app):
     @app.route("/gestao-operacao/logistica")
     @login_required
     def gestao_operacao_logistica():
-        pedidos, page, total_paginas, total_filtrado, filtros, query_operacao = _linhas_gestao_operacao(request.args)
-        # Kanban Expedição (reescrito 23/09/2026 — feature Expedição/
-        # Logística, ver _kanban_expedicao) — independente dos filtros/
-        # paginação da tabela abaixo: mostra SEMPRE todos os pedidos das 3
-        # colunas automáticas, no site inteiro.
-        kanban_expedicao = _kanban_expedicao()
-        # Painel de KPIs (pedido do Bruno, 23/09/2026: "padrão gerencial") —
-        # sobre o conjunto TOTAL filtrado, não só a página atual, mesma
-        # convenção de _painel_operacao_360.
-        painel_operacao_logistica = _painel_operacao_logistica(query_operacao.all())
-        # Semáforo por linha (pedido do Bruno, 29/09/2026: camada visual) —
-        # só sobre a página atual já carregada, sem query nova.
-        semaforo_por_pedido = {p.id: _semaforo_linha_logistica(p) for p in pedidos}
+        """Central de Expedição (Fase 2 do redesenho do grupo Operação, pedido do
+        Bruno 06/11/2026) — mesma lógica de etapas da Operação 360, só que
+        olhando a expedição/logística: faturar, coletar, transportar, entregar,
+        com atraso por responsável, ranking de transportadoras e Modo TV. O
+        conjunto filtrado inteiro é carregado (como na Operação 360); a seleção
+        por etapa/situação (cliques) vem de _parse_filtros_central."""
+        ve_custos = ve_pd_qualidade_custos(current_user)
+        query_base, filtros = _filtrar_pedidos_operacao(request.args)
+        fc = _parse_filtros_central(request.args, False)
+        todos = query_base.all()
+        metricas, info_log = _contexto_logistica(todos)
+        painel_operacao_logistica = _painel_operacao_logistica(todos)
+        central = _central_logistica(todos, info_log, painel_operacao_logistica, filtros, fc, ve_custos)
+        selecionados = _aplicar_filtros_central(todos, info_log, fc)
+        total_filtrado = len(selecionados)
+        total_paginas = max(1, (total_filtrado + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = min(max(request.args.get("page", 1, type=int) or 1, 1), total_paginas)
+        pedidos = selecionados[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+        nomes_transp = {t.id: t.nome for t in Transportadora.query.all()}
+        desvios_por_pedido = {p.id: _desvios_logisticos(p) for p in pedidos}
+        filtros_url = _params_url_operacao(filtros, fc)
+        urls_ordem = {
+            "prioridade": url_for("gestao_operacao_logistica", **_params_url_operacao(filtros, fc, ordem="prioridade")),
+            "recentes": url_for("gestao_operacao_logistica", **_params_url_operacao(filtros, fc, ordem="")),
+        }
         return render_template(
             "gestao_operacao_logistica.html",
             pedidos=pedidos, page=page, total_paginas=total_paginas,
             total_filtrado=total_filtrado, filtros=filtros,
-            kanban_expedicao=kanban_expedicao,
             painel_operacao_logistica=painel_operacao_logistica,
-            semaforo_por_pedido=semaforo_por_pedido,
+            info_operacao=info_log, central=central, fc=fc, filtros_url=filtros_url,
+            filtros_painel_ativos=bool(_params_url_operacao(filtros, {})),
+            filtros_central_ativos=bool(fc["etapa"] or fc["situacao"]),
+            urls_ordem=urls_ordem, desvios_por_pedido=desvios_por_pedido, nomes_transp=nomes_transp,
+            transportadoras_filtro=Transportadora.query.filter_by(ativo=True).order_by(Transportadora.nome).all(),
+            url_sem_tv=url_for("gestao_operacao_logistica", **filtros_url),
+            url_tv=url_for("gestao_operacao_logistica", tv=1, **filtros_url),
+            modo_tv=request.args.get("tv") == "1",
+            etapas_operacao=_ETAPAS_OPERACAO, situacoes_operacao=_SITUACOES_OPERACAO,
+            atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"),
             logistica_st=_logistica_status_resumo(),
         )
 

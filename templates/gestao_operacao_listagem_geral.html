@@ -1,123 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Gestão Operação · Operação 360 · Gestão da Produção e Operação{% endblock %}
 
-{# R$ 1.234,56 #}
-{% macro brl(v) %}R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endmacro %}
+{% from "_op_central_macros.html" import brl, ocultos_central, kpis, pipeline, fila, agrupamentos, barra_selecao %}
 
-{# Campos ocultos pra manter a seleção da Central (etapa/situação/qualidade/ordem) ao enviar um formulário GET. #}
-{% macro ocultos_central(fc) %}
-  {% for v in fc.etapa %}<input type="hidden" name="etapa" value="{{ v }}">{% endfor %}
-  {% for v in fc.situacao %}<input type="hidden" name="situacao" value="{{ v }}">{% endfor %}
-  {% if fc.qualidade %}<input type="hidden" name="qualidade" value="{{ fc.qualidade }}">{% endif %}
-  {% if fc.ordem %}<input type="hidden" name="ordem" value="{{ fc.ordem }}">{% endif %}
-{% endmacro %}
-
-{% macro lista_grupo(itens, modo_tv) %}
-  {% for g in itens %}
-    {% if g.url and not modo_tv %}<a class="op-grupo-linha" href="{{ g.url }}" title="Filtrar a tabela por: {{ g.rotulo }}">{% else %}<div class="op-grupo-linha">{% endif %}
-      <span class="op-grupo-rotulo">{{ g.rotulo }}</span>
-      <div class="op-barra" title="{{ g.valor_fmt }} em aberto"><span style="width: {{ g.pct }}%"></span></div>
-      <span class="op-grupo-num">{{ g.total }}
-        {% if g.atrasados %}<span class="op-pill op-pill-danger">{{ g.atrasados }}</span>{% endif %}
-        {% if g.risco %}<span class="op-pill op-pill-warning">{{ g.risco }}</span>{% endif %}</span>
-    {% if g.url and not modo_tv %}</a>{% else %}</div>{% endif %}
-  {% else %}
-    <div class="text-muted small py-3 text-center">Sem pedidos em aberto neste recorte.</div>
-  {% endfor %}
-{% endmacro %}
-
-{# Bloco da Central de Comando (KPIs + pipeline + fila + agrupamentos). Em modo TV, versão ampliada sem tabela. #}
+{# Bloco da Central de Comando da Operação 360 (KPIs + pipeline de 7 etapas + fila + agrupamentos). Em modo TV, versão ampliada sem tabela. #}
 {% macro bloco_central(central, modo_tv) %}
-  <section>
-    <div class="op-secao-titulo"><i class="bi bi-speedometer2"></i> Indicadores da operação {% if not modo_tv %}<span class="fw-normal text-lowercase">· clique num card pra filtrar a tabela</span>{% endif %}</div>
-    <div class="op-kpis">
-      {% for k in central.kpis %}
-        {% if k.url and not modo_tv %}<a class="op-kpi op-kpi-{{ k.cor }} {% if k.ativo %}op-kpi-ativo{% endif %}" href="{{ k.url }}">
-        {% else %}<div class="op-kpi op-kpi-{{ k.cor }}">{% endif %}
-          <div class="op-kpi-titulo"><i class="bi {{ k.icone }}"></i> {{ k.titulo }}</div>
-          <div class="op-kpi-valor {% if k.chave == 'atrasados' and k.valor %}op-piscar{% endif %}">{{ k.valor }}</div>
-          <div class="op-kpi-sufixo">{{ k.sufixo or "&nbsp;"|safe }}</div>
-        {% if k.url and not modo_tv %}</a>{% else %}</div>{% endif %}
-      {% endfor %}
-    </div>
-  </section>
-
-  <section>
-    <div class="op-secao-titulo"><i class="bi bi-diagram-3"></i> Pipeline operacional · ponta a ponta {% if not modo_tv %}<span class="fw-normal text-lowercase">· clique numa etapa pra ver só os pedidos dela</span>{% endif %}</div>
-    <div class="op-pipeline">
-      {% for e in central.pipeline %}
-      <div class="op-etapa {% if e.ativo %}op-etapa-ativa{% endif %}" style="--op-cor: {{ e.cor }}">
-        <div class="op-etapa-topo"><i class="bi {{ e.icone }}"></i><span class="op-etapa-num">{{ e.idx }}</span></div>
-        <div class="op-etapa-total">{{ e.total }}</div>
-        <div class="op-etapa-label">
-          {% if modo_tv %}{{ e.label }}{% else %}<a class="stretched-link text-decoration-none text-reset" href="{{ e.url }}" title="{{ e.descricao }} Responsável: {{ e.area }}.">{{ e.label }}</a>{% endif %}
-        </div>
-        <div class="op-etapa-valor">{{ e.valor_fmt }}</div>
-        <div class="op-etapa-alertas">
-          {% if e.atrasados %}
-            {% if modo_tv %}<span class="op-pill op-pill-danger">{{ e.atrasados }} atrasado(s)</span>
-            {% else %}<a class="op-pill op-pill-danger" href="{{ e.url_atrasados }}" title="Ver só os atrasados desta etapa">{{ e.atrasados }} atrasado(s)</a>{% endif %}
-          {% endif %}
-          {% if e.risco %}<span class="op-pill op-pill-warning" title="Prazo ao cliente em até 3 dias">{{ e.risco }} em risco</span>{% endif %}
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </section>
-
+  {{ kpis(central, modo_tv) }}
+  {{ pipeline(central, modo_tv) }}
   <section class="row g-3">
-    <div class="col-lg-7">
-      <div class="op-painel">
-        <div class="op-secao-titulo"><i class="bi bi-lightning-charge-fill text-danger"></i> Fila de ação · o que resolver primeiro
-          <span class="ms-auto fw-normal text-lowercase">{{ central.fila_total }} pedido(s) atrasado(s)/em risco</span></div>
-        {% if central.fila_acao %}
-        <ul class="op-fila">
-          {% for f in (central.fila_acao[:8] if modo_tv else central.fila_acao) %}
-          <li>
-            {% if modo_tv %}<div class="op-fila-item">{% else %}<a class="op-fila-item" href="{{ url_for('consulta_pedido', pedido_venda=f.pedido) }}" title="Abrir a consulta completa do pedido">{% endif %}
-              <div class="op-fila-dias op-fila-dias-{{ 'danger' if f.situacao == 'atrasado' else 'warning' }}">
-                {% if f.situacao == 'atrasado' %}+{{ f.dias }}<small>dias</small>{% else %}<i class="bi bi-hourglass-split"></i><small>risco</small>{% endif %}
-              </div>
-              <div class="min-w-0">
-                <div class="op-fila-titulo">{{ f.pedido }} · {{ f.cliente }}{% if f.uf %} <span class="text-muted fw-normal">({{ f.uf }})</span>{% endif %}</div>
-                <div class="op-fila-motivo">{{ f.motivo }} · <span class="op-etapa-chip" style="--op-cor: {{ f.etapa_cor }}">{{ f.etapa_emoji }} {{ f.etapa_label }}</span> <span class="ms-1">resp.: {{ f.area }}</span></div>
-              </div>
-              <div class="op-fila-valor">{{ f.valor_fmt }}</div>
-            {% if modo_tv %}</div>{% else %}</a>{% endif %}
-          </li>
-          {% endfor %}
-        </ul>
-        {% if central.fila_total > (8 if modo_tv else 12) %}
-          <div class="text-muted small mt-2">+ {{ central.fila_total - (8 if modo_tv else 12) }} outro(s) — use o card “Atrasados” acima pra ver todos na tabela.</div>
-        {% endif %}
-        {% else %}
-          <div class="text-success py-4 text-center"><i class="bi bi-check-circle-fill fs-3"></i><div class="fw-semibold mt-1">Nenhum pedido atrasado ou em risco neste recorte.</div></div>
-        {% endif %}
-      </div>
-    </div>
-
+    <div class="col-lg-7">{{ fila(central, modo_tv) }}</div>
     <div class="col-lg-5" id="op-agrupamentos">
-      <div class="op-painel">
-        <div class="op-secao-titulo"><i class="bi bi-bar-chart-steps"></i> Carteira em aberto · agrupamentos</div>
-        {% if modo_tv %}
-          <div class="fw-semibold small mb-1">Por cliente</div>{{ lista_grupo(central.grupos.cliente[:5], modo_tv) }}
-          <div class="fw-semibold small mt-3 mb-1">Por região</div>{{ lista_grupo(central.grupos.regiao[:5], modo_tv) }}
-        {% else %}
-        <ul class="nav nav-pills nav-fill small mb-2" role="tablist" id="op-tabs-grupo">
-          <li class="nav-item"><button class="nav-link active py-1" data-bs-toggle="pill" data-bs-target="#op-g-cliente" type="button">Cliente</button></li>
-          <li class="nav-item"><button class="nav-link py-1" data-bs-toggle="pill" data-bs-target="#op-g-regiao" type="button">Região</button></li>
-          <li class="nav-item"><button class="nav-link py-1" data-bs-toggle="pill" data-bs-target="#op-g-frete" type="button">Frete</button></li>
-          <li class="nav-item"><button class="nav-link py-1" data-bs-toggle="pill" data-bs-target="#op-g-semana" type="button">Semana PCP</button></li>
-        </ul>
-        <div class="tab-content">
-          <div class="tab-pane fade show active" id="op-g-cliente">{{ lista_grupo(central.grupos.cliente, modo_tv) }}</div>
-          <div class="tab-pane fade" id="op-g-regiao">{{ lista_grupo(central.grupos.regiao, modo_tv) }}</div>
-          <div class="tab-pane fade" id="op-g-frete">{{ lista_grupo(central.grupos.frete, modo_tv) }}</div>
-          <div class="tab-pane fade" id="op-g-semana">{{ lista_grupo(central.grupos.semana, modo_tv) }}</div>
-        </div>
-        <div class="text-muted small mt-2">Barra = nº de pedidos em aberto · <span class="op-pill op-pill-danger">N</span> atrasados · <span class="op-pill op-pill-warning">N</span> em risco · clique pra filtrar.</div>
-        {% endif %}
-      </div>
+      {{ agrupamentos([
+        ("cliente", "Cliente", central.grupos.cliente),
+        ("regiao", "Região", central.grupos.regiao),
+        ("frete", "Frete", central.grupos.frete),
+        ("semana", "Semana PCP", central.grupos.semana)], modo_tv) }}
     </div>
   </section>
 {% endmacro %}
@@ -187,20 +84,7 @@
 {% endif %}
 
 {% if filtros_central_ativos and not modo_tv %}
-<div class="op-filtro-ativo mb-3">
-  <i class="bi bi-funnel-fill text-primary"></i>
-  <span>Mostrando
-    {% if fc.etapa %}
-      etapa{{ "s" if fc.etapa|length > 1 }}: <strong>{% for v in fc.etapa %}{{ etapas_operacao[v|int - 1].emoji }} {{ etapas_operacao[v|int - 1].label }}{{ ", " if not loop.last }}{% endfor %}</strong>
-    {% endif %}
-    {% if fc.situacao %}
-      {{ " · " if fc.etapa }}situação: <strong>{% for v in fc.situacao %}{{ "Em aberto" if v == "aberto" else situacoes_operacao[v].label }}{{ ", " if not loop.last }}{% endfor %}</strong>
-    {% endif %}
-    {% if fc.qualidade %}{{ " · " if (fc.etapa or fc.situacao) }}<strong>com desvio de Qualidade</strong>{% endif %}
-    — {{ total_filtrado }} pedido(s)
-  </span>
-  <a class="btn btn-sm btn-outline-primary ms-auto" href="{{ central.url_limpar_central }}"><i class="bi bi-x-circle"></i> Limpar seleção</a>
-</div>
+{{ barra_selecao(fc, etapas_operacao, situacoes_operacao, total_filtrado, central.url_limpar_central) }}
 {% endif %}
 
 <div class="op-tudo {% if modo_tv %}op-tv{% endif %}" id="op360Tudo">

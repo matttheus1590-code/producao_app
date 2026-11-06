@@ -121,6 +121,17 @@
       <option value="NAO_INFORMADO" {% if "NAO_INFORMADO" in filtros.frete %}selected{% endif %}>Não informado</option>
     </select>
   </div>
+  {% if transportadoras_filtro is defined and transportadoras_filtro %}
+  <div class="col-md-3">
+    <label class="form-label small text-muted mb-1">Transportadora</label>
+    <select class="form-select" name="transportadora">
+      <option value="">Todas</option>
+      {% for t in transportadoras_filtro %}
+        <option value="{{ t.id }}" {% if filtros.transportadora == t.id|string %}selected{% endif %}>{{ t.nome }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
   <div class="col-md-1 d-grid pt-4">
     <a href="{{ url_for(endpoint_limpar) }}" class="btn btn-outline-secondary" title="Limpar todos os filtros"><i class="bi bi-eraser"></i></a>
   </div>
