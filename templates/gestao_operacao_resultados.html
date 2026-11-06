@@ -1,430 +1,325 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat_card %}
 {% block title %}Gestão Operação · Resultados / OTD · Gestão da Produção e Operação{% endblock %}
-{% block content %}
 
-{% include "_gestao_operacao_subnav.html" with context %}
+{% from "_op_central_macros.html" import brl, kpis %}
 
-<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-  <h4 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Resultados / OTD</h4>
-  <div class="d-flex align-items-center gap-2">
-    <span class="text-muted small">
-      {{ total_filtrado }} pedido(s)
-      {% if filtros.segmento == "planejamento" %}
-        <span class="badge bg-primary ms-1">Planejamento semanal PCP — {{ mes_label }}</span>
-      {% elif filtros.segmento == "faturados" %}
-        <span class="badge bg-success ms-1">Faturados — {{ mes_label }}</span>
-      {% endif %}
-    </span>
-    <div class="d-flex gap-2">
-      <a href="{{ url_for('gestao_operacao_resultados_xlsx', periodo=periodo, **filtros) }}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-file-earmark-excel"></i> Excel
-      </a>
-      <a href="{{ url_for('gestao_operacao_resultados_pdf', periodo=periodo, **filtros) }}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-file-earmark-pdf"></i> PDF
-      </a>
+{# Campos ocultos a partir de um dict de parâmetros (valores em lista viram vários inputs). `exceto` = chaves a pular. #}
+{% macro ocultos(params, exceto=[]) %}
+  {% for k, v in params.items() if k not in exceto %}
+    {% if v is string %}<input type="hidden" name="{{ k }}" value="{{ v }}">
+    {% else %}{% for x in v %}<input type="hidden" name="{{ k }}" value="{{ x }}">{% endfor %}{% endif %}
+  {% endfor %}
+{% endmacro %}
+
+{# Tabela de ranking de OTD (vendedor/cliente). #}
+{% macro rank_otd(linhas, rotulo, meta) %}
+  <table class="op-rank mt-2">
+    <thead><tr><th>{{ rotulo }}</th><th class="text-end">Pedidos</th><th class="text-end">OTD</th></tr></thead>
+    <tbody>
+    {% for l in linhas %}
+      <tr>
+        <td>{{ l.chave }}</td>
+        <td class="text-end">{{ l.total }}</td>
+        <td class="text-end"><span class="badge bg-{{ 'success' if l.percentual is not none and l.percentual >= meta else 'danger' }}">{{ (l.percentual|string|replace('.', ',') ~ "%") if l.percentual is not none else "—" }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="text-center text-muted py-3">Sem dados de OTD ainda.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endmacro %}
+
+{# Bloco da central de Resultados (KPIs + gráficos + rankings). Os dados dos gráficos vão num JSON (#op-dados) pra o
+   Modo TV poder atualizar sem recarregar a página. #}
+{% macro bloco_central(central, modo_tv) %}
+  {{ kpis(central, modo_tv, "Resultados do período") }}
+
+  <section class="row g-3">
+    <div class="col-lg-7">
+      <div class="op-painel">
+        <div class="op-secao-titulo"><i class="bi bi-graph-up-arrow"></i> OTD por mês{% if ano_grafico_otd %} · {{ ano_grafico_otd }}{% endif %}
+          <span class="ms-auto fw-normal text-lowercase">meta mínima {{ GO_OTD_META_PERCENTUAL }}%</span></div>
+        <div class="op-grafico"><canvas id="graficoOtdMensal"></canvas></div>
+      </div>
     </div>
-  </div>
-</div>
-
-{% set endpoint_limpar = "gestao_operacao_resultados" %}
-<form method="get">
-  <input type="hidden" name="periodo" value="{{ periodo }}">
-  {% if filtros.segmento %}<input type="hidden" name="segmento" value="{{ filtros.segmento }}">{% endif %}
-  {% include "_gestao_operacao_filtros.html" %}
-</form>
-
-<div class="card mb-4">
-  <div class="card-body">
-    <h6 class="text-uppercase text-muted small mb-2">
-      <i class="bi bi-graph-up-arrow"></i> OTD por mês {% if ano_grafico_otd %}— {{ ano_grafico_otd }}{% endif %}
-      <span class="text-muted">(meta mínima {{ GO_OTD_META_PERCENTUAL }}%)</span>
-    </h6>
-    <canvas id="graficoOtdMensal" height="90"></canvas>
-  </div>
-</div>
-
-<div class="card mb-4">
-  <div class="card-body">
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-      <h5 class="mb-0"><i class="bi bi-cash-stack"></i> Faturamento por Semana — {{ mes_label }}</h5>
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        <form method="get" class="d-flex align-items-center gap-1">
-          {% for chave, valor in filtros.items() %}
-            <input type="hidden" name="{{ chave }}" value="{{ valor }}">
-          {% endfor %}
-          <label class="small text-muted mb-0 me-1" for="periodo-select"><i class="bi bi-calendar3"></i> Período:</label>
-          <select id="periodo-select" name="periodo" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
-            <option value="todos" {% if tipo_periodo == "todos" %}selected{% endif %}>Todos os períodos</option>
-            {% for grupo in opcoes_periodo %}
-              <optgroup label="{{ grupo.ano }}">
-                {% for item in grupo.itens %}
-                  <option value="{{ item.valor }}" {% if item.valor == periodo %}selected{% endif %}>{{ item.label }}</option>
-                {% endfor %}
-              </optgroup>
-            {% endfor %}
-          </select>
-          <noscript><button class="btn btn-sm btn-primary" type="submit">Ir</button></noscript>
-        </form>
-        {% if periodo_anterior and periodo_seguinte %}
-        <div class="d-flex align-items-center gap-2">
-          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_resultados', periodo=periodo_anterior, **filtros) }}" title="Período anterior">
-            <i class="bi bi-chevron-left"></i>
-          </a>
-          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_resultados', periodo=periodo_seguinte, **filtros) }}" title="Próximo período">
-            <i class="bi bi-chevron-right"></i>
-          </a>
+    <div class="col-lg-5">
+      <div class="op-painel">
+        <div class="op-secao-titulo"><i class="bi bi-people"></i> OTD por vendedor e por cliente <span class="ms-auto fw-normal text-lowercase">recorte filtrado</span></div>
+        {% if modo_tv %}
+          <div class="fw-semibold small">Vendedor</div>{{ rank_otd(otd.por_vendedor[:5], "Vendedor", GO_OTD_META_PERCENTUAL) }}
+          <div class="fw-semibold small mt-3">Cliente</div>{{ rank_otd(otd.por_cliente[:5], "Cliente", GO_OTD_META_PERCENTUAL) }}
+        {% else %}
+        <ul class="nav nav-pills nav-fill small mb-1" role="tablist">
+          <li class="nav-item"><button class="nav-link active py-1" data-bs-toggle="pill" data-bs-target="#res-vendedor" type="button">Vendedor</button></li>
+          <li class="nav-item"><button class="nav-link py-1" data-bs-toggle="pill" data-bs-target="#res-cliente" type="button">Cliente</button></li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="res-vendedor">
+            <div class="op-grafico op-grafico-sm"><canvas id="graficoOtdVendedor"></canvas></div>
+            {{ rank_otd(otd.por_vendedor, "Vendedor", GO_OTD_META_PERCENTUAL) }}
+          </div>
+          <div class="tab-pane fade" id="res-cliente">
+            <div class="op-grafico op-grafico-sm"><canvas id="graficoOtdCliente"></canvas></div>
+            {{ rank_otd(otd.por_cliente, "Cliente", GO_OTD_META_PERCENTUAL) }}
+          </div>
         </div>
         {% endif %}
       </div>
     </div>
-    <p class="text-muted small mb-3">
-      Com base no Planejamento Semanal de PCP (Término Semanal PCP). "Liberado" = todo pedido planejado pra encerrar naquele período (liberado ou não);
-      "Faturado" = Valor NF Emitida dos pedidos daquele período.
-    </p>
+  </section>
 
-    <canvas id="graficoFaturamentoSemanal" height="90" class="mb-3"></canvas>
-
-    <div class="row g-3 mb-3">
-      <div class="col-6 col-lg-3">
-        {{ stat_card("📦 Qtd. liberada no mês", faturamento_semanal.totais.qtd_liberada) }}
-      </div>
-      <div class="col-6 col-lg-3">
-        {{ stat_card("💰 Valor liberado no mês", "R$ " ~ "{:,.2f}".format(faturamento_semanal.totais.valor_liberado).replace(",", "X").replace(".", ",").replace("X", "."), cor="primary") }}
-      </div>
-      <div class="col-6 col-lg-3">
-        {{ stat_card("🧾 Qtd. faturada no mês", faturamento_semanal.totais.qtd_faturada) }}
-      </div>
-      <div class="col-6 col-lg-3">
-        {{ stat_card("💵 Valor faturado no mês", "R$ " ~ "{:,.2f}".format(faturamento_semanal.totais.valor_faturado).replace(",", "X").replace(".", ",").replace("X", "."), cor="success") }}
+  {% if not modo_tv %}
+  <section class="row g-3">
+    <div class="col-lg-7">
+      <div class="op-painel">
+        <div class="op-secao-titulo"><i class="bi bi-cash-stack"></i> Faturamento por semana · {{ mes_label }} <span class="ms-auto fw-normal text-lowercase">liberado × faturado</span></div>
+        <div class="op-grafico"><canvas id="graficoFaturamentoSemanal"></canvas></div>
       </div>
     </div>
-
-    <hr class="my-3">
-
-    <h6 class="text-uppercase text-muted small mb-1"><i class="bi bi-speedometer2"></i> OTD e Lead Time — {{ mes_label }}</h6>
-    <p class="text-muted small mb-3">
-      Mesmo recorte de "liberado" acima (Término Semanal PCP no mês). OTD = entregas dentro do prazo solicitado. Lead Time Operação = da inclusão do pedido até a entrega no cliente;
-      "CIF"/"FOB" é o mesmo lead time só que separado por modalidade de frete. Lead Time Chão de Fábrica (Produção) = do início ao término da produção em Gestão Produção (início da produção até o fim da inspeção do item).
-    </p>
-    <div class="row g-3 mb-3">
-      <div class="col-6 col-lg-4">
-        {{ stat_card(
-          "🎯 OTD do mês",
-          (otd_mes.percentual ~ "%") if otd_mes.percentual is not none else "—",
-          cor=("success" if otd_mes.atinge_meta else "danger"),
-          borda=("success" if otd_mes.atinge_meta else "danger"),
-          sufixo=(otd_mes.total ~ " pedido(s) com OTD registrado" if otd_mes.total else "sem OTD registrado ainda")
-        ) }}
-      </div>
-      <div class="col-6 col-lg-4">
-        {{ stat_card(
-          "⏱️ Lead Time Operação",
-          (lead_times_mes.lt_operacao.media ~ " dias") if lead_times_mes.lt_operacao.media is not none else "—",
-          cor="primary",
-          sufixo=(lead_times_mes.lt_operacao.n ~ " pedido(s) com dado" if lead_times_mes.lt_operacao.n else "sem dado suficiente")
-        ) }}
-      </div>
-      <div class="col-6 col-lg-4">
-        {{ stat_card(
-          "🚢 Lead Time Operação — CIF",
-          (lead_times_mes.lt_operacao_cif.media ~ " dias") if lead_times_mes.lt_operacao_cif.media is not none else "—",
-          sufixo=(lead_times_mes.lt_operacao_cif.n ~ " pedido(s) CIF" if lead_times_mes.lt_operacao_cif.n else "sem pedido CIF com dado")
-        ) }}
-      </div>
-      <div class="col-6 col-lg-4">
-        {{ stat_card(
-          "🚚 Lead Time Operação — FOB",
-          (lead_times_mes.lt_operacao_fob.media ~ " dias") if lead_times_mes.lt_operacao_fob.media is not none else "—",
-          sufixo=(lead_times_mes.lt_operacao_fob.n ~ " pedido(s) FOB" if lead_times_mes.lt_operacao_fob.n else "sem pedido FOB com dado")
-        ) }}
-      </div>
-      <div class="col-6 col-lg-4">
-        {{ stat_card(
-          "🚛 Lead Time Frete",
-          (lead_times_mes.lt_frete.media ~ " dias") if lead_times_mes.lt_frete.media is not none else "—",
-          sufixo=(lead_times_mes.lt_frete.n ~ " pedido(s) com dado" if lead_times_mes.lt_frete.n else "sem dado suficiente")
-        ) }}
-      </div>
-      <div class="col-6 col-lg-4">
-        {{ stat_card(
-          "🏭 Lead Time Chão de Fábrica (Produção)",
-          (lead_times_mes.lt_producao.media ~ " dias") if lead_times_mes.lt_producao.media is not none else "—",
-          cor="secondary",
-          sufixo=(lead_times_mes.lt_producao.n ~ " item(ns) com dado" if lead_times_mes.lt_producao.n else "sem dado suficiente")
-        ) }}
+    <div class="col-lg-5">
+      <div class="op-painel">
+        <div class="op-secao-titulo"><i class="bi bi-bar-chart-steps"></i> Comparativo de lead times · {{ mes_label }}</div>
+        <div class="op-grafico"><canvas id="graficoLeadTimes"></canvas></div>
       </div>
     </div>
+  </section>
+  {% endif %}
 
-    <h6 class="text-uppercase text-muted small mb-2"><i class="bi bi-bar-chart-steps"></i> Comparativo de Lead Times — {{ mes_label }}</h6>
-    <canvas id="graficoLeadTimes" height="130" class="mb-3"></canvas>
+  <script type="application/json" id="op-dados">{{ {
+    "otd_anual": otd_mensal_ano, "meta": GO_OTD_META_PERCENTUAL, "faturamento": faturamento_semanal_grafico,
+    "lead_times": lead_times_mes, "por_vendedor": otd.por_vendedor, "por_cliente": otd.por_cliente
+  } | tojson }}</script>
+{% endmacro %}
 
-    <p class="text-muted small mb-2">
-      <i class="bi bi-hand-index-thumb"></i> Clique numa semana pra ver os pedidos dela — clique de novo pra encolher.
-    </p>
-    <div class="table-responsive">
-      <table class="table table-sm table-hover mb-0">
-        <thead>
-          <tr>
-            <th>Semana</th>
-            <th class="text-center">Qtd. liberada</th>
-            <th class="text-end">Valor liberado</th>
-            <th class="text-center">Qtd. faturada</th>
-            <th class="text-end">Valor faturado</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for l in faturamento_semanal.linhas %}
-          <tr class="semana-linha-clicavel" data-bs-toggle="collapse" data-bs-target="#semana-detalhe-{{ loop.index0 }}" aria-expanded="false" aria-controls="semana-detalhe-{{ loop.index0 }}">
-            <td><i class="bi bi-caret-right-fill semana-caret"></i> {{ l.semana_curta }}</td>
-            <td class="text-center">{{ l.qtd_liberada }}</td>
-            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_liberado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-            <td class="text-center">{{ l.qtd_faturada }}</td>
-            <td class="text-end">R$ {{ "{:,.2f}".format(l.valor_faturado).replace(",", "X").replace(".", ",").replace("X", ".") }}</td>
-          </tr>
-          <tr class="collapse" id="semana-detalhe-{{ loop.index0 }}">
-            <td colspan="5" class="p-0 border-0">
-              <div class="p-2 bg-light border-bottom">
-                <table class="table table-sm table-hover mb-0 bg-white">
-                  <thead>
-                    <tr>
-                      <th>Pedido</th>
-                      <th>Cliente</th>
-                      <th class="text-end">Valor pedido</th>
-                      <th class="text-end">Valor NF</th>
-                      <th>OTD</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {% for p in l.pedidos %}
-                    <tr>
-                      <td>{{ p.pedido_venda or "—" }}</td>
-                      <td>{{ p.cliente }}</td>
-                      <td class="text-end">
-                        {% if p.go_valor_pedido_operacao is not none %}
-                          R$ {{ "{:,.2f}".format(p.go_valor_pedido_operacao).replace(",", "X").replace(".", ",").replace("X", ".") }}
-                        {% else %}—{% endif %}
-                      </td>
-                      <td class="text-end">
-                        {% if p.go_valor_nf_emitida is not none %}
-                          R$ {{ "{:,.2f}".format(p.go_valor_nf_emitida).replace(",", "X").replace(".", ",").replace("X", ".") }}
-                        {% else %}—{% endif %}
-                      </td>
-                      <td>
-                        {% set otd_p = otd_por_pedido_id.get(p.id, {}) %}
-                        {% if otd_p.status == "SIM" %}
-                          <span class="badge bg-success">SIM</span>
-                        {% elif otd_p.status == "NAO" %}
-                          <span class="badge bg-danger">NÃO</span>
-                        {% else %}—{% endif %}
-                      </td>
-                      <td class="text-end">
-                        {% if current_user.role in ('ADMIN', 'PCP') %}
-                        <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='resultados') }}" class="btn btn-sm btn-outline-primary" title="Editar Resultados">
-                          <i class="bi bi-pencil-square"></i>
-                        </a>
-                        {% endif %}
-                      </td>
-                    </tr>
-                    {% else %}
-                    <tr><td colspan="6" class="text-center text-muted py-2">Nenhum pedido nessa semana.</td></tr>
-                    {% endfor %}
-                  </tbody>
-                </table>
-              </div>
-            </td>
-          </tr>
-        {% else %}
-          <tr><td colspan="5" class="text-center text-muted py-3">Nenhuma semana de PCP planejada nesse período.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+{% block content %}
+{% set ncols = 12 if ve_pd_qualidade_custos else 11 %}
+
+{% if not modo_tv %}{% include "_gestao_operacao_subnav.html" with context %}{% endif %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-graph-up-arrow"></i> Resultados / OTD {% if modo_tv %}<span class="badge text-bg-dark align-middle fs-6">Modo TV</span>{% endif %}</h4>
+    <div class="text-muted small">Painel de resultados · {{ mes_label }}
+      {% if filtros.segmento == "planejamento" %}<span class="badge bg-primary ms-1">Planejamento semanal PCP</span>
+      {% elif filtros.segmento == "faturados" %}<span class="badge bg-success ms-1">Faturados</span>{% endif %}
+      · {{ total_filtrado }} pedido(s) no recorte · atualizado em {{ atualizado_em }}</div>
   </div>
-</div>
-
-<div class="card mb-3">
-  <div class="card-body py-3">
-    <form method="get" class="d-flex align-items-center flex-wrap gap-2">
-      <input type="hidden" name="periodo" value="{{ periodo }}">
-      {% for chave, valor in filtros.items() if chave != "segmento" %}
-        <input type="hidden" name="{{ chave }}" value="{{ valor }}">
-      {% endfor %}
-      <label class="form-label small text-muted mb-0 me-1" for="segmento-select">
-        <i class="bi bi-funnel"></i> Ver OTD e pedidos de {{ mes_label }}:
-      </label>
-      <select id="segmento-select" name="segmento" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
-        <option value="" {% if not filtros.segmento %}selected{% endif %}>Todos os pedidos (sem filtro de período)</option>
-        <option value="planejamento" {% if filtros.segmento == "planejamento" %}selected{% endif %}>Dentro do planejamento semanal PCP</option>
-        <option value="faturados" {% if filtros.segmento == "faturados" %}selected{% endif %}>Faturados (NF emitida)</option>
-      </select>
-      <noscript><button class="btn btn-sm btn-primary" type="submit">Filtrar</button></noscript>
-      {% if filtros.segmento %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('gestao_operacao_resultados', periodo=periodo) }}">
-          <i class="bi bi-x-circle"></i> Limpar filtro
-        </a>
+  <div class="d-flex align-items-center flex-wrap gap-2">
+    {% if modo_tv %}
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Resultados / OTD · Modo TV"><i class="bi bi-arrows-fullscreen"></i> Tela cheia</button>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_sem_tv }}"><i class="bi bi-x-lg"></i> Sair do modo TV</a>
+    {% else %}
+      <form method="get" class="d-flex align-items-center gap-1 m-0">
+        {{ ocultos(filtros_url, ["periodo"]) }}
+        <label class="small text-muted mb-0 me-1" for="periodo-select"><i class="bi bi-calendar3"></i></label>
+        <select id="periodo-select" name="periodo" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()" title="Período dos resultados">
+          <option value="todos" {% if tipo_periodo == "todos" %}selected{% endif %}>Todos os períodos</option>
+          {% for grupo in opcoes_periodo %}
+            <optgroup label="{{ grupo.ano }}">
+              {% for item in grupo.itens %}
+                <option value="{{ item.valor }}" {% if item.valor == periodo %}selected{% endif %}>{{ item.label }}</option>
+              {% endfor %}
+            </optgroup>
+          {% endfor %}
+        </select>
+        <noscript><button class="btn btn-sm btn-primary" type="submit">Ir</button></noscript>
+      </form>
+      {% if periodo_anterior and periodo_seguinte %}
+      <div class="btn-group btn-group-sm">
+        <a class="btn btn-outline-secondary" href="{{ url_for('gestao_operacao_resultados', periodo=periodo_anterior, **filtros_url) }}" title="Período anterior"><i class="bi bi-chevron-left"></i></a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('gestao_operacao_resultados', periodo=periodo_seguinte, **filtros_url) }}" title="Próximo período"><i class="bi bi-chevron-right"></i></a>
+      </div>
       {% endif %}
-    </form>
-    {% if filtros.segmento %}
-      <p class="text-muted small mb-0 mt-2">
-        Use o <strong>seletor de período</strong> acima pra mudar mês/trimestre/semestre/ano sem perder esse filtro.
-      </p>
+      <a class="btn btn-outline-dark btn-sm" href="{{ url_tv }}" title="Painel grande para TV — atualiza sozinho"><i class="bi bi-tv"></i> Modo TV</a>
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Resultados / OTD" title="Abre a central inteira em tela cheia (Esc para sair)"><i class="bi bi-arrows-fullscreen"></i> Tela cheia</button>
+      <div class="dropdown">
+        <button class="btn btn-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-file-earmark-bar-graph"></i> Relatórios</button>
+        <div class="dropdown-menu dropdown-menu-end p-2" style="min-width: 19rem;">
+          <a class="dropdown-item" href="{{ url_for('gestao_operacao_resultados_pdf', periodo=periodo, **filtros_url) }}"><i class="bi bi-file-earmark-pdf"></i> PDF do período e filtros atuais</a>
+          <a class="dropdown-item" href="{{ url_for('gestao_operacao_resultados_xlsx', periodo=periodo, **filtros_url) }}"><i class="bi bi-file-earmark-excel"></i> Excel do período e filtros atuais</a>
+        </div>
+      </div>
     {% endif %}
   </div>
 </div>
 
-<p class="text-muted small mb-3">
-  OTD (On-Time Delivery) — entregas dentro do prazo solicitado pelo cliente. Meta mínima: <strong>{{ GO_OTD_META_PERCENTUAL }}%</strong>.
-  Considera só os pedidos com OTD já registrado ({{ otd.total }} de {{ total_filtrado }}{% if filtros.segmento %} nesse filtro{% endif %}).
-</p>
-
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3">
-    {{ stat_card("🎯 OTD geral", (otd.percentual ~ "%") if otd.percentual is not none else "—", cor=("success" if otd.atinge_meta else "danger"), borda=("success" if otd.atinge_meta else "danger"), sufixo=("Meta: " ~ GO_OTD_META_PERCENTUAL ~ "% " ~ ("✓ atingida" if otd.atinge_meta else "abaixo da meta"))) }}
-  </div>
-  <div class="col-6 col-lg-3">
-    {{ stat_card("✅ Entregues no prazo", otd.no_prazo, cor="success") }}
-  </div>
-  <div class="col-6 col-lg-3">
-    {{ stat_card("⚠️ Fora do prazo", (otd.total - otd.no_prazo) if otd.total else 0, cor="danger") }}
-  </div>
-  <div class="col-6 col-lg-3">
-    {{ stat_card("📋 Pedidos com OTD registrado", otd.total) }}
-  </div>
-</div>
-
-<div class="row g-3 mb-4">
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">OTD por vendedor</h6>
-        {% if otd.por_vendedor %}
-        <canvas id="graficoOtdVendedor" height="180" class="mb-3"></canvas>
-        {% endif %}
-        <table class="table table-sm mb-0">
-          <thead><tr><th>Vendedor</th><th class="text-center">Pedidos</th><th class="text-end">OTD</th></tr></thead>
-          <tbody>
-          {% for l in otd.por_vendedor %}
-            <tr>
-              <td>{{ l.chave }}</td>
-              <td class="text-center">{{ l.total }}</td>
-              <td class="text-end">
-                <span class="badge bg-{{ 'success' if l.percentual is not none and l.percentual >= GO_OTD_META_PERCENTUAL else 'danger' }}">
-                  {{ (l.percentual ~ "%") if l.percentual is not none else "—" }}
-                </span>
-              </td>
-            </tr>
-          {% else %}
-            <tr><td colspan="3" class="text-center text-muted py-3">Sem dados de OTD ainda.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
+{% if not modo_tv %}
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <div class="d-flex align-items-center flex-wrap gap-2">
+      <span class="small text-muted"><i class="bi bi-funnel"></i> Ver pedidos de {{ mes_label }}:</span>
+      <div class="btn-group btn-group-sm" role="group">
+        <a class="btn {{ 'btn-dark' if not filtros.segmento else 'btn-outline-dark' }}" href="{{ central.url_segmentos[''] }}">Todos os pedidos</a>
+        <a class="btn {{ 'btn-dark' if filtros.segmento == 'planejamento' else 'btn-outline-dark' }}" href="{{ central.url_segmentos['planejamento'] }}">Dentro do planejamento semanal PCP</a>
+        <a class="btn {{ 'btn-dark' if filtros.segmento == 'faturados' else 'btn-outline-dark' }}" href="{{ central.url_segmentos['faturados'] }}">Faturados (NF emitida)</a>
       </div>
+      {% if filtros.segmento or central.otd_selecionado %}
+        <a class="btn btn-sm btn-outline-primary ms-auto" href="{{ central.url_limpar }}"><i class="bi bi-x-circle"></i> Limpar seleção</a>
+      {% endif %}
+      <button class="btn btn-sm btn-outline-secondary {{ '' if filtros.segmento or central.otd_selecionado else 'ms-auto' }}" type="button" data-bs-toggle="collapse" data-bs-target="#op-filtros" aria-expanded="{{ 'true' if filtros_painel_ativos else 'false' }}">
+        <i class="bi bi-sliders"></i> Mais filtros {% if filtros_painel_ativos %}<span class="badge text-bg-primary">ativos</span>{% endif %}
+      </button>
     </div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="text-uppercase text-muted small mb-3">OTD por cliente</h6>
-        {% if otd.por_cliente %}
-        <canvas id="graficoOtdCliente" height="180" class="mb-3"></canvas>
-        {% endif %}
-        <table class="table table-sm mb-0">
-          <thead><tr><th>Cliente</th><th class="text-center">Pedidos</th><th class="text-end">OTD</th></tr></thead>
-          <tbody>
-          {% for l in otd.por_cliente %}
-            <tr>
-              <td>{{ l.chave }}</td>
-              <td class="text-center">{{ l.total }}</td>
-              <td class="text-end">
-                <span class="badge bg-{{ 'success' if l.percentual is not none and l.percentual >= GO_OTD_META_PERCENTUAL else 'danger' }}">
-                  {{ (l.percentual ~ "%") if l.percentual is not none else "—" }}
-                </span>
-              </td>
-            </tr>
-          {% else %}
-            <tr><td colspan="3" class="text-center text-muted py-3">Sem dados de OTD ainda.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
+    <div class="collapse {% if filtros_painel_ativos %}show{% endif %} mt-2" id="op-filtros">
+      {% set endpoint_limpar = "gestao_operacao_resultados" %}
+      <form method="get">
+        <input type="hidden" name="periodo" value="{{ periodo }}">
+        {% if filtros.segmento %}<input type="hidden" name="segmento" value="{{ filtros.segmento }}">{% endif %}
+        {% include "_gestao_operacao_filtros.html" %}
+      </form>
     </div>
   </div>
 </div>
-
-<div class="table-responsive">
-  <table class="table table-hover table-sm align-middle bg-white">
-    <thead class="table-success">
-      <tr>
-        <th>Pedido</th>
-        <th>Cliente</th>
-        <th>OTD</th>
-        <th>Data solicitada</th>
-        <th>Entregue cliente</th>
-        <th>Dias atraso/antecipação</th>
-        <th class="text-end" title="Custo produção real + Custo frete final">Custo total</th>
-        <th>Status final</th>
-        <th>Obs.</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for p in pedidos %}
-      <tr>
-        <td>{{ p.pedido_venda or "—" }}</td>
-        <td>{{ p.cliente }}</td>
-        {% set otd_p = otd_por_pedido_id.get(p.id, {}) %}
-        <td>
-          {% if otd_p.status == "SIM" %}
-            <span class="badge bg-success">SIM</span>
-          {% elif otd_p.status == "NAO" %}
-            <span class="badge bg-danger">NÃO</span>
-          {% else %}—{% endif %}
-        </td>
-        <td>{{ otd_p.solicitada.strftime("%d/%m/%Y") if otd_p.solicitada else "—" }}</td>
-        <td>{{ p.go_data_entregue_cliente.strftime("%d/%m/%Y") if p.go_data_entregue_cliente else "—" }}</td>
-        <td>
-          {% set dias = otd_p.dias %}
-          {% if dias is none %}—
-          {% elif dias > 0 %}<span class="text-danger">{{ dias }}d atraso</span>
-          {% elif dias < 0 %}<span class="text-success">{{ -dias }}d antecipado</span>
-          {% else %}no dia{% endif %}
-        </td>
-        <td class="text-end" title="Custo produção real + Custo frete final">
-          {% if p.go_custo_total is not none %}
-            R$ {{ "{:,.2f}".format(p.go_custo_total).replace(",", "X").replace(".", ",").replace("X", ".") }}
-          {% else %}—{% endif %}
-        </td>
-        <td>{{ p.go_status_final_alinhamento or "—" }}</td>
-        <td class="text-truncate" style="max-width: 200px;" title="{{ p.go_obs_operacao or '' }}">{{ p.go_obs_operacao or "—" }}</td>
-        <td class="text-end">
-          {% if current_user.role in ('ADMIN', 'PCP') %}
-          <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='resultados') }}" class="btn btn-sm btn-outline-primary" title="Editar Resultados">
-            <i class="bi bi-pencil-square"></i>
-          </a>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="10" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-
-{% if total_paginas > 1 %}
-<nav class="d-flex justify-content-center">
-  <ul class="pagination">
-    {% for pg in range(1, total_paginas + 1) %}
-      <li class="page-item {% if pg == page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('gestao_operacao_resultados', page=pg, periodo=periodo, **filtros) }}">{{ pg }}</a>
-      </li>
-    {% endfor %}
-  </ul>
-</nav>
 {% endif %}
 
+<div class="op-tudo {% if modo_tv %}op-tv{% endif %}" id="op360Tudo">
+  {{ bloco_central(central, modo_tv) }}
+
+  {% if not modo_tv %}
+  <section>
+    <details class="op-painel">
+      <summary class="op-secao-titulo mb-0" style="cursor:pointer"><i class="bi bi-calendar-week"></i> Faturamento por semana · {{ mes_label }} <span class="fw-normal text-lowercase">(clique pra abrir a tabela por semana)</span></summary>
+      <p class="text-muted small my-2">
+        Com base no Planejamento Semanal de PCP (Término Semanal PCP). "Liberado" = todo pedido planejado pra encerrar naquele período (liberado ou não);
+        "Faturado" = Valor NF Emitida dos pedidos daquele período. Clique numa semana pra ver os pedidos dela.
+      </p>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead>
+            <tr><th>Semana</th><th class="text-center">Qtd. liberada</th><th class="text-end">Valor liberado</th><th class="text-center">Qtd. faturada</th><th class="text-end">Valor faturado</th></tr>
+          </thead>
+          <tbody>
+          {% for l in faturamento_semanal.linhas %}
+            <tr class="semana-linha-clicavel" data-bs-toggle="collapse" data-bs-target="#semana-detalhe-{{ loop.index0 }}" aria-expanded="false" aria-controls="semana-detalhe-{{ loop.index0 }}">
+              <td><i class="bi bi-caret-right-fill semana-caret"></i> {{ l.semana_curta }}</td>
+              <td class="text-center">{{ l.qtd_liberada }}</td>
+              <td class="text-end">{{ brl(l.valor_liberado) }}</td>
+              <td class="text-center">{{ l.qtd_faturada }}</td>
+              <td class="text-end">{{ brl(l.valor_faturado) }}</td>
+            </tr>
+            <tr class="collapse" id="semana-detalhe-{{ loop.index0 }}">
+              <td colspan="5" class="p-0 border-0">
+                <div class="p-2 bg-light border-bottom">
+                  <table class="table table-sm table-hover mb-0 bg-white">
+                    <thead><tr><th>Pedido</th><th>Cliente</th><th class="text-end">Valor pedido</th><th class="text-end">Valor NF</th><th>OTD</th><th></th></tr></thead>
+                    <tbody>
+                      {% for p in l.pedidos %}
+                      {% set otd_p = otd_por_pedido_id.get(p.id, {}) %}
+                      <tr>
+                        <td>{{ p.pedido_venda or "—" }}</td>
+                        <td>{{ p.cliente }}</td>
+                        <td class="text-end">{% if p.go_valor_pedido_operacao is not none %}{{ brl(p.go_valor_pedido_operacao) }}{% else %}—{% endif %}</td>
+                        <td class="text-end">{% if p.go_valor_nf_emitida is not none %}{{ brl(p.go_valor_nf_emitida) }}{% else %}—{% endif %}</td>
+                        <td>{% if otd_p.status == "SIM" %}<span class="badge bg-success">SIM</span>{% elif otd_p.status == "NAO" %}<span class="badge bg-danger">NÃO</span>{% else %}—{% endif %}</td>
+                        <td class="text-end">{% if current_user.role in ('ADMIN', 'PCP') %}<a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='resultados') }}" class="btn btn-sm btn-outline-primary" title="Editar Resultados"><i class="bi bi-pencil-square"></i></a>{% endif %}</td>
+                      </tr>
+                      {% else %}
+                      <tr><td colspan="6" class="text-center text-muted py-2">Nenhum pedido nessa semana.</td></tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-3">Nenhuma semana de PCP planejada nesse período.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <section>
+    <div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-1">
+      <div class="op-secao-titulo mb-0"><i class="bi bi-table"></i> Pedidos · {{ total_filtrado }} no recorte</div>
+      <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#resultadosWrap" data-tela-cheia-titulo="Resultados / OTD · Pedidos" title="Abre só a tabela em tela cheia (Esc para sair)"><i class="bi bi-arrows-fullscreen"></i> Só a tabela</button>
+    </div>
+    <p class="text-muted small mb-2">
+      OTD (On-Time Delivery) = entrega dentro do prazo solicitado pelo cliente. Meta mínima: <strong>{{ GO_OTD_META_PERCENTUAL }}%</strong>. Considera só os pedidos com entrega já registrada
+      ({{ otd.total }} de {{ total_filtrado }}{% if filtros.segmento %} nesse filtro{% endif %}). Linha
+      <span class="badge" style="background:#7ee495;color:#0a3622">verde</span> = entregue no prazo ·
+      <span class="badge" style="background:#f8d7da;color:#842029">vermelha</span> = entregue fora do prazo.
+    </p>
+    <div class="table-responsive tabela-listagem-geral-wrap" id="resultadosWrap">
+      <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral tabela-operacao-360">
+        <colgroup>
+          <col style="width:70px"><col style="width:130px">
+          <col style="width:55px"><col style="width:90px"><col style="width:90px"><col style="width:110px">
+          <col style="width:95px"><col style="width:95px">{% if ve_pd_qualidade_custos %}<col style="width:95px">{% endif %}
+          <col style="width:100px"><col style="width:120px"><col style="width:80px">
+        </colgroup>
+        <thead class="table-light">
+          <tr class="op-grupos-cab">
+            <th colspan="2" class="op-g-ident">Identificação</th>
+            <th colspan="4" class="op-g-result">Prazo / OTD</th>
+            <th colspan="{{ 3 if ve_pd_qualidade_custos else 2 }}" class="op-g-fin">Financeiro</th>
+            <th colspan="2" class="op-g-exped">Fechamento</th>
+            <th class="op-g-acao"></th>
+          </tr>
+          <tr>
+            <th>Pedido</th><th>Cliente</th>
+            <th>OTD</th><th>Data solicitada</th><th>Entregue cliente</th><th>Dias atraso/antecip.</th>
+            <th class="text-end">Valor pedido</th><th class="text-end">Valor NF</th>
+            {% if ve_pd_qualidade_custos %}<th class="text-end" title="Custo produção real + Custo frete final">Custo total</th>{% endif %}
+            <th>Status final</th><th>Obs.</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in pedidos %}
+          {% set otd_p = otd_por_pedido_id.get(p.id, {}) %}
+          <tr class="{% if otd_p.status == 'NAO' %}linha-op-atrasado{% elif otd_p.status == 'SIM' %}linha-op360-entregue{% endif %}">
+            <td>{{ (p.pedido_venda | normalizar_pedido_venda) or "—" }}</td>
+            <td class="text-truncate" title="{{ p.cliente }}">{{ p.cliente }}</td>
+            <td>{% if otd_p.status == "SIM" %}<span class="badge bg-success">SIM</span>{% elif otd_p.status == "NAO" %}<span class="badge bg-danger">NÃO</span>{% else %}<span class="badge bg-secondary" title="Ainda sem entrega registrada">—</span>{% endif %}</td>
+            <td>{{ otd_p.solicitada.strftime("%d/%m/%Y") if otd_p.solicitada else "—" }}</td>
+            <td>{{ p.go_data_entregue_cliente.strftime("%d/%m/%Y") if p.go_data_entregue_cliente else "—" }}</td>
+            <td>
+              {% set dias = otd_p.dias %}
+              {% if dias is none %}—
+              {% elif dias > 0 %}<span class="text-danger">{{ dias }}d atraso</span>
+              {% elif dias < 0 %}<span class="text-success">{{ -dias }}d antecipado</span>
+              {% else %}no dia{% endif %}
+            </td>
+            <td class="text-end">{% if p.go_valor_pedido_operacao is not none %}{{ brl(p.go_valor_pedido_operacao) }}{% else %}—{% endif %}</td>
+            <td class="text-end">{% if p.go_valor_nf_emitida is not none %}{{ brl(p.go_valor_nf_emitida) }}{% else %}—{% endif %}</td>
+            {% if ve_pd_qualidade_custos %}
+            <td class="text-end" title="Custo produção real + Custo frete final">{% if p.go_custo_total is not none %}{{ brl(p.go_custo_total) }}{% else %}—{% endif %}</td>
+            {% endif %}
+            <td class="text-truncate" title="{{ p.go_status_final_alinhamento or '' }}">{{ p.go_status_final_alinhamento or "—" }}</td>
+            <td class="text-truncate" title="{{ p.go_obs_operacao or '' }}">{{ p.go_obs_operacao or "—" }}</td>
+            <td class="text-end text-nowrap">
+              <a href="{{ url_for('consulta_pedido', pedido_venda=(p.pedido_venda | normalizar_pedido_venda)) }}" class="btn btn-sm btn-outline-secondary" title="Consulta completa do pedido"><i class="bi bi-search"></i></a>
+              {% if current_user.role in ('ADMIN', 'PCP') %}
+              <a href="{{ url_for('gestao_operacao_editar', pedido_id=p.id, secao='resultados') }}" class="btn btn-sm btn-outline-primary" title="Editar Resultados"><i class="bi bi-pencil-square"></i></a>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="{{ ncols }}" class="text-center text-muted py-4">Nenhum pedido encontrado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if total_paginas > 1 %}
+    <nav class="d-flex justify-content-center mt-2">
+      <ul class="pagination pagination-sm mb-0">
+        {% for pg in range(1, total_paginas + 1) %}
+          {% if pg == 1 or pg == total_paginas or (pg - page)|abs <= 2 %}
+            <li class="page-item {% if pg == page %}active{% endif %}">
+              <a class="page-link" href="{{ url_for('gestao_operacao_resultados', page=pg, periodo=periodo, **filtros_url) }}">{{ pg }}</a>
+            </li>
+          {% elif (pg - page)|abs == 3 %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -433,153 +328,116 @@
 (function () {
   Chart.defaults.color = "#495057";
   Chart.defaults.font.size = 12;
+  Chart.defaults.maintainAspectRatio = false;
 
-  // OTD mensal (ano do período selecionado), com linha de meta — mesmo
-  // padrão do gráfico equivalente em templates/painel.html.
-  const otdAnual = {{ otd_mensal_ano | tojson }};
-  const otdMeta = {{ GO_OTD_META_PERCENTUAL }};
-  const elOtdMensal = document.getElementById("graficoOtdMensal");
-  if (elOtdMensal) {
-    new Chart(elOtdMensal, {
+  function recriar(id, config) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const antigo = Chart.getChart(el);
+    if (antigo) antigo.destroy();
+    new Chart(el, config);
+  }
+
+  function desenharGraficos() {
+    const alvo = document.getElementById("op-dados");
+    if (!alvo) return;
+    const d = JSON.parse(alvo.textContent);
+    const otdMeta = d.meta;
+
+    // OTD mensal (ano do período selecionado), com linha de meta.
+    recriar("graficoOtdMensal", {
       data: {
-        labels: otdAnual.map(function (p) { return p.mes; }),
+        labels: d.otd_anual.map(function (p) { return p.mes; }),
         datasets: [
-          {
-            type: "bar",
-            label: "OTD (%)",
-            data: otdAnual.map(function (p) { return p.percentual; }),
-            backgroundColor: otdAnual.map(function (p) {
-              if (p.percentual === null) return "#dee2e6";
-              return p.atinge_meta ? "#198754" : "#dc3545";
-            }),
-          },
-          {
-            type: "line",
-            label: "Meta mínima (" + otdMeta + "%)",
-            data: otdAnual.map(function () { return otdMeta; }),
-            borderColor: "#6c757d",
-            borderDash: [6, 4],
-            borderWidth: 2,
-            pointRadius: 0,
-            fill: false,
-          },
+          { type: "bar", label: "OTD (%)", data: d.otd_anual.map(function (p) { return p.percentual; }),
+            backgroundColor: d.otd_anual.map(function (p) { return p.percentual === null ? "#dee2e6" : (p.atinge_meta ? "#198754" : "#dc3545"); }) },
+          { type: "line", label: "Meta mínima (" + otdMeta + "%)", data: d.otd_anual.map(function () { return otdMeta; }),
+            borderColor: "#6c757d", borderDash: [6, 4], borderWidth: 2, pointRadius: 0, fill: false },
         ],
       },
       options: {
-        plugins: {
-          legend: { position: "bottom" },
-          tooltip: {
-            callbacks: {
-              afterLabel: function (ctx) {
-                if (ctx.datasetIndex !== 0) return "";
-                const p = otdAnual[ctx.dataIndex];
-                return p.total ? p.total + " pedido(s) com OTD registrado" : "sem OTD registrado ainda";
-              },
-            },
-          },
-        },
+        animation: false,
+        plugins: { legend: { position: "bottom" }, tooltip: { callbacks: { afterLabel: function (ctx) {
+          if (ctx.datasetIndex !== 0) return "";
+          const p = d.otd_anual[ctx.dataIndex];
+          return p.total ? p.total + " pedido(s) com OTD registrado" : "sem OTD registrado ainda";
+        } } } },
         scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + "%"; } } } },
       },
     });
-  }
 
-  // Faturamento por semana — liberado x faturado (mesmo dado da tabela
-  // abaixo, só re-visualizado como tendência).
-  const faturamentoLinhas = {{ faturamento_semanal_grafico | tojson }};
-  const elFatSemanal = document.getElementById("graficoFaturamentoSemanal");
-  if (elFatSemanal && faturamentoLinhas.length) {
-    new Chart(elFatSemanal, {
-      type: "line",
-      data: {
-        labels: faturamentoLinhas.map(function (l) { return l.semana_curta; }),
-        datasets: [
-          { label: "Valor liberado (R$)", data: faturamentoLinhas.map(function (l) { return l.valor_liberado; }), borderColor: "#6ea8fe", backgroundColor: "#6ea8fe", tension: 0.2 },
-          { label: "Valor faturado (R$)", data: faturamentoLinhas.map(function (l) { return l.valor_faturado; }), borderColor: "#198754", backgroundColor: "#198754", tension: 0.2 },
-        ],
-      },
-      options: {
-        plugins: { legend: { position: "bottom" } },
-        scales: { y: { beginAtZero: true, title: { display: true, text: "R$" } } },
-      },
-    });
-  }
-
-  // Comparativo de lead times do período — mesmo dado dos stat_card acima.
-  const leadTimes = {{ lead_times_mes | tojson }};
-  const leadTimeLabels = [
-    ["lt_operacao", "Lead Time Operação"],
-    ["lt_operacao_cif", "Operação — CIF"],
-    ["lt_operacao_fob", "Operação — FOB"],
-    ["lt_frete", "Lead Time Frete"],
-    ["lt_producao", "Chão de Fábrica (Produção)"],
-  ];
-  const elLeadTimes = document.getElementById("graficoLeadTimes");
-  if (elLeadTimes) {
-    new Chart(elLeadTimes, {
-      type: "bar",
-      data: {
-        labels: leadTimeLabels.map(function (p) { return p[1]; }),
-        datasets: [{
-          label: "Média (dias)",
-          data: leadTimeLabels.map(function (p) { return (leadTimes[p[0]] || {}).media; }),
-          backgroundColor: "#6ea8fe",
-        }],
-      },
-      options: {
-        indexAxis: "y",
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              afterLabel: function (ctx) {
-                const chave = leadTimeLabels[ctx.dataIndex][0];
-                const n = (leadTimes[chave] || {}).n;
-                return n ? n + " registro(s)" : "sem dado suficiente";
-              },
-            },
-          },
+    // Faturamento por semana — liberado x faturado.
+    if (d.faturamento.length) {
+      recriar("graficoFaturamentoSemanal", {
+        type: "line",
+        data: {
+          labels: d.faturamento.map(function (l) { return l.semana_curta; }),
+          datasets: [
+            { label: "Valor liberado (R$)", data: d.faturamento.map(function (l) { return l.valor_liberado; }), borderColor: "#6ea8fe", backgroundColor: "#6ea8fe", tension: 0.2 },
+            { label: "Valor faturado (R$)", data: d.faturamento.map(function (l) { return l.valor_faturado; }), borderColor: "#198754", backgroundColor: "#198754", tension: 0.2 },
+          ],
         },
-        scales: { x: { beginAtZero: true, title: { display: true, text: "dias" } } },
-      },
-    });
-  }
+        options: { animation: false, plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true, title: { display: true, text: "R$" } } } },
+      });
+    }
 
-  // OTD por vendedor / cliente — mesmo dado das tabelas logo abaixo.
-  function graficoOtdRanking(elId, linhas) {
-    const el = document.getElementById(elId);
-    if (!el || !linhas.length) return;
-    new Chart(el, {
+    // Comparativo de lead times do período.
+    const rotulos = [["lt_operacao", "Operação"], ["lt_operacao_cif", "Operação CIF"], ["lt_operacao_fob", "Operação FOB"], ["lt_frete", "Frete"], ["lt_producao", "Chão de fábrica"]];
+    recriar("graficoLeadTimes", {
       type: "bar",
-      data: {
-        labels: linhas.map(function (l) { return l.chave; }),
-        datasets: [{
-          label: "OTD (%)",
-          data: linhas.map(function (l) { return l.percentual; }),
-          backgroundColor: linhas.map(function (l) {
-            if (l.percentual === null) return "#dee2e6";
-            return l.percentual >= otdMeta ? "#198754" : "#dc3545";
-          }),
-        }],
-      },
-      options: {
-        indexAxis: "y",
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              afterLabel: function (ctx) {
-                const l = linhas[ctx.dataIndex];
-                return l.total + " pedido(s)";
-              },
-            },
-          },
-        },
-        scales: { x: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + "%"; } } } },
-      },
+      data: { labels: rotulos.map(function (p) { return p[1]; }),
+              datasets: [{ label: "Média (dias)", data: rotulos.map(function (p) { return (d.lead_times[p[0]] || {}).media; }), backgroundColor: "#6ea8fe" }] },
+      options: { animation: false, indexAxis: "y", plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: function (ctx) {
+        const n = (d.lead_times[rotulos[ctx.dataIndex][0]] || {}).n;
+        return n ? n + " registro(s)" : "sem dado suficiente";
+      } } } }, scales: { x: { beginAtZero: true, title: { display: true, text: "dias" } } } },
     });
+
+    // OTD por vendedor / cliente.
+    function ranking(id, linhas) {
+      if (!linhas.length) return;
+      recriar(id, {
+        type: "bar",
+        data: { labels: linhas.map(function (l) { return l.chave; }),
+                datasets: [{ label: "OTD (%)", data: linhas.map(function (l) { return l.percentual; }),
+                  backgroundColor: linhas.map(function (l) { return l.percentual === null ? "#dee2e6" : (l.percentual >= otdMeta ? "#198754" : "#dc3545"); }) }] },
+        options: { animation: false, indexAxis: "y", plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: function (ctx) { return linhas[ctx.dataIndex].total + " pedido(s)"; } } } },
+                   scales: { x: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + "%"; } } } } },
+      });
+    }
+    ranking("graficoOtdVendedor", d.por_vendedor);
+    ranking("graficoOtdCliente", d.por_cliente);
   }
-  graficoOtdRanking("graficoOtdVendedor", {{ otd.por_vendedor | tojson }});
-  graficoOtdRanking("graficoOtdCliente", {{ otd.por_cliente | tojson }});
+  window.opDesenharGraficos = desenharGraficos;
+  desenharGraficos();
 })();
 </script>
+{% if modo_tv %}
+<script>
+(function () {
+  // Modo TV: atualiza os números e os gráficos sozinho a cada 60s SEM recarregar a página
+  // (assim a tela cheia não é perdida) e entra em "tela cheia" ao abrir.
+  function atualizar() {
+    fetch(window.location.href, { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+      .then(function (html) {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const novo = doc.getElementById("op360Tudo");
+        const atual = document.getElementById("op360Tudo");
+        if (novo && atual) { atual.innerHTML = novo.innerHTML; if (window.opDesenharGraficos) window.opDesenharGraficos(); }
+      })
+      .catch(function () { /* sem rede: tenta de novo no próximo ciclo */ });
+  }
+  setInterval(atualizar, 60000);
+  document.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      if (!document.querySelector(".tela-cheia-overlay")) {
+        const b = document.querySelector('[data-tela-cheia-alvo="#op360Tudo"]');
+        if (b) b.click();
+      }
+    }, 300);
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -14115,6 +14115,88 @@ def _desvios_logisticos(p, hoje=None):
     return {"coleta": texto(coleta), "entrega": texto(entrega)}
 
 
+# ---------------------------------------------------------------------------
+# Resultados / OTD — PAINEL DE RESULTADOS (Fase 3 do redesenho do grupo
+# Operação, pedido do Bruno, 06/11/2026). Só reorganiza/compara dados que a
+# tela já calculava (_resumo_otd, _resumo_lead_times, _faturamento_por_periodo,
+# _otd_mensal_ano) e acrescenta a comparação com o período anterior.
+# ---------------------------------------------------------------------------
+def _fmt_pct_br(v):
+    return "—" if v is None else f"{v:.1f}".replace(".", ",") + "%"
+
+
+def _central_resultados(otd, otd_mes, lead_times_mes, totais_fat, tipo, ano, valor, filtros, periodo_str):
+    """KPIs clicáveis da tela Resultados/OTD. `otd` = recorte filtrado da
+    tela; `otd_mes`/`lead_times_mes`/`totais_fat` = período escolhido (mesmo
+    recorte "Planejamento PCP no período" de sempre). Compara OTD e
+    faturamento com o período imediatamente anterior (mesma granularidade)."""
+    endpoint = "gestao_operacao_resultados"
+
+    def url(**kw):
+        return url_for(endpoint, **_params_url_operacao(filtros, {}, periodo=periodo_str, **kw))
+
+    delta_otd = delta_fat = None
+    rotulo_ant = ""
+    if tipo != "todos":
+        try:
+            t2, a2, v2, rotulo_ant = _parse_periodo(_periodo_vizinho(tipo, ano, valor, -1))
+            otd_ant = _resumo_otd(_pedidos_operacao_do_periodo(t2, a2, v2))
+            fat_ant = _faturamento_por_periodo(t2, a2, v2)["totais"]
+            if otd_mes.get("percentual") is not None and otd_ant.get("percentual") is not None:
+                delta_otd = round(otd_mes["percentual"] - otd_ant["percentual"], 1)
+            if fat_ant.get("valor_faturado"):
+                delta_fat = round(100.0 * (totais_fat["valor_faturado"] - fat_ant["valor_faturado"]) / fat_ant["valor_faturado"], 1)
+        except Exception:  # comparação é bônus: nunca derruba a tela
+            delta_otd = delta_fat = None
+
+    def seta(d, unidade):
+        if d is None:
+            return ""
+        return f" · {'▲' if d > 0 else ('▼' if d < 0 else '=')} {abs(d):.1f}".replace(".", ",") + f" {unidade} vs {rotulo_ant}"
+
+    meta = GO_OTD_META_PERCENTUAL
+    fora = (otd["total"] - otd["no_prazo"]) if otd["total"] else 0
+    sel_otd = list(filtros.get("otd") or [])
+    seg = filtros.get("segmento") or ""
+    pct_fat = round(100.0 * totais_fat["valor_faturado"] / totais_fat["valor_liberado"], 1) if totais_fat["valor_liberado"] else None
+
+    def lt(chave, titulo, icone, cor, sufixo_vazio):
+        d = lead_times_mes.get(chave) or {}
+        return {"chave": chave, "titulo": titulo, "valor": (f"{str(d['media']).replace('.', ',')} d" if d.get("media") is not None else "—"),
+                "cor": cor, "icone": icone, "url": None, "ativo": False,
+                "sufixo": (f"{d['n']} registro(s)" if d.get("n") else sufixo_vazio)}
+
+    kpis = [
+        {"chave": "otd_periodo", "titulo": "OTD do período", "valor": _fmt_pct_br(otd_mes.get("percentual")),
+         "cor": "success" if otd_mes.get("atinge_meta") else "danger", "icone": "bi-bullseye", "url": None, "ativo": False,
+         "sufixo": (f"meta {meta}% · {otd_mes.get('total', 0)} pedido(s)" + seta(delta_otd, "pp")) if otd_mes.get("total") else "sem OTD registrado ainda"},
+        {"chave": "otd_recorte", "titulo": "OTD do recorte", "valor": _fmt_pct_br(otd.get("percentual")),
+         "cor": "success" if otd.get("atinge_meta") else "danger", "icone": "bi-funnel", "url": None, "ativo": False,
+         "sufixo": f"{otd['total']} pedido(s) com OTD" if otd["total"] else "sem OTD registrado"},
+        {"chave": "no_prazo", "titulo": "Entregues no prazo", "valor": otd["no_prazo"], "cor": "success", "icone": "bi-check2-circle",
+         "url": url(otd=[] if sel_otd == ["SIM"] else ["SIM"]), "ativo": sel_otd == ["SIM"], "sufixo": "clique pra listar"},
+        {"chave": "fora", "titulo": "Fora do prazo", "valor": fora, "cor": "danger", "icone": "bi-x-octagon-fill",
+         "url": url(otd=[] if sel_otd == ["NAO"] else ["NAO"]), "ativo": sel_otd == ["NAO"], "sufixo": "clique pra listar"},
+        {"chave": "liberado", "titulo": "Valor liberado (PCP)", "valor": _fmt_brl_curto(totais_fat["valor_liberado"]), "cor": "primary", "icone": "bi-box-seam",
+         "url": url(segmento="" if seg == "planejamento" else "planejamento"), "ativo": seg == "planejamento",
+         "sufixo": f"{totais_fat['qtd_liberada']} pedido(s) no período"},
+        {"chave": "faturado", "titulo": "Valor faturado (NF)", "valor": _fmt_brl_curto(totais_fat["valor_faturado"]), "cor": "success", "icone": "bi-cash-coin",
+         "url": url(segmento="" if seg == "faturados" else "faturados"), "ativo": seg == "faturados",
+         "sufixo": (f"{totais_fat['qtd_faturada']} NF(s) · {_fmt_pct_br(pct_fat)} do liberado" + seta(delta_fat, "%"))},
+        lt("lt_operacao", "LT operação", "bi-stopwatch", "dark", "sem dado suficiente"),
+        lt("lt_operacao_cif", "LT operação · CIF", "bi-ship", "secondary", "sem pedido CIF"),
+        lt("lt_operacao_fob", "LT operação · FOB", "bi-truck", "secondary", "sem pedido FOB"),
+        lt("lt_frete", "LT frete", "bi-geo-alt", "info", "sem dado suficiente"),
+        lt("lt_producao", "LT chão de fábrica", "bi-gear-wide-connected", "purple", "sem dado suficiente"),
+    ]
+    return {
+        "kpis": kpis,
+        "url_segmentos": {"": url(segmento=""), "planejamento": url(segmento="planejamento"), "faturados": url(segmento="faturados")},
+        "url_limpar": url(segmento="", otd=[]),
+        "otd_selecionado": sel_otd,
+    }
+
+
 def _prevista_x_realizada(prevista, real):
     """Compara PREVISTO x REALIZADO pra um par de datas — mesma função
     reaproveitada pros 2 momentos da feature Expedição/Logística (23/09/2026,
@@ -25659,6 +25741,17 @@ def register_routes(app):
             periodo=periodo_str, tipo_periodo=tipo_periodo, mes_label=periodo_label,
             periodo_anterior=periodo_anterior, periodo_seguinte=periodo_seguinte,
             opcoes_periodo=_opcoes_periodo(),
+            central=_central_resultados(
+                otd, otd_mes, lead_times_mes, faturamento_semanal["totais"],
+                tipo_periodo, ano_periodo, valor_periodo, filtros, periodo_str,
+            ),
+            filtros_url=_params_url_operacao(filtros, {}),
+            filtros_painel_ativos=bool(_params_url_operacao({k: v for k, v in filtros.items() if k not in ("segmento", "otd")}, {})),
+            modo_tv=request.args.get("tv") == "1",
+            url_sem_tv=url_for("gestao_operacao_resultados", periodo=periodo_str, **_params_url_operacao(filtros, {})),
+            url_tv=url_for("gestao_operacao_resultados", periodo=periodo_str, tv=1, **_params_url_operacao(filtros, {})),
+            atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"),
+            transportadoras_filtro=Transportadora.query.filter_by(ativo=True).order_by(Transportadora.nome).all(),
         )
 
     @app.route("/gestao-operacao/resultados/relatorio.xlsx")

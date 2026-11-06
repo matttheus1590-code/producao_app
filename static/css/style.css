@@ -4431,3 +4431,9 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 .op-rank td { padding: .3rem .35rem; border-bottom: 1px dashed var(--bs-border-color); font-variant-numeric: tabular-nums; }
 .op-rank td:first-child { font-weight: 600; }
 .op-tv .op-rank { font-size: 1.05rem; }
+
+/* ===== Resultados / OTD (Fase 3) ===== */
+.op-grafico { position: relative; height: 260px; }
+.op-grafico.op-grafico-sm { height: 190px; }
+.op-tv .op-grafico { height: 38vh; }
+.op-tv .op-rank td, .op-tv .op-rank th { font-size: 1.15rem; }
