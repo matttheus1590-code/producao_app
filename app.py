@@ -9891,6 +9891,21 @@ def _logistica_status_resumo():
     }
 
 
+def _payload_sem_datas_reais(payload):
+    """Cópia do payload da Logística com Expedição/Chegada/Entrega reais vazias
+    (também nas remessas) — usado quando a Logística deixa de ter o pedido."""
+    novo = json.loads(json.dumps(payload))
+    for c in ("data_expedicao", "data_chegada_destino", "data_entrega_cliente"):
+        if c in novo:
+            novo[c] = None
+    for r in (novo.get("remessas") or []):
+        if isinstance(r, dict):
+            for c in ("data_expedicao", "data_entrega_cliente"):
+                if c in r:
+                    r[c] = None
+    return novo
+
+
 def _logistica_atualizar_pedido(pedido_venda, max_idade_seg=120):
     """Consulta Pedido: dado fresco de UM pedido (timeout curto). Se a
     Logística estiver fora do ar, segue com o último dado recebido.
@@ -9912,7 +9927,16 @@ def _logistica_atualizar_pedido(pedido_venda, max_idade_seg=120):
                 _logistica_aplicar_payload(payload)
                 db.session.commit()
         except logistica_api.LogisticaNaoEncontrado:
-            pass
+            # A Logística NÃO tem (mais) este pedido: o dado que guardamos é velho e não vale.
+            # Bruno (09/11/2026): "vazio na Logística = não preencha nada" — esvazia as datas
+            # reais (expedição/entrega) que vieram dela, em vez de seguir mostrando o último valor.
+            if reg is not None and not reg.cancelado:
+                try:
+                    antigo = json.loads(reg.payload_json)
+                    _logistica_aplicar_payload(_payload_sem_datas_reais(antigo))
+                    db.session.commit()
+                except (ValueError, TypeError):
+                    db.session.rollback()
         except logistica_api.LogisticaErro as e:
             db.session.rollback()
             erro = str(e)
