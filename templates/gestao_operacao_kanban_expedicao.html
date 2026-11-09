@@ -31,15 +31,6 @@
       {% if not modo_tv %}
       <span class="kp-acoes">
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('consulta_pedido', pedido_venda=c.pedido_venda) }}" title="Consulta completa do pedido"><i class="bi bi-search"></i></a>
-        {% if current_user.role in ('ADMIN', 'PCP') %}
-          {% if c.via_logistica %}
-            <span class="badge text-bg-light border" title="A expedição deste pedido vem da Logística — a baixa é feita lá e aparece aqui sozinha"><i class="bi bi-arrow-repeat"></i> via Logística</span>
-          {% else %}
-            <form method="post" action="{{ url_for('gestao_operacao_marcar_expedido', pedido_id=c.id) }}" class="d-inline" onsubmit="return confirm('Marcar o pedido {{ c.pedido_venda }} como expedido hoje?');">
-              <button class="btn btn-sm btn-outline-success" type="submit" title="Dar baixa: marcar como expedido hoje"><i class="bi bi-box-arrow-right"></i> Expedir</button>
-            </form>
-          {% endif %}
-        {% endif %}
       </span>
       {% endif %}
     </div>
@@ -82,7 +73,7 @@
           <li>Os dias contam da <strong>liberação efetiva</strong> até hoje.</li>
           <li><span class="kp-bolinha kp-b-verde"></span> 0 a 1 dia · <span class="kp-bolinha kp-b-amarelo"></span> 2 a 4 dias · <span class="kp-bolinha kp-b-vermelho"></span> 5 dias ou mais.</li>
           <li>Selo <span class="kp-selo kp-selo-nf"><i class="bi bi-receipt"></i> NF</span> roxo = nota já emitida: está pronto pra sair e esperando coleta.</li>
-          <li>Quando o embarque é registrado (na Logística ou aqui em <em>Expedir</em>), o pedido sai do quadro sozinho.</li>
+          <li>A data de embarque vem <strong>só da Logística</strong>. Quando ela registra a expedição, o pedido sai do quadro sozinho; o site não preenche essa data.</li>
         </ul>
       </div>
     </div>

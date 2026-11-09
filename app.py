@@ -14926,6 +14926,10 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     if trat:
         avisos.append(("amarelo", f"{len(trat)} item(ns) em tratativa (aguardando resolução de uma pendência): "
                        + ", ".join(i.descricao_produto for i in trat[:3]) + "."))
+    if go and not via_logistica and logistica_api.configurado() and (expedido or entrega_real):
+        avisos.append(("vermelho", "A Logística NÃO tem expedição/entrega registrada para este pedido — as datas de "
+                       + ("expedição" if expedido else "entrega") + " mostradas aqui foram digitadas no site, não vêm dela. "
+                       "Se estiverem erradas, apague em Operação → Editar → Logística / NF."))
     if (expedido or entrega_real) and not efetiva:
         avisos.append(("amarelo", "A Logística já registrou " + ("a entrega" if entrega_real else "a expedição")
                        + " deste pedido, mas o PCP ainda não registrou a Liberação Efetiva na Listagem Geral."))
@@ -25880,30 +25884,13 @@ def register_routes(app):
     @app.route("/gestao-operacao/<int:pedido_id>/marcar-expedido", methods=["POST"])
     @requer_role("ADMIN", "PCP")
     def gestao_operacao_marcar_expedido(pedido_id):
-        """Ação rápida do Kanban Expedição (pedido do Bruno, 16/09/2026): marca
-        a Data de expedição de hoje sem precisar abrir o formulário de edição
-        completo. É também a "Data Real de Coleta/Embarque" da feature
-        Expedição/Logística (23/09/2026) — o pedido passa pra coluna
-        "expedido_hoje" na mesma carga e some do board no dia seguinte (ver
-        _kanban_expedicao). Mesmo padrão de auditoria (_registrar_alteracoes)
-        e de permissão (@requer_role) já usados em gestao_operacao_editar."""
-        pedido = db.session.get(PedidoOperacao, pedido_id)
-        if pedido is None:
-            flash("Pedido não encontrado.", "danger")
-            return redirect(url_for("gestao_operacao_logistica"))
-
-        if _logistica_registro(pedido.pedido_venda) is not None:
-            flash("A expedição deste pedido vem da Logística — ela não é marcada aqui.", "warning")
-            return redirect(request.referrer or url_for("gestao_operacao_logistica"))
-
-        antes = {"go_data_pedido_expedido": pedido.go_data_pedido_expedido}
-        pedido.go_data_pedido_expedido = date.today()
-        depois = {"go_data_pedido_expedido": pedido.go_data_pedido_expedido}
-        _registrar_alteracoes("pedido_operacao", pedido.id, None, antes, depois, ["go_data_pedido_expedido"])
-
-        db.session.commit()
-        flash(f"Pedido {pedido.pedido_venda or pedido.id} marcado como expedido.", "success")
-        return redirect(request.referrer or url_for("gestao_operacao_logistica"))
+        """DESATIVADO (Bruno, 09/11/2026): a data de expedição vem SÓ da
+        Logística — se está vazia lá, não se preenche nada aqui. Antes este
+        botão gravava "hoje" como expedição (Kanban); agora a rota só avisa.
+        Mantida (em vez de apagada) pra link/aba antiga não dar 404."""
+        flash("A data de expedição vem só da Logística — não é marcada pelo site. "
+              "Quando a Logística registrar a expedição, o pedido sai da lista sozinho.", "warning")
+        return redirect(request.referrer or url_for("gestao_operacao_kanban_expedicao"))
 
     @app.route("/gestao-operacao/resultados")
     @login_required
