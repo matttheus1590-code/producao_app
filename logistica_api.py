@@ -302,7 +302,7 @@ def mapear(payload, parte=None):
         "go_data_prevista_coleta": coleta,
         "go_data_pedido_expedido": exped,
         "go_data_prevista_entrega": prev_ent,
-        "go_data_real_entrega": chegada,
+        "go_data_real_entrega": entrega,  # Bruno 09/11/2026: só Entrega real (data_entrega_cliente); chegada ao destino não conta
         "go_data_entregue_cliente": entrega,
         "go_transportadora_nome": transp,
         "go_custo_frete_previsto": _num(frete.get("previsto")) if usar_frete else None,

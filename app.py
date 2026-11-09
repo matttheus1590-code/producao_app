@@ -9687,6 +9687,9 @@ def _logistica_info(reg):
         "status": payload.get("status_logistica"),
         "remessas": logistica_api.resumo_remessas(payload),
         "pedido_venda": reg.pedido_venda_logistica,
+        # Campos crus do JSON da Logística (diagnóstico, só ADMIN vê na Consulta)
+        "bruto": {c: payload.get(c) for c in ("data_prevista_coleta", "data_expedicao", "data_prevista_entrega",
+                                              "data_chegada_destino", "data_entrega_cliente")},
     }
 
 
@@ -13503,7 +13506,9 @@ def _classificar_pedidos_operacao(pedidos, metricas, pedidos_producao_por_pv, da
         entregue = bool(p.go_data_entregue_cliente or p.go_data_real_entrega)
         expedido = bool(p.go_data_pedido_expedido)
         tem_nf = bool(p.go_numero_nf or p.go_data_emissao_nf)
-        liberado = bool(conclusao) or (pp is not None and pp.status_producao == "FINALIZADO")
+        # Bruno (09/11/2026): "liberado/na expedição" = liberação EFETIVA da Listagem Geral com a
+        # data já alcançada (efetiva em 11/11 só vale a partir de 11/11).
+        liberado = bool(conclusao and conclusao <= hoje)
         em_inspecao = any(i.inicio_inspecao or i.termino_inspecao for i in itens)
         em_producao = pp is not None and (
             any(i.inicio_producao for i in itens) or pp.status_producao in ("ANDAMENTO", "EM TRATATIVA")
@@ -14325,8 +14330,8 @@ def _kanban_expedicao():
     for go in candidatos:
         chave = _normalizar_pedido_venda(go.pedido_venda)
         liberacao_efetiva = (liberacao_pcp.get(chave) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
-        if not liberacao_efetiva:
-            continue  # PCP ainda não liberou — não entra no kanban
+        if not liberacao_efetiva or liberacao_efetiva > hoje:
+            continue  # PCP ainda não liberou (ou a data efetiva ainda não chegou) — não entra no kanban
 
         expedido_hoje = go.go_data_pedido_expedido == hoje
         if go.go_data_pedido_expedido and not expedido_hoje:
@@ -14372,6 +14377,30 @@ def _kanban_expedicao():
 # Expedição. O Kanban mede há quantos dias ele está lá (a partir da liberação
 # efetiva) e cruza com tipo de frete (CIF/FOB) e com a NF emitida.
 # ---------------------------------------------------------------------------
+def _logistica_regs_por_base():
+    """{nº base do PV: LogisticaSync não cancelado} — vazio com a integração desligada."""
+    if not logistica_api.configurado():
+        return {}
+    return {r.pedido_venda_norm: r for r in LogisticaSync.query.filter_by(cancelado=False).all()}
+
+
+def _datas_reais_logistica(go, regs):
+    """(expedição real, entrega real, veio_da_logistica) de um PedidoOperacao,
+    cruzando pelo PV. Regra do Bruno (09/11/2026): se a Logística conhece o
+    pedido, só valem os campos DELA (data_expedicao e data_entrega_cliente) —
+    vazio lá = vazio aqui, nada digitado no site conta. Pedido que a Logística
+    não conhece (ou integração desligada) usa as datas do próprio site."""
+    reg = regs.get(logistica_api.base_do_pedido(go.pedido_venda)) if regs else None
+    if reg is not None:
+        try:
+            m = logistica_api.mapear(json.loads(reg.payload_json), parte=logistica_api.normalizar_pedido(go.pedido_venda))
+        except (ValueError, TypeError):
+            m = None
+        if m is not None:
+            return m.get("go_data_pedido_expedido"), m.get("go_data_entregue_cliente"), True
+    return go.go_data_pedido_expedido, go.go_data_entregue_cliente, False
+
+
 _KANBAN_COLUNAS_PARADOS = [
     {"chave": "verde", "titulo": "Recém-liberados", "faixa": "0 a 1 dia", "emoji": "🟢"},
     {"chave": "amarelo", "titulo": "Atenção", "faixa": "2 a 4 dias", "emoji": "🟡"},
@@ -14410,24 +14439,22 @@ def _kanban_parados_expedicao(args, hoje=None):
     liberação efetiva (semáforo próprio: _semaforo_dias_parado)."""
     hoje = hoje or _hoje_brt()
     filtros = _parse_filtros_kanban_parados(args)
-    candidatos = PedidoOperacao.query.filter(
-        PedidoOperacao.go_data_entregue_cliente.is_(None),
-        PedidoOperacao.go_data_pedido_expedido.is_(None),
-    ).all()
+    candidatos = PedidoOperacao.query.filter(PedidoOperacao.go_data_entregue_cliente.is_(None)).all()
     liberacao_pcp = _liberacao_pcp_por_pedido_venda([go.pedido_venda for go in candidatos])
-    sincronizados = set()
-    if logistica_api.configurado():
-        sincronizados = {r[0] for r in db.session.query(LogisticaSync.pedido_venda_norm).filter_by(cancelado=False).all()}
+    regs = _logistica_regs_por_base()
 
     base = []
     for go in candidatos:
         chave = _normalizar_pedido_venda(go.pedido_venda)
+        # Cruza pelo PV: Liberação efetiva vem da Listagem Geral (Gestão Produção).
         liberacao = (liberacao_pcp.get(chave) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
-        if not liberacao:
-            continue  # ainda não saiu da produção: não está na Expedição
+        if not liberacao or liberacao > hoje:
+            continue  # sem liberação efetiva, ou ela ainda é futura: ainda não está na Expedição
+        exp_real, ent_real, via_log = _datas_reais_logistica(go, regs)
+        if exp_real or ent_real:
+            continue  # já saiu (expedição real) ou já chegou (entrega real)
         dias = max((hoje - liberacao).days, 0)
         tem_nf = bool(go.go_numero_nf or go.go_data_emissao_nf)
-        base_log = logistica_api.base_do_pedido(go.pedido_venda) if sincronizados else None
         base.append({
             "id": go.id,
             "pedido_venda": chave or go.pedido_venda or str(go.id),
@@ -14447,7 +14474,7 @@ def _kanban_parados_expedicao(args, hoje=None):
             "prevista_coleta": go.go_data_prevista_coleta,
             "atraso_coleta": _prevista_x_realizada(go.go_data_prevista_coleta, None),
             "observacao": go.go_obs_operacao,
-            "via_logistica": bool(base_log and base_log in sincronizados),
+            "via_logistica": via_log,
         })
 
     def url(**kw):
@@ -14526,6 +14553,81 @@ def _kanban_parados_expedicao(args, hoje=None):
     }
 
 
+def _auditoria_expedicao(dias=45, filtro="", hoje=None):
+    """Auditoria (só leitura) das datas de Expedição/Entrega do site x Logística,
+    cruzando pelo PV. Regra do Bruno (09/11/2026): se a Logística conhece o
+    pedido, só valem Expedição real (data_expedicao) e Entrega real
+    (data_entrega_cliente) DELA; vazio lá = vazio aqui. Status por pedido:
+      - sem_registro: o site tem data, mas a Logística não tem o pedido;
+      - vazio: o site tem data num campo que a Logística mandou vazio;
+      - diferente: as duas têm data e não batem (ou só a Logística tem);
+      - ok: batem."""
+    hoje = hoje or _hoje_brt()
+    configurado = logistica_api.configurado()
+    q = PedidoOperacao.query.filter(or_(
+        PedidoOperacao.go_data_pedido_expedido.isnot(None),
+        PedidoOperacao.go_data_entregue_cliente.isnot(None),
+        PedidoOperacao.go_data_real_entrega.isnot(None),
+    ))
+    if dias:
+        corte = hoje - timedelta(days=dias)
+        q = q.filter(or_(
+            PedidoOperacao.go_data_pedido_expedido >= corte,
+            PedidoOperacao.go_data_entregue_cliente >= corte,
+            PedidoOperacao.go_data_real_entrega >= corte,
+        ))
+    pedidos = q.order_by(PedidoOperacao.go_data_pedido_expedido.desc(), PedidoOperacao.id.desc()).all()
+    regs = _logistica_regs_por_base()
+    liberacao_pcp = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
+
+    ultimo = {}
+    if pedidos:
+        ids = [p.id for p in pedidos]
+        campos = ("go_data_pedido_expedido", "go_data_entregue_cliente", "go_data_real_entrega")
+        for h in (HistoricoAlteracao.query
+                  .filter(HistoricoAlteracao.entidade_tipo == "pedido_operacao",
+                          HistoricoAlteracao.entidade_id.in_(ids),
+                          HistoricoAlteracao.campo.in_(campos))
+                  .order_by(HistoricoAlteracao.criado_em.desc()).all()):
+            ultimo.setdefault(h.entidade_id, h)
+
+    linhas = []
+    contagem = {"vazio": 0, "sem_registro": 0, "diferente": 0, "ok": 0}
+    for p in pedidos:
+        chave = _normalizar_pedido_venda(p.pedido_venda)
+        site_exp = p.go_data_pedido_expedido
+        site_ent = p.go_data_entregue_cliente or p.go_data_real_entrega
+        log_exp, log_ent, via = _datas_reais_logistica(p, regs)
+        if not via:
+            status = "sem_registro"
+            log_exp = log_ent = None
+        else:
+            pares = ((site_exp, log_exp), (site_ent, log_ent))
+            if any(s_ and not l_ for s_, l_ in pares):
+                status = "vazio"
+            elif any(s_ != l_ for s_, l_ in pares):
+                status = "diferente"
+            else:
+                status = "ok"
+        contagem[status] += 1
+        h = ultimo.get(p.id)
+        linhas.append({
+            "id": p.id, "pedido_venda": chave or p.pedido_venda or str(p.id), "cliente": p.cliente,
+            "frete": _frete_tipo(p.frete), "status": status,
+            "site_exp": site_exp, "log_exp": log_exp, "site_ent": site_ent, "log_ent": log_ent,
+            "efetiva": (liberacao_pcp.get(chave) or {}).get("efetiva") or p.go_data_efetiva_liberacao_pcp,
+            "nf": p.go_numero_nf,
+            "usuario": h.usuario_nome if h else None,
+            "quando": (h.criado_em - timedelta(hours=3)) if h and h.criado_em else None,
+        })
+    total = len(linhas)
+    if filtro in contagem:
+        linhas = [l for l in linhas if l["status"] == filtro]
+    ordem = {"vazio": 0, "sem_registro": 1, "diferente": 2, "ok": 3}
+    linhas.sort(key=lambda l: ordem[l["status"]])
+    return {"dias": dias, "configurado": configurado, "total": total, "contagem": contagem, "linhas": linhas}
+
+
 def _expedidos_recentes_painel(hoje=None):
     """Aviso do Painel (Radar operacional): o que saiu da Expedição hoje e
     ontem. Regra do Bruno (09/11/2026): a data de expedição vem SÓ da
@@ -14540,18 +14642,13 @@ def _expedidos_recentes_painel(hoje=None):
     pedidos = (PedidoOperacao.query
                .filter(PedidoOperacao.go_data_pedido_expedido.in_([hoje, ontem]))
                .order_by(PedidoOperacao.go_data_pedido_expedido.desc(), PedidoOperacao.cliente).all())
-    regs = {}
-    if configurado and pedidos:
-        nomes = {logistica_api.base_do_pedido(p.pedido_venda) for p in pedidos} - {None, ""}
-        if nomes:
-            regs = {r.pedido_venda_norm: r for r in LogisticaSync.query.filter(
-                LogisticaSync.pedido_venda_norm.in_(nomes), LogisticaSync.cancelado.is_(False)).all()}
+    regs = _logistica_regs_por_base() if pedidos else {}
     dias = {"hoje": [], "ontem": []}
     nao_confirmados = []
     liberacao_pcp = _liberacao_pcp_por_pedido_venda([go.pedido_venda for go in pedidos])
     for go in pedidos:
         chave_pv = _normalizar_pedido_venda(go.pedido_venda)
-        exp_data, ent_data, via_log = go.go_data_pedido_expedido, go.go_data_entregue_cliente or go.go_data_real_entrega, False
+        exp_data, ent_data, via_log = go.go_data_pedido_expedido, go.go_data_entregue_cliente, False
         if configurado:
             reg = regs.get(logistica_api.base_do_pedido(go.pedido_venda))
             m = None
@@ -14564,7 +14661,7 @@ def _expedidos_recentes_painel(hoje=None):
                 nao_confirmados.append(chave_pv or go.pedido_venda or str(go.id))
                 continue
             exp_data = m.get("go_data_pedido_expedido")
-            ent_data = m.get("go_data_entregue_cliente") or m.get("go_data_real_entrega")
+            ent_data = m.get("go_data_entregue_cliente")
             via_log = True
         efetiva = (liberacao_pcp.get(chave_pv) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
         dias["hoje" if exp_data == hoje else "ontem"].append({
@@ -14702,7 +14799,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     dias_frete = frete_dias or 0
 
     # --- datas do pedido ---
-    entrega_real = (go.go_data_entregue_cliente or go.go_data_real_entrega) if go else None
+    entrega_real = go.go_data_entregue_cliente if go else None
     expedido = go.go_data_pedido_expedido if go else None
     # Fonte oficial (Bruno, 09/11/2026): se a Logística conhece o pedido, Expedição e Entrega reais são os dela.
     via_logistica = False
@@ -14711,7 +14808,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
         try:
             m_log = logistica_api.mapear(json.loads(reg_log.payload_json), parte=logistica_api.normalizar_pedido(go.pedido_venda)) or {}
             expedido = m_log.get("go_data_pedido_expedido")
-            entrega_real = m_log.get("go_data_entregue_cliente") or m_log.get("go_data_real_entrega")
+            entrega_real = m_log.get("go_data_entregue_cliente")
             via_logistica = True
         except (ValueError, TypeError):
             pass
@@ -14725,15 +14822,15 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     previstas = [i.liberacao_prevista for i in abertos if i.liberacao_prevista]
     sem_prev = n_abertos - len(previstas)
     efetiva = (liberacao_pcp or {}).get("efetiva") or (go.go_data_efetiva_liberacao_pcp if go else None)
-    if efetiva is None and itens and not abertos:
-        reais = [i.liberacao_real or i.liberacao_faturamento or i.termino_inspecao for i in itens]
-        reais = [r for r in reais if r]
-        efetiva = max(reais) if reais else None
+    # Liberação PCP = SÓ a "liberação efetiva" da Listagem Geral (Bruno, 09/11/2026):
+    # nada derivado de inspeção/faturamento dos itens.
     previsao_pcp = max(previstas) if previstas else ((liberacao_pcp or {}).get("previsao") or (go.go_previsao_liberacao_pcp if go else None))
     # "Liberado" = todos os itens liberados (ou, sem itens em Produção, a data
     # efetiva de Operação). A "efetiva" derivada dos itens é a MAIS RECENTE
     # entre os que já saíram — com item ainda em aberto, o pedido não está liberado.
-    liberado = (bool(itens) and not abertos) or (not itens and bool(efetiva))
+    # Regra do Bruno (09/11/2026): o pedido só está NA EXPEDIÇÃO depois que a data da
+    # liberação efetiva chegou (efetiva marcada pra 11/11 = só entra em 11/11).
+    liberado = bool(efetiva and efetiva <= hoje)
 
     # --- fase/projeção ---
     if entrega_real:
@@ -14896,8 +14993,6 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     if not expedido:
         add(prev_coleta, "🚚", "Coleta/embarque previsto", None, "previsto")
     add(expedido, "🚚", "Pedido expedido", go.go_transportadora.nome if go and go.go_transportadora else None)
-    if go and go.go_data_real_entrega and go.go_data_entregue_cliente and go.go_data_real_entrega != go.go_data_entregue_cliente:
-        add(go.go_data_real_entrega, "🚛", "Chegada ao destino (transportadora)")
     if fase == "entregue":
         add(entrega, "🎉", "Entregue ao cliente")
     elif entrega:
@@ -17694,7 +17789,7 @@ def _dados_relatorio_expedicao_diario():
     for go in candidatos:
         chave = _normalizar_pedido_venda(go.pedido_venda)
         liberacao_efetiva = (liberacao_pcp.get(chave) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
-        if not liberacao_efetiva:
+        if not liberacao_efetiva or liberacao_efetiva > hoje:
             continue
 
         if go.go_data_pedido_expedido:

@@ -225,11 +225,16 @@
         {% endmacro %}
         {{ linha_logi(go.go_data_emissao_nf is not none, "Nota fiscal", (dt(go.go_data_emissao_nf) if go.go_data_emissao_nf else "a emitir"), ("NF " ~ go.go_numero_nf) if go.go_numero_nf else None) }}
         {{ linha_logi(v.expedido is not none, "Expedição", (dt(v.expedido) if v.expedido else ("prevista " ~ dt(go.go_data_prevista_coleta) if go.go_data_prevista_coleta else "a agendar")), ("Transportadora: " ~ go.go_transportadora.nome) if go.go_transportadora else None) }}
-        {{ linha_logi((go.go_data_real_entrega is not none) or (go.go_data_entregue_cliente is not none), "Chegada ao destino", (dt(go.go_data_real_entrega) if go.go_data_real_entrega else ("prevista " ~ dt(go.go_data_prevista_entrega) if go.go_data_prevista_entrega else "—"))) }}
-        {{ linha_logi(go.go_data_entregue_cliente is not none, "Entregue ao cliente", (dt(go.go_data_entregue_cliente) if go.go_data_entregue_cliente else "aguardando")) }}
+        {{ linha_logi(v.entrega_real is not none, "Entregue ao cliente", (dt(v.entrega_real) if v.entrega_real else ("prevista " ~ dt(go.go_data_prevista_entrega) if go.go_data_prevista_entrega else "aguardando"))) }}
       </ul>
       {% if logistica_info %}
       <div class="small text-muted mt-1"><i class="bi bi-link-45deg"></i> Origem: <b>Logística</b>{% if logistica_info.atualizado_em %} · atualizado em {{ logistica_info.atualizado_em.strftime("%d/%m/%Y %H:%M") }}{% endif %}{% if logistica_info.status %} · {{ logistica_info.status }}{% endif %}</div>
+      {% if current_user.is_authenticated and current_user.role == 'ADMIN' and logistica_info.bruto %}
+      <div class="small mt-1 p-2 border rounded bg-light"><i class="bi bi-bug"></i> <b>Diagnóstico (só admin)</b> — o que a Logística mandou:
+        {% for c, r in (('data_expedicao','expedição'),('data_chegada_destino','chegada ao destino'),('data_entrega_cliente','entrega ao cliente')) %}
+        <span class="ms-2">{{ r }}: <b>{{ logistica_info.bruto[c] or 'vazio' }}</b></span>{% endfor %}
+      </div>
+      {% endif %}
       {% if logistica_info.remessas and logistica_info.remessas.total > 1 %}
       <div class="small mt-1"><i class="bi bi-boxes"></i> <b>{{ logistica_info.remessas.entregues }} de {{ logistica_info.remessas.total }}</b> remessas entregues · {{ logistica_info.remessas.expedidas }} de {{ logistica_info.remessas.total }} expedidas</div>
       {% endif %}
