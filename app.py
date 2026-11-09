@@ -14573,6 +14573,86 @@ def _expedidos_recentes_painel(hoje=None):
     }
 
 
+def _auditoria_expedicao(dias=45, filtro=""):
+    """Auditoria (Bruno, 09/11/2026): confere, pedido a pedido, se a data de
+    Expedição/Entrega que o SITE mostra bate com a da Logística (fonte
+    oficial). Só leitura. Status por pedido:
+      - ok: a Logística tem a mesma data (ou o pedido está sem data nos dois lados)
+      - sem_registro: o site tem data, mas a Logística NÃO tem o pedido
+      - vazio: a Logística conhece o pedido e está vazia, mas o site tem data
+      - diferente: as duas têm data, mas diferentes
+    `usuario` = quem gravou por último a data no site (Logística (API) ou uma pessoa)."""
+    hoje = _hoje_brt()
+    q = PedidoOperacao.query.filter(db.or_(
+        PedidoOperacao.go_data_pedido_expedido.isnot(None),
+        PedidoOperacao.go_data_entregue_cliente.isnot(None),
+        PedidoOperacao.go_data_real_entrega.isnot(None),
+    ))
+    pedidos = q.all()
+    if dias:
+        corte = hoje - timedelta(days=dias)
+        pedidos = [p for p in pedidos if max([d for d in (p.go_data_pedido_expedido, p.go_data_entregue_cliente, p.go_data_real_entrega) if d]) >= corte]
+    configurado = logistica_api.configurado()
+    bases = {p.id: logistica_api.base_do_pedido(p.pedido_venda) for p in pedidos}
+    regs = {}
+    if configurado and pedidos:
+        nomes = {b for b in bases.values() if b}
+        regs = {r.pedido_venda_norm: r for r in LogisticaSync.query.filter(LogisticaSync.pedido_venda_norm.in_(nomes), LogisticaSync.cancelado.is_(False)).all()} if nomes else {}
+    ult = {}
+    if pedidos:
+        ids = [p.id for p in pedidos]
+        hist = (HistoricoAlteracao.query
+                .filter(HistoricoAlteracao.entidade_tipo == "pedido_operacao", HistoricoAlteracao.entidade_id.in_(ids),
+                        HistoricoAlteracao.campo.in_(("go_data_pedido_expedido", "go_data_entregue_cliente")))
+                .order_by(HistoricoAlteracao.id.desc()).all())
+        for h in hist:
+            ult.setdefault((h.entidade_id, h.campo), h)
+    liberacao = _liberacao_pcp_por_pedido_venda([p.pedido_venda for p in pedidos])
+    linhas = []
+    for p in pedidos:
+        chave = _normalizar_pedido_venda(p.pedido_venda)
+        site_exp, site_ent = p.go_data_pedido_expedido, p.go_data_entregue_cliente
+        log_exp = log_ent = None
+        reg = regs.get(bases.get(p.id)) if configurado else None
+        m = None
+        if reg is not None:
+            try:
+                m = logistica_api.mapear(json.loads(reg.payload_json), parte=logistica_api.normalizar_pedido(p.pedido_venda))
+            except (ValueError, TypeError):
+                m = None
+        if m is not None:
+            log_exp, log_ent = m.get("go_data_pedido_expedido"), m.get("go_data_entregue_cliente")
+        if not (site_exp or site_ent):
+            continue
+        if not configurado:
+            status = "sem_registro"
+        elif m is None:
+            status = "sem_registro"
+        else:
+            probs = []
+            for s_d, l_d in ((site_exp, log_exp), (site_ent, log_ent)):
+                if s_d and not l_d:
+                    probs.append("vazio")
+                elif s_d and l_d and s_d != l_d:
+                    probs.append("diferente")
+            status = probs[0] if probs else "ok"
+        h_exp, h_ent = ult.get((p.id, "go_data_pedido_expedido")), ult.get((p.id, "go_data_entregue_cliente"))
+        h = max([x for x in (h_exp, h_ent) if x], key=lambda x: x.id, default=None)
+        linhas.append({
+            "id": p.id, "pedido_venda": chave or p.pedido_venda, "cliente": p.cliente, "frete": _frete_tipo(p.frete),
+            "site_exp": site_exp, "site_ent": site_ent, "log_exp": log_exp, "log_ent": log_ent,
+            "efetiva": (liberacao.get(chave) or {}).get("efetiva") or p.go_data_efetiva_liberacao_pcp,
+            "nf": p.go_numero_nf, "status": status,
+            "usuario": (h.usuario_nome if h else None), "quando": ((h.criado_em - timedelta(hours=3)) if h and h.criado_em else None),
+        })
+    ordem = {"vazio": 0, "sem_registro": 1, "diferente": 2, "ok": 3}
+    linhas.sort(key=lambda l: (ordem[l["status"]], -(max([d for d in (l["site_exp"], l["site_ent"]) if d]).toordinal())))
+    contagem = {k: sum(1 for l in linhas if l["status"] == k) for k in ordem}
+    if filtro in ordem:
+        linhas = [l for l in linhas if l["status"] == filtro]
+    return {"linhas": linhas, "contagem": contagem, "total": sum(contagem.values()), "configurado": configurado, "dias": dias}
+
+
 def _prazos_pedido(pedido, go, liberacao_pcp, data_cliente_producao):
     """Pedido do Bruno (09/09/2026, tela Consulta Pedido): 2 lead times em
     dias corridos, sempre calculados a partir da Data de inclusão do
@@ -25859,6 +25939,18 @@ def register_routes(app):
         _dados_relatorio_expedicao_diario/_gerar_pdf_expedicao_diario."""
         linhas = _dados_relatorio_expedicao_diario()
         return _gerar_pdf_expedicao_diario(linhas)
+
+    @app.route("/gestao-operacao/auditoria-expedicao")
+    @login_required
+    def gestao_operacao_auditoria_expedicao():
+        """Auditoria de datas de Expedição/Entrega x Logística (só leitura) —
+        pedido do Bruno, 09/11/2026: "revise outros pedidos na expedição"."""
+        dias = request.args.get("dias", 45, type=int)
+        dias = dias if dias in (15, 45, 90, 0) else 45
+        filtro = (request.args.get("status") or "").strip()
+        a = _auditoria_expedicao(dias, filtro)
+        return render_template("gestao_operacao_auditoria_expedicao.html", a=a, filtro=filtro,
+                               atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"), logistica_st=_logistica_status_resumo())
 
     @app.route("/gestao-operacao/kanban-expedicao")
     @login_required

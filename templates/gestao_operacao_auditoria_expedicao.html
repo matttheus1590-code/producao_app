@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · Auditoria de Expedição · Gestão da Produção e Operação{% endblock %}
+
+{% macro d(v) %}{% if v %}{{ v.strftime('%d/%m/%Y') }}{% else %}<span class="text-muted">—</span>{% endif %}{% endmacro %}
+
+{% block content %}
+{% include "_gestao_operacao_subnav.html" with context %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-clipboard2-check"></i> Auditoria · datas de Expedição e Entrega × Logística</h4>
+    <div class="text-muted small">
+      Regra: a data de expedição/entrega vem <strong>só da Logística</strong>; se lá está vazio, aqui também deve estar. Só leitura · atualizado em {{ atualizado_em }}
+      {% if logistica_st.ultimo_sucesso %}· Logística sincronizada em {{ logistica_st.ultimo_sucesso.strftime('%d/%m %H:%M') }}{% endif %}
+    </div>
+  </div>
+  <form method="get" class="d-flex align-items-center gap-1 m-0">
+    {% if filtro %}<input type="hidden" name="status" value="{{ filtro }}">{% endif %}
+    <label class="small text-muted mb-0" for="dias">Pedidos com data nos últimos</label>
+    <select id="dias" name="dias" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+      {% for v, r in ((15, '15 dias'), (45, '45 dias'), (90, '90 dias'), (0, 'todos')) %}<option value="{{ v }}" {{ 'selected' if a.dias == v }}>{{ r }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+
+{% if not a.configurado %}
+<div class="alert alert-warning">A integração com a Logística não está configurada neste ambiente — todas as datas aparecem como "sem registro na Logística".</div>
+{% endif %}
+
+<div class="op-kpis mb-3">
+  {% set cards = (
+    ('', 'Auditados', a.total, 'primary', 'bi-list-check', 'pedidos com data de expedição/entrega no site'),
+    ('vazio', 'Logística vazia', a.contagem.vazio, 'danger', 'bi-exclamation-octagon', 'o site tem data, a Logística não'),
+    ('sem_registro', 'Sem registro na Logística', a.contagem.sem_registro, 'warning', 'bi-question-octagon', 'a Logística não tem o pedido'),
+    ('diferente', 'Data diferente', a.contagem.diferente, 'purple', 'bi-arrow-left-right', 'as duas têm data, mas não batem'),
+    ('ok', 'Conferem', a.contagem.ok, 'success', 'bi-check-circle', 'site = Logística')) %}
+  {% for chave, titulo, n, cor, icone, sub in cards %}
+  <a class="op-kpi op-kpi-{{ cor }} {{ 'op-kpi-ativo' if filtro == chave }}" href="{{ url_for('gestao_operacao_auditoria_expedicao', status=chave or None, dias=a.dias) }}">
+    <div class="op-kpi-titulo"><i class="bi {{ icone }}"></i> {{ titulo }}</div>
+    <div class="op-kpi-valor">{{ n }}</div>
+    <div class="op-kpi-sufixo">{{ sub }}</div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="table-responsive">
+  <table class="table table-sm table-hover align-middle bg-white">
+    <thead class="table-light">
+      <tr><th>Pedido</th><th>Cliente</th><th>Frete</th><th>Situação</th>
+        <th>Expedido · site</th><th>Expedido · Logística</th><th>Entregue · site</th><th>Entregue · Logística</th>
+        <th>Liberação efetiva (PCP)</th><th>NF</th><th>Data gravada por</th></tr>
+    </thead>
+    <tbody>
+    {% for l in a.linhas %}
+      <tr class="{{ {'vazio': 'table-danger', 'sem_registro': 'table-warning', 'diferente': '', 'ok': ''}[l.status] }}">
+        <td><a class="fw-semibold text-decoration-none" href="{{ url_for('consulta_pedido', pedido_venda=l.pedido_venda) }}">{{ l.pedido_venda }}</a></td>
+        <td class="text-truncate" style="max-width: 14rem;" title="{{ l.cliente }}">{{ l.cliente }}</td>
+        <td>{{ l.frete if l.frete != 'NI' else '—' }}</td>
+        <td>
+          {% if l.status == 'vazio' %}<span class="badge text-bg-danger">Logística vazia</span>
+          {% elif l.status == 'sem_registro' %}<span class="badge text-bg-warning">Sem registro na Logística</span>
+          {% elif l.status == 'diferente' %}<span class="badge text-bg-primary" style="background:#7048e8!important">Data diferente</span>
+          {% else %}<span class="badge text-bg-success">Confere</span>{% endif %}
+        </td>
+        <td>{{ d(l.site_exp) }}</td><td>{{ d(l.log_exp) }}</td><td>{{ d(l.site_ent) }}</td><td>{{ d(l.log_ent) }}</td>
+        <td>{% if l.efetiva %}{{ d(l.efetiva) }}{% else %}<span class="badge text-bg-warning">pendente</span>{% endif %}</td>
+        <td>{{ l.nf or '—' }}</td>
+        <td class="small">{% if l.usuario %}{{ l.usuario }}{% if l.quando %}<br><span class="text-muted">{{ l.quando.strftime('%d/%m/%Y %H:%M') }}</span>{% endif %}{% else %}<span class="text-muted">sem histórico (dado antigo/importado)</span>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="11" class="text-center text-muted py-4">Nenhum pedido neste filtro.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="small text-muted">Para corrigir um pedido "Logística vazia" ou "Sem registro", apague a data em Operação → Editar → Logística / NF (quando a Logística já conhece o pedido o campo é bloqueado e se corrige sozinho na próxima sincronização).</p>
+{% endblock %}
