@@ -9636,6 +9636,9 @@ def _contar_liberacoes_futuras_pcp(hoje):
 # ----------------------------------------------------------------------------
 LOGISTICA_USUARIO_HISTORICO = "Logística (API)"
 _LOGISTICA_CAMPOS_VALOR = tuple(c for c in logistica_api.CAMPOS_CONTROLADOS if c != "go_transportadora_nome")
+# Regra do Bruno (09/11/2026): Expedição real e Entrega real de pedido que a Logística conhece vêm SÓ
+# dela — se ela manda vazio, o site fica vazio (nada digitado/estimado por cima).
+_LOGISTICA_CAMPOS_SO_DELA = ("go_data_pedido_expedido", "go_data_entregue_cliente", "go_data_real_entrega")
 
 
 def _logistica_registro(pedido_venda):
@@ -9750,7 +9753,7 @@ def _logistica_aplicar_payload(payload, agora=None):
         antes = {c: getattr(po, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
         for campo in _LOGISTICA_CAMPOS_VALOR:
             novo = novos.get(campo)
-            if novo is None and anterior.get(campo) is None:
+            if novo is None and anterior.get(campo) is None and campo not in _LOGISTICA_CAMPOS_SO_DELA:
                 continue  # nada novo e nada que a Logística já tenha mandado antes
             if getattr(po, campo) != novo:
                 setattr(po, campo, novo)
@@ -14537,10 +14540,16 @@ def _expedidos_recentes_painel(hoje=None):
     if logistica_api.configurado():
         sincronizados = {r[0] for r in db.session.query(LogisticaSync.pedido_venda_norm).filter_by(cancelado=False).all()}
     dias = {"hoje": [], "ontem": []}
+    liberacao_pcp = _liberacao_pcp_por_pedido_venda([go.pedido_venda for go in pedidos])
     for go in pedidos:
         base_log = logistica_api.base_do_pedido(go.pedido_venda) if sincronizados else None
+        chave_pv = _normalizar_pedido_venda(go.pedido_venda)
+        efetiva = (liberacao_pcp.get(chave_pv) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
         item = {
             "id": go.id,
+            "liberacao_efetiva": efetiva,
+            "expedido_em": go.go_data_pedido_expedido,
+            "entregue_em": go.go_data_entregue_cliente or go.go_data_real_entrega,
             "pedido_venda": _normalizar_pedido_venda(go.pedido_venda) or go.pedido_venda or str(go.id),
             "cliente": go.cliente,
             "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
@@ -14675,6 +14684,17 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     # --- datas do pedido ---
     entrega_real = (go.go_data_entregue_cliente or go.go_data_real_entrega) if go else None
     expedido = go.go_data_pedido_expedido if go else None
+    # Fonte oficial (Bruno, 09/11/2026): se a Logística conhece o pedido, Expedição e Entrega reais são os dela.
+    via_logistica = False
+    reg_log = _logistica_registro(go.pedido_venda) if go else None
+    if reg_log is not None:
+        try:
+            m_log = logistica_api.mapear(json.loads(reg_log.payload_json), parte=logistica_api.normalizar_pedido(go.pedido_venda)) or {}
+            expedido = m_log.get("go_data_pedido_expedido")
+            entrega_real = m_log.get("go_data_entregue_cliente") or m_log.get("go_data_real_entrega")
+            via_logistica = True
+        except (ValueError, TypeError):
+            pass
     prev_coleta = go.go_data_prevista_coleta if go else None
     prev_entrega_go = go.go_data_prevista_entrega if go else None
     nf_data = go.go_data_emissao_nf if go else None
@@ -14775,20 +14795,22 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     if prazo and fase != "entregue":
         cor_prazo = "vermelho" if dias_prazo < 0 else ("amarelo" if dias_prazo <= 7 else None)
     t_prazo = tile("Prazo do cliente", "🎯", prazo, "meta" if prazo else "faltando", None, cor_prazo)
-    if liberado:
-        t_lib = tile("Liberação PCP (real)", "✅", efetiva, "feito" if efetiva else "faltando", "todos os itens liberados" if itens and not abertos else None)
+    if efetiva:
+        t_lib = tile("Liberação PCP (efetiva)", "✅", efetiva, "feito", "da Listagem Geral" + (" · todos os itens liberados" if itens and not abertos else ""))
     else:
-        extra_lib = (f"{n_abertos - sem_prev}/{n_abertos} itens com previsão" if previstas and sem_prev
-                     else (f"{n_itens - n_abertos}/{n_itens} itens já liberados" if n_itens > n_abertos else None))
+        extra_lib = ("pendente · previsão " + _fmt_data_curta(previsao_pcp)) if previsao_pcp else "pendente · sem previsão"
         cor_lib = "vermelho" if previsao_pcp and previsao_pcp < hoje else (
             "vermelho" if previsao_pcp and prazo and previsao_pcp > prazo else None)
-        t_lib = tile("Liberação PCP (prevista)", "🗓️", previsao_pcp, "previsto" if previsao_pcp else "faltando", extra_lib, cor_lib)
+        t_lib = tile("Liberação PCP (pendente)", "🗓️", None, "faltando", extra_lib, cor_lib)
     if expedido:
-        t_exp = tile("Expedição (real)", "🚚", expedido, "feito", f"transportadora: {go.go_transportadora.nome}" if go and go.go_transportadora else None)
+        extra_exp = ("via Logística" if via_logistica else None)
+        if go and go.go_transportadora:
+            extra_exp = (extra_exp + " · " if extra_exp else "") + f"transportadora: {go.go_transportadora.nome}"
+        t_exp = tile("Expedição (real)", "🚚", expedido, "feito", extra_exp)
     else:
         t_exp = tile("Coleta/embarque (prevista)", "🚚", prev_coleta, "previsto" if prev_coleta else "faltando", None)
     if fase == "entregue":
-        t_ent = tile("Entrega (real)", "📬", entrega, "feito", None, "verde" if (prazo is None or entrega <= prazo) else "vermelho")
+        t_ent = tile("Entrega (real)", "📬", entrega, "feito", "via Logística" if via_logistica else None, "verde" if (prazo is None or entrega <= prazo) else "vermelho")
     else:
         t_ent = tile("Entrega (projetada)", "📬", entrega, "previsto" if entrega else "faltando",
                      (f"folga {folga}d" if folga is not None and folga >= 0 else (f"{-folga}d após o prazo" if folga is not None else None)),
@@ -14806,7 +14828,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     marco("inclusao", "Incluído", inclusao, "azul")
     marco("hoje", "Hoje", hoje, "hoje")
     marco("prazo", "Prazo cliente", prazo, cor_prazo or "meta")
-    marco("lib", "Liberação" + (" (real)" if liberado else " (prev.)"), efetiva if liberado else previsao_pcp, "verde" if liberado else "previsto")
+    marco("lib", "Liberação" + (" (efetiva)" if efetiva else " (prev.)"), efetiva or previsao_pcp, "verde" if efetiva else "previsto")
     marco("entrega", "Entrega" + (" (real)" if fase == "entregue" else " (proj.)"), entrega,
           "verde" if fase == "entregue" else {"vermelho": "vermelho", "amarelo": "amarelo"}.get(veredito["cor"], "previsto"))
     barra = None
@@ -14845,8 +14867,8 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
         add(max(termino_insp), "🔍", "Inspeção/embalagem concluída", "todos os itens" if n_itens > 1 else None)
     elif termino_insp:
         add(max(termino_insp), "🔍", "Inspeção/embalagem concluída em parte", f"{len(termino_insp)}/{n_itens} item(ns)")
-    if liberado:
-        add(efetiva, "✅", "Liberado pelo PCP")
+    if efetiva:
+        add(efetiva, "✅", "Liberado pelo PCP (liberação efetiva)")
     elif previsao_pcp:
         add(previsao_pcp, "🗓️", "Liberação prevista pelo PCP",
             (f"{n_abertos - sem_prev}/{n_abertos} itens com previsão" if sem_prev and previstas else None), "previsto")
@@ -14904,6 +14926,9 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     if trat:
         avisos.append(("amarelo", f"{len(trat)} item(ns) em tratativa (aguardando resolução de uma pendência): "
                        + ", ".join(i.descricao_produto for i in trat[:3]) + "."))
+    if (expedido or entrega_real) and not efetiva:
+        avisos.append(("amarelo", "A Logística já registrou " + ("a entrega" if entrega_real else "a expedição")
+                       + " deste pedido, mas o PCP ainda não registrou a Liberação Efetiva na Listagem Geral."))
     if frete_sem_cadastro:
         avisos.append(("cinza", f"Sem lead time de frete cadastrado para {uf or 'a UF'} — o frete CIF não foi somado na projeção."))
     if prazo is None and fase != "entregue":
@@ -14938,7 +14963,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     datas_etapas = {
         1: (inclusao, None),
         2: (inicio_producao, None),
-        3: (efetiva if liberado else None, previsao_pcp if not liberado else None),
+        3: (efetiva, previsao_pcp if not efetiva else None),
         4: (expedido, prev_coleta if not expedido else None),
         5: (entrega_real, entrega if not entrega_real else None),
     }

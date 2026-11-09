@@ -224,7 +224,7 @@
           <div><span class="cp-logi-rot">{{ rotulo }}</span><span class="cp-logi-val">{{ valor }}</span>{% if extra %}<div class="small text-muted">{{ extra }}</div>{% endif %}</div></li>
         {% endmacro %}
         {{ linha_logi(go.go_data_emissao_nf is not none, "Nota fiscal", (dt(go.go_data_emissao_nf) if go.go_data_emissao_nf else "a emitir"), ("NF " ~ go.go_numero_nf) if go.go_numero_nf else None) }}
-        {{ linha_logi(go.go_data_pedido_expedido is not none, "Expedição", (dt(go.go_data_pedido_expedido) if go.go_data_pedido_expedido else ("prevista " ~ dt(go.go_data_prevista_coleta) if go.go_data_prevista_coleta else "a agendar")), ("Transportadora: " ~ go.go_transportadora.nome) if go.go_transportadora else None) }}
+        {{ linha_logi(v.expedido is not none, "Expedição", (dt(v.expedido) if v.expedido else ("prevista " ~ dt(go.go_data_prevista_coleta) if go.go_data_prevista_coleta else "a agendar")), ("Transportadora: " ~ go.go_transportadora.nome) if go.go_transportadora else None) }}
         {{ linha_logi((go.go_data_real_entrega is not none) or (go.go_data_entregue_cliente is not none), "Chegada ao destino", (dt(go.go_data_real_entrega) if go.go_data_real_entrega else ("prevista " ~ dt(go.go_data_prevista_entrega) if go.go_data_prevista_entrega else "—"))) }}
         {{ linha_logi(go.go_data_entregue_cliente is not none, "Entregue ao cliente", (dt(go.go_data_entregue_cliente) if go.go_data_entregue_cliente else "aguardando")) }}
       </ul>

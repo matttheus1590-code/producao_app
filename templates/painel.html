@@ -318,7 +318,7 @@
       </h6>
       <div class="d-flex align-items-center gap-2 flex-wrap">
         <span class="text-muted small">
-          {% if EX.logistica_ok %}<i class="bi bi-arrow-repeat"></i> sincronizado com a Logística em {{ EX.ultimo_sync.strftime('%d/%m %H:%M') }}{% else %}baixa pela data de embarque{% endif %}
+          {% if EX.logistica_ok %}<i class="bi bi-arrow-repeat"></i> datas reais da Logística · sincronizado em {{ EX.ultimo_sync.strftime('%d/%m %H:%M') }}{% else %}baixa pela data real de expedição{% endif %}
         </span>
         <a href="{{ url_for('gestao_operacao_kanban_expedicao') }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-kanban"></i> Ver parados na expedição</a>
       </div>
@@ -326,20 +326,21 @@
     {% if EX.total %}
     <div class="table-responsive">
       <table class="table table-sm align-middle mb-0">
-        <thead><tr><th>Quando</th><th>Pedido</th><th>Cliente</th><th>Transportadora</th><th>Frete</th><th>NF</th><th class="text-end">Valor</th><th>Coleta</th></tr></thead>
+        <thead><tr><th>Expedido (real)</th><th>Pedido</th><th>Cliente</th><th>Liberação PCP (efetiva)</th><th>Transportadora</th><th>Frete</th><th>NF</th><th class="text-end">Valor</th><th>Entrega (real)</th></tr></thead>
         <tbody>
         {% for grupo, itens, data_ref in (('Hoje', EX.hoje, EX.data_hoje), ('Ontem', EX.ontem, EX.data_ontem)) %}
           {% for i in itens %}
           <tr class="{{ 'table-success' if grupo == 'Hoje' }}">
-            <td class="text-nowrap"><strong>{{ grupo }}</strong> <span class="text-muted small">{{ data_ref.strftime('%d/%m') }}</span></td>
+            <td class="text-nowrap"><strong>{{ grupo }}</strong> <span class="text-muted small">{{ i.expedido_em.strftime('%d/%m') }}</span></td>
             <td><a href="{{ url_for('consulta_pedido', pedido_venda=i.pedido_venda) }}" class="fw-semibold text-decoration-none">{{ i.pedido_venda }}</a>
               {% if i.via_logistica %}<i class="bi bi-arrow-repeat text-muted" title="Baixa vinda da Logística"></i>{% endif %}</td>
             <td class="text-truncate" style="max-width: 14rem;" title="{{ i.cliente }}">{{ i.cliente }}</td>
+            <td class="text-nowrap">{% if i.liberacao_efetiva %}{{ i.liberacao_efetiva.strftime('%d/%m/%Y') }}{% else %}<span class="badge text-bg-warning" title="O PCP ainda não registrou a Liberação Efetiva na Listagem Geral">pendente</span>{% endif %}</td>
             <td>{{ i.transportadora or '—' }}</td>
             <td>{{ i.frete_tipo if i.frete_tipo != 'NI' else '—' }}</td>
             <td>{{ i.numero_nf or '—' }}</td>
             <td class="text-end">{% if i.valor %}R$ {{ "{:,.2f}".format(i.valor).replace(",", "X").replace(".", ",").replace("X", ".") }}{% else %}—{% endif %}</td>
-            <td>{% if i.prevista_coleta %}{% if i.atraso_coleta.status == 'atrasado' %}<span class="text-danger small">saiu {{ i.atraso_coleta.dias }}d após o previsto</span>{% else %}<span class="text-success small">no prazo</span>{% endif %}{% else %}<span class="text-muted small">sem previsão</span>{% endif %}</td>
+            <td class="text-nowrap">{% if i.entregue_em %}<span class="badge text-bg-success">{{ i.entregue_em.strftime('%d/%m/%Y') }}</span>{% elif i.prevista_entrega %}<span class="text-muted small">prevista {{ i.prevista_entrega.strftime('%d/%m') }}</span>{% else %}<span class="text-muted small">a caminho</span>{% endif %}</td>
           </tr>
           {% endfor %}
         {% endfor %}
