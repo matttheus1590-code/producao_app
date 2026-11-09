@@ -348,7 +348,14 @@
       </table>
     </div>
     {% else %}
-    <div class="text-muted small"><i class="bi bi-info-circle"></i> Nenhum material expedido hoje nem ontem.</div>
+    <div class="text-muted small"><i class="bi bi-info-circle"></i> Nenhum material expedido hoje nem ontem{% if EX.logistica_ok %} segundo a Logística{% endif %}.</div>
+    {% endif %}
+    {% if EX.nao_confirmados %}
+    <div class="alert alert-warning small mt-2 mb-0 py-2">
+      <i class="bi bi-exclamation-triangle"></i> <strong>{{ EX.nao_confirmados|length }}</strong> pedido(s) com data de expedição digitada no site que a Logística <strong>não confirma</strong>
+      ({{ EX.nao_confirmados[:6]|join(', ') }}{% if EX.nao_confirmados|length > 6 %}…{% endif %}) — não entram neste aviso.
+      <a href="{{ url_for('gestao_operacao_auditoria_expedicao') }}" class="alert-link">Ver na Auditoria</a>
+    </div>
     {% endif %}
   </div>
 </div>
