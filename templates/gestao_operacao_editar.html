@@ -23,16 +23,31 @@
       {% endfor %}
     </ul>
 
+    <form id="form-ajuste-ligar" method="post" action="{{ url_for('gestao_operacao_ajuste_manual', pedido_id=pedido.id) }}" class="d-none"><input type="hidden" name="acao" value="ligar"><input type="hidden" name="secao" value="{{ secao }}"></form>
+    <form id="form-ajuste-desligar" method="post" action="{{ url_for('gestao_operacao_ajuste_manual', pedido_id=pedido.id) }}" class="d-none"><input type="hidden" name="acao" value="desligar"><input type="hidden" name="secao" value="{{ secao }}"></form>
     <form method="post">
-      {% if logistica_info and secao in ('logistica', 'resultados') %}
+      {% if ajuste_manual and secao in ('logistica', 'resultados') %}
+      <div class="alert alert-warning d-flex gap-2 align-items-start py-2 mb-3">
+        <i class="bi bi-pencil-square fs-4"></i>
+        <div class="small flex-grow-1">
+          <div class="fw-semibold">Ajuste manual ligado neste pedido</div>
+          Você pode editar os campos de Logística/NF abaixo e a Logística <strong>não</strong> os sobrescreve
+          {% if pedido.go_baixa_manual_por %}(ligado por {{ pedido.go_baixa_manual_por }}){% endif %}.
+        </div>
+        <button type="submit" form="form-ajuste-desligar" class="btn btn-sm btn-outline-dark"
+                onclick="return confirm('Voltar a seguir a Logística? Os campos deste pedido serão atualizados com o que a Logística tem.');">Voltar a seguir a Logística</button>
+      </div>
+      {% elif logistica_info and secao in ('logistica', 'resultados') %}
       <div class="alert alert-info d-flex gap-2 align-items-start py-2 mb-3">
         <i class="bi bi-link-45deg fs-4"></i>
         <div class="small">
           <div class="fw-semibold">Dados de expedição e transporte vêm da Logística</div>
           Origem: Logística · atualizado em {{ logistica_info.atualizado_em.strftime("%d/%m/%Y %H:%M") if logistica_info.atualizado_em else "—" }}.
-          Estes campos ficam somente para leitura aqui — para corrigir, ajuste na Logística.
+          Estes campos ficam somente para leitura aqui. Se precisar corrigir algo, use o ajuste manual ao lado.
           {% if logistica_info.remessas and logistica_info.remessas.total > 1 %}<div>{{ logistica_info.remessas.entregues }} de {{ logistica_info.remessas.total }} remessas entregues.</div>{% endif %}
         </div>
+        <button type="submit" form="form-ajuste-ligar" class="btn btn-sm btn-outline-primary"
+                onclick="return confirm('Ligar o ajuste manual? Você poderá editar os campos de Logística/NF deste pedido e a Logística deixa de sobrescrevê-los até você voltar a seguir a Logística.');">Ajustar manualmente</button>
       </div>
       {% endif %}
 

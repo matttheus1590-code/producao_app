@@ -225,7 +225,7 @@
         {% endmacro %}
         {{ linha_logi(go.go_data_emissao_nf is not none, "Nota fiscal", (dt(go.go_data_emissao_nf) if go.go_data_emissao_nf else "a emitir"), ("NF " ~ go.go_numero_nf) if go.go_numero_nf else None) }}
         {{ linha_logi(v.expedido is not none, "Expedição", (dt(v.expedido) if v.expedido else ("prevista " ~ dt(go.go_data_prevista_coleta) if go.go_data_prevista_coleta else "a agendar")), ("Transportadora: " ~ go.go_transportadora.nome) if go.go_transportadora else None) }}
-        {{ linha_logi(v.entrega_real is not none, "Entregue ao cliente", (dt(v.entrega_real) if v.entrega_real else ("prevista " ~ dt(go.go_data_prevista_entrega) if go.go_data_prevista_entrega else "aguardando"))) }}
+        {{ linha_logi(v.entrega_real is not none, ("Disponível p/ retirada" if v.fob_apto else "Entregue ao cliente"), (dt(v.entrega_real) if v.entrega_real else ("prevista " ~ dt(go.go_data_prevista_entrega) if go.go_data_prevista_entrega else "aguardando"))) }}
       </ul>
       {% if logistica_info %}
       <div class="small text-muted mt-1"><i class="bi bi-link-45deg"></i> Origem: <b>Logística</b>{% if logistica_info.atualizado_em %} · atualizado em {{ logistica_info.atualizado_em.strftime("%d/%m/%Y %H:%M") }}{% endif %}{% if logistica_info.status %} · {{ logistica_info.status }}{% endif %}</div>

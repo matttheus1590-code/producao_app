@@ -20,6 +20,7 @@
         <span class="kp-selo kp-selo-sem-nf"><i class="bi bi-hourglass-split"></i> sem NF</span>
       {% endif %}
       {% if c.muito_critico %}<span class="kp-selo kp-selo-critico">+10 dias</span>{% endif %}
+      {% if c.apto_retirada %}<span class="kp-selo kp-selo-nf" title="FOB: apto para retirada desde {{ c.apto_retirada.strftime('%d/%m/%Y') }}; aguardando baixa de expedição da Logística"><i class="bi bi-box-arrow-up-right"></i> Apto p/ retirada {{ c.apto_retirada.strftime('%d/%m') }}</span>{% endif %}
     </div>
     <div class="kp-linha"><i class="bi bi-truck"></i> {{ c.transportadora or 'Sem transportadora' }}</div>
     <div class="kp-linha {% if c.atraso_coleta.status in ('atrasado', 'atrasando') %}text-danger fw-semibold{% endif %}">

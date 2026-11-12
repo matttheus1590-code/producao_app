@@ -9770,6 +9770,8 @@ def _logistica_aplicar_payload(payload, agora=None):
         if novos is None:
             continue  # a Logística ainda não tem dado desta parte
         atualizou_algum = True
+        if po.go_baixa_manual_em:
+            continue  # ajuste manual: a Logística não sobrescreve nada deste pedido
         anterior = logistica_api.mapear(payload_anterior, parte=parte) if payload_anterior else None
         anterior = anterior or {}
         antes = {c: getattr(po, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
@@ -13544,6 +13546,7 @@ def _classificar_pedidos_operacao(pedidos, metricas, pedidos_producao_por_pv, da
     hoje = hoje or _hoje_brt()
     rdim_por_pv = rdim_por_pv or {}
     resultado = {}
+    regs_log = _logistica_regs_por_base()
     for p in pedidos:
         chave = _normalizar_pedido_venda(p.pedido_venda)
         m = metricas.get(p.id, {})
@@ -13555,6 +13558,9 @@ def _classificar_pedidos_operacao(pedidos, metricas, pedidos_producao_por_pv, da
 
         entregue = bool(p.go_data_entregue_cliente or p.go_data_real_entrega)
         expedido = bool(p.go_data_pedido_expedido)
+        # FOB conhecido pela Logística: entrega real = apto p/ retirada; sem expedição ainda está na planta.
+        if entregue and not expedido and (p.frete or "").upper().startswith("FOB") and regs_log.get(logistica_api.base_do_pedido(p.pedido_venda)):
+            entregue = False
         tem_nf = bool(p.go_numero_nf or p.go_data_emissao_nf)
         # Bruno (09/11/2026): "liberado/na expedição" = liberação EFETIVA da Listagem Geral com a
         # data já alcançada (efetiva em 11/11 só vale a partir de 11/11).
@@ -14494,7 +14500,8 @@ def _kanban_parados_expedicao(args, hoje=None):
     liberação efetiva (semáforo próprio: _semaforo_dias_parado)."""
     hoje = hoje or _hoje_brt()
     filtros = _parse_filtros_kanban_parados(args)
-    candidatos = PedidoOperacao.query.filter(PedidoOperacao.go_data_entregue_cliente.is_(None)).all()
+    candidatos = PedidoOperacao.query.filter(or_(
+        PedidoOperacao.go_data_entregue_cliente.is_(None), PedidoOperacao.frete.ilike("%FOB%"))).all()
     liberacao_pcp = _liberacao_pcp_por_pedido_venda([go.pedido_venda for go in candidatos])
     regs = _logistica_regs_por_base()
 
@@ -14506,7 +14513,12 @@ def _kanban_parados_expedicao(args, hoje=None):
         if not liberacao or liberacao > hoje:
             continue  # sem liberação efetiva, ou ela ainda é futura: ainda não está na Expedição
         exp_real, ent_real, via_log = _datas_reais_logistica(go, regs)
-        if exp_real or ent_real:
+        fob = _frete_tipo(go.frete) == "FOB"
+        # FOB (Bruno, 12/11/2026): "entrega real" = pedido apto p/ o cliente retirar; ele só sai da planta
+        # depois da baixa de expedição da Logística. Pedido FOB que a Logística conhece, com entrega real
+        # mas sem expedição, continua parado (aguardando retirada).
+        apto_retirada = ent_real if (via_log and fob and ent_real and not exp_real) else None
+        if exp_real or (ent_real and not apto_retirada):
             continue  # já saiu (expedição real) ou já chegou (entrega real)
         dias = max((hoje - liberacao).days, 0)
         tem_nf = bool(go.go_numero_nf or go.go_data_emissao_nf)
@@ -14530,6 +14542,7 @@ def _kanban_parados_expedicao(args, hoje=None):
             "atraso_coleta": _prevista_x_realizada(go.go_data_prevista_coleta, None),
             "observacao": go.go_obs_operacao,
             "via_logistica": via_log,
+            "apto_retirada": apto_retirada,
         })
 
     def url(**kw):
@@ -14879,6 +14892,8 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
                 embarque_manual = True
         except (ValueError, TypeError):
             pass
+    # FOB (Bruno, 12/11/2026): entrega real = pedido apto p/ retirada; sem baixa de expedição da Logística ele ainda está na planta.
+    fob_apto = bool(via_logistica and (frete or "").upper().startswith("FOB") and entrega_real and not expedido)
     prev_coleta = go.go_data_prevista_coleta if go else None
     prev_entrega_go = go.go_data_prevista_entrega if go else None
     nf_data = go.go_data_emissao_nf if go else None
@@ -14992,9 +15007,12 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
             extra_exp = (extra_exp + " · " if extra_exp else "") + f"transportadora: {go.go_transportadora.nome}"
         t_exp = tile("Expedição (real)", "🚚", expedido, "feito", extra_exp)
     else:
-        t_exp = tile("Coleta/embarque (prevista)", "🚚", prev_coleta, "previsto" if prev_coleta else "faltando", None)
+        if fob_apto:
+            t_exp = tile("Expedição (a confirmar)", "🚚", None, "faltando", "aguardando a baixa da Logística · ainda na planta")
+        else:
+            t_exp = tile("Coleta/embarque (prevista)", "🚚", prev_coleta, "previsto" if prev_coleta else "faltando", None)
     if fase == "entregue":
-        t_ent = tile("Entrega (real)", "📬", entrega, "feito", "via Logística" if via_logistica else ("baixa manual" if baixa_manual else None), "verde" if (prazo is None or entrega <= prazo) else "vermelho")
+        t_ent = tile("Disponível p/ retirada (real)" if fob_apto else "Entrega (real)", "📬", entrega, "feito", "via Logística" if via_logistica else ("baixa manual" if baixa_manual else None), "verde" if (prazo is None or entrega <= prazo) else "vermelho")
     else:
         t_ent = tile("Entrega (projetada)", "📬", entrega, "previsto" if entrega else "faltando",
                      (f"folga {folga}d" if folga is not None and folga >= 0 else (f"{-folga}d após o prazo" if folga is not None else None)),
@@ -15115,6 +15133,9 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     if (expedido or entrega_real) and not efetiva:
         avisos.append(("amarelo", "A Logística já registrou " + ("a entrega" if entrega_real else "a expedição")
                        + " deste pedido, mas o PCP ainda não registrou a Liberação Efetiva na Listagem Geral."))
+    if fob_apto:
+        avisos.append(("amarelo", f"FOB: o pedido está apto para o cliente retirar desde {_fmt_data_curta(entrega_real)}, mas ainda está na planta — "
+                       "a expedição só vale depois da baixa da Logística."))
     if frete_sem_cadastro:
         avisos.append(("cinza", f"Sem lead time de frete cadastrado para {uf or 'a UF'} — o frete CIF não foi somado na projeção."))
     if prazo is None and fase != "entregue":
@@ -15187,7 +15208,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
         "prazo": prazo, "frete": frete, "uf": uf, "frete_dias": frete_dias, "n_abertos": n_abertos, "n_itens": n_itens,
         "nf_num": nf_num, "nf_data": nf_data, "prev_coleta": prev_coleta, "expedido": expedido,
         "prev_entrega_go": prev_entrega_go, "entrega_real": entrega_real, "efetiva": efetiva, "previsao_pcp": previsao_pcp,
-        "primeiro": p0, "inclusao": inclusao,
+        "primeiro": p0, "inclusao": inclusao, "fob_apto": fob_apto,
     }
 
 
@@ -26441,6 +26462,41 @@ def register_routes(app):
         pedidos, metricas, rdim, painel, filtros, dados_periodo = _dados_relatorio_operacao_360(request.args)
         return _gerar_pdf_operacao_360(pedidos, metricas, rdim, painel, filtros, dados_periodo)
 
+    @app.route("/gestao-operacao/<int:pedido_id>/ajuste-manual", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def gestao_operacao_ajuste_manual(pedido_id):
+        """Bruno (12/11/2026): "por mais que a Logística tenha o controle dos dados, quero poder ajustar
+        alguma informação". Liga o ajuste manual do pedido: os campos de Logística/NF ficam editáveis e
+        a sincronização para de sobrescrevê-los até o ajuste ser desligado."""
+        pedido = PedidoOperacao.query.get_or_404(pedido_id)
+        ligar = request.form.get("acao") != "desligar"
+        secao = request.form.get("secao", "logistica")
+        if ligar:
+            pedido.go_baixa_manual_em = datetime.utcnow()
+            pedido.go_baixa_manual_por = current_user.nome
+            db.session.add(HistoricoAlteracao(
+                entidade_tipo="pedido_operacao", entidade_id=pedido.id, pedido_id=None, usuario_id=current_user.id,
+                usuario_nome=current_user.nome, campo="ajuste_manual", valor_anterior=None, valor_novo="ligado"))
+            db.session.commit()
+            flash("Ajuste manual ligado: agora você pode editar os campos de Logística/NF deste pedido e a Logística não os sobrescreve.", "success")
+        else:
+            pedido.go_baixa_manual_em = None
+            pedido.go_baixa_manual_por = None
+            pedido.go_embarque_manual_em = None
+            pedido.go_embarque_manual_por = None
+            db.session.add(HistoricoAlteracao(
+                entidade_tipo="pedido_operacao", entidade_id=pedido.id, pedido_id=None, usuario_id=current_user.id,
+                usuario_nome=current_user.nome, campo="ajuste_manual", valor_anterior="ligado", valor_novo="desligado"))
+            reg = LogisticaSync.query.filter_by(pedido_venda_norm=logistica_api.base_do_pedido(pedido.pedido_venda)).first() if logistica_api.configurado() else None
+            if reg is not None:
+                try:
+                    _logistica_aplicar_payload(json.loads(reg.payload_json))
+                except (ValueError, TypeError):
+                    pass
+            db.session.commit()
+            flash("Ajuste manual desligado: o pedido voltou a seguir a Logística.", "success")
+        return redirect(url_for("gestao_operacao_editar", pedido_id=pedido.id, secao=secao))
+
     @app.route("/gestao-operacao/<int:pedido_id>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")
     def gestao_operacao_editar(pedido_id):
@@ -26496,7 +26552,7 @@ def register_routes(app):
                 ]
             # Integração com a Logística: os campos de expedição/transporte
             # deste pedido vêm da Logística — nunca são lidos do formulário.
-            if _logistica_registro(pedido.pedido_venda) is not None:
+            if _logistica_registro(pedido.pedido_venda) is not None and not pedido.go_baixa_manual_em:
                 campos_secao = [c for c in campos_secao if c not in logistica_api.CAMPOS_TRAVADOS_FORM]
             campos_historico = [c for c in campos_secao if c in CAMPOS_HISTORICO_GESTAO_OPERACAO]
             antes = {c: getattr(pedido, c) for c in campos_historico}
@@ -26532,8 +26588,9 @@ def register_routes(app):
             secao=secao, GO_SECOES=GO_SECOES, GO_SECAO_ENDPOINT=GO_SECAO_ENDPOINT, GO_SECAO_LABEL=GO_SECAO_LABEL,
             status_real=status_real, liberacao_real=liberacao_real, data_cliente_real=data_cliente_real,
             otd_calculado=otd_calculado,
-            travados=(set(logistica_api.CAMPOS_TRAVADOS_FORM) if reg_logistica is not None else set()),
+            travados=(set(logistica_api.CAMPOS_TRAVADOS_FORM) if (reg_logistica is not None and not pedido.go_baixa_manual_em) else set()),
             logistica_info=_logistica_info(reg_logistica),
+            ajuste_manual=bool(pedido.go_baixa_manual_em),
         )
 
     # ------------------------------------------------------------------
