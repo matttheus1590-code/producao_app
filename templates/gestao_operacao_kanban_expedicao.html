@@ -117,6 +117,7 @@
       <a class="btn btn-outline-secondary btn-sm" href="{{ url_sem_tv }}"><i class="bi bi-x-lg"></i> Sair do modo TV</a>
     {% else %}
       <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('gestao_operacao_auditoria_expedicao') }}" title="Confere as datas de expedição/entrega do site contra a Logística"><i class="bi bi-clipboard2-check"></i> Auditar datas</a>
+      {% if current_user.role in ('ADMIN', 'PCP') %}<a class="btn btn-outline-danger btn-sm" href="{{ url_for('gestao_operacao_baixa_antigos') }}" title="Dar baixa em pedidos antigos parados por engano"><i class="bi bi-check2-all"></i> Dar baixa em antigos</a>{% endif %}
       <a class="btn btn-outline-dark btn-sm" href="{{ url_tv }}" title="Painel grande para TV — atualiza sozinho"><i class="bi bi-tv"></i> Modo TV</a>
       <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#op360Tudo" data-tela-cheia-titulo="Kanban · Parados na Expedição" title="Abre o quadro inteiro em tela cheia (Esc para sair)"><i class="bi bi-arrows-fullscreen"></i> Tela cheia</button>
     {% endif %}

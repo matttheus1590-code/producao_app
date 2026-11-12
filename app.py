@@ -26032,6 +26032,52 @@ def register_routes(app):
             hoje=_hoje_brt(),
         )
 
+    def _baixa_antigos_candidatos(min_dias):
+        """Pedidos hoje no quadro 'Parados na Expedição' com pelo menos `min_dias` dias parados.
+        Os que a Logística conhece NÃO entram na baixa (a Logística é a fonte e o sync desfaria)."""
+        dados = _kanban_parados_expedicao({})
+        cards = [c for col in dados["colunas"] for c in col["cards"] if c["dias"] >= min_dias]
+        cards.sort(key=lambda c: -c["dias"])
+        return cards
+
+    @app.route("/gestao-operacao/kanban-expedicao/baixa-antigos", methods=["GET", "POST"])
+    @requer_role("ADMIN", "PCP")
+    def gestao_operacao_baixa_antigos():
+        """Pedido do Bruno (12/11/2026): pedidos antigos que ficaram parados por engano no Kanban
+        recebem baixa: Entrega (real) = data da liberação efetiva do PCP (e Expedição real, que
+        estava vazia, = a mesma data). Antes de gravar mostra a lista; cada pedido tem caixa pra
+        desmarcar. Fica no histórico de cada pedido com o nome de quem fez a baixa."""
+        if request.method == "POST":
+            min_dias = request.form.get("min_dias", 5, type=int)
+            escolhidos = {int(v) for v in request.form.getlist("ids") if v.isdigit()}
+        else:
+            min_dias = request.args.get("min_dias", 5, type=int)
+            escolhidos = set()
+        min_dias = min_dias if min_dias in (5, 10, 30, 90) else 5
+        candidatos = _baixa_antigos_candidatos(min_dias)
+        if request.method == "POST":
+            feitos = 0
+            for c in candidatos:
+                if c["id"] not in escolhidos or c["via_logistica"]:
+                    continue
+                po = db.session.get(PedidoOperacao, c["id"])
+                if po is None or po.go_data_entregue_cliente is not None or po.go_data_pedido_expedido is not None:
+                    continue
+                data = c["liberacao"]
+                for campo in ("go_data_pedido_expedido", "go_data_entregue_cliente"):
+                    setattr(po, campo, data)
+                    db.session.add(HistoricoAlteracao(
+                        entidade_tipo="pedido_operacao", entidade_id=po.id, pedido_id=None,
+                        usuario_id=current_user.id, usuario_nome=current_user.nome, campo=campo,
+                        valor_anterior=None, valor_novo=data.isoformat(),
+                    ))
+                feitos += 1
+            db.session.commit()
+            flash(f"Baixa feita em {feitos} pedido(s): entrega registrada na data da liberação efetiva do PCP.", "success")
+            return redirect(url_for("gestao_operacao_kanban_expedicao"))
+        return render_template("gestao_operacao_kanban_baixa.html", cards=candidatos, min_dias=min_dias,
+                               atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"))
+
     @app.route("/gestao-operacao/<int:pedido_id>/marcar-expedido", methods=["POST"])
     @requer_role("ADMIN", "PCP")
     def gestao_operacao_marcar_expedido(pedido_id):

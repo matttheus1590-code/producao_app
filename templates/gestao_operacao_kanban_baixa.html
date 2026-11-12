@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Gestão Operação · Baixa de pedidos antigos · Gestão da Produção e Operação{% endblock %}
+{% block content %}
+{% include "_gestao_operacao_subnav.html" with context %}
+<div class="mb-2">
+  <h4 class="mb-0"><i class="bi bi-check2-all"></i> Dar baixa em pedidos antigos parados</h4>
+  <div class="text-muted small">Para cada pedido marcado, a <strong>Entrega (real)</strong> e a <strong>Expedição (real)</strong> passam a ser a data da <strong>liberação efetiva do PCP</strong>. Fica registrado no histórico com o seu nome · {{ atualizado_em }}</div>
+</div>
+<form method="get" class="d-flex align-items-center gap-1 mb-2">
+  <label class="small text-muted mb-0" for="min_dias">Mostrar pedidos parados há</label>
+  <select id="min_dias" name="min_dias" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
+    {% for v, r in ((5, '5 dias ou mais (coluna Críticos)'), (10, '10 dias ou mais'), (30, '30 dias ou mais'), (90, '90 dias ou mais')) %}<option value="{{ v }}" {{ 'selected' if min_dias == v }}>{{ r }}</option>{% endfor %}
+  </select>
+</form>
+<form method="post" onsubmit="return confirm('Dar baixa nos pedidos marcados? A entrega será registrada na data da liberação efetiva.');">
+  <input type="hidden" name="min_dias" value="{{ min_dias }}">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle bg-white">
+      <thead class="table-light"><tr>
+        <th style="width:2.5rem"><input type="checkbox" class="form-check-input" id="todos" checked onclick="document.querySelectorAll('.baixa-ck:not(:disabled)').forEach(c=>c.checked=this.checked)"></th>
+        <th>Pedido</th><th>Cliente</th><th>Frete</th><th>NF</th><th class="text-end">Valor</th><th>Liberação efetiva (PCP)</th><th class="text-end">Dias parado</th><th>Entrega real passará a ser</th></tr></thead>
+      <tbody>
+      {% for c in cards %}
+        <tr class="{{ 'table-secondary' if c.via_logistica }}">
+          <td><input type="checkbox" class="form-check-input baixa-ck" name="ids" value="{{ c.id }}" {{ 'disabled' if c.via_logistica else 'checked' }}></td>
+          <td><a class="fw-semibold text-decoration-none" href="{{ url_for('consulta_pedido', pedido_venda=c.pedido_venda) }}">{{ c.pedido_venda }}</a></td>
+          <td class="text-truncate" style="max-width:16rem" title="{{ c.cliente }}">{{ c.cliente }}</td>
+          <td>{{ c.frete_tipo if c.frete_tipo != 'NI' else '—' }}</td>
+          <td>{{ ('NF ' ~ c.numero_nf) if c.numero_nf else ('emitida' if c.tem_nf else '—') }}</td>
+          <td class="text-end">{{ ('R$ {:,.2f}'.format(c.valor)).replace(',', 'X').replace('.', ',').replace('X', '.') if c.valor else '—' }}</td>
+          <td>{{ c.liberacao.strftime('%d/%m/%Y') }}</td>
+          <td class="text-end">{{ c.dias }}</td>
+          <td>{% if c.via_logistica %}<span class="badge text-bg-secondary">Logística conhece este pedido — a baixa é feita lá</span>{% else %}<strong>{{ c.liberacao.strftime('%d/%m/%Y') }}</strong>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="text-center text-muted py-4">Nenhum pedido parado com essa idade.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-danger" {{ 'disabled' if not cards }}><i class="bi bi-check2-all"></i> Dar baixa nos marcados</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('gestao_operacao_kanban_expedicao') }}">Cancelar</a>
+  </div>
+</form>
+{% endblock %}
