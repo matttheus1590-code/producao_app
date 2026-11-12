@@ -7,6 +7,29 @@
   <div class="text-muted small">Para cada pedido marcado, a <strong>Entrega (real)</strong> e a <strong>Expedição (real)</strong> passam a ser a data da <strong>liberação efetiva do PCP</strong>. Fica registrado no histórico com o seu nome · {{ atualizado_em }}</div>
 </div>
 <div class="card mb-3"><div class="card-body py-2">
+  <div class="fw-semibold mb-1"><i class="bi bi-truck"></i> Dar baixa de EMBARQUE (expedição) manual</div>
+  <form method="post" class="d-flex align-items-end flex-wrap gap-2 m-0">
+    <input type="hidden" name="acao" value="embarque">
+    <div><label class="small text-muted d-block">Nº do pedido (PV)</label><input name="pedido_venda" class="form-control form-control-sm" placeholder="ex.: 888" required></div>
+    <div><label class="small text-muted d-block">Data do embarque</label><input type="date" name="data" class="form-control form-control-sm" required></div>
+    <button class="btn btn-sm btn-dark" onclick="return confirm('Registrar o embarque deste pedido na data indicada? O pedido sai do Kanban de parados.');"><i class="bi bi-truck"></i> Registrar embarque</button>
+  </form>
+  <div class="small text-muted mt-1">Só a expedição (a entrega continua vindo da Logística). Vale até a Logística registrar a data dela — quando ela registrar, a data da Logística assume sozinha.</div>
+  {% if embarques %}
+  <div class="table-responsive mt-2"><table class="table table-sm align-middle mb-0">
+    <thead class="table-light"><tr><th>Pedido</th><th>Cliente</th><th>Embarque</th><th>Lançado por</th><th></th></tr></thead>
+    <tbody>
+    {% for p in embarques %}
+      <tr><td><a class="fw-semibold text-decoration-none" href="{{ url_for('consulta_pedido', pedido_venda=p.pedido_venda) }}">{{ p.pedido_venda }}</a></td>
+        <td>{{ p.cliente }}</td><td>{{ p.go_data_pedido_expedido.strftime('%d/%m/%Y') if p.go_data_pedido_expedido else '—' }}</td>
+        <td class="small">{{ p.go_embarque_manual_por }} · {{ p.go_embarque_manual_em.strftime('%d/%m/%Y %H:%M') }} (UTC)</td>
+        <td class="text-end"><form method="post" class="m-0" onsubmit="return confirm('Desfazer o embarque manual deste pedido?');"><input type="hidden" name="acao" value="desfazer_embarque"><input type="hidden" name="id" value="{{ p.id }}"><button class="btn btn-sm btn-outline-secondary">Desfazer</button></form></td></tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% endif %}
+</div></div>
+
+<div class="card mb-3"><div class="card-body py-2">
   <div class="fw-semibold mb-1"><i class="bi bi-pencil-square"></i> Dar baixa em um pedido específico (qualquer situação)</div>
   <form method="post" class="d-flex align-items-end flex-wrap gap-2 m-0">
     <input type="hidden" name="acao" value="individual">

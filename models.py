@@ -1122,6 +1122,10 @@ class PedidoOperacao(db.Model):
     # o que foi lançado na baixa e a sincronização com a Logística NÃO as sobrescreve.
     go_baixa_manual_em = db.Column(db.DateTime, nullable=True)
     go_baixa_manual_por = db.Column(db.String(120), nullable=True)
+    # Embarque manual (Bruno, 12/11/2026): Expedição real lançada por pessoa enquanto a Logística ainda
+    # não registrou. Vale até a Logística mandar a data dela (aí a dela assume e a marca some).
+    go_embarque_manual_em = db.Column(db.DateTime, nullable=True)
+    go_embarque_manual_por = db.Column(db.String(120), nullable=True)
     go_status_final_alinhamento = db.Column(db.String(60), nullable=True)
 
     criado_em = db.Column(db.DateTime, default=datetime.utcnow)

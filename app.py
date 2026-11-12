@@ -2076,6 +2076,10 @@ def _migrar_pedidos_operacao_baixa_manual(app):
             conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_baixa_manual_em TIMESTAMP"))
         if "go_baixa_manual_por" not in colunas:
             conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_baixa_manual_por VARCHAR(120)"))
+        if "go_embarque_manual_em" not in colunas:
+            conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_embarque_manual_em TIMESTAMP"))
+        if "go_embarque_manual_por" not in colunas:
+            conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_embarque_manual_por VARCHAR(120)"))
 
 
 def _migrar_logistica_itens(app):
@@ -9773,6 +9777,11 @@ def _logistica_aplicar_payload(payload, agora=None):
             if po.go_baixa_manual_em and campo in _LOGISTICA_CAMPOS_SO_DELA:
                 continue  # baixa manual: datas reais não são sobrescritas pela Logística
             novo = novos.get(campo)
+            if campo == "go_data_pedido_expedido" and po.go_embarque_manual_em:
+                if novo is None:
+                    continue  # embarque manual vale enquanto a Logística não tiver a data dela
+                po.go_embarque_manual_em = None  # a Logística registrou: a data dela assume
+                po.go_embarque_manual_por = None
             if novo is None and anterior.get(campo) is None and campo not in _LOGISTICA_CAMPOS_SO_DELA:
                 continue  # nada novo e nada que a Logística já tenha mandado antes
             if getattr(po, campo) != novo:
@@ -14440,7 +14449,10 @@ def _datas_reais_logistica(go, regs):
         except (ValueError, TypeError):
             m = None
         if m is not None:
-            return m.get("go_data_pedido_expedido"), m.get("go_data_entregue_cliente"), True
+            exp = m.get("go_data_pedido_expedido")
+            if exp is None and go.go_embarque_manual_em:  # embarque lançado à mão, Logística ainda não registrou
+                exp = go.go_data_pedido_expedido
+            return exp, m.get("go_data_entregue_cliente"), True
     return go.go_data_pedido_expedido, go.go_data_entregue_cliente, False
 
 
@@ -14641,7 +14653,7 @@ def _auditoria_expedicao(dias=45, filtro="", hoje=None):
         site_exp = p.go_data_pedido_expedido
         site_ent = p.go_data_entregue_cliente or p.go_data_real_entrega
         log_exp, log_ent, via = _datas_reais_logistica(p, regs)
-        if p.go_baixa_manual_em:
+        if p.go_baixa_manual_em or p.go_embarque_manual_em:
             status = "baixa_manual"
             log_exp = log_ent = None
         elif not via:
@@ -14703,12 +14715,16 @@ def _expedidos_recentes_painel(hoje=None):
                     m = logistica_api.mapear(json.loads(reg.payload_json), parte=logistica_api.normalizar_pedido(go.pedido_venda))
                 except (ValueError, TypeError):
                     m = None
-            if m is None or m.get("go_data_pedido_expedido") not in (hoje, ontem):
+            emb_manual = bool(go.go_embarque_manual_em and (m is None or not m.get("go_data_pedido_expedido")))
+            if emb_manual:
+                pass  # embarque lançado à mão (Logística ainda não registrou): vale a data do site
+            elif m is None or m.get("go_data_pedido_expedido") not in (hoje, ontem):
                 nao_confirmados.append(chave_pv or go.pedido_venda or str(go.id))
                 continue
-            exp_data = m.get("go_data_pedido_expedido")
-            ent_data = m.get("go_data_entregue_cliente")
-            via_log = True
+            if not emb_manual:
+                exp_data = m.get("go_data_pedido_expedido")
+                ent_data = m.get("go_data_entregue_cliente")
+                via_log = True
         efetiva = (liberacao_pcp.get(chave_pv) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
         dias["hoje" if exp_data == hoje else "ontem"].append({
             "id": go.id,
@@ -14850,6 +14866,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     # Fonte oficial (Bruno, 09/11/2026): se a Logística conhece o pedido, Expedição e Entrega reais são os dela.
     via_logistica = False
     baixa_manual = bool(go and go.go_baixa_manual_em)
+    embarque_manual = False
     reg_log = _logistica_registro(go.pedido_venda) if (go and not baixa_manual) else None
     if reg_log is not None:
         try:
@@ -14857,6 +14874,9 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
             expedido = m_log.get("go_data_pedido_expedido")
             entrega_real = m_log.get("go_data_entregue_cliente")
             via_logistica = True
+            if expedido is None and go.go_embarque_manual_em and go.go_data_pedido_expedido:
+                expedido = go.go_data_pedido_expedido
+                embarque_manual = True
         except (ValueError, TypeError):
             pass
     prev_coleta = go.go_data_prevista_coleta if go else None
@@ -14967,7 +14987,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
             "vermelho" if previsao_pcp and prazo and previsao_pcp > prazo else None)
         t_lib = tile("Liberação PCP (pendente)", "🗓️", None, "faltando", extra_lib, cor_lib)
     if expedido:
-        extra_exp = ("via Logística" if via_logistica else ("baixa manual" if baixa_manual else None))
+        extra_exp = ("embarque manual · a Logística ainda não registrou" if embarque_manual else ("via Logística" if via_logistica else ("baixa manual" if baixa_manual else None)))
         if go and go.go_transportadora:
             extra_exp = (extra_exp + " · " if extra_exp else "") + f"transportadora: {go.go_transportadora.nome}"
         t_exp = tile("Expedição (real)", "🚚", expedido, "feito", extra_exp)
@@ -26113,6 +26133,48 @@ def register_routes(app):
                 db.session.commit()
                 flash(f"Baixa feita no pedido {chave} ({pos[0].cliente}): expedição e entrega em {data.strftime('%d/%m/%Y')}.", "success")
                 return redirect(url_for("gestao_operacao_baixa_antigos"))
+            if acao == "embarque":
+                chave = _normalizar_pedido_venda(request.form.get("pedido_venda", ""))
+                pos = (PedidoOperacao.query.filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave).all()
+                       if chave else [])
+                try:
+                    data = datetime.strptime((request.form.get("data") or "").strip(), "%Y-%m-%d").date()
+                except ValueError:
+                    data = None
+                if not pos or data is None:
+                    flash("Informe o número do pedido (que exista em Gestão Operação) e a data do embarque.", "warning")
+                    return redirect(url_for("gestao_operacao_baixa_antigos"))
+                for po in pos:
+                    antes = po.go_data_pedido_expedido
+                    po.go_data_pedido_expedido = data
+                    po.go_embarque_manual_em = datetime.utcnow()
+                    po.go_embarque_manual_por = current_user.nome
+                    if antes != data:
+                        db.session.add(HistoricoAlteracao(
+                            entidade_tipo="pedido_operacao", entidade_id=po.id, pedido_id=None,
+                            usuario_id=current_user.id, usuario_nome=current_user.nome, campo="go_data_pedido_expedido",
+                            valor_anterior=None if antes is None else antes.isoformat(), valor_novo=data.isoformat(),
+                        ))
+                db.session.commit()
+                flash(f"Embarque do pedido {chave} ({pos[0].cliente}) registrado em {data.strftime('%d/%m/%Y')}. "
+                      "Vale até a Logística registrar a data dela.", "success")
+                return redirect(url_for("gestao_operacao_baixa_antigos"))
+            if acao == "desfazer_embarque":
+                po = db.session.get(PedidoOperacao, request.form.get("id", 0, type=int))
+                if po is not None and po.go_embarque_manual_em:
+                    antes = po.go_data_pedido_expedido
+                    po.go_data_pedido_expedido = None
+                    po.go_embarque_manual_em = None
+                    po.go_embarque_manual_por = None
+                    if antes is not None:
+                        db.session.add(HistoricoAlteracao(
+                            entidade_tipo="pedido_operacao", entidade_id=po.id, pedido_id=None,
+                            usuario_id=current_user.id, usuario_nome=current_user.nome, campo="go_data_pedido_expedido",
+                            valor_anterior=antes.isoformat(), valor_novo=None,
+                        ))
+                    db.session.commit()
+                    flash(f"Embarque manual desfeito no pedido {po.pedido_venda}.", "success")
+                return redirect(url_for("gestao_operacao_baixa_antigos"))
             if acao == "desfazer":
                 po = db.session.get(PedidoOperacao, request.form.get("id", 0, type=int))
                 if po is not None and po.go_baixa_manual_em:
@@ -26149,8 +26211,10 @@ def register_routes(app):
         min_dias = min_dias if min_dias in (5, 10, 30, 90) else 5
         feitas = (PedidoOperacao.query.filter(PedidoOperacao.go_baixa_manual_em.isnot(None))
                   .order_by(PedidoOperacao.go_baixa_manual_em.desc()).limit(60).all())
+        embarques = (PedidoOperacao.query.filter(PedidoOperacao.go_embarque_manual_em.isnot(None))
+                     .order_by(PedidoOperacao.go_embarque_manual_em.desc()).limit(60).all())
         return render_template("gestao_operacao_kanban_baixa.html", cards=_baixa_antigos_candidatos(min_dias), min_dias=min_dias,
-                               feitas=feitas, atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"))
+                               feitas=feitas, embarques=embarques, atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"))
 
     @app.route("/gestao-operacao/<int:pedido_id>/marcar-expedido", methods=["POST"])
     @requer_role("ADMIN", "PCP")
