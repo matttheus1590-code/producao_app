@@ -1478,6 +1478,7 @@ def create_app():
         # — senão o SELECT do SQLAlchemy já pede a coluna nova antes dela
         # existir de verdade no banco.
         _migrar_pedidos_operacao_coleta(app)
+        _migrar_pedidos_operacao_baixa_manual(app)
         _migrar_dados_go_para_pedidos_operacao(app)
         # Só depois de TODAS as colunas de pedidos/itens existirem de verdade
         # (senão o ORM tenta selecionar coluna que ainda não foi criada nesta
@@ -2061,6 +2062,20 @@ def _migrar_pedidos_operacao_coleta(app):
     with db.engine.begin() as conn:
         conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_data_prevista_coleta DATE"))
     app.logger.info("Migração automática: campo go_data_prevista_coleta adicionado a pedidos_operacao.")
+
+
+def _migrar_pedidos_operacao_baixa_manual(app):
+    """Baixa manual (12/11/2026): colunas go_baixa_manual_em/_por em pedidos_operacao."""
+    db.session.remove()  # solta qualquer transação aberta antes do ALTER TABLE (evita travar o banco)
+    inspector = inspect(db.engine)
+    if "pedidos_operacao" not in inspector.get_table_names():
+        return
+    colunas = {c["name"] for c in inspector.get_columns("pedidos_operacao")}
+    with db.engine.begin() as conn:
+        if "go_baixa_manual_em" not in colunas:
+            conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_baixa_manual_em TIMESTAMP"))
+        if "go_baixa_manual_por" not in colunas:
+            conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_baixa_manual_por VARCHAR(120)"))
 
 
 def _migrar_logistica_itens(app):
@@ -9755,6 +9770,8 @@ def _logistica_aplicar_payload(payload, agora=None):
         anterior = anterior or {}
         antes = {c: getattr(po, c) for c in CAMPOS_HISTORICO_GESTAO_OPERACAO}
         for campo in _LOGISTICA_CAMPOS_VALOR:
+            if po.go_baixa_manual_em and campo in _LOGISTICA_CAMPOS_SO_DELA:
+                continue  # baixa manual: datas reais não são sobrescritas pela Logística
             novo = novos.get(campo)
             if novo is None and anterior.get(campo) is None and campo not in _LOGISTICA_CAMPOS_SO_DELA:
                 continue  # nada novo e nada que a Logística já tenha mandado antes
@@ -14414,6 +14431,8 @@ def _datas_reais_logistica(go, regs):
     pedido, só valem os campos DELA (data_expedicao e data_entrega_cliente) —
     vazio lá = vazio aqui, nada digitado no site conta. Pedido que a Logística
     não conhece (ou integração desligada) usa as datas do próprio site."""
+    if go.go_baixa_manual_em:  # baixa manual do Bruno prevalece sobre a Logística
+        return go.go_data_pedido_expedido, go.go_data_entregue_cliente, False
     reg = regs.get(logistica_api.base_do_pedido(go.pedido_venda)) if regs else None
     if reg is not None:
         try:
@@ -14616,13 +14635,16 @@ def _auditoria_expedicao(dias=45, filtro="", hoje=None):
             ultimo.setdefault(h.entidade_id, h)
 
     linhas = []
-    contagem = {"vazio": 0, "sem_registro": 0, "diferente": 0, "ok": 0}
+    contagem = {"vazio": 0, "sem_registro": 0, "diferente": 0, "ok": 0, "baixa_manual": 0}
     for p in pedidos:
         chave = _normalizar_pedido_venda(p.pedido_venda)
         site_exp = p.go_data_pedido_expedido
         site_ent = p.go_data_entregue_cliente or p.go_data_real_entrega
         log_exp, log_ent, via = _datas_reais_logistica(p, regs)
-        if not via:
+        if p.go_baixa_manual_em:
+            status = "baixa_manual"
+            log_exp = log_ent = None
+        elif not via:
             status = "sem_registro"
             log_exp = log_ent = None
         else:
@@ -14647,7 +14669,7 @@ def _auditoria_expedicao(dias=45, filtro="", hoje=None):
     total = len(linhas)
     if filtro in contagem:
         linhas = [l for l in linhas if l["status"] == filtro]
-    ordem = {"vazio": 0, "sem_registro": 1, "diferente": 2, "ok": 3}
+    ordem = {"vazio": 0, "sem_registro": 1, "diferente": 2, "ok": 3, "baixa_manual": 4}
     linhas.sort(key=lambda l: ordem[l["status"]])
     return {"dias": dias, "configurado": configurado, "total": total, "contagem": contagem, "linhas": linhas}
 
@@ -14673,7 +14695,7 @@ def _expedidos_recentes_painel(hoje=None):
     for go in pedidos:
         chave_pv = _normalizar_pedido_venda(go.pedido_venda)
         exp_data, ent_data, via_log = go.go_data_pedido_expedido, go.go_data_entregue_cliente, False
-        if configurado:
+        if configurado and not go.go_baixa_manual_em:
             reg = regs.get(logistica_api.base_do_pedido(go.pedido_venda))
             m = None
             if reg is not None:
@@ -14827,7 +14849,8 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     expedido = go.go_data_pedido_expedido if go else None
     # Fonte oficial (Bruno, 09/11/2026): se a Logística conhece o pedido, Expedição e Entrega reais são os dela.
     via_logistica = False
-    reg_log = _logistica_registro(go.pedido_venda) if go else None
+    baixa_manual = bool(go and go.go_baixa_manual_em)
+    reg_log = _logistica_registro(go.pedido_venda) if (go and not baixa_manual) else None
     if reg_log is not None:
         try:
             m_log = logistica_api.mapear(json.loads(reg_log.payload_json), parte=logistica_api.normalizar_pedido(go.pedido_venda)) or {}
@@ -14944,14 +14967,14 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
             "vermelho" if previsao_pcp and prazo and previsao_pcp > prazo else None)
         t_lib = tile("Liberação PCP (pendente)", "🗓️", None, "faltando", extra_lib, cor_lib)
     if expedido:
-        extra_exp = ("via Logística" if via_logistica else None)
+        extra_exp = ("via Logística" if via_logistica else ("baixa manual" if baixa_manual else None))
         if go and go.go_transportadora:
             extra_exp = (extra_exp + " · " if extra_exp else "") + f"transportadora: {go.go_transportadora.nome}"
         t_exp = tile("Expedição (real)", "🚚", expedido, "feito", extra_exp)
     else:
         t_exp = tile("Coleta/embarque (prevista)", "🚚", prev_coleta, "previsto" if prev_coleta else "faltando", None)
     if fase == "entregue":
-        t_ent = tile("Entrega (real)", "📬", entrega, "feito", "via Logística" if via_logistica else None, "verde" if (prazo is None or entrega <= prazo) else "vermelho")
+        t_ent = tile("Entrega (real)", "📬", entrega, "feito", "via Logística" if via_logistica else ("baixa manual" if baixa_manual else None), "verde" if (prazo is None or entrega <= prazo) else "vermelho")
     else:
         t_ent = tile("Entrega (projetada)", "📬", entrega, "previsto" if entrega else "faltando",
                      (f"folga {folga}d" if folga is not None and folga >= 0 else (f"{-folga}d após o prazo" if folga is not None else None)),
@@ -15065,7 +15088,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     if trat:
         avisos.append(("amarelo", f"{len(trat)} item(ns) em tratativa (aguardando resolução de uma pendência): "
                        + ", ".join(i.descricao_produto for i in trat[:3]) + "."))
-    if go and not via_logistica and logistica_api.configurado() and (expedido or entrega_real):
+    if go and not via_logistica and not baixa_manual and logistica_api.configurado() and (expedido or entrega_real):
         avisos.append(("vermelho", "A Logística NÃO tem expedição/entrega registrada para este pedido — as datas de "
                        + ("expedição" if expedido else "entrega") + " mostradas aqui foram digitadas no site, não vêm dela. "
                        "Se estiverem erradas, apague em Operação → Editar → Logística / NF."))
@@ -26040,43 +26063,94 @@ def register_routes(app):
         cards.sort(key=lambda c: -c["dias"])
         return cards
 
+    def _aplicar_baixa_manual(po, data):
+        """Baixa manual: Expedição real, Entrega real (e Chegada) = `data`, com marca que impede a
+        Logística de sobrescrever. Grava histórico com o nome de quem fez."""
+        antes = {c: getattr(po, c) for c in ("go_data_pedido_expedido", "go_data_entregue_cliente", "go_data_real_entrega")}
+        for campo in antes:
+            setattr(po, campo, data)
+            if antes[campo] != data:
+                db.session.add(HistoricoAlteracao(
+                    entidade_tipo="pedido_operacao", entidade_id=po.id, pedido_id=None,
+                    usuario_id=current_user.id, usuario_nome=current_user.nome, campo=campo,
+                    valor_anterior=None if antes[campo] is None else antes[campo].isoformat(), valor_novo=data.isoformat(),
+                ))
+        po.go_baixa_manual_em = datetime.utcnow()
+        po.go_baixa_manual_por = current_user.nome
+
     @app.route("/gestao-operacao/kanban-expedicao/baixa-antigos", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP")
     def gestao_operacao_baixa_antigos():
-        """Pedido do Bruno (12/11/2026): pedidos antigos que ficaram parados por engano no Kanban
-        recebem baixa: Entrega (real) = data da liberação efetiva do PCP (e Expedição real, que
-        estava vazia, = a mesma data). Antes de gravar mostra a lista; cada pedido tem caixa pra
-        desmarcar. Fica no histórico de cada pedido com o nome de quem fez a baixa."""
+        """Baixa manual de pedidos (Bruno, 12/11/2026): "autonomia de dar baixa em qualquer pedido,
+        independente da situação". Três ações: baixa em lote dos parados antigos (data = liberação
+        efetiva do PCP), baixa de UM pedido pelo nº (data = liberação efetiva, ou a data digitada) e
+        desfazer baixa. A baixa manual prevalece sobre a Logística (ela não sobrescreve as datas)."""
         if request.method == "POST":
+            acao = request.form.get("acao", "lote")
             min_dias = request.form.get("min_dias", 5, type=int)
+            if acao == "individual":
+                chave = _normalizar_pedido_venda(request.form.get("pedido_venda", ""))
+                pos = (PedidoOperacao.query.filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave).all()
+                       if chave else [])
+                if not pos:
+                    flash("Pedido não encontrado em Gestão Operação. Confira o número.", "warning")
+                    return redirect(url_for("gestao_operacao_baixa_antigos"))
+                data = None
+                txt = (request.form.get("data") or "").strip()
+                if txt:
+                    try:
+                        data = datetime.strptime(txt, "%Y-%m-%d").date()
+                    except ValueError:
+                        data = None
+                if data is None:
+                    efetiva = (_liberacao_pcp_por_pedido_venda([pos[0].pedido_venda]).get(chave) or {}).get("efetiva") or pos[0].go_data_efetiva_liberacao_pcp
+                    data = efetiva
+                if data is None:
+                    flash(f"O pedido {chave} não tem liberação efetiva do PCP — informe a data da baixa.", "warning")
+                    return redirect(url_for("gestao_operacao_baixa_antigos"))
+                for po in pos:
+                    _aplicar_baixa_manual(po, data)
+                db.session.commit()
+                flash(f"Baixa feita no pedido {chave} ({pos[0].cliente}): expedição e entrega em {data.strftime('%d/%m/%Y')}.", "success")
+                return redirect(url_for("gestao_operacao_baixa_antigos"))
+            if acao == "desfazer":
+                po = db.session.get(PedidoOperacao, request.form.get("id", 0, type=int))
+                if po is not None and po.go_baixa_manual_em:
+                    for campo in ("go_data_pedido_expedido", "go_data_entregue_cliente", "go_data_real_entrega"):
+                        antes = getattr(po, campo)
+                        setattr(po, campo, None)
+                        if antes is not None:
+                            db.session.add(HistoricoAlteracao(
+                                entidade_tipo="pedido_operacao", entidade_id=po.id, pedido_id=None,
+                                usuario_id=current_user.id, usuario_nome=current_user.nome, campo=campo,
+                                valor_anterior=antes.isoformat(), valor_novo=None,
+                            ))
+                    po.go_baixa_manual_em = None
+                    po.go_baixa_manual_por = None
+                    db.session.commit()
+                    flash(f"Baixa desfeita no pedido {po.pedido_venda}. Se a Logística tiver datas, elas voltam na próxima sincronização.", "success")
+                return redirect(url_for("gestao_operacao_baixa_antigos"))
+            # lote
+            min_dias = min_dias if min_dias in (5, 10, 30, 90) else 5
             escolhidos = {int(v) for v in request.form.getlist("ids") if v.isdigit()}
-        else:
-            min_dias = request.args.get("min_dias", 5, type=int)
-            escolhidos = set()
-        min_dias = min_dias if min_dias in (5, 10, 30, 90) else 5
-        candidatos = _baixa_antigos_candidatos(min_dias)
-        if request.method == "POST":
             feitos = 0
-            for c in candidatos:
-                if c["id"] not in escolhidos or c["via_logistica"]:
+            for c in _baixa_antigos_candidatos(min_dias):
+                if c["id"] not in escolhidos:
                     continue
                 po = db.session.get(PedidoOperacao, c["id"])
-                if po is None or po.go_data_entregue_cliente is not None or po.go_data_pedido_expedido is not None:
+                if po is None:
                     continue
-                data = c["liberacao"]
-                for campo in ("go_data_pedido_expedido", "go_data_entregue_cliente"):
-                    setattr(po, campo, data)
-                    db.session.add(HistoricoAlteracao(
-                        entidade_tipo="pedido_operacao", entidade_id=po.id, pedido_id=None,
-                        usuario_id=current_user.id, usuario_nome=current_user.nome, campo=campo,
-                        valor_anterior=None, valor_novo=data.isoformat(),
-                    ))
+                _aplicar_baixa_manual(po, c["liberacao"])
                 feitos += 1
             db.session.commit()
-            flash(f"Baixa feita em {feitos} pedido(s): entrega registrada na data da liberação efetiva do PCP.", "success")
+            flash(f"Baixa feita em {feitos} pedido(s): expedição e entrega registradas na data da liberação efetiva do PCP.", "success")
             return redirect(url_for("gestao_operacao_kanban_expedicao"))
-        return render_template("gestao_operacao_kanban_baixa.html", cards=candidatos, min_dias=min_dias,
-                               atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"))
+        min_dias = request.args.get("min_dias", 5, type=int)
+        min_dias = min_dias if min_dias in (5, 10, 30, 90) else 5
+        feitas = (PedidoOperacao.query.filter(PedidoOperacao.go_baixa_manual_em.isnot(None))
+                  .order_by(PedidoOperacao.go_baixa_manual_em.desc()).limit(60).all())
+        return render_template("gestao_operacao_kanban_baixa.html", cards=_baixa_antigos_candidatos(min_dias), min_dias=min_dias,
+                               feitas=feitas, atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"))
 
     @app.route("/gestao-operacao/<int:pedido_id>/marcar-expedido", methods=["POST"])
     @requer_role("ADMIN", "PCP")

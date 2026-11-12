@@ -1118,6 +1118,10 @@ class PedidoOperacao(db.Model):
     go_data_solicitada_cliente_final = db.Column(db.Date, nullable=True)
     go_data_entregue_cliente = db.Column(db.Date, nullable=True)
     go_obs_operacao = db.Column(db.Text, nullable=True)
+    # Baixa manual (Bruno, 12/11/2026): quando preenchida, Expedição/Entrega reais do pedido valem
+    # o que foi lançado na baixa e a sincronização com a Logística NÃO as sobrescreve.
+    go_baixa_manual_em = db.Column(db.DateTime, nullable=True)
+    go_baixa_manual_por = db.Column(db.String(120), nullable=True)
     go_status_final_alinhamento = db.Column(db.String(60), nullable=True)
 
     criado_em = db.Column(db.DateTime, default=datetime.utcnow)

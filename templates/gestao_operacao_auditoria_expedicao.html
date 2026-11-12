@@ -33,7 +33,8 @@
     ('vazio', 'Logística vazia', a.contagem.vazio, 'danger', 'bi-exclamation-octagon', 'o site tem data, a Logística não'),
     ('sem_registro', 'Sem registro na Logística', a.contagem.sem_registro, 'warning', 'bi-question-octagon', 'a Logística não tem o pedido'),
     ('diferente', 'Data diferente', a.contagem.diferente, 'purple', 'bi-arrow-left-right', 'as duas têm data, mas não batem'),
-    ('ok', 'Conferem', a.contagem.ok, 'success', 'bi-check-circle', 'site = Logística')) %}
+    ('ok', 'Conferem', a.contagem.ok, 'success', 'bi-check-circle', 'site = Logística'),
+    ('baixa_manual', 'Baixa manual', a.contagem.baixa_manual, 'dark', 'bi-pencil-square', 'lançada por pessoa, vale sobre a Logística')) %}
   {% for chave, titulo, n, cor, icone, sub in cards %}
   <a class="op-kpi op-kpi-{{ cor }} {{ 'op-kpi-ativo' if filtro == chave }}" href="{{ url_for('gestao_operacao_auditoria_expedicao', status=chave or None, dias=a.dias) }}">
     <div class="op-kpi-titulo"><i class="bi {{ icone }}"></i> {{ titulo }}</div>
@@ -52,7 +53,7 @@
     </thead>
     <tbody>
     {% for l in a.linhas %}
-      <tr class="{{ {'vazio': 'table-danger', 'sem_registro': 'table-warning', 'diferente': '', 'ok': ''}[l.status] }}">
+      <tr class="{{ {'vazio': 'table-danger', 'sem_registro': 'table-warning', 'diferente': '', 'ok': '', 'baixa_manual': ''}[l.status] }}">
         <td><a class="fw-semibold text-decoration-none" href="{{ url_for('consulta_pedido', pedido_venda=l.pedido_venda) }}">{{ l.pedido_venda }}</a></td>
         <td class="text-truncate" style="max-width: 14rem;" title="{{ l.cliente }}">{{ l.cliente }}</td>
         <td>{{ l.frete if l.frete != 'NI' else '—' }}</td>
@@ -60,6 +61,7 @@
           {% if l.status == 'vazio' %}<span class="badge text-bg-danger">Logística vazia</span>
           {% elif l.status == 'sem_registro' %}<span class="badge text-bg-warning">Sem registro na Logística</span>
           {% elif l.status == 'diferente' %}<span class="badge text-bg-primary" style="background:#7048e8!important">Data diferente</span>
+          {% elif l.status == 'baixa_manual' %}<span class="badge text-bg-dark">Baixa manual</span>
           {% else %}<span class="badge text-bg-success">Confere</span>{% endif %}
         </td>
         <td>{{ d(l.site_exp) }}</td><td>{{ d(l.log_exp) }}</td><td>{{ d(l.site_ent) }}</td><td>{{ d(l.log_ent) }}</td>

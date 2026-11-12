@@ -6,6 +6,17 @@
   <h4 class="mb-0"><i class="bi bi-check2-all"></i> Dar baixa em pedidos antigos parados</h4>
   <div class="text-muted small">Para cada pedido marcado, a <strong>Entrega (real)</strong> e a <strong>Expedição (real)</strong> passam a ser a data da <strong>liberação efetiva do PCP</strong>. Fica registrado no histórico com o seu nome · {{ atualizado_em }}</div>
 </div>
+<div class="card mb-3"><div class="card-body py-2">
+  <div class="fw-semibold mb-1"><i class="bi bi-pencil-square"></i> Dar baixa em um pedido específico (qualquer situação)</div>
+  <form method="post" class="d-flex align-items-end flex-wrap gap-2 m-0">
+    <input type="hidden" name="acao" value="individual">
+    <div><label class="small text-muted d-block">Nº do pedido (PV)</label><input name="pedido_venda" class="form-control form-control-sm" placeholder="ex.: 568" required></div>
+    <div><label class="small text-muted d-block">Data da baixa (vazio = liberação efetiva do PCP)</label><input type="date" name="data" class="form-control form-control-sm"></div>
+    <button class="btn btn-sm btn-danger" onclick="return confirm('Dar baixa neste pedido? Expedição e entrega serão registradas na data indicada, mesmo que a Logística tenha outra informação.');"><i class="bi bi-check2"></i> Dar baixa</button>
+  </form>
+  <div class="small text-muted mt-1">A baixa manual prevalece sobre a Logística: ela não muda mais essas datas, até você desfazer a baixa.</div>
+</div></div>
+
 <form method="get" class="d-flex align-items-center gap-1 mb-2">
   <label class="small text-muted mb-0" for="min_dias">Mostrar pedidos parados há</label>
   <select id="min_dias" name="min_dias" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()">
@@ -13,16 +24,17 @@
   </select>
 </form>
 <form method="post" onsubmit="return confirm('Dar baixa nos pedidos marcados? A entrega será registrada na data da liberação efetiva.');">
+  <input type="hidden" name="acao" value="lote">
   <input type="hidden" name="min_dias" value="{{ min_dias }}">
   <div class="table-responsive">
     <table class="table table-sm table-hover align-middle bg-white">
       <thead class="table-light"><tr>
-        <th style="width:2.5rem"><input type="checkbox" class="form-check-input" id="todos" checked onclick="document.querySelectorAll('.baixa-ck:not(:disabled)').forEach(c=>c.checked=this.checked)"></th>
+        <th style="width:2.5rem"><input type="checkbox" class="form-check-input" id="todos" checked onclick="document.querySelectorAll('.baixa-ck').forEach(c=>c.checked=this.checked)"></th>
         <th>Pedido</th><th>Cliente</th><th>Frete</th><th>NF</th><th class="text-end">Valor</th><th>Liberação efetiva (PCP)</th><th class="text-end">Dias parado</th><th>Entrega real passará a ser</th></tr></thead>
       <tbody>
       {% for c in cards %}
-        <tr class="{{ 'table-secondary' if c.via_logistica }}">
-          <td><input type="checkbox" class="form-check-input baixa-ck" name="ids" value="{{ c.id }}" {{ 'disabled' if c.via_logistica else 'checked' }}></td>
+        <tr class="{{ 'table-warning' if c.via_logistica }}">
+          <td><input type="checkbox" class="form-check-input baixa-ck" name="ids" value="{{ c.id }}" {{ '' if c.via_logistica else 'checked' }}></td>
           <td><a class="fw-semibold text-decoration-none" href="{{ url_for('consulta_pedido', pedido_venda=c.pedido_venda) }}">{{ c.pedido_venda }}</a></td>
           <td class="text-truncate" style="max-width:16rem" title="{{ c.cliente }}">{{ c.cliente }}</td>
           <td>{{ c.frete_tipo if c.frete_tipo != 'NI' else '—' }}</td>
@@ -30,7 +42,7 @@
           <td class="text-end">{{ ('R$ {:,.2f}'.format(c.valor)).replace(',', 'X').replace('.', ',').replace('X', '.') if c.valor else '—' }}</td>
           <td>{{ c.liberacao.strftime('%d/%m/%Y') }}</td>
           <td class="text-end">{{ c.dias }}</td>
-          <td>{% if c.via_logistica %}<span class="badge text-bg-secondary">Logística conhece este pedido — a baixa é feita lá</span>{% else %}<strong>{{ c.liberacao.strftime('%d/%m/%Y') }}</strong>{% endif %}</td>
+          <td><strong>{{ c.liberacao.strftime('%d/%m/%Y') }}</strong>{% if c.via_logistica %} <span class="badge text-bg-warning">Logística conhece (vazio lá) — a baixa manual prevalece</span>{% endif %}</td>
         </tr>
       {% else %}
         <tr><td colspan="9" class="text-center text-muted py-4">Nenhum pedido parado com essa idade.</td></tr>
@@ -43,4 +55,24 @@
     <a class="btn btn-outline-secondary" href="{{ url_for('gestao_operacao_kanban_expedicao') }}">Cancelar</a>
   </div>
 </form>
+
+<h6 class="mt-4"><i class="bi bi-clock-history"></i> Baixas manuais feitas</h6>
+<div class="table-responsive">
+  <table class="table table-sm align-middle bg-white">
+    <thead class="table-light"><tr><th>Pedido</th><th>Cliente</th><th>Data lançada</th><th>Feita por</th><th></th></tr></thead>
+    <tbody>
+    {% for p in feitas %}
+      <tr>
+        <td><a class="fw-semibold text-decoration-none" href="{{ url_for('consulta_pedido', pedido_venda=p.pedido_venda) }}">{{ p.pedido_venda }}</a></td>
+        <td>{{ p.cliente }}</td>
+        <td>{{ p.go_data_entregue_cliente.strftime('%d/%m/%Y') if p.go_data_entregue_cliente else '—' }}</td>
+        <td class="small">{{ p.go_baixa_manual_por }} · {{ p.go_baixa_manual_em.strftime('%d/%m/%Y %H:%M') }} (UTC)</td>
+        <td class="text-end"><form method="post" class="m-0" onsubmit="return confirm('Desfazer a baixa deste pedido?');"><input type="hidden" name="acao" value="desfazer"><input type="hidden" name="id" value="{{ p.id }}"><button class="btn btn-sm btn-outline-secondary">Desfazer baixa</button></form></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-muted text-center py-3">Nenhuma baixa manual feita ainda.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}
