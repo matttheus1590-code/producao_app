@@ -1,0 +1,124 @@
+{% set aba = 'dia' %}{% include "_chao_topo.html" %}
+<style>
+  .lin { background:#fff; border:2px solid #dde3ea; border-radius:14px; padding:12px 14px; margin-bottom:10px; }
+  .lin.on { border-color:#0d6efd; background:#f4f8ff; }
+  .lin .campos { display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #c9d3df; }
+  .lin.on .campos { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; }
+  .rotulo { font-size:.85rem; font-weight:700; color:#5b6b7f; text-transform:uppercase; letter-spacing:.03em; margin-bottom:4px; }
+  .btn-trab { min-width:150px; font-weight:700; font-size:1.1rem; border-radius:12px; min-height:56px; }
+  .num { width:110px; }
+  .chip-h { min-width:48px; font-weight:700; }
+  .barra-fixa { position:sticky; bottom:0; background:#12263f; color:#fff; padding:12px 16px; border-radius:14px 14px 0 0; display:flex; align-items:center; gap:16px; flex-wrap:wrap; box-shadow:0 -4px 12px rgba(0,0,0,.2); }
+</style>
+
+  <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+    <div class="fs-4 fw-bold">Resumo do dia — {{ data.strftime('%d/%m/%Y') }}{% if data == hoje %} (hoje){% endif %}</div>
+    <div class="ms-auto d-flex gap-2 flex-wrap">
+      {% for d in dias_atras %}<a class="btn {{ 'btn-dark' if d == data else 'btn-outline-dark' }}" href="{{ url_for('chao_dia', estacao=estacao, data=d.isoformat()) }}">{{ 'Hoje' if d == hoje else d.strftime('%d/%m') }}</a>{% endfor %}
+    </div>
+  </div>
+  {% if data.weekday() >= 5 %}<div class="alert alert-info py-2">📅 {{ 'Sábado' if data.weekday() == 5 else 'Domingo' }}: todas as horas deste dia contam como <strong>hora extra</strong>.</div>{% endif %}
+  <div class="text-muted mb-3">Toque em <strong>Trabalhei</strong> nas ordens em que a equipe atuou e informe: <strong>quantas peças</strong>, <strong>quantas pessoas</strong> e <strong>quantas horas</strong>. As demais ficam como estão.</div>
+
+  <form method="post" action="{{ url_for('chao_dia_salvar', estacao=estacao) }}" id="form-dia">
+    <input type="hidden" name="data" value="{{ data.isoformat() }}">
+    <input type="search" id="filtro" class="form-control form-control-lg mb-3" placeholder="Buscar por pedido, cliente ou produto…" style="font-size:1.1rem;text-align:left">
+    {% for l in linhas %}{% set it = l.item %}{% set et = l.et %}
+    <div class="lin" data-id="{{ it.id }}" data-saldo="{{ '%g'|format(et.saldo) }}" data-busca="{{ (it.pedido.pedido_venda ~ ' ' ~ it.pedido.cliente ~ ' ' ~ it.descricao_produto)|lower }}">
+      <div class="d-flex align-items-center gap-3">
+        <div class="flex-grow-1" style="min-width:0">
+          <div><span class="fw-bold fs-5">PV {{ it.pedido.pedido_venda }}</span> <span class="meta">· {{ it.pedido.cliente }}</span></div>
+          <div class="fw-semibold">{{ it.descricao_produto }}</div>
+          <div class="meta">Pedido {{ '%g'|format(it.quantidade) }} · já produzido {{ '%g'|format(et.produzida) }} · <strong>saldo {{ '%g'|format(et.saldo) }}</strong>
+            {% if l.dia %}· <span class="text-success fw-semibold">lançado nesta data: {{ '%g'|format(l.dia.qtd) }} un · {{ '%.1f'|format(l.dia.seg/3600) }} h</span>{% endif %}
+            {% if l.aberta %}· <span class="text-warning fw-semibold">está rodando no cronômetro</span>{% endif %}</div>
+        </div>
+        <input type="checkbox" class="d-none ck-on" name="on_{{ it.id }}" value="1" disabled>
+        <button type="button" class="btn btn-outline-primary btn-trab">+ Trabalhei</button>
+      </div>
+      <div class="campos">
+        <div><div class="rotulo">Peças feitas</div><input name="qtd_{{ it.id }}" class="form-control form-control-lg num f-qtd" inputmode="decimal" placeholder="0" disabled></div>
+        <div><div class="rotulo">Pessoas</div>
+          <span class="pessoas-box"><button type="button" class="btn btn-outline-secondary" data-f="pes" data-d="-1">−</button><span class="n f-pes-n">{{ pessoas_padrao }}</span><button type="button" class="btn btn-outline-secondary" data-f="pes" data-d="1">+</button></span>
+          <input type="hidden" name="pes_{{ it.id }}" class="f-pes" value="{{ pessoas_padrao }}" disabled></div>
+        <div><div class="rotulo">Horas trabalhadas</div>
+          <span class="pessoas-box"><button type="button" class="btn btn-outline-secondary" data-f="h" data-d="-0.5">−</button><span class="n f-h-n">1</span><button type="button" class="btn btn-outline-secondary" data-f="h" data-d="0.5">+</button></span>
+          <input type="hidden" name="horas_{{ it.id }}" class="f-h" value="1" disabled>
+          <div class="mt-1 d-flex gap-1">{% for h in (1, 2, 4, 8) %}<button type="button" class="btn btn-sm btn-outline-secondary chip-h" data-h="{{ h }}">{{ h }}h</button>{% endfor %}</div></div>
+        {% if data.weekday() < 5 %}
+        <div><div class="rotulo">Hora extra (17h–19h)</div>
+          <button type="button" class="btn btn-outline-secondary btn-hx">+ Teve hora extra</button>
+          <span class="pessoas-box d-none box-hx"><button type="button" class="btn btn-outline-secondary" data-f="hx" data-d="-0.5">−</button><span class="n f-hx-n">0</span><button type="button" class="btn btn-outline-secondary" data-f="hx" data-d="0.5">+</button></span>
+          <input type="hidden" name="hx_{{ it.id }}" class="f-hx" value="0" disabled></div>
+        {% endif %}
+        <div class="form-check form-switch fs-5 mb-2">
+          <input class="form-check-input f-fim" type="checkbox" role="switch" name="fim_{{ it.id }}" value="1" id="fim{{ it.id }}" disabled>
+          <label class="form-check-label" for="fim{{ it.id }}">Terminou a ordem</label>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-muted py-3">Não há ordens abertas no {{ rotulo }}.</div>
+    {% endfor %}
+
+    <div class="barra-fixa">
+      <div><div style="font-size:.8rem;opacity:.8">Marcadas</div><div class="fs-4 fw-bold" id="t-n">0</div></div>
+      <div><div style="font-size:.8rem;opacity:.8">Peças</div><div class="fs-4 fw-bold" id="t-q">0</div></div>
+      <div><div style="font-size:.8rem;opacity:.8">Horas-homem</div><div class="fs-4 fw-bold" id="t-hh">0</div></div>
+      <div style="font-size:.85rem;opacity:.85" id="t-eq"></div>
+      <button class="btn btn-success btn-xl ms-auto" id="btn-salvar" disabled>💾 SALVAR RESUMO</button>
+    </div>
+  </form>
+
+  <div class="sec-titulo mt-4">Já lançado em {{ data.strftime('%d/%m') }} ({{ lancados|length }}) · {{ '%.1f'|format(tot_hh) }} h-homem · {{ '%g'|format(tot_qtd) }} peças</div>
+  {% for x in lancados %}{% set a = x.a %}
+    <div class="fila-linha" style="padding:8px 14px">
+      <div class="info"><strong>PV {{ a.item.pedido.pedido_venda }}</strong> · {{ a.item.descricao_produto }}
+        <span class="text-muted">— {{ '%g'|format(a.quantidade_produzida or 0) }} un · {{ x.r.pessoas_atual }} pessoa(s) · {{ '%.1f'|format(x.horas) }} h · {{ '%.1f'|format(x.r.hora_homem) }} h-homem {{ '(resumo do dia)' if a.origem == 'RESUMO' else '(cronômetro)' }}{% if x.r.hora_homem_extra > 0.01 %} · <strong class="text-danger">hora extra</strong>{% endif %}</span></div>
+      <form method="post" action="{{ url_for('chao_excluir', estacao=estacao, ap_id=a.id) }}" class="m-0" onsubmit="return confirm('Desfazer este lançamento?');"><button class="btn btn-outline-danger">Desfazer</button></form>
+    </div>
+  {% else %}<div class="text-muted">Nada lançado nesta data ainda.</div>{% endfor %}
+</div>
+
+<script>
+(function(){
+  var linhas=document.querySelectorAll(".lin"), btnSalvar=document.getElementById("btn-salvar");
+  function num(v){ return parseFloat((v||"0").toString().replace(",","."))||0; }
+  function fmt(x){ return (Math.round(x*10)/10).toString().replace(".",","); }
+  function totais(){
+    var n=0,q=0,hh=0;
+    linhas.forEach(function(l){ if(!l.classList.contains("on")) return; n++; q+=num(l.querySelector(".f-qtd").value); hh+=num(l.querySelector(".f-pes").value)*(num(l.querySelector(".f-h").value)+(l.querySelector(".f-hx")?num(l.querySelector(".f-hx").value):0)); });
+    document.getElementById("t-n").textContent=n; document.getElementById("t-q").textContent=fmt(q); document.getElementById("t-hh").textContent=fmt(hh);
+    document.getElementById("t-eq").textContent = hh ? ("≈ "+fmt(hh/8)+" pessoa(s) em tempo integral (8 h)") : "";
+    btnSalvar.disabled = n===0;
+  }
+  function setOn(l,on){
+    l.classList.toggle("on",on);
+    l.querySelectorAll("input").forEach(function(i){ if(!i.classList.contains("ck-on") && i.type!=="search") i.disabled=!on; });
+    l.querySelector(".ck-on").disabled=!on; l.querySelector(".ck-on").checked=on;
+    var b=l.querySelector(".btn-trab"); b.textContent = on ? "✔ Trabalhei" : "+ Trabalhei"; b.className = "btn btn-trab " + (on ? "btn-primary" : "btn-outline-primary");
+    if(on){ var q=l.querySelector(".f-qtd"); setTimeout(function(){ q.focus(); },50); }
+    totais();
+  }
+  linhas.forEach(function(l){
+    l.querySelector(".btn-trab").addEventListener("click", function(){ setOn(l, !l.classList.contains("on")); });
+    l.querySelectorAll("[data-f]").forEach(function(b){ b.addEventListener("click", function(){
+      var f=b.dataset.f, hid=l.querySelector(".f-"+f), min=(f==="pes"?1:(f==="hx"?0:0.5)), max=(f==="pes"?50:(f==="hx"?6:12));
+      var v=Math.min(max,Math.max(min,num(hid.value)+num(b.dataset.d))); hid.value=v; l.querySelector(".f-"+f+"-n").textContent=fmt(v); totais(); }); });
+    var bx=l.querySelector(".btn-hx"); if(bx){ bx.addEventListener("click", function(){ bx.classList.add("d-none"); l.querySelector(".box-hx").classList.remove("d-none");
+      var hid=l.querySelector(".f-hx"); hid.value=2; l.querySelector(".f-hx-n").textContent="2"; totais(); }); }
+    l.querySelectorAll(".chip-h").forEach(function(b){ b.addEventListener("click", function(){ var hid=l.querySelector(".f-h"); hid.value=b.dataset.h; l.querySelector(".f-h-n").textContent=b.dataset.h; totais(); }); });
+    l.querySelector(".f-qtd").addEventListener("input", function(){
+      var saldo=num(l.dataset.saldo), v=num(this.value); l.querySelector(".f-fim").checked = (saldo>0 && v>=saldo); totais(); });
+  });
+  document.getElementById("filtro").addEventListener("input", function(){ var q=this.value.toLowerCase().trim();
+    linhas.forEach(function(l){ l.style.display = (!q || l.dataset.busca.indexOf(q)>=0) ? "" : "none"; }); });
+  document.getElementById("form-dia").addEventListener("submit", function(e){
+    var faltam=[]; linhas.forEach(function(l){ if(l.classList.contains("on") && !num(l.querySelector(".f-qtd").value)) faltam.push(l); });
+    if(faltam.length && !confirm(faltam.length+" ordem(ns) marcada(s) estão SEM quantidade de peças (só horas). Salvar assim mesmo?")) e.preventDefault(); });
+  totais();
+})();
+</script>
+<script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
+</body>
+</html>

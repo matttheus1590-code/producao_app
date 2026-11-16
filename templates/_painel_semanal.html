@@ -26,12 +26,14 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
     </div>
     <div class="pw-acoes">
       <a id="pwPdfSemana" class="btn btn-success btn-sm" target="_blank"
-         href="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_mensal=pw.mes, semana=pw.ativa)) }}"
-         data-base="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_mensal=pw.mes)) }}"
+         href="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_semanal='', sem_planejamento_semanal='', planejamento_mensal=pw.mes, semana=pw.ativa)) }}"
+         data-base="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_semanal='', sem_planejamento_semanal='', planejamento_mensal=pw.mes)) }}"
          title="PDF A4 horizontal, 1 folha, só a semana aberta agora"><i class="bi bi-printer"></i> Imprimir semana (1 folha)</a>
       <a class="btn btn-outline-success btn-sm" target="_blank"
-         href="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_mensal=pw.mes)) }}"
+         href="{{ url_for('relatorio_painel_semanal_visual_pdf', **dict(filtros, planejamento_semanal='', sem_planejamento_semanal='', planejamento_mensal=pw.mes)) }}"
          title="Uma folha por semana do mês"><i class="bi bi-files"></i> Todas as semanas (PDF)</a>
+      <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#pwModalSemanas" title="Escolher semanas de meses diferentes e imprimir num PDF só">
+        <i class="bi bi-calendar2-check"></i> Escolher semanas…</button>
     </div>
   </div>
   <p class="pw-nota text-muted small mb-2"><i class="bi bi-funnel"></i> Mostra as 4 ou 5 semanas do Planejamento PCP do mês, respeitando a busca/filtros acima (vendedor, status, estação, região, datas…). Clique na linha para abrir o pedido.</p>
@@ -236,5 +238,60 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
     var tr = ev.target.closest("tr.pw-linha");
     if (tr && tr.dataset.href && !ev.target.closest("a, button")) window.location.href = tr.dataset.href;
   });
+})();
+</script>
+
+{# ---------- seletor de semanas (várias semanas, de meses diferentes, num PDF só) ---------- #}
+<div class="modal fade" id="pwModalSemanas" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg">
+    <form class="modal-content" method="get" action="{{ url_for('relatorio_painel_semanal_visual_pdf') }}" target="_blank">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-calendar2-check"></i> Painel semanal — escolher semanas</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="small text-muted mb-2">Marque quantas semanas quiser, mesmo de meses diferentes (ex.: <strong>Semana 02 de outubro</strong> + <strong>Semana 01 de novembro</strong>). Sai <strong>1 folha por semana</strong>, em ordem de calendário, respeitando a busca/filtros da tela.</div>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="pwSemAtual">Só a semana atual</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="pwSemMesAberto">Todas do mês aberto</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="pwSemLimpar">Limpar</button>
+          <span class="ms-auto small text-muted align-self-center"><span id="pwSemQtd">0</span> semana(s) marcada(s)</span>
+        </div>
+        <div class="row g-3">
+          {% for bloco in pw.seletor %}
+          <div class="col-md-6">
+            <div class="border rounded p-2 h-100 {{ 'border-primary' if bloco.atual }}">
+              <div class="fw-semibold mb-1">{{ bloco.titulo }}{% if bloco.atual %} <span class="badge text-bg-primary">mês aberto</span>{% endif %}</div>
+              {% for sm in bloco.semanas %}
+              <label class="d-flex align-items-center gap-2 py-1 pw-sem-linha" style="cursor:pointer">
+                <input type="checkbox" class="form-check-input mt-0 pw-sem-ck" name="sem" value="{{ sm.valor }}" {{ 'checked' if sm.marcada }} data-atual="{{ 1 if sm.atual else 0 }}" data-mes-aberto="{{ 1 if bloco.atual else 0 }}">
+                <span>Semana {{ '%02d'|format(sm.n) }} <span class="text-muted">· {{ sm.ini }} a {{ sm.fim }}</span>{% if sm.atual %} <span class="badge text-bg-success">atual</span>{% endif %}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {# mantém busca/vendedor/status etc. da tela (menos os filtros de semana, que vêm daqui) #}
+        {% for k, v in filtros.items() %}{% if v and k not in ('planejamento_semanal', 'sem_planejamento_semanal', 'planejamento_mensal') %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-success" id="pwSemGerar"><i class="bi bi-printer"></i> Gerar PDF das semanas marcadas</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+(function(){
+  var m=document.getElementById("pwModalSemanas"); if(!m) return;
+  var cks=m.querySelectorAll(".pw-sem-ck"), qtd=document.getElementById("pwSemQtd"), gerar=document.getElementById("pwSemGerar");
+  function atualiza(){ var n=m.querySelectorAll(".pw-sem-ck:checked").length; qtd.textContent=n; gerar.disabled=(n===0); }
+  cks.forEach(function(c){ c.addEventListener("change", atualiza); });
+  function marca(fn){ cks.forEach(function(c){ c.checked=fn(c); }); atualiza(); }
+  document.getElementById("pwSemAtual").addEventListener("click", function(){ marca(function(c){ return c.dataset.atual==="1"; }); });
+  document.getElementById("pwSemMesAberto").addEventListener("click", function(){ marca(function(c){ return c.dataset.mesAberto==="1"; }); });
+  document.getElementById("pwSemLimpar").addEventListener("click", function(){ marca(function(){ return false; }); });
+  atualiza();
 })();
 </script>

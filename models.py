@@ -2425,3 +2425,169 @@ class LogisticaSyncEstado(db.Model):
     ult_recebidos = db.Column(db.Integer, nullable=True)
     ult_aplicados = db.Column(db.Integer, nullable=True)
     ult_sem_pedido = db.Column(db.Integer, nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Chão de Fábrica — apontamento de início/fim de OP por setor (piloto: CORTE,
+# Bruno 15/11/2026). Cada ITEM do pedido é uma Ordem de Produção. O líder do
+# setor, no tablet, inicia/pausa/finaliza e informa quantas pessoas estão na
+# OP; todo o resto (tempo líquido, hora-homem, tempo por peça) é CALCULADO
+# dos eventos — nada é editado depois, só registrado.
+# ---------------------------------------------------------------------------
+APONTAMENTO_STATUS = ("EM_ANDAMENTO", "PAUSADO", "FINALIZADO")
+APONTAMENTO_MOTIVOS_PAUSA = (
+    "Falta de material",
+    "Quebra / manutenção",
+    "Almoço / intervalo",
+    "Troca de prioridade",
+    "Outro",
+)
+
+
+class Apontamento(db.Model):
+    """Uma execução de uma OP (item do pedido) num setor. Pode haver mais de
+    uma por item/setor (retrabalho), mas só UMA aberta (em andamento/pausada)."""
+
+    __tablename__ = "apontamentos_producao"
+
+    id = db.Column(db.Integer, primary_key=True)
+    item_id = db.Column(db.Integer, db.ForeignKey("itens_pedido.id"), nullable=False, index=True)
+    estacao = db.Column(db.String(40), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="EM_ANDAMENTO", index=True)
+    iniciado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)  # UTC
+    finalizado_em = db.Column(db.DateTime, nullable=True)  # UTC
+    quantidade_produzida = db.Column(db.Float, nullable=True)  # boas, NESTE apontamento (parcial é permitido)
+    refugo = db.Column(db.Float, nullable=True)
+    observacao = db.Column(db.String(300), nullable=True)
+    # etapa do roteiro (ex.: "Corte"); o avanço da OP é somado por etapa
+    etapa = db.Column(db.String(40), nullable=False, default="Corte", index=True)
+    # True = o líder encerrou a OP nesta etapa mesmo sem atingir a quantidade pedida
+    encerra_op = db.Column(db.Boolean, nullable=False, default=False)
+    # como foi lançado: "TABLET" (cronômetro iniciar/finalizar) ou "RESUMO" (resumo do dia, no fim do expediente)
+    origem = db.Column(db.String(10), nullable=False, default="TABLET")
+
+    item = db.relationship("ItemPedido", backref=db.backref("apontamentos", lazy="select"))
+    eventos = db.relationship("ApontamentoEvento", backref="apontamento", order_by="ApontamentoEvento.momento, ApontamentoEvento.id",
+                              cascade="all, delete-orphan")
+
+    # ---- cálculos a partir dos eventos ----
+    def resumo(self, agora=None):
+        """{'segundos_liquidos', 'segundos_pausa', 'hora_homem', 'hora_homem_extra', 'pessoas_atual', ...}.
+        Tempo líquido = tempo trabalhando (sem pausas e SEM o almoço 12:00–13:00 BRT, que é descontado
+        automaticamente nos apontamentos de cronômetro). Hora-homem = Σ tempo × pessoas. Hora EXTRA =
+        o que cai fora de 08:00–17:00 em dia útil, ou qualquer horário de sábado/domingo."""
+        agora = agora or datetime.utcnow()
+        # OP esquecida aberta de um dia anterior: o relógio para às 17:00 (BRT) do dia em que começou,
+        # senão o tempo/hora-homem explodiria durante a noite.
+        dia_ini = (self.iniciado_em - timedelta(hours=3)).date() if self.iniciado_em else None
+        if dia_ini and (agora - timedelta(hours=3)).date() > dia_ini:
+            agora = min(agora, datetime.combine(dia_ini, datetime.min.time()) + timedelta(hours=20))
+        # resumo do dia: as horas informadas já são as reais trabalhadas (não desconta almoço de novo)
+        desconta_almoco = (self.origem or "TABLET") != "RESUMO"
+        liquidos = 0.0
+        extra_seg = 0.0
+        pausa = 0.0
+        hh_seg = 0.0
+        hh_extra = 0.0
+        pessoas = 1
+        trabalhando_desde = None
+        pausado_desde = None
+
+        def fecha(t0, t1):
+            nonlocal liquidos, extra_seg, hh_seg, hh_extra
+            liq, ext = _segmento_trabalho(t0, t1, desconta_almoco)
+            liquidos += liq
+            extra_seg += ext
+            hh_seg += liq * pessoas
+            hh_extra += ext * pessoas
+
+        for ev in self.eventos:
+            t = ev.momento
+            if ev.tipo in ("INICIO", "RETOMADA"):
+                if pausado_desde is not None:
+                    pausa += (t - pausado_desde).total_seconds()
+                    pausado_desde = None
+                if ev.pessoas:
+                    pessoas = ev.pessoas
+                trabalhando_desde = t
+            elif ev.tipo == "PESSOAS":
+                if trabalhando_desde is not None:
+                    fecha(trabalhando_desde, t)
+                    trabalhando_desde = t
+                if ev.pessoas:
+                    pessoas = ev.pessoas
+            elif ev.tipo == "PAUSA":
+                if trabalhando_desde is not None:
+                    fecha(trabalhando_desde, t)
+                    trabalhando_desde = None
+                pausado_desde = t
+            elif ev.tipo == "FIM":
+                if trabalhando_desde is not None:
+                    fecha(trabalhando_desde, t)
+                    trabalhando_desde = None
+                if pausado_desde is not None:
+                    pausa += (t - pausado_desde).total_seconds()
+                    pausado_desde = None
+        if trabalhando_desde is not None and self.status == "EM_ANDAMENTO":
+            fecha(trabalhando_desde, max(agora, trabalhando_desde))
+        if pausado_desde is not None and self.status == "PAUSADO":
+            pausa += max((agora - pausado_desde).total_seconds(), 0)
+        return {
+            "segundos_liquidos": liquidos, "segundos_pausa": pausa, "segundos_extra": extra_seg,
+            "hora_homem": hh_seg / 3600.0, "hora_homem_extra": hh_extra / 3600.0,
+            "pessoas_atual": pessoas, "pausado_desde": pausado_desde, "trabalhando_desde": trabalhando_desde,
+        }
+
+
+def _segmento_trabalho(t0, t1, desconta_almoco=True):
+    """(segundos líquidos, segundos de hora extra) de um trecho trabalhado [t0, t1] em UTC.
+    Regras da fábrica (BRT = UTC−3): expediente 08:00–17:00, almoço 12:00–13:00 (descontado),
+    extra = fora do expediente em dia útil (17:00–19:00 etc.) e sábado/domingo inteiros."""
+    if t1 <= t0:
+        return 0.0, 0.0
+    h = timedelta(hours=1)
+    total = 0.0
+    extra = 0.0
+    d = (t0 - timedelta(hours=3)).date()
+    ultimo = (t1 - timedelta(hours=3)).date()
+    while d <= ultimo:
+        base = datetime.combine(d, datetime.min.time()) + timedelta(hours=3)  # 00:00 BRT em UTC
+        a, b = max(t0, base), min(t1, base + 24 * h)
+        if b > a:
+            partes = [(a, b)]
+            if desconta_almoco:
+                l0, l1 = base + 12 * h, base + 13 * h
+                partes = []
+                if a < l0:
+                    partes.append((a, min(b, l0)))
+                if b > l1:
+                    partes.append((max(a, l1), b))
+            fim_semana = d.weekday() >= 5
+            for x0, x1 in partes:
+                if x1 <= x0:
+                    continue
+                seg = (x1 - x0).total_seconds()
+                total += seg
+                if fim_semana:
+                    extra += seg
+                else:
+                    n0, n1 = max(x0, base + 8 * h), min(x1, base + 17 * h)
+                    extra += seg - max((n1 - n0).total_seconds(), 0.0)
+        d += timedelta(days=1)
+    return total, extra
+
+
+class ApontamentoEvento(db.Model):
+    """Linha do tempo do apontamento: INICIO, PAUSA, RETOMADA, PESSOAS (mudou o
+    nº de pessoas), FIM. Só se acrescenta; nunca se edita."""
+
+    __tablename__ = "apontamento_eventos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    apontamento_id = db.Column(db.Integer, db.ForeignKey("apontamentos_producao.id"), nullable=False, index=True)
+    tipo = db.Column(db.String(12), nullable=False)
+    momento = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)  # UTC
+    pessoas = db.Column(db.Integer, nullable=True)
+    motivo = db.Column(db.String(60), nullable=True)
+    usuario_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
+    usuario_nome = db.Column(db.String(120), nullable=True)

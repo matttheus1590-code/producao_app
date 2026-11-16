@@ -24,6 +24,9 @@ from sqlalchemy.orm import selectinload
 import logistica_api
 from extensions import db, login_manager
 from models import (
+    APONTAMENTO_MOTIVOS_PAUSA,
+    Apontamento,
+    ApontamentoEvento,
     _MESES_ABREV_PCP,
     ESTACOES,
     ESTACOES_GRUPOS_MONITORAMENTO,
@@ -1609,6 +1612,7 @@ def create_app():
         return dict(
             ASSET_V=_versao_estaticos(app),
             ve_pd_qualidade_custos=ve_pd_qualidade_custos(current_user),
+            CHAO_FABRICA_ATIVO=CHAO_FABRICA_ATIVO,
             ESTACOES=estacoes_ativas or ESTACOES,
             STATUS_OPCOES=STATUS_OPCOES,
             PRIORIDADE_OPCOES=PRIORIDADE_OPCOES,
@@ -14843,6 +14847,82 @@ def _fase_item_consulta(item):
     return 1
 
 
+# Roteiro mínimo por estação no Chão de Fábrica: quais ETAPAS contam para o avanço da
+# OP (= item do pedido). Hoje só o piloto (Corte); cada estação nova entra aqui.
+CHAO_ETAPAS_POR_ESTACAO = {"CORTE": ("Corte",)}
+
+# Chave geral do Chão de Fábrica (Bruno, 16/11/2026: "deixe off por enquanto"). Desligado = nenhuma
+# tela/rota /chao*, sem menu e sem nada na Consulta Pedido; o código e as tabelas ficam prontos.
+# Para ligar depois: variável de ambiente CHAO_FABRICA_ATIVO=1 no Render (e reiniciar o serviço).
+CHAO_FABRICA_ATIVO = os.environ.get("CHAO_FABRICA_ATIVO", "0").strip() == "1"
+
+
+def _chao_progresso(item, agora=None):
+    """Avanço da OP (item do pedido) a partir dos apontamentos, por etapa.
+    Cada etapa: produzida (boas, soma dos apontamentos), refugo, saldo, % e se está
+    concluída (atingiu a quantidade pedida OU o líder encerrou a OP). O avanço geral é a
+    média das etapas do roteiro. Projeção: saldo × ritmo real (tempo líquido por unidade)."""
+    agora = agora or datetime.utcnow()
+    qtd = float(item.quantidade or 0)
+    etapas = {}
+    for nome in CHAO_ETAPAS_POR_ESTACAO.get(item.estacao, ()):
+        etapas[nome] = None
+    for a in (getattr(item, "apontamentos", None) or []):
+        e = etapas.get(a.etapa) or {"etapa": a.etapa, "produzida": 0.0, "refugo": 0.0, "hh": 0.0, "seg": 0.0,
+                                    "seg_prod": 0.0, "encerrada": False, "aberto": None, "n": 0}
+        etapas[a.etapa] = e
+        r = a.resumo(agora)
+        e["n"] += 1
+        e["hh"] += r["hora_homem"]
+        e["hh_extra"] = e.get("hh_extra", 0.0) + r["hora_homem_extra"]
+        e["seg"] += r["segundos_liquidos"]
+        if a.status == "FINALIZADO":
+            e["produzida"] += a.quantidade_produzida or 0.0
+            e["refugo"] += a.refugo or 0.0
+            e["seg_prod"] += r["segundos_liquidos"]  # ritmo = TODO o tempo gasto ÷ peças feitas
+            if a.encerra_op:
+                e["encerrada"] = True
+        else:
+            e["aberto"] = {"status": a.status, "desde": a.iniciado_em - timedelta(hours=3), "pessoas": r["pessoas_atual"],
+                           "seg": r["segundos_liquidos"]}
+    lista = []
+    for nome, e in etapas.items():
+        if e is None:
+            e = {"etapa": nome, "produzida": 0.0, "refugo": 0.0, "hh": 0.0, "seg": 0.0, "seg_prod": 0.0,
+                 "encerrada": False, "aberto": None, "n": 0}
+        e["saldo"] = max(qtd - e["produzida"], 0.0)
+        e["pct"] = min(e["produzida"] / qtd, 1.0) if qtd > 0 else (1.0 if e["encerrada"] else 0.0)
+        e["concluida"] = bool(e["encerrada"] or (qtd > 0 and e["produzida"] >= qtd))
+        if e["concluida"]:
+            e["pct"] = 1.0
+        e["seg_restante"] = (e["seg_prod"] / e["produzida"] * e["saldo"]) if (e["produzida"] > 0 and e["saldo"] > 0 and not e["concluida"]) else None
+        lista.append(e)
+    geral = (sum(e["pct"] for e in lista) / len(lista)) if lista else 0.0
+    return {"etapas": lista, "pct": geral, "qtd": qtd,
+            "refugo": sum(e["refugo"] for e in lista), "hh": sum(e["hh"] for e in lista),
+            "hh_extra": sum(e.get("hh_extra", 0.0) for e in lista),
+            "aberto": next((e["aberto"] for e in lista if e["aberto"]), None),
+            "concluida": bool(lista) and all(e["concluida"] for e in lista)}
+
+
+def _chao_resumo_item(item, agora):
+    """Para a Consulta Pedido: avanço por etapa + o que está rodando agora."""
+    if not CHAO_FABRICA_ATIVO:
+        return None
+    if not (getattr(item, "apontamentos", None) or []):
+        return None
+    pr = _chao_progresso(item, agora)
+    info = {"hora_homem": pr["hh"], "progresso": pr, "aberto": None}
+    aberto = next((a for a in item.apontamentos if a.status in ("EM_ANDAMENTO", "PAUSADO")), None)
+    if aberto is not None:
+        r = aberto.resumo(agora)
+        info["aberto"] = {
+            "estacao": rotulo_estacao(aberto.estacao), "status": aberto.status,
+            "desde": aberto.iniciado_em - timedelta(hours=3), "pessoas": r["pessoas_atual"],
+        }
+    return info
+
+
 def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
     """Dados da nova Consulta Pedido: veredito de prazo, datas-chave, barra de
     tempo, linha do tempo, itens com projeção, logística e avisos.
@@ -15113,6 +15193,7 @@ def _visao_pedido_consulta(pedidos, go, liberacao_pcp, hoje, agora):
             "lead_time": i.lt_producao_dias, "nf": i.numero_nota_fiscal, "envio": i.data_envio,
             "liberacao_atrasada": bool(i.liberacao_prevista and i.liberacao_prevista < hoje and i.status_producao != "FINALIZADO"),
             "item_obj": i,
+            "chao": _chao_resumo_item(i, agora),
         })
 
     # --- avisos amigáveis (nada interno) ---
@@ -20366,7 +20447,68 @@ def _contexto_painel_semanal_tela(args_originais, filtros):
         "mes_anterior": f"{ano_ant:04d}-{mes_ant:02d}", "mes_seguinte": f"{ano_seg:04d}-{mes_seg:02d}",
         "semanas": semanas, "ativa": ativa,
         "total": _resumo_semana_visual([p for s in semanas for p in s["pedidos"]]),
+        "seletor": _seletor_semanas_painel(mes_ano, hoje, ativa),
     }
+
+
+def _seletor_semanas_painel(mes_ano, hoje, ativa):
+    """Meses (2 antes e 2 depois do mês aberto) com suas semanas do Planejamento PCP, para o
+    seletor "Escolher semanas" do Painel semanal — dá para marcar semanas de meses diferentes
+    (ex.: SEMANA 02 de outubro + SEMANA 01 de novembro) e imprimir tudo num PDF só."""
+    blocos = []
+    for delta in range(-2, 3):
+        ano, mes = _somar_meses(mes_ano[0], mes_ano[1], delta)
+        semanas = []
+        for n in range(1, numero_semanas_pcp(ano, mes) + 1):
+            ini, fim = _intervalo_calendario_semana_pcp((ano, mes), f"SEMANA {n:02d}")
+            semanas.append({
+                "n": n, "valor": f"{ano:04d}-{mes:02d}:{n}", "ini": ini.strftime("%d/%m"), "fim": fim.strftime("%d/%m"),
+                "atual": ini <= hoje <= fim,
+                "marcada": (ano, mes) == tuple(mes_ano) and n == ativa,
+            })
+        blocos.append({"titulo": f"{_MESES_PT[mes - 1].capitalize()}/{ano}", "atual": (ano, mes) == tuple(mes_ano), "semanas": semanas})
+    return blocos
+
+
+def _parse_semanas_multimes(valores):
+    """["2026-10:2", "2026-11:1"] -> [(2026,10,2), (2026,11,1)] ordenado, sem repetir e só semanas que existem."""
+    out = set()
+    for v in valores or []:
+        m = re.fullmatch(r"\s*(\d{4})-(\d{1,2}):(\d{1,2})\s*", v or "")
+        if not m:
+            continue
+        ano, mes, n = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mes <= 12 and 2000 <= ano <= 2100 and 1 <= n <= numero_semanas_pcp(ano, mes):
+            out.add((ano, mes, n))
+    return sorted(out)
+
+
+def _pdf_painel_semanal_multimes(args, escolhidas):
+    """PDF do Painel semanal com semanas de MESES diferentes (1 folha por semana, em ordem de calendário)."""
+    import pdf_semana_visual
+    agora = _agora_brt()
+    por_mes = {}
+    for ano, mes, n in escolhidas:
+        por_mes.setdefault((ano, mes), set()).add(n)
+    semanas, nomes = [], []
+    filtros_base = None
+    for (ano, mes), nums in sorted(por_mes.items()):
+        a = dict(args)
+        a["planejamento_mensal"] = f"{ano:04d}-{mes:02d}"
+        query, filtros = _filtrar_pedidos(a)
+        filtros_base = filtros_base or filtros
+        linhas = [l for l in _linhas_listagem_geral(query.all(), a) if _numero_semana_linha(l) in nums]
+        semanas += _dados_painel_semanal_visual(linhas, (ano, mes), nums, agora.date())
+        for n in sorted(nums):
+            ini, fim = _intervalo_calendario_semana_pcp((ano, mes), f"SEMANA {n:02d}")
+            nomes.append(f"SEMANA {n:02d}/{_MESES_PT[mes - 1][:3].capitalize()} ({ini.strftime('%d/%m')} a {fim.strftime('%d/%m')})")
+    filtros = dict(filtros_base or {})
+    filtros["semanas_txt"] = "Somente " + " + ".join(nomes)
+    pdf = pdf_semana_visual.gerar(semanas, agora, _ESPELHO_LOGO_PATH, _formatar_moeda_br,
+                                  filtros_txt=_texto_filtros_listagem_geral_semanal(filtros), hoje=agora.date())
+    resposta = Response(pdf, mimetype="application/pdf")
+    resposta.headers["Content-Disposition"] = f"inline; filename=painel_semanal_{len(semanas)}semanas_{agora.strftime('%d%m_%H%M')}.pdf"
+    return resposta
 
 
 def _texto_semanas_selecionadas(sel, mes_ano):
@@ -23540,6 +23682,12 @@ def register_routes(app):
         _logistica_disparar_em_segundo_plano(app)
 
     @app.before_request
+    def _chao_fabrica_desligado():
+        """Chão de Fábrica desligado (CHAO_FABRICA_ATIVO): as rotas /chao* respondem 404."""
+        if not CHAO_FABRICA_ATIVO and (request.endpoint or "").startswith("chao_"):
+            abort(404)
+
+    @app.before_request
     def _restringir_acesso_por_papel():
         """Papel PD (Líder de P&D): só pode acessar P&D + visualização de
         Gestão Produção > Estações — ver ENDPOINTS_PERMITIDOS_PD em
@@ -25242,6 +25390,13 @@ def register_routes(app):
         o backlog do mês seguinte (cada folha é uma semana do mês escolhido)."""
         import pdf_semana_visual
         args = request.args.to_dict()
+        # O recorte de semana deste PDF vem SÓ do seletor (semana= / sem=): o filtro "planejamento_semanal"
+        # herdado da Listagem (clique num quadrante) esvaziava a folha de outra semana (Bruno, 16/11/2026).
+        args.pop("planejamento_semanal", None)
+        args.pop("sem_planejamento_semanal", None)
+        escolhidas = _parse_semanas_multimes(request.args.getlist("sem"))
+        if escolhidas:
+            return _pdf_painel_semanal_multimes(args, escolhidas)
         if not args.get("planejamento_mensal", "").strip():
             args["planejamento_mensal"] = date.today().strftime("%Y-%m")
         query, filtros = _filtrar_pedidos(args)
@@ -27725,6 +27880,476 @@ def register_routes(app):
         return _gerar_pptx_seguro(
             lambda g: g.montar_conclusoes_estacoes(titulo_periodo, itens_por_estacao, modo, agora.strftime("%d/%m/%Y %H:%M"), _aux_pptx(), _ESPELHO_LOGO_PATH),
             f"conclusoes_estacoes_{modo}_{tag}.pptx", url_for("estacoes_lista"))
+
+    # ------------------------------------------------------------------
+    # Chão de Fábrica (piloto CORTE, Bruno 15/11/2026): apontamento de início/fim de
+    # OP (= item do pedido) pelo líder do setor, no tablet. Só grava tempos, pausas,
+    # pessoas (hora-homem), quantidade e refugo; NÃO finaliza o item nem libera
+    # faturamento (isso segue com o PCP/Kanban de Estações). Ao INICIAR, só preenche o
+    # "Início de produção" do item se ainda estiver vazio.
+    # ------------------------------------------------------------------
+    CHAO_ESTACOES_HABILITADAS = ("CORTE",)
+
+    def _chao_pode_operar(estacao):
+        return estacao in CHAO_ESTACOES_HABILITADAS and pode_editar_estacao(current_user, estacao)
+
+    def _chao_brt(d):
+        return (d - timedelta(hours=3)) if d else None
+
+    def _chao_fmt_dur(seg):
+        seg = int(max(seg or 0, 0))
+        h, r = divmod(seg, 3600)
+        m, _ = divmod(r, 60)
+        return f"{h}h{m:02d}" if h else f"{m} min"
+
+    def _chao_aberto(item_id, estacao):
+        return (Apontamento.query.filter(Apontamento.item_id == item_id, Apontamento.estacao == estacao,
+                                         Apontamento.status.in_(("EM_ANDAMENTO", "PAUSADO"))).first())
+
+    def _chao_evento(ap, tipo, pessoas=None, motivo=None, momento=None):
+        db.session.add(ApontamentoEvento(
+            apontamento=ap, tipo=tipo, momento=momento or datetime.utcnow(), pessoas=pessoas, motivo=motivo,
+            usuario_id=current_user.id, usuario_nome=current_user.nome))
+
+    @app.route("/chao")
+    @login_required
+    def chao_hub():
+        if current_user.role == "LIDER" and current_user.setor in CHAO_ESTACOES_HABILITADAS:
+            return redirect(url_for("chao_tablet", estacao=current_user.setor))
+        if current_user.role not in ("ADMIN", "PCP", "GESTAO", "LIDER"):
+            abort(403)
+        return render_template("chao_hub.html", estacoes=CHAO_ESTACOES_HABILITADAS, rotulo=rotulo_estacao)
+
+    @app.route("/chao/<estacao>")
+    @login_required
+    def chao_tablet(estacao):
+        if estacao not in CHAO_ESTACOES_HABILITADAS:
+            flash("O apontamento no chão de fábrica ainda não está habilitado para este setor (piloto: Corte).", "info")
+            return redirect(url_for("chao_hub"))
+        if not _chao_pode_operar(estacao):
+            flash("Você não tem permissão para apontar neste setor. Veja o painel de acompanhamento.", "warning")
+            return redirect(url_for("chao_painel", estacao=estacao))
+        agora = datetime.utcnow()
+        abertos = (Apontamento.query.options(selectinload(Apontamento.item).selectinload(ItemPedido.pedido), selectinload(Apontamento.eventos),
+                                             selectinload(Apontamento.item).selectinload(ItemPedido.apontamentos).selectinload(Apontamento.eventos))
+                   .filter(Apontamento.estacao == estacao, Apontamento.status.in_(("EM_ANDAMENTO", "PAUSADO")))
+                   .order_by(Apontamento.iniciado_em).all())
+        ids_abertos = {a.item_id for a in abertos}
+        hoje = _hoje_brt()
+        fila_q = (ItemPedido.query.options(selectinload(ItemPedido.pedido),
+                                           selectinload(ItemPedido.apontamentos).selectinload(Apontamento.eventos))
+                  .filter(ItemPedido.estacao == estacao, ItemPedido.status_producao != "FINALIZADO").all())
+        prog = {}
+        fila = []
+        for i in fila_q:
+            if i.id in ids_abertos:
+                continue
+            prog[i.id] = _chao_progresso(i, agora)
+            if prog[i.id]["concluida"]:  # a(s) etapa(s) do roteiro já foram concluídas: sai da fila do tablet
+                continue
+            fila.append(i)
+        fila.sort(key=lambda i: (i.liberacao_prevista is None, i.liberacao_prevista or date.max, i.id))
+        total_fila = len(fila)
+        fila = fila[:80]
+        inicio_hoje_utc = datetime.combine(hoje, datetime.min.time()) + timedelta(hours=3)
+        feitos_hoje = (Apontamento.query.options(selectinload(Apontamento.item).selectinload(ItemPedido.pedido), selectinload(Apontamento.eventos))
+                       .filter(Apontamento.estacao == estacao, Apontamento.status == "FINALIZADO", Apontamento.finalizado_em >= inicio_hoje_utc)
+                       .order_by(Apontamento.finalizado_em.desc()).all())
+        ultima = (ApontamentoEvento.query.join(Apontamento).filter(Apontamento.estacao == estacao, ApontamentoEvento.tipo == "INICIO")
+                  .order_by(ApontamentoEvento.id.desc()).first())
+        cards_abertos = []
+        agora_b = _agora_brt()
+        for a in abertos:
+            r = a.resumo(agora)
+            pr = _chao_progresso(a.item, agora)
+            et = next((e for e in pr["etapas"] if e["etapa"] == a.etapa), None)
+            cards_abertos.append({"a": a, "r": r, "pr": pr, "et": et, "iniciado_brt": _chao_brt(a.iniciado_em),
+                                  "esquecida": _chao_brt(a.iniciado_em).date() < hoje,
+                                  "ultimo_motivo": next((e.motivo for e in reversed(a.eventos) if e.tipo == "PAUSA"), None),
+                                  "pausado_desde_brt": _chao_brt(r["pausado_desde"]), "liquido_txt": _chao_fmt_dur(r["segundos_liquidos"])})
+        cards_feitos = []
+        for a in feitos_hoje:
+            r = a.resumo(agora)
+            cards_feitos.append({"a": a, "r": r, "dur": _chao_fmt_dur(r["segundos_liquidos"]), "hh": r["hora_homem"]})
+        return render_template(
+            "chao_tablet.html", estacao=estacao, rotulo=rotulo_estacao(estacao), abertos=cards_abertos, fila=fila,
+            total_fila=total_fila, feitos=cards_feitos, prog=prog, hoje=hoje, motivos=APONTAMENTO_MOTIVOS_PAUSA,
+            pessoas_padrao=(ultima.pessoas if ultima and ultima.pessoas else 2),
+            agora_brt=agora_b, pode_ver_painel=True,
+            fechando=(agora_b.hour, agora_b.minute) >= (16, 30),
+            almoco=(12 <= agora_b.hour < 13),
+            brt_ms=int((agora_b - datetime(1970, 1, 1)).total_seconds() * 1000))
+
+    def _chao_voltar(estacao):
+        return redirect(url_for("chao_tablet", estacao=estacao))
+
+    @app.route("/chao/<estacao>/iniciar", methods=["POST"])
+    @login_required
+    def chao_iniciar(estacao):
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        item = db.session.get(ItemPedido, request.form.get("item_id", type=int) or 0)
+        pessoas = request.form.get("pessoas", 1, type=int) or 1
+        pessoas = min(max(pessoas, 1), 50)
+        if item is None or item.estacao != estacao:
+            flash("Ordem de produção não encontrada neste setor.", "danger")
+            return _chao_voltar(estacao)
+        if _chao_aberto(item.id, estacao) is not None:
+            flash("Esta ordem de produção já está iniciada.", "info")
+            return _chao_voltar(estacao)
+        etapas_ok = CHAO_ETAPAS_POR_ESTACAO.get(estacao, ())
+        etapa = request.form.get("etapa") or (etapas_ok[0] if etapas_ok else estacao.title())
+        if etapas_ok and etapa not in etapas_ok:
+            etapa = etapas_ok[0]
+        ap = Apontamento(item=item, estacao=estacao, etapa=etapa, status="EM_ANDAMENTO", iniciado_em=datetime.utcnow())
+        db.session.add(ap)
+        _chao_evento(ap, "INICIO", pessoas=pessoas)
+        # só preenche "Início de produção" do item se ainda estiver vazio
+        if item.inicio_producao is None:
+            antes = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+            item.inicio_producao = _hoje_brt()
+            item.status_manual = False
+            item.atualizar_status_automatico()
+            depois = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+            _registrar_alteracoes("item_pedido", item.id, item.pedido_id, antes, depois, CAMPOS_HISTORICO_ITEM)
+        db.session.commit()
+        flash(f"Ordem iniciada: {item.descricao_produto} — {pessoas} pessoa(s).", "success")
+        return _chao_voltar(estacao)
+
+    def _chao_ap_do_form(estacao):
+        ap = db.session.get(Apontamento, request.form.get("apont_id", type=int) or 0)
+        if ap is None or ap.estacao != estacao or ap.status == "FINALIZADO":
+            flash("Apontamento não encontrado ou já finalizado.", "warning")
+            return None
+        return ap
+
+    @app.route("/chao/<estacao>/pausar", methods=["POST"])
+    @login_required
+    def chao_pausar(estacao):
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        ap = _chao_ap_do_form(estacao)
+        if ap is not None and ap.status == "EM_ANDAMENTO":
+            motivo = (request.form.get("motivo") or "").strip()[:60] or None
+            ap.status = "PAUSADO"
+            _chao_evento(ap, "PAUSA", motivo=motivo)
+            db.session.commit()
+            flash("Ordem pausada." + ("" if motivo else " Se quiser, toque no motivo abaixo."), "info")
+        return _chao_voltar(estacao)
+
+    @app.route("/chao/<estacao>/motivo", methods=["POST"])
+    @login_required
+    def chao_motivo(estacao):
+        """Motivo da pausa é opcional e vem DEPOIS da pausa (1 toque), para não atrasar o líder."""
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        ap = _chao_ap_do_form(estacao)
+        motivo = (request.form.get("motivo") or "").strip()[:60]
+        if ap is not None and motivo:
+            ev = next((e for e in reversed(ap.eventos) if e.tipo == "PAUSA"), None)
+            if ev is not None:
+                ev.motivo = motivo
+                db.session.commit()
+        return _chao_voltar(estacao)
+
+    @app.route("/chao/<estacao>/retomar", methods=["POST"])
+    @login_required
+    def chao_retomar(estacao):
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        ap = _chao_ap_do_form(estacao)
+        if ap is not None and ap.status == "PAUSADO":
+            pessoas = request.form.get("pessoas", type=int)
+            ap.status = "EM_ANDAMENTO"
+            _chao_evento(ap, "RETOMADA", pessoas=min(max(pessoas, 1), 50) if pessoas else None)
+            db.session.commit()
+            flash("Ordem retomada.", "success")
+        return _chao_voltar(estacao)
+
+    @app.route("/chao/<estacao>/pessoas", methods=["POST"])
+    @login_required
+    def chao_pessoas(estacao):
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        ap = _chao_ap_do_form(estacao)
+        pessoas = request.form.get("pessoas", type=int)
+        if ap is not None and pessoas:
+            pessoas = min(max(pessoas, 1), 50)
+            _chao_evento(ap, "PESSOAS", pessoas=pessoas)
+            db.session.commit()
+            flash(f"Pessoas na ordem atualizado para {pessoas}.", "success")
+        return _chao_voltar(estacao)
+
+    @app.route("/chao/<estacao>/finalizar", methods=["POST"])
+    @login_required
+    def chao_finalizar(estacao):
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        ap = _chao_ap_do_form(estacao)
+        if ap is not None:
+            qtd = _parse_valor_br(request.form.get("quantidade", ""))
+            ap.quantidade_produzida = qtd
+            ap.refugo = 0.0
+            ap.encerra_op = request.form.get("encerra_op") == "1"
+            fim = datetime.utcnow()
+            if _chao_brt(ap.iniciado_em).date() < _hoje_brt():
+                # ficou aberta de um dia anterior: o fim vale 17:00 (BRT) do dia em que começou
+                fim = datetime.combine(_chao_brt(ap.iniciado_em).date(), datetime.min.time()) + timedelta(hours=20)
+                if fim < ap.iniciado_em:
+                    fim = ap.iniciado_em
+            _chao_evento(ap, "FIM", momento=fim)
+            ap.status = "FINALIZADO"
+            ap.finalizado_em = fim
+            db.session.commit()
+            r = ap.resumo()
+            pr = _chao_progresso(ap.item)
+            et = next((e for e in pr["etapas"] if e["etapa"] == ap.etapa), None)
+            if et and not et["concluida"]:
+                flash(f"Apontamento salvo: {_chao_fmt_dur(r['segundos_liquidos'])} · {r['hora_homem']:.1f} h-homem. "
+                      f"OP parcial: {et['produzida']:g} de {pr['qtd']:g} — saldo {et['saldo']:g} volta para a fila.", "success")
+            else:
+                flash(f"OP concluída no {ap.etapa}: {_chao_fmt_dur(r['segundos_liquidos'])} trabalhados · {r['hora_homem']:.1f} h-homem.", "success")
+        return _chao_voltar(estacao)
+
+    @app.route("/chao/<estacao>/cancelar", methods=["POST"])
+    @login_required
+    def chao_cancelar(estacao):
+        """Início por engano: apaga o apontamento ainda aberto (some da fila de tempos)."""
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        ap = _chao_ap_do_form(estacao)
+        if ap is not None:
+            nome = ap.item.descricao_produto
+            db.session.delete(ap)
+            db.session.commit()
+            flash(f"Início cancelado: {nome} voltou para a fila.", "info")
+        return _chao_voltar(estacao)
+
+    # ---- Resumo do dia: o líder lança o dia inteiro de uma vez (ex.: nos últimos 20 min do expediente) ----
+    def _chao_data_arg():
+        hoje = _hoje_brt()
+        try:
+            d = datetime.strptime(request.values.get("data", ""), "%Y-%m-%d").date()
+        except ValueError:
+            d = hoje
+        return min(max(d, hoje - timedelta(days=7)), hoje)
+
+    def _chao_janela_utc(data):
+        ini = datetime.combine(data, datetime.min.time()) + timedelta(hours=3)
+        return ini, ini + timedelta(days=1)
+
+    @app.route("/chao/<estacao>/dia")
+    @login_required
+    def chao_dia(estacao):
+        if estacao not in CHAO_ESTACOES_HABILITADAS:
+            return redirect(url_for("chao_hub"))
+        if not _chao_pode_operar(estacao):
+            return redirect(url_for("chao_painel", estacao=estacao))
+        data = _chao_data_arg()
+        hoje = _hoje_brt()
+        agora = datetime.utcnow()
+        ini_utc, fim_utc = _chao_janela_utc(data)
+        do_dia = (Apontamento.query.options(selectinload(Apontamento.item).selectinload(ItemPedido.pedido), selectinload(Apontamento.eventos))
+                  .filter(Apontamento.estacao == estacao, Apontamento.status == "FINALIZADO",
+                          Apontamento.finalizado_em >= ini_utc, Apontamento.finalizado_em < fim_utc)
+                  .order_by(Apontamento.finalizado_em).all())
+        por_item_dia = {}
+        for a in do_dia:
+            r = a.resumo(agora)
+            d = por_item_dia.setdefault(a.item_id, {"qtd": 0.0, "hh": 0.0, "seg": 0.0})
+            d["qtd"] += a.quantidade_produzida or 0.0
+            d["hh"] += r["hora_homem"]
+            d["seg"] += r["segundos_liquidos"]
+        itens = (ItemPedido.query.options(selectinload(ItemPedido.pedido), selectinload(ItemPedido.apontamentos).selectinload(Apontamento.eventos))
+                 .filter(or_(and_(ItemPedido.estacao == estacao, ItemPedido.status_producao != "FINALIZADO"),
+                             ItemPedido.id.in_(set(por_item_dia) or {0}))).all())
+        abertos_ids = {a.item_id for a in Apontamento.query.filter(Apontamento.estacao == estacao, Apontamento.status.in_(("EM_ANDAMENTO", "PAUSADO"))).all()}
+        linhas = []
+        for it in itens:
+            pr = _chao_progresso(it, agora)
+            et = pr["etapas"][0] if pr["etapas"] else None
+            if et is None:
+                continue
+            if et["concluida"] and it.id not in por_item_dia:
+                continue
+            linhas.append({"item": it, "pr": pr, "et": et, "dia": por_item_dia.get(it.id), "aberta": it.id in abertos_ids})
+        linhas.sort(key=lambda x: (x["dia"] is None, x["item"].liberacao_prevista is None, x["item"].liberacao_prevista or date.max, x["item"].id))
+        ultimo = (ApontamentoEvento.query.join(Apontamento).filter(Apontamento.estacao == estacao, ApontamentoEvento.pessoas.isnot(None))
+                  .order_by(ApontamentoEvento.id.desc()).first())
+        lancados = []
+        for a in do_dia:
+            r = a.resumo(agora)
+            lancados.append({"a": a, "r": r, "horas": r["segundos_liquidos"] / 3600.0})
+        return render_template("chao_dia.html", estacao=estacao, rotulo=rotulo_estacao(estacao), data=data, hoje=hoje,
+                               linhas=linhas, lancados=lancados, pessoas_padrao=(ultimo.pessoas if ultimo else 2),
+                               tot_hh=sum(l["r"]["hora_homem"] for l in lancados),
+                               tot_qtd=sum(l["a"].quantidade_produzida or 0 for l in lancados),
+                               dias_atras=[hoje - timedelta(days=i) for i in range(0, 4)])
+
+    @app.route("/chao/<estacao>/dia/salvar", methods=["POST"])
+    @login_required
+    def chao_dia_salvar(estacao):
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        data = _chao_data_arg()
+        inicio_utc = datetime.combine(data, datetime.min.time()) + timedelta(hours=11)  # 08:00 BRT
+        etapas_ok = CHAO_ETAPAS_POR_ESTACAO.get(estacao, ())
+        etapa = etapas_ok[0] if etapas_ok else estacao.title()
+        n, avisos = 0, []
+        for chave in request.form:
+            if not chave.startswith("on_"):
+                continue
+            try:
+                item_id = int(chave[3:])
+            except ValueError:
+                continue
+            item = db.session.get(ItemPedido, item_id)
+            if item is None or item.estacao != estacao:
+                continue
+            qtd = _parse_valor_br(request.form.get(f"qtd_{item_id}", "")) or 0.0
+            horas = _parse_valor_br(request.form.get(f"horas_{item_id}", "")) or 0.0
+            pessoas = min(max(request.form.get(f"pes_{item_id}", 1, type=int) or 1, 1), 50)
+            horas_extra = _parse_valor_br(request.form.get(f"hx_{item_id}", "")) or 0.0
+            if horas <= 0 or horas > 12:
+                avisos.append(f"{item.pedido.pedido_venda} · {item.descricao_produto}: informe as horas (de 0,5 a 12) — não foi lançado.")
+                continue
+            if qtd < 0:
+                qtd = 0.0
+            fim_utc = inicio_utc + timedelta(hours=horas)
+            ap = Apontamento(item=item, estacao=estacao, etapa=etapa, status="FINALIZADO", origem="RESUMO", iniciado_em=inicio_utc,
+                             finalizado_em=fim_utc, quantidade_produzida=qtd, refugo=0.0,
+                             encerra_op=request.form.get(f"fim_{item_id}") == "1")
+            db.session.add(ap)
+            _chao_evento(ap, "INICIO", pessoas=pessoas, momento=inicio_utc)
+            _chao_evento(ap, "FIM", momento=fim_utc)
+            if 0 < horas_extra <= 6 and data.weekday() < 5:
+                # hora extra em dia útil: 2º trecho começando às 17:00 (BRT); fim de semana já é extra inteiro
+                ini_x = datetime.combine(data, datetime.min.time()) + timedelta(hours=20)
+                fim_x = ini_x + timedelta(hours=horas_extra)
+                ax = Apontamento(item=item, estacao=estacao, etapa=etapa, status="FINALIZADO", origem="RESUMO", iniciado_em=ini_x,
+                                 finalizado_em=fim_x, quantidade_produzida=0.0, refugo=0.0)
+                db.session.add(ax)
+                _chao_evento(ax, "INICIO", pessoas=pessoas, momento=ini_x)
+                _chao_evento(ax, "FIM", momento=fim_x)
+            if item.inicio_producao is None:
+                antes = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+                item.inicio_producao = data
+                item.status_manual = False
+                item.atualizar_status_automatico()
+                depois = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+                _registrar_alteracoes("item_pedido", item.id, item.pedido_id, antes, depois, CAMPOS_HISTORICO_ITEM)
+            n += 1
+        db.session.commit()
+        if n:
+            flash(f"Resumo do dia salvo: {n} ordem(ns) lançada(s) em {data.strftime('%d/%m')}.", "success")
+        elif not avisos:
+            flash("Nada foi lançado: marque as ordens em que trabalhou e informe as horas.", "info")
+        for a in avisos:
+            flash(a, "warning")
+        return redirect(url_for("chao_dia", estacao=estacao, data=data.isoformat()))
+
+    @app.route("/chao/<estacao>/apontamento/<int:ap_id>/excluir", methods=["POST"])
+    @login_required
+    def chao_excluir(estacao, ap_id):
+        """Corrige um lançamento errado (só dos últimos 8 dias): apaga o apontamento."""
+        if not _chao_pode_operar(estacao):
+            abort(403)
+        ap = db.session.get(Apontamento, ap_id)
+        if ap is None or ap.estacao != estacao:
+            abort(404)
+        ref = _chao_brt(ap.finalizado_em or ap.iniciado_em).date()
+        if ref < _hoje_brt() - timedelta(days=8):
+            flash("Só é possível desfazer lançamentos dos últimos 8 dias.", "warning")
+            return _chao_voltar(estacao)
+        nome = ap.item.descricao_produto
+        db.session.delete(ap)
+        db.session.commit()
+        flash(f"Lançamento desfeito: {nome}.", "info")
+        return redirect(url_for("chao_dia", estacao=estacao, data=ref.isoformat()))
+
+    @app.route("/chao/<estacao>/painel")
+    @login_required
+    def chao_painel(estacao):
+        if estacao not in CHAO_ESTACOES_HABILITADAS or current_user.role not in ("ADMIN", "PCP", "GESTAO", "LIDER"):
+            abort(403)
+        dias = request.args.get("dias", 7, type=int)
+        dias = dias if dias in (1, 7, 30, 90) else 7
+        agora = datetime.utcnow()
+        hoje = _hoje_brt()
+        desde_utc = datetime.combine(hoje - timedelta(days=dias - 1), datetime.min.time()) + timedelta(hours=3)
+        aps = (Apontamento.query.options(selectinload(Apontamento.item).selectinload(ItemPedido.pedido), selectinload(Apontamento.eventos))
+               .filter(Apontamento.estacao == estacao,
+                       or_(Apontamento.status != "FINALIZADO", Apontamento.finalizado_em >= desde_utc))
+               .order_by(Apontamento.iniciado_em.desc()).all())
+        valor_hh = _hora_homem_atual()
+        linhas, por_dia = [], {}
+        tot = {"hh": 0.0, "hh_extra": 0.0, "seg": 0.0, "pausa": 0.0, "fin": 0, "andamento": 0, "pausado": 0}
+        for a in aps:
+            r = a.resumo(agora)
+            if a.status == "FINALIZADO":
+                tot["fin"] += 1
+                dia = _chao_brt(a.finalizado_em).date()
+                por_dia[dia] = por_dia.get(dia, 0.0) + r["hora_homem"]
+            elif a.status == "EM_ANDAMENTO":
+                tot["andamento"] += 1
+            else:
+                tot["pausado"] += 1
+            tot["hh"] += r["hora_homem"]
+            tot["hh_extra"] += r["hora_homem_extra"]
+            tot["seg"] += r["segundos_liquidos"]
+            tot["pausa"] += r["segundos_pausa"]
+            qtd = a.quantidade_produzida
+            linhas.append({
+                "a": a, "r": r, "inicio": _chao_brt(a.iniciado_em), "fim": _chao_brt(a.finalizado_em),
+                "liquido": _chao_fmt_dur(r["segundos_liquidos"]), "pausa": _chao_fmt_dur(r["segundos_pausa"]),
+                "min_por_un": (r["segundos_liquidos"] / 60.0 / qtd) if (qtd and a.status == "FINALIZADO") else None,
+                "custo": r["hora_homem"] * valor_hh,
+            })
+        n_fin = tot["fin"]
+        # ---- avanço das OPs (carteira do setor + o que teve apontamento no período) ----
+        ids_ativos = {a.item_id for a in aps}
+        itens_av = (ItemPedido.query.options(selectinload(ItemPedido.pedido),
+                                             selectinload(ItemPedido.apontamentos).selectinload(Apontamento.eventos))
+                    .filter(or_(and_(ItemPedido.estacao == estacao, ItemPedido.status_producao != "FINALIZADO"),
+                                ItemPedido.id.in_(ids_ativos or {0}))).all())
+        avanco = []
+        for it in itens_av:
+            pr = _chao_progresso(it, agora)
+            et = pr["etapas"][0] if pr["etapas"] else None
+            if et is None:
+                continue
+            if pr["aberto"]:
+                sit = "pausada" if pr["aberto"]["status"] == "PAUSADO" else "andamento"
+            elif pr["concluida"]:
+                sit = "concluida"
+            elif et["n"]:
+                sit = "parcial"
+            else:
+                sit = "fila"
+            avanco.append({"item": it, "pr": pr, "et": et, "sit": sit,
+                           "restante": _chao_fmt_dur(et["seg_restante"]) if et["seg_restante"] else None})
+        ordem_sit = {"andamento": 0, "pausada": 1, "parcial": 2, "fila": 3, "concluida": 4}
+        avanco.sort(key=lambda x: (ordem_sit[x["sit"]], x["item"].liberacao_prevista is None, x["item"].liberacao_prevista or date.max, x["item"].id))
+        cont_sit = {k: sum(1 for x in avanco if x["sit"] == k) for k in ordem_sit}
+        boas = sum(a.quantidade_produzida or 0.0 for a in aps if a.status == "FINALIZADO")
+        refs = sum(a.refugo or 0.0 for a in aps if a.status == "FINALIZADO")
+        carteira_qtd = sum(x["pr"]["qtd"] for x in avanco)
+        carteira_prod = sum(min(x["et"]["produzida"], x["pr"]["qtd"]) for x in avanco)
+        kpis = {
+            "boas": boas, "refugo_un": refs, "pct_refugo": (100.0 * refs / (boas + refs)) if (boas + refs) else 0.0,
+            "carteira_qtd": carteira_qtd, "carteira_prod": carteira_prod,
+            "carteira_pct": (100.0 * carteira_prod / carteira_qtd) if carteira_qtd else 0.0,
+            "andamento": tot["andamento"], "pausado": tot["pausado"], "finalizadas": n_fin,
+            "hh_extra": tot["hh_extra"], "pct_extra": (100.0 * tot["hh_extra"] / tot["hh"]) if tot["hh"] else 0.0,
+            "hh": tot["hh"], "custo": tot["hh"] * valor_hh,
+            "tempo_medio": _chao_fmt_dur(tot["seg"] / max(len(aps), 1)) if aps else "—",
+            "pct_pausa": (100.0 * tot["pausa"] / (tot["seg"] + tot["pausa"])) if (tot["seg"] + tot["pausa"]) else 0.0,
+        }
+        return render_template("chao_painel.html", estacao=estacao, rotulo=rotulo_estacao(estacao), linhas=linhas, kpis=kpis,
+                               avanco=avanco, cont_sit=cont_sit, hoje=hoje,
+                               dias=dias, valor_hh=valor_hh, por_dia=sorted(por_dia.items(), reverse=True),
+                               atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"),
+                               pode_operar=_chao_pode_operar(estacao))
 
     @app.route("/estacoes/<nome>/kanban/mover", methods=["POST"])
     @login_required

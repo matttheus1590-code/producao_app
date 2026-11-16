@@ -1,0 +1,146 @@
+{% set aba = 'agora' %}{% include "_chao_topo.html" %}
+
+  {% if almoco %}
+  <div class="alert alert-secondary mt-3 mb-0 fs-5">🍽️ Horário de almoço (12h–13h): o relógio das ordens em andamento está parado e não conta como hora trabalhada.</div>
+  {% endif %}
+  {% if fechando %}
+  <div class="alert alert-warning d-flex align-items-center gap-3 mt-3 mb-0">
+    <div class="flex-grow-1 fs-5">⏰ Fim do expediente chegando. Esqueceu de apontar alguma coisa? Lance o dia inteiro de uma vez.</div>
+    <a class="btn btn-dark btn-lg" href="{{ url_for('chao_dia', estacao=estacao) }}">📝 Resumo do dia</a>
+  </div>
+  {% endif %}
+
+  <div class="sec-titulo">▶ Em produção agora ({{ abertos|length }})</div>
+  {% if not abertos %}
+    <div class="text-muted py-3">Nenhuma ordem iniciada. Toque em <strong>INICIAR</strong> na ordem que você vai começar.</div>
+  {% endif %}
+  {% for c in abertos %}
+    {% set a = c.a %}{% set it = a.item %}{% set pausado = a.status == 'PAUSADO' %}
+    <div class="op {{ 'pausado' if pausado else 'andando' }}">
+      {% if c.esquecida %}<div class="alert alert-danger py-2 mb-2">Esta ordem ficou aberta desde {{ c.iniciado_brt.strftime('%d/%m') }}. Toque em FINALIZAR e informe o que foi produzido (o tempo conta só até as 17:00 daquele dia).</div>{% endif %}
+      <div class="d-flex flex-wrap align-items-start gap-3">
+        <div class="flex-grow-1" style="min-width:230px">
+          <div class="pv">PV {{ it.pedido.pedido_venda }} <span class="badge {{ 'text-bg-warning' if pausado else 'text-bg-success' }} fs-6 align-middle">{{ 'PAUSADA' if pausado else 'EM ANDAMENTO' }}</span></div>
+          <div class="prod">{{ it.descricao_produto }}</div>
+          <div class="meta">{{ it.pedido.cliente }} · iniciada às {{ c.iniciado_brt.strftime('%H:%M') }}{% if pausado %} · pausa desde {{ c.pausado_desde_brt.strftime('%H:%M') }}{% endif %}</div>
+          {% if c.et %}<div class="mt-2" style="max-width:420px">
+            <div class="avanco-txt">Já produzido {{ '%g'|format(c.et.produzida) }} de {{ '%g'|format(c.pr.qtd) }} <span class="text-muted fw-normal">· saldo {{ '%g'|format(c.et.saldo) }}</span></div>
+            <div class="barra"><span style="width:{{ (c.et.pct*100)|round|int }}%"></span></div>
+          </div>{% endif %}
+        </div>
+        <div class="text-end">
+          <div class="meta">Tempo trabalhado</div>
+          <div class="cron" data-seg="{{ c.r.segundos_liquidos|int }}" data-run="{{ 0 if pausado else 1 }}">{{ c.liquido_txt }}</div>
+        </div>
+      </div>
+      {% if pausado and not c.ultimo_motivo %}
+      <div class="mt-3"><span class="meta">Por quê? (opcional, 1 toque):</span>
+        <div class="d-flex flex-wrap gap-2 mt-1">
+        {% for m in motivos %}<form method="post" action="{{ url_for('chao_motivo', estacao=estacao) }}" class="m-0"><input type="hidden" name="apont_id" value="{{ a.id }}"><input type="hidden" name="motivo" value="{{ m }}"><button class="btn btn-outline-secondary">{{ m }}</button></form>{% endfor %}
+        </div></div>
+      {% elif pausado %}<div class="mt-2 meta">Motivo: {{ c.ultimo_motivo }}</div>{% endif %}
+      <div class="d-flex flex-wrap align-items-center gap-3 mt-3">
+        <form method="post" action="{{ url_for('chao_pessoas', estacao=estacao) }}" class="m-0 d-flex align-items-center gap-2 form-pessoas">
+          <input type="hidden" name="apont_id" value="{{ a.id }}"><input type="hidden" name="pessoas" value="{{ c.r.pessoas_atual }}">
+          <span class="meta">Pessoas:</span>
+          <span class="pessoas-box"><button type="button" class="btn btn-outline-secondary" data-d="-1">−</button><span class="n">{{ c.r.pessoas_atual }}</span><button type="button" class="btn btn-outline-secondary" data-d="1">+</button></span>
+          <button class="btn btn-primary d-none btn-salvar-pessoas">Salvar</button>
+        </form>
+        <div class="ms-auto d-flex gap-2 flex-wrap">
+          {% if pausado %}
+            <form method="post" action="{{ url_for('chao_retomar', estacao=estacao) }}" class="m-0"><input type="hidden" name="apont_id" value="{{ a.id }}"><button class="btn btn-success btn-xl">▶ RETOMAR</button></form>
+          {% else %}
+            <form method="post" action="{{ url_for('chao_pausar', estacao=estacao) }}" class="m-0"><input type="hidden" name="apont_id" value="{{ a.id }}"><button class="btn btn-warning btn-xl">⏸ PAUSAR</button></form>
+          {% endif %}
+          <button class="btn btn-danger btn-xl" data-bs-toggle="modal" data-bs-target="#mdFim" data-apont="{{ a.id }}" data-saldo="{{ '%g'|format(c.et.saldo if c.et else it.quantidade) }}" data-nome="PV {{ it.pedido.pedido_venda }} · {{ it.descricao_produto }}">⏹ FINALIZAR</button>
+          <form method="post" action="{{ url_for('chao_cancelar', estacao=estacao) }}" class="m-0" onsubmit="return confirm('Cancelar este início? Os tempos desta ordem serão apagados e ela volta para a fila.');"><input type="hidden" name="apont_id" value="{{ a.id }}"><button class="btn btn-outline-secondary btn-xl" title="Iniciei por engano">✕</button></form>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+
+  <div class="sec-titulo">📋 Fila de ordens do {{ rotulo }} ({{ total_fila }}){% if total_fila > fila|length %} · mostrando as {{ fila|length }} primeiras{% endif %}</div>
+  <input type="search" id="filtro" class="form-control form-control-lg mb-2" placeholder="Buscar por pedido, cliente ou produto…" style="font-size:1.1rem;text-align:left">
+  {% for i in fila %}
+    {% set atrasada = i.liberacao_prevista and i.liberacao_prevista < hoje %}
+    {% set et = prog[i.id].etapas[0] if prog.get(i.id) and prog[i.id].etapas else None %}
+    <div class="fila-linha" data-busca="{{ (i.pedido.pedido_venda ~ ' ' ~ i.pedido.cliente ~ ' ' ~ i.descricao_produto)|lower }}">
+      <div class="info">
+        <div><span class="fw-bold">PV {{ i.pedido.pedido_venda }}</span> <span class="meta">· {{ i.pedido.cliente }}</span>{% if atrasada %}<span class="badge badge-atraso ms-1">atrasada</span>{% endif %}</div>
+        <div class="prod">{{ i.descricao_produto }}</div>
+        <div class="meta">Qtd {{ '%g'|format(i.quantidade) }} · Liberação prevista: {{ i.liberacao_prevista.strftime('%d/%m') if i.liberacao_prevista else '—' }}</div>
+        {% if et and et.n %}<div class="avanco-txt text-primary">PARCIAL: {{ '%g'|format(et.produzida) }} de {{ '%g'|format(i.quantidade) }} · saldo {{ '%g'|format(et.saldo) }}</div>
+          <div class="barra" style="max-width:320px"><span style="width:{{ (et.pct*100)|round|int }}%"></span></div>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('chao_iniciar', estacao=estacao) }}" class="m-0">
+        <input type="hidden" name="item_id" value="{{ i.id }}"><input type="hidden" name="pessoas" value="{{ pessoas_padrao }}">
+        <button class="btn btn-success btn-xl">▶ INICIAR<div style="font-size:.75rem;font-weight:500">com {{ pessoas_padrao }} pessoa(s)</div></button>
+      </form>
+    </div>
+  {% else %}
+    <div class="text-muted py-3">Não há ordens aguardando no {{ rotulo }}.</div>
+  {% endfor %}
+
+  <div class="sec-titulo">✔ Finalizadas hoje ({{ feitos|length }})</div>
+  {% for c in feitos %}
+    <div class="fila-linha" style="padding:8px 14px"><div class="info"><strong>PV {{ c.a.item.pedido.pedido_venda }}</strong> · {{ c.a.item.descricao_produto }}
+      <span class="text-muted">— {{ c.dur }} · {{ '%.1f'|format(c.hh) }} h-homem · {{ '%g'|format(c.a.quantidade_produzida or 0) }} un</span></div></div>
+  {% else %}
+    <div class="text-muted">Nada finalizado hoje ainda.</div>
+  {% endfor %}
+</div>
+
+<!-- FINALIZAR -->
+<div class="modal fade" id="mdFim" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><form method="post" action="{{ url_for('chao_finalizar', estacao=estacao) }}" class="modal-content">
+  <div class="modal-header"><h5 class="modal-title fw-bold">Finalizar</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body">
+    <input type="hidden" name="apont_id" id="fim-id">
+    <div class="fw-semibold mb-1" id="fim-nome"></div>
+    <div class="small text-muted mb-3" id="fim-resumo"></div>
+    <label class="form-label fw-semibold">Quantas peças você produziu?</label>
+    <input name="quantidade" id="fim-qtd" inputmode="decimal" class="form-control form-control-lg mb-2" required>
+    <div id="fim-parcial" class="form-check form-switch fs-5 d-none">
+      <input class="form-check-input" type="checkbox" role="switch" name="encerra_op" value="1" id="fim-encerra">
+      <label class="form-check-label" for="fim-encerra">Não vou produzir mais desta ordem</label>
+    </div>
+    <div class="small text-muted" id="fim-dica"></div>
+  </div>
+  <div class="modal-footer"><button type="button" class="btn btn-light btn-xl" data-bs-dismiss="modal">Voltar</button><button class="btn btn-danger btn-xl">⏹ FINALIZAR</button></div>
+</form></div></div>
+
+<script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
+<script>
+(function(){
+  function fmt(s){ s=Math.max(0,Math.floor(s)); var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60;
+    return h ? (h+"h"+String(m).padStart(2,"0")+"m"+String(x).padStart(2,"0")) : (String(m).padStart(2,"0")+":"+String(x).padStart(2,"0")); }
+  var t0 = Date.now(), crons = document.querySelectorAll(".cron");
+  // hora de Brasília a partir do relógio do servidor (não depende do fuso do tablet): o relógio não anda das 12h às 13h
+  var offBrt = {{ brt_ms }} - Date.now();
+  function noAlmoco(){ return new Date(Date.now()+offBrt).getUTCHours()===12; }
+  var parado = 0, ultimo = Date.now();
+  function tick(){ var agora=Date.now(); if(noAlmoco()) parado += (agora-ultimo)/1000; ultimo=agora;
+    var d=(agora-t0)/1000-parado; crons.forEach(function(c){ var base=+c.dataset.seg, run=c.dataset.run==="1"; c.textContent=fmt(base+(run?Math.max(d,0):0)); }); }
+  tick(); setInterval(tick, 1000);
+  document.querySelectorAll(".form-pessoas").forEach(function(f){
+    var hidden=f.querySelector("input[name=pessoas]"), orig=hidden.value, btn=f.querySelector(".btn-salvar-pessoas"), box=f.querySelector(".pessoas-box");
+    box.querySelectorAll("button[data-d]").forEach(function(b){ b.addEventListener("click", function(){
+      var n=Math.min(50,Math.max(1,(+hidden.value||1)+(+b.dataset.d))); hidden.value=n; box.querySelector(".n").textContent=n; btn.classList.toggle("d-none", String(n)===orig); }); });
+  });
+  var saldo=0;
+  function atualizaFim(){
+    var v=parseFloat((document.getElementById("fim-qtd").value||"0").replace(",",".")), p=document.getElementById("fim-parcial"), enc=document.getElementById("fim-encerra"), dica=document.getElementById("fim-dica");
+    if (v>=saldo) { p.classList.add("d-none"); enc.checked=false; dica.textContent="✔ A ordem será concluída."; }
+    else { p.classList.remove("d-none"); dica.textContent="Fica salvo como PARCIAL: faltam "+(Math.round((saldo-v)*100)/100)+" para concluir. O saldo volta para a fila."; }
+  }
+  document.getElementById("mdFim").addEventListener("show.bs.modal", function(e){ var b=e.relatedTarget; saldo=parseFloat(b.dataset.saldo.replace(",","."));
+    document.getElementById("fim-id").value=b.dataset.apont; document.getElementById("fim-nome").textContent=b.dataset.nome;
+    document.getElementById("fim-resumo").textContent="Saldo da ordem: "+b.dataset.saldo; document.getElementById("fim-qtd").value=b.dataset.saldo; atualizaFim(); });
+  document.getElementById("mdFim").addEventListener("shown.bs.modal", function(){ var i=document.getElementById("fim-qtd"); i.focus(); i.select(); });
+  document.getElementById("fim-qtd").addEventListener("input", atualizaFim);
+  document.getElementById("filtro").addEventListener("input", function(){ var q=this.value.toLowerCase().trim();
+    document.querySelectorAll(".fila-linha[data-busca]").forEach(function(l){ l.style.display = (!q || l.dataset.busca.indexOf(q)>=0) ? "" : "none"; }); });
+  setTimeout(function r(){ if(!document.querySelector(".modal.show") && document.activeElement.tagName!=="INPUT") location.reload(); else setTimeout(r, 60000); }, 300000);
+})();
+</script>
+</body>
+</html>

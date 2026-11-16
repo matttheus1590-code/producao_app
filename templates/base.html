@@ -71,6 +71,11 @@
           <span>🗂️ Estações{% if current_user.role == 'PD' %} (visualização){% endif %}</span>
         </a>
         {% endif %}
+        {% if CHAO_FABRICA_ATIVO and current_user.role in ('ADMIN', 'PCP', 'GESTAO', 'LIDER') %}
+        <a class="app-nav-link {% if request.endpoint and request.endpoint.startswith('chao_') %}active{% endif %}" href="{{ url_for('chao_hub') }}">
+          <span>🛠️ Chão de Fábrica</span>
+        </a>
+        {% endif %}
         {% if current_user.role != 'PD' %}
         <a class="app-nav-link {% if request.endpoint == 'programacao_semana' %}active{% endif %}" href="{{ url_for('programacao_semana') }}">
           <span>🗓️ Programação</span>

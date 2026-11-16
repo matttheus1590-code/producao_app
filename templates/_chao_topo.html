@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chão de Fábrica · {{ rotulo }}</title>
+  <link href="{{ url_for('static', filename='vendor/bootstrap/css/bootstrap.min.css') }}" rel="stylesheet">
+  <style>
+    body { background:#eef1f5; font-size:1.05rem; -webkit-tap-highlight-color:transparent; }
+    .topo { background:#12263f; color:#fff; position:sticky; top:0; z-index:20; }
+    .topo a { color:#cfe0f5; text-decoration:none; }
+    .abas { display:flex; gap:6px; background:#0d1c30; padding:6px 12px; }
+    .aba { flex:1; text-align:center; padding:12px 8px; border-radius:10px; color:#cfe0f5; text-decoration:none; font-weight:700; font-size:1.15rem; }
+    .aba.ativa { background:#fff; color:#12263f; }
+    .sec-titulo { font-weight:700; letter-spacing:.04em; text-transform:uppercase; font-size:.85rem; color:#5b6b7f; margin:1.1rem 0 .5rem; }
+    .op { background:#fff; border-radius:14px; border:2px solid #dde3ea; padding:14px 16px; margin-bottom:12px; }
+    .op.andando { border-color:#198754; }
+    .op.pausado { border-color:#f0ad00; background:#fffaf0; }
+    .op .pv { font-size:1.35rem; font-weight:800; }
+    .op .prod { font-size:1.05rem; font-weight:600; }
+    .meta { color:#6c7a89; font-size:.9rem; }
+    .cron { font-variant-numeric:tabular-nums; font-size:2.2rem; font-weight:800; line-height:1; }
+    .btn-xl { padding:.9rem 1.2rem; font-size:1.25rem; font-weight:700; border-radius:12px; min-height:60px; }
+    .pessoas-box { display:inline-flex; align-items:center; gap:.4rem; background:#eef1f5; border-radius:12px; padding:4px 6px; }
+    .pessoas-box button { width:48px; height:48px; border-radius:10px; font-size:1.6rem; line-height:1; }
+    .pessoas-box .n { min-width:48px; text-align:center; font-size:1.5rem; font-weight:800; }
+    .fila-linha { background:#fff; border-radius:12px; padding:10px 14px; margin-bottom:8px; display:flex; align-items:center; gap:12px; border:1px solid #dde3ea; }
+    .fila-linha .info { flex:1; min-width:0; }
+    .fila-linha .prod { font-weight:600; }
+    .badge-atraso { background:#dc3545; color:#fff; }
+    .barra { height:10px; background:#e3e8ee; border-radius:6px; overflow:hidden; }
+    .barra > span { display:block; height:100%; background:#0d6efd; }
+    .avanco-txt { font-size:.95rem; font-weight:600; }
+    input.form-control-lg { font-size:1.6rem; text-align:center; }
+  </style>
+</head>
+<body>
+<div class="topo">
+  <div class="py-2 px-3 d-flex align-items-center gap-3 flex-wrap">
+    <div class="fw-bold fs-5">🛠️ Chão de Fábrica · {{ rotulo }}</div>
+    <div class="ms-auto d-flex align-items-center gap-3 small">
+      <span>👤 {{ current_user.nome }}</span>
+      <a href="{{ url_for('chao_painel', estacao=estacao) }}">📈 Painel</a>
+      <a href="{{ url_for('painel') }}">🏠 Sistema</a>
+      <a href="{{ url_for('logout') }}">⎋ Sair</a>
+    </div>
+  </div>
+  <div class="abas">
+    <a class="aba {{ 'ativa' if aba == 'agora' }}" href="{{ url_for('chao_tablet', estacao=estacao) }}">▶ Agora (iniciar / finalizar)</a>
+    <a class="aba {{ 'ativa' if aba == 'dia' }}" href="{{ url_for('chao_dia', estacao=estacao) }}">📝 Resumo do dia</a>
+  </div>
+</div>
+<div class="container-fluid px-3 pb-5" style="max-width:1100px">
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, m in msgs %}<div class="alert alert-{{ 'info' if cat == 'message' else cat }} mt-3 mb-0 py-2">{{ m }}</div>{% endfor %}
+  {% endwith %}

@@ -159,6 +159,12 @@
         <tr>
           <td>
             <div class="fw-semibold">{{ i.produto }}</div>
+            {% if i.chao %}<div class="small mt-1">
+              {% if i.chao.aberto %}<span class="badge text-bg-{{ 'warning' if i.chao.aberto.status == 'PAUSADO' else 'success' }}">{{ 'Pausada em ' if i.chao.aberto.status == 'PAUSADO' else 'Em ' }}{{ i.chao.aberto.estacao }}</span> desde {{ i.chao.aberto.desde.strftime('%d/%m %H:%M') }} · {{ i.chao.aberto.pessoas }} pessoa(s){% endif %}
+              {% for e in i.chao.progresso.etapas %}{% if e.n %}<div class="mt-1" style="max-width:260px"><span class="fw-semibold">{{ e.etapa }}</span> · {{ '%g'|format(e.produzida) }} de {{ '%g'|format(i.chao.progresso.qtd) }}{% if e.concluida %} <span class="cp-ok">✔ concluído</span>{% else %} <span class="text-muted">(saldo {{ '%g'|format(e.saldo) }})</span>{% endif %}
+                <div style="height:6px;background:#e3e8ee;border-radius:4px;overflow:hidden"><div style="height:100%;width:{{ (e.pct*100)|round|int }}%;background:{{ '#198754' if e.concluida else '#0d6efd' }}"></div></div></div>{% endif %}{% endfor %}
+              {% if current_user.role in ('ADMIN', 'PCP', 'GESTAO', 'LIDER') and i.chao.hora_homem %}<span class="text-muted{{ ' ms-2' if i.chao.aberto }}">⏱ {{ '%.1f'|format(i.chao.hora_homem) }} h-homem apontadas</span>{% endif %}
+            </div>{% endif %}
             {% if i.nf or i.envio %}<div class="small text-muted">{% if i.nf %}NF {{ i.nf }}{% endif %}{% if i.nf and i.envio %} · {% endif %}{% if i.envio %}enviado em {{ dt(i.envio) }}{% endif %}</div>{% endif %}
           </td>
           <td class="text-center">{{ ('%g' | format(i.quantidade)) if i.quantidade is not none else '—' }}</td>

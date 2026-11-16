@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Chão de Fábrica · Painel {{ rotulo }} · Gestão da Produção e Operação<script>
+(function(){ var chips=document.querySelectorAll("#chips .chip"), rows=document.querySelectorAll("#tb-avanco tbody tr[data-sit]");
+  var off={};
+  function apply(){ chips.forEach(function(c){ c.classList.toggle("off", !!off[c.dataset.sit]); });
+    rows.forEach(function(r){ r.style.display = off[r.dataset.sit] ? "none" : ""; }); }
+  chips.forEach(function(c){ c.addEventListener("click", function(){ off[c.dataset.sit]=!off[c.dataset.sit]; apply(); }); }); apply(); })();
+</script>
+{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-graph-up"></i> Chão de Fábrica · {{ rotulo }}</h4>
+    <div class="text-muted small">Tempo apontado pelos líderes, pausas e hora-homem por ordem (item do pedido) · atualizado {{ atualizado_em }}</div>
+  </div>
+  <div class="ms-auto d-flex gap-2 align-items-center">
+    <form method="get" class="m-0"><select name="dias" class="form-select form-select-sm" onchange="this.form.submit()">
+      {% for v, r in ((1, 'Hoje'), (7, 'Últimos 7 dias'), (30, 'Últimos 30 dias'), (90, 'Últimos 90 dias')) %}<option value="{{ v }}" {{ 'selected' if dias == v }}>{{ r }}</option>{% endfor %}
+    </select></form>
+    {% if pode_operar %}<a class="btn btn-sm btn-success" href="{{ url_for('chao_tablet', estacao=estacao) }}"><i class="bi bi-tablet"></i> Tela do tablet</a>{% endif %}
+  </div>
+</div>
+
+<style>
+  .av-barra{height:12px;background:#e3e8ee;border-radius:6px;overflow:hidden;min-width:120px}
+  .av-barra>span{display:block;height:100%;background:#0d6efd}
+  .av-barra.ok>span{background:#198754}
+  .chip{cursor:pointer;user-select:none}
+  .chip.off{opacity:.45}
+</style>
+<div class="row g-3 mb-3">
+  <div class="col-12 col-xl-4"><div class="card h-100"><div class="card-body py-2">
+    <div class="small text-muted">Avanço da carteira do {{ rotulo }} (abertas + concluídas no período)</div>
+    <div class="d-flex align-items-baseline gap-2"><span class="fs-3 fw-bold">{{ '%.0f'|format(kpis.carteira_pct) }}%</span>
+      <span class="text-muted">{{ '%g'|format(kpis.carteira_prod) }} de {{ '%g'|format(kpis.carteira_qtd) }} un. já produzidas</span></div>
+    <div class="av-barra mt-1"><span style="width:{{ kpis.carteira_pct|round|int }}%"></span></div>
+  </div></div></div>
+  <div class="col-6 col-xl-4"><div class="card h-100"><div class="card-body py-2">
+    <div class="small text-muted">Produção no período (boas)</div><div class="fs-3 fw-bold text-success">{{ '%g'|format(kpis.boas) }} <span class="fs-6 text-muted">un.</span></div>
+  </div></div></div>
+  <div class="col-6 col-xl-4"><div class="card h-100"><div class="card-body py-2">
+    <div class="small text-muted">Situação das ordens</div>
+    <div class="d-flex flex-wrap gap-2 mt-1">
+      <span class="badge text-bg-success fs-6">{{ cont_sit.andamento }} em andamento</span>
+      <span class="badge text-bg-warning fs-6">{{ cont_sit.pausada }} pausada(s)</span>
+      <span class="badge text-bg-primary fs-6">{{ cont_sit.parcial }} parcial(is)</span>
+      <span class="badge text-bg-light border fs-6">{{ cont_sit.fila }} na fila</span>
+      <span class="badge text-bg-secondary fs-6">{{ cont_sit.concluida }} concluída(s)</span>
+    </div>
+  </div></div></div>
+</div>
+
+<div class="card mb-4"><div class="card-body">
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <div class="fw-bold fs-5">Avanço das ordens de produção</div>
+    <div class="ms-auto d-flex flex-wrap gap-1" id="chips">
+      {% for k, r, c in (('andamento','Em andamento','success'),('pausada','Pausadas','warning'),('parcial','Parciais','primary'),('fila','Na fila','light border'),('concluida','Concluídas','secondary')) %}
+      <span class="badge text-bg-{{ c }} chip" data-sit="{{ k }}">{{ r }} ({{ cont_sit[k] }})</span>{% endfor %}
+    </div>
+  </div>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0" id="tb-avanco">
+    <thead class="table-light text-nowrap"><tr><th>Situação</th><th>Pedido</th><th>Produto</th><th class="text-end">Pedida</th><th class="text-end">Produzida</th><th class="text-end">Saldo</th>
+      <th style="min-width:170px">Avanço</th><th class="text-end">H-homem</th><th>Falta (ritmo real)</th><th>Liberação prev.</th></tr></thead>
+    <tbody>
+    {% for x in avanco %}{% set it = x.item %}{% set et = x.et %}
+      <tr data-sit="{{ x.sit }}">
+        <td>{% if x.sit == 'andamento' %}<span class="badge text-bg-success">Em andamento</span>
+            {% elif x.sit == 'pausada' %}<span class="badge text-bg-warning">Pausada</span>
+            {% elif x.sit == 'parcial' %}<span class="badge text-bg-primary">Parcial</span>
+            {% elif x.sit == 'concluida' %}<span class="badge text-bg-secondary">Concluída</span>
+            {% else %}<span class="badge text-bg-light border">Na fila</span>{% endif %}</td>
+        <td><a class="fw-semibold text-decoration-none" href="{{ url_for('consulta_pedido', pedido_venda=it.pedido.pedido_venda) }}">{{ it.pedido.pedido_venda }}</a><div class="small text-muted">{{ it.pedido.cliente }}</div></td>
+        <td>{{ it.descricao_produto }}</td>
+        <td class="text-end">{{ '%g'|format(x.pr.qtd) }}</td>
+        <td class="text-end fw-semibold">{{ '%g'|format(et.produzida) }}</td>
+        <td class="text-end">{{ '%g'|format(et.saldo) if not et.concluida else '—' }}</td>
+        <td><div class="av-barra {{ 'ok' if et.concluida }}"><span style="width:{{ (et.pct*100)|round|int }}%"></span></div><div class="small text-muted">{{ '%.0f'|format(et.pct*100) }}% · {{ et.etapa }}</div></td>
+        <td class="text-end">{{ '%.1f'|format(et.hh) if et.hh else '—' }}</td>
+        <td class="small">{{ x.restante or '—' }}</td>
+        <td class="small {{ 'text-danger fw-semibold' if it.liberacao_prevista and it.liberacao_prevista < hoje and x.sit != 'concluida' }}">{{ it.liberacao_prevista.strftime('%d/%m/%Y') if it.liberacao_prevista else '—' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="10" class="text-center text-muted py-3">Sem ordens no período.</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+  <div class="small text-muted mt-2">Avanço = unidades boas apontadas ÷ quantidade do item. "Falta" = saldo × ritmo real já medido nesta OP (aparece depois do 1º apontamento com quantidade).</div>
+</div></div>
+
+<div class="fw-bold fs-5 mb-2">Apontamentos de tempo e hora-homem</div>
+<div class="row g-3 mb-3">
+  {% for t, v, s, cor in (
+     ('Apontamentos finalizados', kpis.finalizadas, 'no período', 'primary'),
+     ('Horas-homem', '%.1f'|format(kpis.hh), ('inclui ' ~ ('%.1f'|format(kpis.hh_extra)) ~ ' h extras (' ~ ('%.0f'|format(kpis.pct_extra)) ~ '%)'), 'dark'),
+     ('Custo de mão de obra', 'R$ ' ~ ('{:,.2f}'.format(kpis.custo)).replace(',', 'X').replace('.', ',').replace('X', '.'), 'a R$ ' ~ ('%.2f'|format(valor_hh)).replace('.', ',') ~ ' por hora-homem', 'dark'),
+     ('Tempo médio por ordem', kpis.tempo_medio, '', 'dark'),
+     ('Tempo em pausa', '%.0f'|format(kpis.pct_pausa) ~ '%', 'do tempo total apontado', 'warning')) %}
+  <div class="col-6 col-md-4 col-xl-2"><div class="card h-100"><div class="card-body py-2">
+    <div class="small text-muted">{{ t }}</div><div class="fs-4 fw-bold text-{{ cor }}">{{ v }}</div><div class="small text-muted">{{ s }}</div>
+  </div></div></div>
+  {% endfor %}
+</div>
+
+{% if por_dia %}
+<div class="card mb-3"><div class="card-body py-2">
+  <div class="fw-semibold mb-1">Hora-homem por dia (ordens finalizadas)</div>
+  <div class="d-flex flex-wrap gap-3 small">
+    {% for d, v in por_dia %}<span><strong>{{ d.strftime('%d/%m') }}</strong> {{ '%.1f'|format(v) }} h</span>{% endfor %}
+  </div>
+</div></div>
+{% endif %}
+
+<div class="table-responsive">
+<table class="table table-sm table-hover align-middle bg-white">
+  <thead class="table-light"><tr>
+    <th>Situação</th><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Início</th><th>Fim</th>
+    <th class="text-end">Tempo</th><th class="text-end">Pausas</th><th class="text-end">Pessoas</th><th class="text-end">H-homem</th>
+    <th class="text-end">Qtd</th><th class="text-end">Min/un</th><th class="text-end">Custo</th></tr></thead>
+  <tbody>
+  {% for l in linhas %}{% set a = l.a %}
+    <tr>
+      <td>{% if a.status == 'EM_ANDAMENTO' %}<span class="badge text-bg-success">Em andamento</span>
+          {% elif a.status == 'PAUSADO' %}<span class="badge text-bg-warning">Pausada</span>
+          {% else %}<span class="badge text-bg-secondary">Finalizada</span>{% endif %}</td>
+      <td><a class="fw-semibold text-decoration-none" href="{{ url_for('consulta_pedido', pedido_venda=a.item.pedido.pedido_venda) }}">{{ a.item.pedido.pedido_venda }}</a></td>
+      <td>{{ a.item.pedido.cliente }}</td>
+      <td>{{ a.item.descricao_produto }}</td>
+      {% if a.origem == 'RESUMO' %}<td class="text-nowrap" colspan="2"><span class="badge text-bg-light border">resumo do dia</span> {{ l.fim.strftime('%d/%m') }}</td>
+      {% else %}<td class="text-nowrap">{{ l.inicio.strftime('%d/%m %H:%M') }}</td>
+      <td class="text-nowrap">{{ l.fim.strftime('%d/%m %H:%M') if l.fim else '—' }}</td>{% endif %}
+      <td class="text-end">{{ l.liquido }}</td>
+      <td class="text-end">{{ l.pausa }}</td>
+      <td class="text-end">{{ l.r.pessoas_atual }}</td>
+      <td class="text-end fw-semibold">{{ '%.2f'|format(l.r.hora_homem) }}{% if l.r.hora_homem_extra > 0.01 %}<div class="small fw-normal text-danger">{{ '%.2f'|format(l.r.hora_homem_extra) }} extra</div>{% endif %}</td>
+      <td class="text-end">{{ '%g'|format(a.quantidade_produzida) if a.quantidade_produzida is not none else '—' }}</td>
+      <td class="text-end">{{ '%.1f'|format(l.min_por_un) if l.min_por_un is not none else '—' }}</td>
+      <td class="text-end">R$ {{ ('%.2f'|format(l.custo)).replace('.', ',') }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="13" class="text-center text-muted py-4">Nenhum apontamento no período. Quando o líder iniciar uma ordem no tablet, ela aparece aqui.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<script>
+(function(){ var chips=document.querySelectorAll("#chips .chip"), rows=document.querySelectorAll("#tb-avanco tbody tr[data-sit]");
+  var off={};
+  function apply(){ chips.forEach(function(c){ c.classList.toggle("off", !!off[c.dataset.sit]); });
+    rows.forEach(function(r){ r.style.display = off[r.dataset.sit] ? "none" : ""; }); }
+  chips.forEach(function(c){ c.addEventListener("click", function(){ off[c.dataset.sit]=!off[c.dataset.sit]; apply(); }); }); apply(); })();
+</script>
+{% endblock %}
