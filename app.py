@@ -14720,12 +14720,84 @@ def _expedidos_recentes_painel(hoje=None):
     regs = _logistica_regs_por_base() if pedidos else {}
     dias = {"hoje": [], "ontem": []}
     nao_confirmados = []
-    liberacao_pcp = _liberacao_pcp_por_pedido_venda([go.pedido_venda for go in pedidos])
+
+    # ---- PARTES do pedido (Bruno, 17/11/2026: "esse pedido é 1033/2"): a Operação pode ter a linha pelo nº base
+    # ("1033") enquanto a Produção/Logística trabalham com a parte ("1033/2"). O aviso mostra a PARTE que de fato
+    # saiu, com a liberação do PCP e o valor dela. ----
+    conhecidos = {_normalizar_pedido_venda(x) for (x,) in db.session.query(PedidoOperacao.pedido_venda)
+                  .filter(PedidoOperacao.pedido_venda.like("%/%")).all() if x}
+    bases = {logistica_api.base_do_pedido(go.pedido_venda) for go in pedidos if "/" not in (go.pedido_venda or "")}
+    partes_producao = {}  # base -> [Pedido da Produção com sufixo]
+    base_exata_producao = set()
+    if bases:
+        col = _pedido_venda_normalizado_sql(Pedido.pedido_venda)
+        for pr in Pedido.query.filter(or_(col.in_(bases), *[col.like(b + "/%") for b in bases])).all():
+            n = _normalizar_pedido_venda(pr.pedido_venda)
+            b = logistica_api.base_do_pedido(n)
+            if "/" in n:
+                partes_producao.setdefault(b, []).append(pr)
+            else:
+                base_exata_producao.add(b)
+    sub_por_go = {}  # go.id -> [(rotulo, remessa dict)]
+    for go in pedidos:
+        if not configurado or go.go_baixa_manual_em or "/" in (go.pedido_venda or ""):
+            continue
+        reg = regs.get(logistica_api.base_do_pedido(go.pedido_venda))
+        if reg is None:
+            continue
+        try:
+            payload = json.loads(reg.payload_json)
+        except (ValueError, TypeError):
+            continue
+        achadas = []
+        for r in logistica_api._remessas(payload):
+            rid = logistica_api.normalizar_pedido(r.get("id"))
+            if "/" in rid and logistica_api._data(r.get("data_expedicao")) in (hoje, ontem) and rid not in conhecidos:
+                achadas.append((rid, r))
+        if achadas:
+            sub_por_go[go.id] = achadas
+    rotulos = {r for lst in sub_por_go.values() for r, _ in lst}
+    rotulos |= {_normalizar_pedido_venda(pr.pedido_venda) for lst in partes_producao.values() for pr in lst}
+    pedido_por_rotulo = {}
+    if rotulos:
+        col = _pedido_venda_normalizado_sql(Pedido.pedido_venda)
+        for pr in Pedido.query.filter(col.in_(rotulos)).all():
+            pedido_por_rotulo[_normalizar_pedido_venda(pr.pedido_venda)] = pr
+    liberacao_pcp = _liberacao_pcp_por_pedido_venda([go.pedido_venda for go in pedidos] + list(rotulos))
+
     for go in pedidos:
         chave_pv = _normalizar_pedido_venda(go.pedido_venda)
+        base_go = logistica_api.base_do_pedido(go.pedido_venda)
+        # (a) a Logística tem remessa(s) com sufixo expedida(s) hoje/ontem: 1 linha por parte
+        if go.id in sub_por_go:
+            for rid, r in sub_por_go[go.id]:
+                exp_r = logistica_api._data(r.get("data_expedicao"))
+                pr = pedido_por_rotulo.get(rid)
+                nfs_r = ", ".join(str(x).strip() for x in (r.get("notas_fiscais") or []) if str(x).strip())[:30]
+                dias["hoje" if exp_r == hoje else "ontem"].append({
+                    "id": go.id,
+                    "liberacao_efetiva": (liberacao_pcp.get(rid) or {}).get("efetiva"),
+                    "expedido_em": exp_r,
+                    "entregue_em": logistica_api._data(r.get("data_entrega_cliente")),
+                    "pedido_venda": rid,
+                    "cliente": go.cliente,
+                    "transportadora": logistica_api._texto(r.get("transportadora")) or (go.go_transportadora.nome if go.go_transportadora else None),
+                    "frete_tipo": _frete_tipo(go.frete),
+                    "numero_nf": nfs_r or None,
+                    "valor": (pr.valor_total if pr is not None and pr.valor_total else None) or go.go_valor_pedido_operacao or 0.0,
+                    "prevista_entrega": logistica_api._data(r.get("data_prevista_entrega")),
+                    "via_logistica": True,
+                })
+            continue
+        # (b) a Produção só tem UMA parte desse nº ("1033/2", sem "1033" puro): é ela que está sendo expedida
+        rotulo = chave_pv
+        pr_parte = None
+        if "/" not in chave_pv and base_go not in base_exata_producao and len(partes_producao.get(base_go, [])) == 1:
+            pr_parte = partes_producao[base_go][0]
+            rotulo = _normalizar_pedido_venda(pr_parte.pedido_venda)
         exp_data, ent_data, via_log = go.go_data_pedido_expedido, go.go_data_entregue_cliente, False
         if configurado and not go.go_baixa_manual_em:
-            reg = regs.get(logistica_api.base_do_pedido(go.pedido_venda))
+            reg = regs.get(base_go)
             m = None
             if reg is not None:
                 try:
@@ -14736,24 +14808,27 @@ def _expedidos_recentes_painel(hoje=None):
             if emb_manual:
                 pass  # embarque lançado à mão (Logística ainda não registrou): vale a data do site
             elif m is None or m.get("go_data_pedido_expedido") not in (hoje, ontem):
-                nao_confirmados.append(chave_pv or go.pedido_venda or str(go.id))
+                nao_confirmados.append(rotulo or go.pedido_venda or str(go.id))
                 continue
             if not emb_manual:
                 exp_data = m.get("go_data_pedido_expedido")
                 ent_data = m.get("go_data_entregue_cliente")
                 via_log = True
-        efetiva = (liberacao_pcp.get(chave_pv) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
+        efetiva = (liberacao_pcp.get(rotulo) or liberacao_pcp.get(chave_pv) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
+        valor = go.go_valor_pedido_operacao or 0.0
+        if pr_parte is not None and pr_parte.valor_total:
+            valor = pr_parte.valor_total
         dias["hoje" if exp_data == hoje else "ontem"].append({
             "id": go.id,
             "liberacao_efetiva": efetiva,
             "expedido_em": exp_data,
             "entregue_em": ent_data,
-            "pedido_venda": chave_pv or go.pedido_venda or str(go.id),
+            "pedido_venda": rotulo or go.pedido_venda or str(go.id),
             "cliente": go.cliente,
             "transportadora": go.go_transportadora.nome if go.go_transportadora else None,
             "frete_tipo": _frete_tipo(go.frete),
             "numero_nf": go.go_numero_nf,
-            "valor": go.go_valor_pedido_operacao or 0.0,
+            "valor": valor,
             "prevista_entrega": go.go_data_prevista_entrega,
             "via_logistica": via_log,
         })
