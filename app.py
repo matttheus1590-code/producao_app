@@ -23931,6 +23931,58 @@ def register_routes(app):
         session["ultima_visita_painel"] = datetime.utcnow().isoformat()
         return render_template("painel.html", agora_painel=_agora_brt(), **contexto)
 
+    @app.route("/painel/diag-expedicao")
+    @requer_role("ADMIN")
+    def painel_diag_expedicao():
+        """Diagnóstico (só ADMIN, só leitura) do aviso "Material expedido" do Painel: mostra, pro nº base
+        informado (?pv=1033), o que a Operação, a Produção e a Logística guardam — pra achar por que um
+        pedido aparece como "1033" quando o que saiu foi "1033/2"."""
+        pv = (request.args.get("pv") or "").strip()
+        base = logistica_api.base_do_pedido(pv)
+        L = [f"DIAGNÓSTICO EXPEDIÇÃO · base '{base}' · hoje (BRT) {_hoje_brt():%d/%m/%Y}", ""]
+        if not base:
+            return Response("Use /painel/diag-expedicao?pv=1033", mimetype="text/plain")
+        L.append("== OPERAÇÃO (PedidoOperacao) ==")
+        for go in PedidoOperacao.query.all():
+            if logistica_api.base_do_pedido(go.pedido_venda) == base:
+                L.append(f"  PV '{go.pedido_venda}' | cliente {go.cliente} | valor {go.go_valor_pedido_operacao} | "
+                         f"expedido {go.go_data_pedido_expedido} | embarque manual {go.go_embarque_manual_em} | "
+                         f"baixa manual {go.go_baixa_manual_em} | NF {go.go_numero_nf} | lib. PCP {go.go_data_efetiva_liberacao_pcp}")
+        L.append("")
+        L.append("== PRODUÇÃO (Pedido / itens) ==")
+        col = _pedido_venda_normalizado_sql(Pedido.pedido_venda)
+        for pr in Pedido.query.filter(or_(col == base, col.like(base + "/%"))).all():
+            L.append(f"  PV '{pr.pedido_venda}' | cliente {pr.cliente} | valor_total {pr.valor_total} | itens {len(pr.itens)}")
+            for it in pr.itens[:12]:
+                L.append(f"      - {(it.descricao_produto or '')[:40]} | status {it.status_producao} | "
+                         f"lib. prevista {getattr(it, 'liberacao_prevista', None)} | lib. real {it.liberacao_real}")
+        L.append("")
+        L.append("== LOGÍSTICA (LogisticaSync) ==")
+        reg = LogisticaSync.query.filter_by(pedido_venda_norm=base, cancelado=False).first()
+        if reg is None:
+            L.append("  (sem registro)")
+        else:
+            try:
+                payload = json.loads(reg.payload_json)
+            except (ValueError, TypeError):
+                payload = {}
+            L.append(f"  pedido '{reg.pedido_venda_logistica}' | sincronizado {reg.sincronizado_em} | "
+                     f"expedição(resumo) {payload.get('data_expedicao')} | entrega(resumo) {payload.get('data_entrega_cliente')}")
+            rems = logistica_api._remessas(payload)
+            if not rems:
+                L.append("  remessas: (nenhuma listada)")
+            for r in rems:
+                L.append(f"  remessa id '{r.get('id')}' | expedição {r.get('data_expedicao')} | entrega {r.get('data_entrega_cliente')} | "
+                         f"transp. {r.get('transportadora')} | NFs {r.get('notas_fiscais')}")
+        L.append("")
+        L.append("== O QUE O PAINEL MOSTRA AGORA ==")
+        r = _expedidos_recentes_painel()
+        for i in r["hoje"] + r["ontem"]:
+            if logistica_api.base_do_pedido(i["pedido_venda"]) == base:
+                L.append(f"  {i['pedido_venda']} | expedido {i['expedido_em']} | lib. efetiva {i['liberacao_efetiva']} | valor {i['valor']}")
+        L.append(f"  não confirmados pela Logística: {r['nao_confirmados']}")
+        return Response("\n".join(L), mimetype="text/plain; charset=utf-8")
+
     @app.route("/painel/revisao-prazo/<int:pedido_id>/solicitar", methods=["POST"])
     @requer_role("ADMIN", "PCP")
     def painel_revisao_prazo_solicitar(pedido_id):
