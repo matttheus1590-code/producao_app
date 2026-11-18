@@ -21432,7 +21432,75 @@ def _gerar_pdf_planejamento_mensal_pcp(blocos, filtros, modelo="completo", inclu
                 estilo_tabela.append(("LINEBELOW", (0, idx_linha), (-1, idx_linha), 0.6, colors.HexColor("#8fa8cc")))
             tabela_semana.setStyle(TableStyle(estilo_tabela))
 
-            elems.append(cabecalho_semana)
+            # ---- TOP 10 PEDIDOS DA SEMANA (pedido do Bruno, 18/11/2026: "para cada agrupamento de semana,
+            # quero que coloque os top 10 pedido de cada semana") — ranking por valor total do pedido NA
+            # semana (soma dos itens que caem nela, mesma base do cabeçalho da semana, nunca diverge);
+            # vale pros dois modelos (completo e compacto) e vem logo abaixo do cabeçalho da semana. ----
+            ranking_ped = []
+            for pedido_id_t, itens_t in grupos_pedido:
+                prim_t = itens_t[0]
+                total_t = sum(l.venda_total or 0 for l in itens_t)
+                n_lib_t = sum(1 for l in itens_t if l.liberacao_real)
+                if n_lib_t == len(itens_t):
+                    reais_t = sorted({l.liberacao_real for l in itens_t})
+                    lib_txt_t = _formatar_data_br(reais_t[-1])
+                elif n_lib_t:
+                    lib_txt_t = f"{n_lib_t}/{len(itens_t)} liberados"
+                else:
+                    lib_txt_t = "a liberar"
+                ranking_ped.append((total_t, prim_t, lib_txt_t))
+            ranking_ped.sort(key=lambda r: (-r[0], str(r[1].pedido_venda or "")))
+            top_ped = ranking_ped[:10]
+            st_top_h = ParagraphStyle("top10_h", parent=estilos["Normal"], fontSize=8.6, leading=10, fontName="Helvetica-Bold", textColor=COR_CABECALHO_TEXTO)
+            dados_top_ped = [[Paragraph(c, estilo_cabecalho_tabela) for c in
+                              ("#", "Pedido", "Cliente", "Frete", "UF / Região", "Prazo cliente", "Lib. efetiva", "Valor", "%")]]
+            for pos, (total_t, prim_t, lib_txt_t) in enumerate(top_ped, start=1):
+                pct_t = (total_t / faturamento_semana * 100) if faturamento_semana else 0
+                dados_top_ped.append([
+                    Paragraph(str(pos), estilo_celula),
+                    Paragraph(f"<b>{prim_t.pedido_venda or '—'}</b>", estilo_celula_pv),
+                    Paragraph(_quebravel(prim_t.cliente) or "—", estilo_celula),
+                    Paragraph(prim_t.frete or "—", estilo_celula),
+                    Paragraph(f"{prim_t.estado or '—'} / {REGIAO_POR_UF.get(prim_t.estado, '—')}", estilo_celula),
+                    Paragraph(_formatar_data_br(prim_t.data_cliente) or "—", estilo_celula),
+                    Paragraph(lib_txt_t, estilo_celula),
+                    Paragraph(f"<b>{_fmt_moeda(total_t)}</b>", estilo_celula),
+                    Paragraph(f"{pct_t:.0f}%", estilo_celula),
+                ])
+            soma_top = sum(r[0] for r in top_ped)
+            pct_top = (soma_top / faturamento_semana * 100) if faturamento_semana else 0
+            rotulo_top = "Top 10 pedidos da semana" if len(ranking_ped) > 10 else f"Pedidos da semana (ranking por valor)"
+            dados_top_ped.append([
+                Paragraph(f"<b>{'Top 10' if len(ranking_ped) > 10 else 'Total'}</b>", estilo_celula), "", "", "", "", "", "",
+                Paragraph(f"<b>{_fmt_moeda(soma_top)}</b>", estilo_celula),
+                Paragraph(f"<b>{pct_top:.0f}%</b>", estilo_celula),
+            ])
+            larg_top_ped = [largura_disponivel * f for f in (0.05, 0.10, 0.27, 0.07, 0.13, 0.10, 0.10, 0.12, 0.06)]
+            tabela_top_ped = Table(dados_top_ped, colWidths=larg_top_ped, repeatRows=1)
+            it_top = len(dados_top_ped) - 1
+            tabela_top_ped.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COR_CABECALHO_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), COR_CABECALHO_TEXTO),
+                ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#8fa8cc")),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#ced4da")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (7, 1), (-1, -1), "RIGHT"),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.6),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("BACKGROUND", (0, it_top), (-1, it_top), colors.HexColor("#eef3fb")),
+                ("SPAN", (0, it_top), (6, it_top)),
+                ("BACKGROUND", (7, 1), (7, it_top - 1), colors.HexColor("#f4f8ff")),
+            ]))
+            elems.append(KeepTogether([
+                cabecalho_semana,
+                Spacer(1, 2 * mm),
+                Paragraph(rotulo_top, st_top_h),
+                Spacer(1, 1 * mm),
+                tabela_top_ped,
+            ]))
+            elems.append(Spacer(1, 3 * mm))
             elems.append(tabela_semana)
             elems.append(Spacer(1, 6 * mm))
 
