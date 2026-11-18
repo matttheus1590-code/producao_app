@@ -20558,8 +20558,9 @@ def _parse_semanas_multimes(valores):
     return sorted(out)
 
 
-def _pdf_painel_semanal_multimes(args, escolhidas):
-    """PDF do Painel semanal com semanas de MESES diferentes (1 folha por semana, em ordem de calendário)."""
+def _pdf_painel_semanal_multimes(args, escolhidas, juntar=False):
+    """PDF do Painel semanal com semanas de MESES diferentes (1 folha por semana, em ordem de calendário).
+    `juntar=True` (Bruno, 18/11/2026): todas as semanas marcadas numa ÚNICA folha, cada semana com a sua cor."""
     import pdf_semana_visual
     agora = _agora_brt()
     por_mes = {}
@@ -20573,12 +20574,26 @@ def _pdf_painel_semanal_multimes(args, escolhidas):
         query, filtros = _filtrar_pedidos(a)
         filtros_base = filtros_base or filtros
         linhas = [l for l in _linhas_listagem_geral(query.all(), a) if _numero_semana_linha(l) in nums]
-        semanas += _dados_painel_semanal_visual(linhas, (ano, mes), nums, agora.date())
+        novas = _dados_painel_semanal_visual(linhas, (ano, mes), nums, agora.date())
+        for sm in novas:
+            sm["_mes"] = mes
+        semanas += novas
         for n in sorted(nums):
             ini, fim = _intervalo_calendario_semana_pcp((ano, mes), f"SEMANA {n:02d}")
             nomes.append(f"SEMANA {n:02d}/{_MESES_PT[mes - 1][:3].capitalize()} ({ini.strftime('%d/%m')} a {fim.strftime('%d/%m')})")
     filtros = dict(filtros_base or {})
     filtros["semanas_txt"] = "Somente " + " + ".join(nomes)
+    if juntar:
+        meses = sorted(por_mes)
+        for k, sem in enumerate(semanas):
+            sem["cor"] = k % 5 + 1
+            sem["rotulo_mes"] = _MESES_PT[sem["_mes"] - 1][:3].capitalize() + f"/{sem['ano']}" if sem.get("_mes") else ""
+        titulo_mes = " + ".join(f"{_MESES_PT[m - 1].capitalize()}/{a}" for a, m in meses)
+        pdf = pdf_semana_visual.gerar_mes(semanas, agora, _ESPELHO_LOGO_PATH, _formatar_moeda_br, titulo_mes=titulo_mes,
+                                          filtros_txt=_texto_filtros_listagem_geral_semanal(filtros), hoje=agora.date())
+        resposta = Response(pdf, mimetype="application/pdf")
+        resposta.headers["Content-Disposition"] = f"inline; filename=painel_semanal_1folha_{agora.strftime('%d%m_%H%M')}.pdf"
+        return resposta
     pdf = pdf_semana_visual.gerar(semanas, agora, _ESPELHO_LOGO_PATH, _formatar_moeda_br,
                                   filtros_txt=_texto_filtros_listagem_geral_semanal(filtros), hoje=agora.date())
     resposta = Response(pdf, mimetype="application/pdf")
@@ -25523,12 +25538,25 @@ def register_routes(app):
         args.pop("sem_planejamento_semanal", None)
         escolhidas = _parse_semanas_multimes(request.args.getlist("sem"))
         if escolhidas:
-            return _pdf_painel_semanal_multimes(args, escolhidas)
+            return _pdf_painel_semanal_multimes(args, escolhidas, juntar=request.args.get("juntar") == "1")
         if not args.get("planejamento_mensal", "").strip():
             args["planejamento_mensal"] = date.today().strftime("%Y-%m")
         query, filtros = _filtrar_pedidos(args)
         linhas = _linhas_listagem_geral(query.all(), args)
         mes_ano = _parse_mes_ano_form(filtros.get("planejamento_mensal"), None) or (date.today().year, date.today().month)
+        if request.args.get("modo") == "mes":
+            # MÊS INTEIRO EM UMA FOLHA (Bruno, 18/11/2026): todas as semanas do mês, 1 linha por pedido, 1 cor por semana.
+            agora = _agora_brt()
+            semanas = _dados_painel_semanal_visual(linhas, mes_ano, set(range(1, numero_semanas_pcp(*mes_ano) + 1)), agora.date())
+            filtros = dict(filtros)
+            filtros["semanas_txt"] = ""
+            pdf = pdf_semana_visual.gerar_mes(semanas, agora, _ESPELHO_LOGO_PATH, _formatar_moeda_br,
+                                              titulo_mes=f"{_MESES_PT[mes_ano[1] - 1].capitalize()}/{mes_ano[0]}",
+                                              filtros_txt=_texto_filtros_listagem_geral_semanal(filtros), hoje=agora.date())
+            resposta = Response(pdf, mimetype="application/pdf")
+            resposta.headers["Content-Disposition"] = (
+                f"inline; filename=painel_semanal_mes_{mes_ano[0]}-{mes_ano[1]:02d}_{agora.strftime('%H%M')}.pdf")
+            return resposta
         semanas_sel = _semanas_selecionadas(request.args.getlist("semana"), mes_ano)
         if semanas_sel is not None:
             linhas = [l for l in linhas if _numero_semana_linha(l) in semanas_sel]

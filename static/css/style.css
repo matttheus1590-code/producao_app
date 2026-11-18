@@ -4488,3 +4488,25 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 .op-tv .kp-selo { font-size: .9rem; } .op-tv .kp-linha { font-size: 1rem; } .op-tv .kp-coluna-n { font-size: 2.6rem; }
 .op-tv .kp-coluna-titulo { font-size: 1.3rem; } .op-tv .kp-coluna-valor { font-size: .95rem; }
 @media (min-width: 1200px) { .kp-sete .op-kpis { grid-template-columns: repeat(7, minmax(0, 1fr)); } .op-tv.op-tudo .kp-sete .op-kpis, .op-tv .kp-sete .op-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+
+/* ===== Painel semanal · MÊS INTEIRO (Bruno, 18/11/2026): 1 cor por semana ===== */
+.pw-tab-mes { border-style: dashed; }
+.pw-tab-mes.ativa { border-style: solid; }
+.pw-w1 { --pwc: #2f6fd6; --pwb: #e4edfb; }
+.pw-w2 { --pwc: #e08a00; --pwb: #fdf0da; }
+.pw-w3 { --pwc: #7a4fc2; --pwb: #efe8fa; }
+.pw-w4 { --pwc: #0f9488; --pwb: #dcf3f0; }
+.pw-w5 { --pwc: #cf3d78; --pwb: #fbe4ed; }
+.pw-w0 { --pwc: #6c757d; --pwb: #eceef0; }
+.pw-tabela tbody tr.pw-linha.pw-m > td { background: var(--pwb); }
+.pw-tabela tbody tr.pw-linha.pw-m > td.pw-semcol { background: var(--pwc); color: #fff; font-weight: 800; text-align: center; width: 2.2rem; border-bottom-color: rgba(255,255,255,.55); }
+.pw-tabela tbody tr.pw-linha.pw-m:hover > td { filter: brightness(.95); }
+.pw-tabela tbody tr.pw-linha.pw-m.pw-lib > td.pw-efetiva { color: #0f5a2d; font-weight: 700; }
+.pw-chip.pw-chip-sem { border-color: var(--pwc); background: var(--pwb); color: #1b2a4a; }
+.pw-chip.pw-chip-sem.ativo { background: var(--pwc); color: #fff; border-color: var(--pwc); }
+.pw-chip-lib { font-size: .72rem; opacity: .85; margin-left: .15rem; }
+.pw-tabela-mes { font-size: .8rem; }
+.pw-tabela-mes tbody td, .pw-tabela-mes thead th { padding-left: .32rem !important; padding-right: .32rem !important; }
+.pw-tabela-mes .pw-pill { min-width: 5.4rem; }
+.pw-tabela-mes tbody td.pw-semcol { padding-left: .1rem !important; padding-right: .1rem !important; }
