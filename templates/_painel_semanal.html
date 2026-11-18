@@ -202,7 +202,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
       {% for sem in pw.semanas if sem.pedidos %}
       {% set rs = sem.resumo %}
       <button type="button" class="pw-chip pw-chip-sem pw-w{{ sem.num or 0 }}" data-filtro-semana="{{ sem.num or 0 }}" title="Filtrar só {{ sem.titulo }}">
-        <b>{{ ('SEM ' ~ '%02d'|format(sem.num)) if sem.num else 'SEM SEMANA' }}</b> {{ rs.n }} ped. · {{ pw_brl(rs.valor) }} <span class="pw-chip-lib">lib. {{ rs.pct_valor|round|int }}%</span></button>
+        <b>{{ ('SEM ' ~ '%02d'|format(sem.num)) if sem.num else 'SEM SEMANA' }}</b> · {{ rs.n }} ped. · <span class="pw-chip-valor">{{ pw_brl(rs.valor) }}</span> <span class="pw-chip-lib">lib. {{ rs.pct_valor|round|int }}%</span></button>
       {% endfor %}
     </div>
 
@@ -224,6 +224,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
             <th data-sort="num" class="text-center">Sem.</th>
             <th data-sort="txt">Pedido</th>
             <th data-sort="txt">Cliente</th>
+            <th data-sort="num" class="text-end pw-th-valor">Valor total</th>
             <th data-sort="txt" class="text-center">Frete</th>
             <th data-sort="txt" class="text-center">Região / UF</th>
             <th data-sort="txt" class="text-center">Inclusão</th>
@@ -232,7 +233,6 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
             <th data-sort="txt" class="text-center">Lib. efetiva</th>
             <th data-sort="num" class="text-center">Folga</th>
             <th data-sort="txt" class="text-center">Situação</th>
-            <th data-sort="num" class="text-end">Valor total</th>
           </tr>
         </thead>
         <tbody>
@@ -245,6 +245,7 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
             <td class="pw-semcol" data-v="{{ sem.num or 0 }}" title="{{ sem.titulo }}">{{ sem.num or '—' }}</td>
             <td class="pw-ped" data-v="{{ p.pedido_venda }}">{{ p.pedido_venda }}</td>
             <td class="pw-cli" data-v="{{ p.cliente }}" title="{{ p.cliente }}">{{ p.cliente }}</td>
+            <td class="text-end text-nowrap pw-valor" data-v="{{ p.valor }}">{{ pw_brl(p.valor) }}{% if p.parcial_semana %}<span title="Pedido com itens também em outras semanas: valor = parte planejada nesta semana">*</span>{% endif %}</td>
             <td class="text-center {{ 'pw-cif' if fr == 'CIF' else ('pw-fob' if fr == 'FOB' else '') }}" data-v="{{ fr }}" title="{{ p.frete or '' }}">{{ fr if fr in ('CIF', 'FOB') else (fr[:3] ~ '.' if fr|length > 4 else (fr or '—')) }}</td>
             <td class="text-center text-nowrap" data-v="{{ p.regiao }}">{{ p.regiao }}{% if p.uf and p.uf != '—' %} · {{ p.uf }}{% endif %}</td>
             <td class="text-center text-nowrap" data-v="{{ p.data_inclusao.isoformat() if p.data_inclusao else '' }}">{{ pw_data(p.data_inclusao, sem.ano) }}</td>
@@ -253,15 +254,14 @@ R$ {{ "{:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".") 
             <td class="text-center text-nowrap {{ 'pw-efetiva' if lib else '' }}" data-v="{{ p.lib_real.isoformat() if (lib and p.lib_real) else '' }}">{{ pw_data(p.lib_real, sem.ano) if lib else '—' }}</td>
             <td class="text-center text-nowrap pw-folga {{ '' if f is none else ('pw-folga-neg' if f < 0 else ('pw-folga-med' if f <= 3 else 'pw-folga-ok')) }}" data-v="{{ f if f is not none else '' }}">{% if f is none %}—{% elif f < 0 %}{{ f }}d{% else %}+{{ f }}d{% endif %}</td>
             <td class="text-center" data-v="{{ 'a' if lib else 'b' }}"><span class="pw-pill {{ 'pw-pill-lib' if lib else 'pw-pill-pend' }}">{{ 'LIBERADO' if lib else 'A LIBERAR' }}</span></td>
-            <td class="text-end text-nowrap pw-valor" data-v="{{ p.valor }}">{{ pw_brl(p.valor) }}{% if p.parcial_semana %}<span title="Pedido com itens também em outras semanas: valor = parte planejada nesta semana">*</span>{% endif %}</td>
           </tr>
           {% endfor %}{% endfor %}
         </tbody>
         <tfoot>
           <tr class="pw-total">
-            <td colspan="3"><b>TOTAL</b> <span class="pw-total-n"></span></td>
-            <td colspan="8" class="text-center pw-total-lib"></td>
+            <td colspan="3"><b>TOTAL DO MÊS</b> <span class="pw-total-n"></span></td>
             <td class="text-end pw-total-valor"></td>
+            <td colspan="8" class="text-center pw-total-lib"></td>
           </tr>
         </tfoot>
       </table>

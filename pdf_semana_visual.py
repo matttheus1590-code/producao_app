@@ -427,46 +427,72 @@ def gerar_mes(semanas, agora, logo_path, moeda, titulo_mes="", filtros_txt="", h
                              ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     flow_topo += [cab, Spacer(1, 1 * mm), HRFlowable(width="100%", thickness=1.3, color=colors.HexColor(NAVY)), Spacer(1, 1.4 * mm)]
 
+    # ---------------- números principais do mês (grandes) ----------------
+    ticket = (valor / n) if n else 0
+    def kpi(valor_txt, rot, cor, sub_txt="", tam=16):
+        return [
+            P(f'<font color="{cor}"><b>{valor_txt}</b></font>', ParagraphStyle("kv", parent=base, fontSize=tam, leading=tam + 2, alignment=1)),
+            P(f"<b>{rot}</b>", ParagraphStyle("kr", parent=base, fontSize=7, leading=8.2, alignment=1, textColor=colors.HexColor("#33405a"))),
+            P(sub_txt or "&nbsp;", ParagraphStyle("ks", parent=base, fontSize=6.8, leading=8, alignment=1, textColor=colors.HexColor("#5b6472"))),
+        ]
+    n_cli = len({(p["cliente"] or "").strip().upper() for p in todos})
+    cards = [
+        kpi(str(n), "PEDIDOS NO MÊS", NAVY, f"{n_cli} cliente(s) · {len(semanas)} semana(s)"),
+        kpi(moeda(valor), "FATURAMENTO DO MÊS (VALOR TOTAL)", NAVY, f"ticket médio {moeda(ticket)} por pedido", tam=20),
+        kpi(moeda(v_lib), "LIBERADO (PCP)", VERDE, f"{len(lib)} pedido(s) · {pct_lib:.0f}% do valor"),
+        kpi(moeda(v_pend), "A LIBERAR", "#b35c00", f"{len(pend)} pedido(s) · {100 - pct_lib:.0f}% do valor" if valor else ""),
+        kpi(moeda(v_cif), "FRETE CIF", "#0b5ed7", f"{(v_cif / valor * 100) if valor else 0:.0f}% do valor", tam=14),
+        kpi(moeda(v_fob), "FRETE FOB", "#b35c00", f"{(v_fob / valor * 100) if valor else 0:.0f}% do valor", tam=14),
+    ]
+    pesos_k = [0.8, 1.7, 1.3, 1.3, 1.05, 1.05]
+    kp = Table([cards], colWidths=[w / sum(pesos_k) * largura for w in pesos_k])
+    kp.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor(NAVY)), ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDA),
+                            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f6f8fb")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                            ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#dbe5f4")),
+                            ("BACKGROUND", (2, 0), (2, 0), colors.HexColor(VERDE_CLARO)),
+                            ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5)]))
+    flow_topo += [kp, Spacer(1, 1.6 * mm)]
+
     # ---------------- faturamento por semana (macro): 1 coluna por semana + total do mês ----------------
-    rot_w = 30 * mm
+    rot_w = 27 * mm
     cols = len(semanas) + 1
     larg_col = (largura - rot_w) / cols
-    sm = ParagraphStyle("sm", parent=base, fontSize=6.6, leading=7.8, alignment=1)
-    cab_row = [P("<b>FATURAMENTO</b>", ParagraphStyle("fh", parent=base, fontSize=6.6, leading=7.8))]
-    l_ped, l_val, l_lib, l_pen, l_fr = ([P("<b>Pedidos</b>", sm)], [P("<b>Valor total</b>", sm)], [P("<b>Liberado (PCP)</b>", sm)],
+    sm = ParagraphStyle("sm", parent=base, fontSize=7.2, leading=8.6, alignment=1)
+    smv = ParagraphStyle("smv", parent=sm, fontSize=9.2, leading=10.6)
+    sm_fr = ParagraphStyle("smf", parent=sm, fontSize=6.2, leading=7.4)
+    cab_row = [P("<b>POR SEMANA</b>", ParagraphStyle("fh", parent=base, fontSize=7, leading=8.4))]
+    l_ped, l_val, l_lib, l_pen, l_fr = ([P("<b>Pedidos</b>", sm)], [P("<b>VALOR TOTAL</b>", sm)], [P("<b>Liberado (PCP)</b>", sm)],
                                          [P("<b>A liberar</b>", sm)], [P("<b>CIF / FOB</b>", sm)])
-    estilo_f = [("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("BOX", (0, 0), (-1, -1), 0.5, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDA),
-                ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+    estilo_f = [("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("BOX", (0, 0), (-1, -1), 0.6, BORDA), ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDA),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
                 ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
                 ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#f6f8fb"))]
     for j, sem in enumerate(semanas, start=1):
         forte, claro = _cor_semana(sem)
-        r = sem.get("resumo") or {}
         peds = sem["pedidos"]
         v = sum(p["valor"] for p in peds)
         vl = sum(p["valor"] for p in peds if p["situacao"] == "liberado")
-        nl = sum(1 for p in peds if p["situacao"] == "liberado")
         rotulo = sem["titulo"].replace("SEMANA ", "SEM ") if sem.get("num") else "SEM SEMANA"
-        if sem.get("mes_txt") and len(semanas) > 0 and sem.get("rotulo_mes"):
+        if sem.get("mes_txt") and sem.get("rotulo_mes"):
             rotulo += f" · {sem['rotulo_mes']}"
-        cab_row.append(P(f'<font color="#ffffff"><b>{rotulo}</b></font>', sm))
-        l_ped.append(P(str(len(peds)), sm))
-        l_val.append(P(f"<b>{moeda(v)}</b>", sm))
-        l_lib.append(P(f'<font color="{VERDE}">{moeda(vl)}</font> ({(vl / v * 100) if v else 0:.0f}%)', sm))
+        cab_row.append(P(f'<font color="#ffffff"><b>{rotulo}</b></font>', ParagraphStyle("smh", parent=sm, fontSize=8, leading=9.4)))
+        l_ped.append(P(f"<b>{len(peds)}</b>", sm))
+        l_val.append(P(f"<b>{moeda(v)}</b>", smv))
+        l_lib.append(P(f'<font color="{VERDE}"><b>{moeda(vl)}</b></font> ({(vl / v * 100) if v else 0:.0f}%)', sm))
         l_pen.append(P(moeda(v - vl), sm))
         l_fr.append(P(f'{moeda(sum(p["valor"] for p in peds if (p["frete"] or "").upper() == "CIF"))} / '
-                      f'{moeda(sum(p["valor"] for p in peds if (p["frete"] or "").upper() == "FOB"))}',
-                      ParagraphStyle("sm2", parent=sm, fontSize=5.9, leading=7)))
+                      f'{moeda(sum(p["valor"] for p in peds if (p["frete"] or "").upper() == "FOB"))}', sm_fr))
         estilo_f.append(("BACKGROUND", (j, 0), (j, 0), colors.HexColor(forte)))
         estilo_f.append(("BACKGROUND", (j, 1), (j, -1), colors.HexColor(claro)))
-    cab_row.append(P('<font color="#ffffff"><b>TOTAL DO MÊS</b></font>', sm))
+    cab_row.append(P('<font color="#ffffff"><b>TOTAL DO MÊS</b></font>', ParagraphStyle("smh2", parent=sm, fontSize=8, leading=9.4)))
     l_ped.append(P(f"<b>{n}</b>", sm))
-    l_val.append(P(f"<b>{moeda(valor)}</b>", sm))
+    l_val.append(P(f"<b>{moeda(valor)}</b>", ParagraphStyle("smv2", parent=smv, fontSize=10.2, leading=11.6)))
     l_lib.append(P(f'<font color="{VERDE}"><b>{moeda(v_lib)}</b></font> ({pct_lib:.0f}%)', sm))
     l_pen.append(P(f"<b>{moeda(v_pend)}</b>", sm))
-    l_fr.append(P(f"{moeda(v_cif)} / {moeda(v_fob)}", ParagraphStyle("sm3", parent=sm, fontSize=5.9, leading=7)))
+    l_fr.append(P(f"{moeda(v_cif)} / {moeda(v_fob)}", sm_fr))
     estilo_f.append(("BACKGROUND", (cols, 0), (cols, 0), colors.HexColor(NAVY)))
     estilo_f.append(("BACKGROUND", (cols, 1), (cols, -1), colors.HexColor("#dbe5f4")))
+    estilo_f.append(("BOX", (cols, 0), (cols, -1), 1.0, colors.HexColor(NAVY)))
     fat = Table([cab_row, l_ped, l_val, l_lib, l_pen, l_fr], colWidths=[rot_w] + [larg_col] * cols)
     fat.setStyle(TableStyle(estilo_f))
     flow_topo += [fat, Spacer(1, 1.6 * mm)]
@@ -478,16 +504,18 @@ def gerar_mes(semanas, agora, logo_path, moeda, titulo_mes="", filtros_txt="", h
     story += flow_topo
 
     # ---------------- tabela única: faixa colorida por semana + 1 linha por pedido ----------------
-    cab_txt = ["SEM", "PEDIDO", "CLIENTE", "FRETE", "REGIÃO / UF", "INCLUSÃO", "PRAZO CLIENTE", "LIB. PREVISTA PCP",
-               "LIB. EFETIVA", "FOLGA", "SITUAÇÃO", "VALOR TOTAL"]
-    pesos = [4.2, 8.3, 23, 5.2, 11.5, 9.2, 9.6, 10.2, 9.6, 6.3, 11.2, 12.2]
+    cab_txt = ["SEM", "PEDIDO", "CLIENTE", "VALOR TOTAL", "FRETE", "REGIÃO / UF", "INCLUSÃO", "PRAZO CLIENTE",
+               "LIB. PREVISTA PCP", "LIB. EFETIVA", "FOLGA", "SITUAÇÃO"]
+    pesos = [4.2, 7.6, 21, 12.8, 5, 10.5, 8.6, 9, 9.6, 9, 6, 10.5]
     cw = [p / sum(pesos) * largura for p in pesos]
     n_faixas = sum(1 for s in semanas if s["pedidos"])
-    n_linhas = max(n, 1) + n_faixas + 1  # + linha de total
+    h_faixa = 10.5   # faixa colorida da semana (altura fixa, texto em destaque)
+    h_total = 15     # linha do total do mês
+    n_linhas = max(n, 1)
     h_cab = 12
     h_legenda = 7 * mm
     disponivel = altura - h_topo - h_legenda - 2 * mm
-    h_lin = (disponivel - h_cab) / n_linhas
+    h_lin = (disponivel - h_cab - n_faixas * h_faixa - h_total) / n_linhas
     h_lin = max(1.8, min(15, h_lin))  # sem piso prático: a folha é UMA só, mesmo com muitos pedidos (a letra encolhe)
     fs = max(1.8, min(8.6, h_lin * 0.62))
     fs_cab = max(4.2, min(6.4, h_cab * 0.5))
@@ -498,11 +526,11 @@ def gerar_mes(semanas, agora, logo_path, moeda, titulo_mes="", filtros_txt="", h
         ("FONTNAME", (0, 0), (-1, 0), fb), ("FONTSIZE", (0, 0), (-1, 0), fs_cab), ("LEADING", (0, 0), (-1, 0), fs_cab * 1.15),
         ("ALIGN", (0, 0), (-1, 0), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("FONTNAME", (0, 1), (-1, -1), fn), ("FONTSIZE", (0, 1), (-1, -1), fs), ("LEADING", (0, 1), (-1, -1), fs * 1.08),
-        ("ALIGN", (0, 1), (0, -1), "CENTER"), ("ALIGN", (1, 1), (2, -1), "LEFT"), ("ALIGN", (3, 1), (-2, -1), "CENTER"),
-        ("ALIGN", (-1, 1), (-1, -1), "RIGHT"),
+        ("ALIGN", (0, 1), (0, -1), "CENTER"), ("ALIGN", (1, 1), (2, -1), "LEFT"), ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+        ("ALIGN", (4, 1), (-1, -1), "CENTER"),
         ("LEFTPADDING", (0, 0), (-1, -1), 2.2), ("RIGHTPADDING", (0, 0), (-1, -1), 2.2),
         ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("FONTNAME", (1, 1), (1, -1), fb),
+        ("FONTNAME", (1, 1), (1, -1), fb), ("FONTNAME", (3, 1), (3, -1), fb),
     ]
     alturas = [h_cab]
     tem_parcial = False
@@ -516,13 +544,13 @@ def gerar_mes(semanas, agora, logo_path, moeda, titulo_mes="", filtros_txt="", h
         vl_s = sum(p["valor"] for p in peds if p["situacao"] == "liberado")
         nl_s = sum(1 for p in peds if p["situacao"] == "liberado")
         nome = sem["titulo"] + (f' · {sem["mes_txt"]}' if sem.get("mes_txt") and sem.get("rotulo_mes") else "")
-        faixa = (f'{nome}  ·  {sem["periodo_txt"]}  ·  {len(peds)} pedido(s)  ·  valor {moeda(v_s)}  ·  '
+        faixa = (f'{nome}  ·  {sem["periodo_txt"]}  ·  {len(peds)} pedido(s)  ·  VALOR DA SEMANA {moeda(v_s)}  ·  '
                  f'liberado {moeda(vl_s)} ({(vl_s / v_s * 100) if v_s else 0:.0f}%)  ·  a liberar {moeda(v_s - vl_s)}')
         dados.append([faixa] + [""] * 11)
         estilo += [("SPAN", (0, rf), (-1, rf)), ("BACKGROUND", (0, rf), (-1, rf), colors.HexColor(forte)),
                    ("TEXTCOLOR", (0, rf), (-1, rf), colors.white), ("FONTNAME", (0, rf), (-1, rf), fb),
-                   ("ALIGN", (0, rf), (-1, rf), "LEFT"), ("FONTSIZE", (0, rf), (-1, rf), fs + 0.3)]
-        alturas.append(h_lin)
+                   ("ALIGN", (0, rf), (-1, rf), "LEFT"), ("FONTSIZE", (0, rf), (-1, rf), 7.4), ("LEADING", (0, rf), (-1, rf), 9)]
+        alturas.append(h_faixa)
         marca = str(sem["num"]) if sem.get("num") else "—"
         for p in peds:
             i = len(dados)
@@ -544,11 +572,12 @@ def gerar_mes(semanas, agora, logo_path, moeda, titulo_mes="", filtros_txt="", h
                 marca,
                 _cortar(p["pedido_venda"], fb, fs, cw[1] - 4.4),
                 _cortar(p["cliente"], fn, fs, cw[2] - 4.4),
+                val_txt,
                 _frete_curto(p["frete"]),
-                _cortar(f'{p["regiao"]} · {p["uf"]}' if p["uf"] and p["uf"] != "—" else p["regiao"], fn, fs, cw[4] - 4.4),
+                _cortar(f'{p["regiao"]} · {p["uf"]}' if p["uf"] and p["uf"] != "—" else p["regiao"], fn, fs, cw[5] - 4.4),
                 _d(p["data_inclusao"], ano), _d(p["prazo_cliente"], ano), _d(p["lib_prevista"], ano),
                 _d(p["lib_real"], ano) if (p["lib_real"] and sit == "liberado") else "—",
-                folga_txt, rotulo, val_txt,
+                folga_txt, rotulo,
             ])
             alturas.append(h_lin)
             estilo.append(("BACKGROUND", (1, i), (-1, i), colors.HexColor(claro)))
@@ -557,33 +586,36 @@ def gerar_mes(semanas, agora, logo_path, moeda, titulo_mes="", filtros_txt="", h
             estilo.append(("FONTNAME", (0, i), (0, i), fb))
             estilo.append(("LINEBELOW", (0, i), (-1, i), 0.25, colors.white))
             if sit == "liberado":
-                estilo.append(("FONTNAME", (8, i), (8, i), fb))
-                estilo.append(("TEXTCOLOR", (8, i), (8, i), colors.HexColor("#0f5a2d")))
-            estilo.append(("BACKGROUND", (10, i), (10, i), colors.HexColor(bg)))
-            estilo.append(("TEXTCOLOR", (10, i), (10, i), colors.HexColor(fg)))
+                estilo.append(("FONTNAME", (9, i), (9, i), fb))
+                estilo.append(("TEXTCOLOR", (9, i), (9, i), colors.HexColor("#0f5a2d")))
+            estilo.append(("BACKGROUND", (11, i), (11, i), colors.HexColor(bg)))
+            estilo.append(("TEXTCOLOR", (11, i), (11, i), colors.HexColor(fg)))
+            estilo.append(("FONTNAME", (11, i), (11, i), fb))
+            estilo.append(("FONTSIZE", (11, i), (11, i), max(fs - 0.4, 1.8)))
+            estilo.append(("TEXTCOLOR", (10, i), (10, i), colors.HexColor(folga_cor)))
             estilo.append(("FONTNAME", (10, i), (10, i), fb))
-            estilo.append(("FONTSIZE", (10, i), (10, i), max(fs - 0.4, 1.8)))
-            estilo.append(("TEXTCOLOR", (9, i), (9, i), colors.HexColor(folga_cor)))
-            estilo.append(("FONTNAME", (9, i), (9, i), fb))
+            estilo.append(("FONTSIZE", (3, i), (3, i), fs + 0.5))
             frete = (p["frete"] or "").upper()
             if frete == "CIF":
-                estilo += [("TEXTCOLOR", (3, i), (3, i), colors.HexColor("#0b5ed7")), ("FONTNAME", (3, i), (3, i), fb)]
+                estilo += [("TEXTCOLOR", (4, i), (4, i), colors.HexColor("#0b5ed7")), ("FONTNAME", (4, i), (4, i), fb)]
             elif frete == "FOB":
-                estilo += [("TEXTCOLOR", (3, i), (3, i), colors.HexColor("#b35c00")), ("FONTNAME", (3, i), (3, i), fb)]
+                estilo += [("TEXTCOLOR", (4, i), (4, i), colors.HexColor("#b35c00")), ("FONTNAME", (4, i), (4, i), fb)]
     if not todos:
         dados.append(["Nenhum pedido planejado neste período"] + [""] * 11)
         estilo += [("SPAN", (0, 1), (-1, 1)), ("ALIGN", (0, 1), (-1, 1), "CENTER")]
         alturas.append(h_lin)
-    # total do mês
-    dados.append(["TOTAL DO MÊS", "", "", f"{n} pedido(s)", "", "", "", "", f"{len(lib)} liberados / {len(pend)} a liberar", "", "", moeda(valor)])
+    # total do mês (reforçado)
+    dados.append(["TOTAL DO MÊS", "", "", moeda(valor), f"{n} pedido(s)", "", "", "", "", f"{len(lib)} liberados / {len(pend)} a liberar", "", ""])
     it = len(dados) - 1
     estilo += [
-        ("BACKGROUND", (0, it), (-1, it), colors.HexColor("#dbe5f4")), ("FONTNAME", (0, it), (-1, it), fb),
-        ("TEXTCOLOR", (0, it), (-1, it), colors.HexColor(NAVY)), ("LINEABOVE", (0, it), (-1, it), 1.0, colors.HexColor(NAVY)),
-        ("SPAN", (0, it), (2, it)), ("SPAN", (3, it), (7, it)), ("SPAN", (8, it), (10, it)),
-        ("ALIGN", (0, it), (2, it), "LEFT"), ("ALIGN", (3, it), (10, it), "CENTER"), ("FONTSIZE", (0, it), (-1, it), fs + 0.6),
+        ("BACKGROUND", (0, it), (-1, it), colors.HexColor("#c9d8f0")), ("FONTNAME", (0, it), (-1, it), fb),
+        ("TEXTCOLOR", (0, it), (-1, it), colors.HexColor(NAVY)), ("LINEABOVE", (0, it), (-1, it), 1.3, colors.HexColor(NAVY)),
+        ("LINEBELOW", (0, it), (-1, it), 1.3, colors.HexColor(NAVY)),
+        ("SPAN", (0, it), (2, it)), ("SPAN", (4, it), (8, it)), ("SPAN", (9, it), (11, it)),
+        ("ALIGN", (0, it), (2, it), "LEFT"), ("ALIGN", (3, it), (3, it), "RIGHT"), ("ALIGN", (4, it), (11, it), "CENTER"),
+        ("FONTSIZE", (0, it), (-1, it), 8), ("FONTSIZE", (3, it), (3, it), 10), ("LEADING", (0, it), (-1, it), 11.5),
     ]
-    alturas.append(h_lin + 1)
+    alturas.append(h_total)
     tabela = Table(dados, colWidths=cw, rowHeights=alturas)
     tabela.setStyle(TableStyle(estilo))
     story.append(tabela)

@@ -4510,3 +4510,15 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 .pw-tabela-mes tbody td, .pw-tabela-mes thead th { padding-left: .32rem !important; padding-right: .32rem !important; }
 .pw-tabela-mes .pw-pill { min-width: 5.4rem; }
 .pw-tabela-mes tbody td.pw-semcol { padding-left: .1rem !important; padding-right: .1rem !important; }
+/* Mês inteiro: números principais reforçados (Bruno, 18/11/2026) */
+.pw-pane[data-semana="mes"] .pw-kpi-v { font-size: 1.95rem; }
+.pw-pane[data-semana="mes"] .pw-kpi-valor .pw-kpi-v { font-size: 2.3rem; color: #1b2a4a; }
+.pw-pane[data-semana="mes"] .pw-kpi-l { font-weight: 700; }
+.pw-semanas-chips .pw-chip.pw-chip-sem { font-size: .88rem; padding: .22rem .75rem; }
+.pw-chip-valor { font-weight: 800; font-size: .95rem; }
+.pw-tabela-mes tbody td.pw-valor { font-weight: 800; font-size: .88rem; }
+.pw-tabela-mes tfoot .pw-total td { font-size: 1rem; }
+.pw-tabela-mes tfoot .pw-total-valor { font-size: 1.15rem; font-weight: 800; }
+.pw-pane[data-semana="mes"] .pw-kpi-v, .pw-tabela-mes tfoot .pw-total-valor { white-space: nowrap; }
+.pw-pane[data-semana="mes"] .pw-kpi-valor .pw-kpi-v { font-size: 2.05rem; }
+.pw-tabela-mes tfoot .pw-total td.pw-total-valor { font-weight: 800 !important; font-size: 1.2rem !important; color: #1b2a4a; }
