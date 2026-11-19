@@ -25873,33 +25873,134 @@ def register_routes(app):
     @app.route("/pedidos/novo/importar-pdf", methods=["POST"])
     @requer_role("ADMIN", "PCP")
     def novo_pedido_importar_pdf():
-        """Lê o PDF "Confirmação do Pedido" do ERP (SIGA/1076) e devolve os campos pra tela "Novo pedido" se
-        preencher sozinha (pedido do Bruno, 19/11/2026). SÓ LÊ: nada é gravado aqui — o PCP confere, completa
-        Prioridade / Tipo de pedido / Status (que não vêm no PDF) e salva pelo formulário de sempre."""
+        """Lê 1 ou VÁRIOS PDFs "Confirmação do Pedido" do ERP (SIGA/1076) — cada PDF pode trazer 1 ou mais
+        pedidos — e devolve os campos pra tela "Novo pedido" (pedido do Bruno, 19/11/2026; vários PDFs no mesmo
+        envio: pedido de 19/11/2026). SÓ LÊ: nada é gravado aqui — o PCP confere, completa Prioridade / Tipo de
+        pedido / Status (que não vêm no PDF) e inclui: pelo formulário (1 pedido) ou pela tela de conferência em
+        lote (2+ pedidos, ver novo_pedido_incluir_lote)."""
         import importar_pedido_pdf
-        arquivo = request.files.get("pdf")
-        if arquivo is None or not arquivo.filename:
+        arquivos = [a for a in request.files.getlist("pdf") if a is not None and a.filename]
+        if not arquivos:
             return jsonify(ok=False, erro="Nenhum arquivo enviado."), 400
-        dados = arquivo.read(8 * 1024 * 1024 + 1)
-        if len(dados) > 8 * 1024 * 1024:
-            return jsonify(ok=False, erro="Arquivo grande demais (máximo 8 MB)."), 413
-        if not dados.startswith(b"%PDF"):
-            return jsonify(ok=False, erro="O arquivo não é um PDF."), 400
-        try:
-            resultado = importar_pedido_pdf.ler_pedido_pdf(dados)
-        except importar_pedido_pdf.PdfPedidoInvalido as e:
-            return jsonify(ok=False, erro=str(e)), 422
-        except Exception:  # PDF corrompido/inesperado: nunca derruba a tela
-            app.logger.exception("Falha ao ler PDF de pedido")
-            return jsonify(ok=False, erro="Não consegui ler esse PDF. Confira se é o relatório de Confirmação do Pedido."), 422
-        # pedido já cadastrado? (mesma regra de comparação do resto do site: sem espaços/zeros à esquerda)
-        pv = resultado.get("pedido_venda")
-        if pv:
-            existente = Pedido.query.filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda) == _normalizar_pedido_venda(pv)).first()
+        if len(arquivos) > 30:
+            return jsonify(ok=False, erro="Envie no máximo 30 PDFs de cada vez."), 400
+        pedidos, erros = [], []
+        for arquivo in arquivos:
+            dados = arquivo.read(8 * 1024 * 1024 + 1)
+            if len(dados) > 8 * 1024 * 1024:
+                erros.append({"arquivo": arquivo.filename, "erro": "Arquivo grande demais (máximo 8 MB)."})
+                continue
+            if not dados.startswith(b"%PDF"):
+                erros.append({"arquivo": arquivo.filename, "erro": "O arquivo não é um PDF."})
+                continue
+            try:
+                lidos = importar_pedido_pdf.ler_pedidos_pdf(dados)
+            except importar_pedido_pdf.PdfPedidoInvalido as e:
+                erros.append({"arquivo": arquivo.filename, "erro": str(e)})
+                continue
+            except Exception:  # PDF corrompido/inesperado: nunca derruba a tela
+                app.logger.exception("Falha ao ler PDF de pedido")
+                erros.append({"arquivo": arquivo.filename,
+                              "erro": "Não consegui ler esse PDF. Confira se é o relatório de Confirmação do Pedido."})
+                continue
+            for r in lidos:
+                r["arquivo"] = arquivo.filename
+                pedidos.append(r)
+        if not pedidos:
+            return jsonify(ok=False, erro=erros[0]["erro"] if erros else "Nenhum pedido encontrado nos PDFs.", erros=erros), 422
+        # duplicados: já cadastrado no site OU repetido dentro deste mesmo envio (mesma regra de comparação do resto do site)
+        vistos = {}
+        for r in pedidos:
+            r["duplicado"] = False
+            pv = r.get("pedido_venda")
+            if not pv:
+                continue
+            chave = _normalizar_pedido_venda(pv)
+            existente = Pedido.query.filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda) == chave).first()
             if existente is not None:
-                resultado["avisos"].insert(0, f"Atenção: já existe o pedido {existente.pedido_venda} cadastrado "
-                                              f"({existente.cliente}). Confira antes de incluir de novo.")
-        return jsonify(ok=True, **resultado)
+                r["avisos"].insert(0, f"Atenção: já existe o pedido {existente.pedido_venda} cadastrado "
+                                      f"({existente.cliente}). Confira antes de incluir de novo.")
+                r["duplicado"] = True
+            elif chave in vistos:
+                r["avisos"].insert(0, f"Atenção: o pedido {pv} aparece mais de uma vez neste envio ({vistos[chave]} e {r['arquivo']}).")
+                r["duplicado"] = True
+            vistos.setdefault(chave, r["arquivo"])
+        return jsonify(ok=True, pedidos=pedidos, erros=erros)
+
+    @app.route("/pedidos/novo/incluir-lote", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def novo_pedido_incluir_lote():
+        """Inclui vários pedidos de uma vez, a partir da tela de conferência em lote (PDFs do ERP). Cada pedido é
+        gravado na sua própria transação — um com problema não impede os outros — e segue exatamente o mesmo
+        caminho do formulário "Novo pedido" (Pedido + itens + linha na Listagem Geral de Gestão Operação)."""
+        corpo = request.get_json(silent=True) or {}
+        lista = corpo.get("pedidos")
+        if not isinstance(lista, list) or not lista:
+            return jsonify(ok=False, erro="Nenhum pedido para incluir."), 400
+        if len(lista) > 60:
+            return jsonify(ok=False, erro="Pedidos demais de uma vez (máximo 60)."), 400
+
+        def txt(v, n=None):
+            t = str(v).strip() if v is not None else ""
+            return (t[:n] if n else t) or None
+
+        def num(v):
+            try:
+                return float(v) if v not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+
+        resultados = []
+        for dado in lista:
+            rotulo = txt((dado or {}).get("pedido_venda")) or "?"
+            try:
+                cliente = txt(dado.get("cliente"), 200)
+                itens = []
+                for it in dado.get("itens") or []:
+                    desc = txt((it or {}).get("descricao"))
+                    if not desc:
+                        continue
+                    itens.append(ItemPedido(descricao_produto=desc, quantidade=num(it.get("quantidade")),
+                                            custo_unitario=num(it.get("custo_unitario")), estacao=txt(it.get("estacao"))))
+                if not cliente or not itens:
+                    resultados.append({"pedido_venda": rotulo, "ok": False, "erro": "Falta cliente ou ao menos um item."})
+                    continue
+                prioridade = dado.get("prioridade")
+                frete = dado.get("frete")
+                pedido = Pedido(
+                    data_cliente=_parse_data_form(dado.get("data_cliente")),
+                    data_inclusao_pedido=_parse_data_form(dado.get("data_inclusao_pedido")),
+                    cliente=cliente,
+                    cnpj=txt(dado.get("cnpj"), 40),
+                    cidade=txt(dado.get("cidade"), 120),
+                    estado=txt(dado.get("estado"), 2),
+                    pais=txt(dado.get("pais")) or "Brasil",
+                    frete=frete if frete in FRETE_OPCOES else None,
+                    vendedor=txt(dado.get("vendedor"), 120),
+                    pedido_venda=txt(dado.get("pedido_venda"), 60),
+                    prioridade=prioridade if prioridade in PRIORIDADE_OPCOES else "MÉDIA",
+                )
+                pedido.itens = itens
+                for item in itens:
+                    item.atualizar_status_automatico()
+                tipo, status = dado.get("go_tipo_pedido"), dado.get("go_status_pedido_info")
+                valor_op = num(dado.get("go_valor_pedido_operacao"))
+                campos_op = {
+                    "go_tipo_pedido": tipo if tipo in GO_TIPO_PEDIDO_OPCOES else "",
+                    "go_status_pedido_info": status if status in GO_STATUS_PEDIDO_INFO_OPCOES else "",
+                    "go_pedido_compra_cliente": txt(dado.get("go_pedido_compra_cliente"), 120) or "",
+                    "go_valor_pedido_operacao": f"{valor_op:.2f}" if valor_op is not None else "",
+                }
+                db.session.add(pedido)
+                _criar_pedido_operacao_a_partir_de_producao(pedido, campos_op)
+                db.session.commit()
+                resultados.append({"pedido_venda": rotulo, "ok": True, "id": pedido.id, "cliente": pedido.cliente,
+                                   "itens": len(itens), "url": url_for("editar_pedido", pedido_id=pedido.id)})
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Falha ao incluir pedido %s em lote", rotulo)
+                resultados.append({"pedido_venda": rotulo, "ok": False, "erro": "Erro ao gravar este pedido."})
+        return jsonify(ok=True, resultados=resultados, incluidos=sum(1 for r in resultados if r["ok"]))
 
     @app.route("/pedidos/<int:pedido_id>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP", "LIDER")

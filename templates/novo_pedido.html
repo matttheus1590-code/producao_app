@@ -21,17 +21,19 @@
         <div class="flex-grow-1" style="min-width: 16rem;">
           <div class="fw-semibold"><i class="bi bi-file-earmark-pdf"></i> Preencher a partir do PDF do pedido (ERP)</div>
           <div class="small text-muted">
-            Anexe (ou arraste aqui) o relatório <strong>“Confirmação do Pedido”</strong> (SIGA/1076). Cliente, CNPJ, cidade/UF, vendedor, frete,
-            datas, pedido de venda e itens são preenchidos sozinhos — <strong>nada é salvo</strong> até você conferir e clicar em
-            <em>Incluir pedido</em>. <strong>Prioridade, Tipo de pedido e Status do pedido</strong> não vêm no PDF: escolha você.
+            Anexe (ou arraste aqui) <strong>um ou vários PDFs</strong> do relatório <strong>“Confirmação do Pedido”</strong> (SIGA/1076).
+            Com <strong>1 pedido</strong>, o formulário abaixo é preenchido sozinho; com <strong>2 ou mais</strong>, abre uma tela de conferência
+            para você revisar e incluir todos de uma vez. <strong>Nada é salvo</strong> até você confirmar.
+            <strong>Prioridade, Tipo de pedido e Status do pedido</strong> não vêm no PDF: escolha você.
           </div>
         </div>
         <div>
-          <input type="file" id="pdfPedidoArquivo" accept="application/pdf,.pdf" class="d-none">
-          <button type="button" id="btnImportarPdf" class="btn btn-primary"><i class="bi bi-upload"></i> Anexar PDF</button>
+          <input type="file" id="pdfPedidoArquivo" accept="application/pdf,.pdf" multiple class="d-none">
+          <button type="button" id="btnImportarPdf" class="btn btn-primary"><i class="bi bi-upload"></i> Anexar PDF(s)</button>
         </div>
       </div>
       <div id="importPdfResultado" class="mt-2" aria-live="polite"></div>
+      <div id="importPdfLote" class="mt-3 d-none"></div>
     </div>
 
     <form method="post" class="card p-4 shadow-sm">
@@ -383,31 +385,198 @@
     const el = campo('cliente'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  function enviarPdf(arquivo) {
-    if (!arquivo) return;
-    if (!/\.pdf$/i.test(arquivo.name) && arquivo.type !== 'application/pdf') {
-      mostrar('erro', 'Escolha um arquivo PDF.'); return;
+  // ---- Lote: 2+ pedidos (vários PDFs, ou um PDF com vários pedidos) -> tela de conferência ----
+  const loteBox = document.getElementById('importPdfLote');
+  const OPC_PRIORIDADE = {{ PRIORIDADE_OPCOES | list | tojson }};
+  const OPC_TIPO = {{ GO_TIPO_PEDIDO_OPCOES | list | tojson }};
+  const OPC_STATUS = {{ GO_STATUS_PEDIDO_INFO_OPCOES | list | tojson }};
+  const FRETES = ['CIF', 'FOB', 'SEM FRETE', 'EXPORTAÇÃO', 'OUTRO'];
+  let lotePedidos = [];
+
+  function el(tag, cls, txt) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (txt !== undefined && txt !== null) e.textContent = txt;
+    return e;
+  }
+
+  function seletor(opcoes, atual, vazio) {
+    const sel = el('select', 'form-select form-select-sm');
+    if (vazio !== null) { const o = el('option', '', vazio); o.value = ''; sel.appendChild(o); }
+    opcoes.forEach(function(v) { const o = el('option', '', v); o.value = v; sel.appendChild(o); });
+    sel.value = atual || '';
+    return sel;
+  }
+
+  function cartaoLote(p, idx) {
+    const card = el('div', 'lote-card' + (p.duplicado ? ' lote-dup' : ''));
+    const topo = el('div', 'lote-topo');
+    const chk = el('input', 'form-check-input'); chk.type = 'checkbox'; chk.checked = !p.duplicado; chk.id = 'lote_inc_' + idx;
+    chk.disabled = !p.cliente || !(p.itens && p.itens.length);
+    if (chk.disabled) chk.checked = false;
+    const tit = el('label', 'lote-titulo');
+    tit.htmlFor = chk.id;
+    tit.appendChild(el('strong', '', 'Pedido ' + (p.pedido_venda || '?')));
+    tit.appendChild(document.createTextNode(' · ' + (p.cliente || 'cliente não identificado')));
+    const meta = el('div', 'small text-muted',
+      (p.cidade ? p.cidade + (p.estado ? '/' + p.estado : '') + ' · ' : '') + (p.itens || []).length + ' item(ns) · entrega ' +
+      dataBr(p.data_cliente) + (p.go_valor_pedido_operacao ? ' · ' + brl(p.go_valor_pedido_operacao) : '') + ' · ' + (p.arquivo || ''));
+    const cab = el('div', 'flex-grow-1'); cab.appendChild(tit); cab.appendChild(meta);
+    topo.appendChild(chk); topo.appendChild(cab);
+    card.appendChild(topo);
+
+    if (p.avisos && p.avisos.length) {
+      const ul = el('ul', 'small ps-4 mb-1 mt-1 lote-avisos');
+      p.avisos.forEach(function(a) { ul.appendChild(el('li', '', '⚠ ' + a)); });
+      card.appendChild(ul);
     }
+
+    const det = el('details', 'small mt-1');
+    det.appendChild(el('summary', 'text-primary', 'Ver itens e dados lidos'));
+    const ul2 = el('ul', 'mb-1 ps-3');
+    (p.itens || []).forEach(function(it) {
+      ul2.appendChild(el('li', '', it.descricao + ' — ' + (it.quantidade !== null ? BR.fmt(it.quantidade, 0, 3) : '?') + ' × ' +
+        (it.custo_unitario !== null ? brl(it.custo_unitario) : '?') + ' — entrega ' + dataBr(it.entrega)));
+    });
+    det.appendChild(ul2);
+    det.appendChild(el('div', 'text-muted', 'CNPJ ' + (p.cnpj || '—') + ' · vendedor ' + (p.vendedor || '—') + ' · frete ' + (p.frete || '—') +
+      ' · inclusão ' + dataBr(p.data_inclusao_pedido) + ' · pedido do cliente ' + (p.go_pedido_compra_cliente || '—')));
+    card.appendChild(det);
+
+    const sels = el('div', 'row g-2 mt-1');
+    function col(rotulo, sel, pendente) {
+      const c = el('div', 'col-md-4');
+      c.appendChild(el('label', 'form-label small mb-0', rotulo));
+      if (pendente) sel.classList.add('campo-pendente');
+      sel.addEventListener('change', function() { sel.classList.remove('campo-pendente'); });
+      c.appendChild(sel); sels.appendChild(c);
+    }
+    const sPri = seletor(OPC_PRIORIDADE, 'MÉDIA', null);
+    const sTipo = seletor(OPC_TIPO, '', '— escolha —');
+    const sSta = seletor(OPC_STATUS, '', '— escolha —');
+    col('Prioridade', sPri, false); col('Tipo de pedido', sTipo, true); col('Status do pedido', sSta, true);
+    card.appendChild(sels);
+
+    card._ler = function() {
+      if (!chk.checked) return null;
+      const o = Object.assign({}, p);
+      o.prioridade = sPri.value; o.go_tipo_pedido = sTipo.value; o.go_status_pedido_info = sSta.value;
+      return o;
+    };
+    return card;
+  }
+
+  function mostrarLote(pedidos, erros) {
+    lotePedidos = pedidos;
+    loteBox.innerHTML = '';
+    loteBox.classList.remove('d-none');
+    const cab = el('div', 'fw-semibold mb-2', pedidos.length + ' pedidos lidos — confira, escolha Tipo e Status de cada um e inclua.');
+    loteBox.appendChild(cab);
+    const lista = el('div', 'lote-lista');
+    const cards = pedidos.map(function(p, i) { const c = cartaoLote(p, i); lista.appendChild(c); return c; });
+    loteBox.appendChild(lista);
+
+    const rodape = el('div', 'd-flex flex-wrap gap-2 align-items-center mt-2');
+    const btn = el('button', 'btn btn-success'); btn.type = 'button';
+    const btnCancel = el('button', 'btn btn-outline-secondary'); btnCancel.type = 'button'; btnCancel.textContent = 'Cancelar';
+    const aviso = el('span', 'small text-muted');
+    function atualizarBotao() {
+      const n = loteBox.querySelectorAll('.lote-topo input:checked').length;
+      btn.textContent = 'Incluir ' + n + ' pedido' + (n === 1 ? '' : 's') + ' selecionado' + (n === 1 ? '' : 's');
+      btn.disabled = n === 0;
+    }
+    loteBox.addEventListener('change', atualizarBotao);
+    atualizarBotao();
+    btnCancel.addEventListener('click', function() { loteBox.classList.add('d-none'); loteBox.innerHTML = ''; resultadoPdf.innerHTML = ''; });
+    btn.addEventListener('click', function() {
+      const envio = cards.map(function(c) { return c._ler(); }).filter(Boolean);
+      const semTipo = envio.filter(function(o) { return !o.go_tipo_pedido || !o.go_status_pedido_info; }).length;
+      if (semTipo && !window.confirm(semTipo + ' pedido(s) estão sem Tipo de pedido e/ou Status do pedido. Incluir mesmo assim? (dá pra completar depois na edição)')) return;
+      btn.disabled = true; btnCancel.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Incluindo…';
+      fetch({{ url_for('novo_pedido_incluir_lote') | tojson }}, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ pedidos: envio })
+      })
+        .then(function(r) { return r.json().catch(function() { return { ok: false, erro: 'Sessão expirada ou resposta inesperada — recarregue a página.' }; }); })
+        .then(function(d) {
+          if (!d.ok) { mostrar('erro', d.erro || 'Não consegui incluir os pedidos.'); btn.disabled = false; btnCancel.disabled = false; atualizarBotao(); return; }
+          resumoLote(d.resultados || []);
+        })
+        .catch(function() { mostrar('erro', 'Falha de conexão ao incluir os pedidos. Confira em "Pedidos" antes de tentar de novo.'); btn.disabled = false; btnCancel.disabled = false; atualizarBotao(); });
+    });
+    rodape.appendChild(btn); rodape.appendChild(btnCancel); rodape.appendChild(aviso);
+    loteBox.appendChild(rodape);
+
+    const linhas = (erros || []).map(function(e) { return e.arquivo + ': ' + e.erro; });
+    if (linhas.length) mostrar('aviso', 'Alguns arquivos não puderam ser lidos:', linhas); else resultadoPdf.innerHTML = '';
+    loteBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function resumoLote(resultados) {
+    const ok = resultados.filter(function(r) { return r.ok; });
+    const falhas = resultados.filter(function(r) { return !r.ok; });
+    loteBox.innerHTML = '';
+    loteBox.classList.add('d-none');
+    resultadoPdf.innerHTML = '';
+    const box = el('div', 'import-pdf-msg ' + (falhas.length ? 'import-pdf-aviso' : 'import-pdf-ok'));
+    box.appendChild(el('div', 'fw-semibold', ok.length + ' pedido(s) incluído(s)' + (falhas.length ? ' · ' + falhas.length + ' com problema' : '') + '.'));
+    const ul = el('ul', 'mb-0 small ps-3');
+    ok.forEach(function(r) {
+      const li = el('li');
+      const a = el('a', '', 'Pedido ' + r.pedido_venda + ' · ' + r.cliente + ' (' + r.itens + ' item(ns))');
+      a.href = r.url; a.target = '_blank'; li.appendChild(a); ul.appendChild(li);
+    });
+    falhas.forEach(function(r) { ul.appendChild(el('li', '', '❌ Pedido ' + r.pedido_venda + ': ' + r.erro)); });
+    box.appendChild(ul);
+    const novo = el('a', 'btn btn-sm btn-outline-primary mt-2', 'Abrir Consulta Pedido');
+    novo.href = {{ url_for('consulta_pedido') | tojson }};
+    box.appendChild(novo);
+    resultadoPdf.appendChild(box);
+  }
+
+  function enviarPdfs(arquivos) {
+    arquivos = Array.prototype.slice.call(arquivos || []);
+    if (!arquivos.length) return;
+    const pdfs = arquivos.filter(function(a) { return /\.pdf$/i.test(a.name) || a.type === 'application/pdf'; });
+    if (!pdfs.length) { mostrar('erro', 'Escolha arquivos PDF.'); return; }
     btnPdf.disabled = true;
-    btnPdf.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Lendo PDF…';
+    btnPdf.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Lendo ' + (pdfs.length > 1 ? pdfs.length + ' PDFs' : 'PDF') + '…';
+    loteBox.classList.add('d-none'); loteBox.innerHTML = '';
     const fd = new FormData();
-    fd.append('pdf', arquivo);
+    pdfs.forEach(function(a) { fd.append('pdf', a); });
     fetch({{ url_for('novo_pedido_importar_pdf') | tojson }}, { method: 'POST', body: fd, credentials: 'same-origin' })
       .then(function(r) { return r.json().catch(function() { return { ok: false, erro: 'Sessão expirada ou resposta inesperada — recarregue a página e tente de novo.' }; }); })
-      .then(function(d) { if (d.ok) { aplicarPdf(d); } else { mostrar('erro', d.erro || 'Não consegui ler o PDF.'); } })
+      .then(function(d) {
+        if (!d.ok) {
+          mostrar('erro', d.erro || 'Não consegui ler o PDF.', (d.erros || []).length > 1 ? d.erros.map(function(e) { return e.arquivo + ': ' + e.erro; }) : null);
+          return;
+        }
+        if (d.pedidos.length === 1) {
+          aplicarPdf(d.pedidos[0]);
+          if (d.erros && d.erros.length) {
+            const extra = d.erros.map(function(e) { return e.arquivo + ': ' + e.erro; });
+            const box = resultadoPdf.querySelector('.import-pdf-msg ul') || resultadoPdf.querySelector('.import-pdf-msg').appendChild(el('ul', 'mb-0 small ps-3'));
+            extra.forEach(function(t) { box.appendChild(el('li', '', '⚠ Arquivo ignorado — ' + t)); });
+          }
+        } else {
+          mostrarLote(d.pedidos, d.erros);
+        }
+      })
       .catch(function() { mostrar('erro', 'Falha de conexão ao enviar o PDF. Tente de novo.'); })
-      .finally(function() { btnPdf.disabled = false; btnPdf.innerHTML = '<i class="bi bi-upload"></i> Anexar PDF'; inputPdf.value = ''; });
+      .finally(function() { btnPdf.disabled = false; btnPdf.innerHTML = '<i class="bi bi-upload"></i> Anexar PDF(s)'; inputPdf.value = ''; });
   }
 
   btnPdf.addEventListener('click', function() { inputPdf.click(); });
-  inputPdf.addEventListener('change', function() { enviarPdf(inputPdf.files[0]); });
+  inputPdf.addEventListener('change', function() { enviarPdfs(inputPdf.files); });
   ['dragenter', 'dragover'].forEach(function(ev) {
     cardPdf.addEventListener(ev, function(e) { e.preventDefault(); cardPdf.classList.add('import-pdf-drag'); });
   });
   ['dragleave', 'drop'].forEach(function(ev) {
     cardPdf.addEventListener(ev, function(e) { e.preventDefault(); cardPdf.classList.remove('import-pdf-drag'); });
   });
-  cardPdf.addEventListener('drop', function(e) { enviarPdf(e.dataTransfer.files[0]); });
+  cardPdf.addEventListener('drop', function(e) { enviarPdfs(e.dataTransfer.files); });
 
   atualizarTotal();
 })();

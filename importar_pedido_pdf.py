@@ -122,8 +122,10 @@ def _campo(rx, texto, flags=0):
     return m.group(1).strip() if m else None
 
 
-def ler_pedido_pdf(dados):
-    """bytes do PDF -> dict (ver docstring do módulo). Levanta PdfPedidoInvalido se não for o relatório esperado."""
+def ler_pedidos_pdf(dados):
+    """bytes do PDF -> LISTA de dicts, um por pedido (ver docstring do módulo). O relatório do ERP aceita
+    "do pedido... até o pedido", então 1 arquivo pode trazer vários pedidos (páginas seguidas com o mesmo
+    "PEDIDO N." são continuação do mesmo pedido). Levanta PdfPedidoInvalido se não for o relatório esperado."""
     try:
         import pdfplumber
     except ImportError as e:  # pragma: no cover - só se a dependência faltar no servidor
@@ -135,19 +137,35 @@ def ler_pedido_pdf(dados):
         raise PdfPedidoInvalido("Não consegui abrir o arquivo como PDF.") from e
 
     with pdf:
-        paginas = []
+        grupos = []  # [[(pagina, texto), ...], ...] — 1 grupo por pedido
+        ultimo_num = None
         for pg in pdf.pages:
             txt = pg.extract_text() or ""
-            if re.search(r"CONFIRMACAO\s+DO\s+PEDIDO", txt, re.I) and re.search(r"PEDIDO\s+N\.", txt, re.I):
-                paginas.append((pg, txt))
-        if not paginas:
+            if not (re.search(r"CONFIRMACAO\s+DO\s+PEDIDO", txt, re.I) and re.search(r"PEDIDO\s+N\.", txt, re.I)):
+                continue
+            num = _campo(r"PEDIDO\s+N\.\s*(\d+)", txt, re.I)
+            if grupos and num == ultimo_num:
+                grupos[-1].append((pg, txt))
+            else:
+                grupos.append([(pg, txt)])
+            ultimo_num = num
+        if not grupos:
             raise PdfPedidoInvalido(
                 "Esse PDF não parece o relatório \"Confirmação do Pedido\" do ERP (SIGA/1076). "
                 "Gere o relatório do pedido e anexe de novo."
             )
-        pg0, txt0 = paginas[0]
-        texto = "\n".join(t for _, t in paginas)
-        cliente, cnpj, cidade, uf = _bloco_cliente(pg0)
+        return [_ler_um_pedido(g) for g in grupos]
+
+
+def ler_pedido_pdf(dados):
+    """Compatibilidade: só o 1º pedido do arquivo."""
+    return ler_pedidos_pdf(dados)[0]
+
+
+def _ler_um_pedido(paginas):
+    pg0, txt0 = paginas[0]
+    texto = "\n".join(t for _, t in paginas)
+    cliente, cnpj, cidade, uf = _bloco_cliente(pg0)
 
     avisos = []
     num_ped = _campo(r"PEDIDO\s+N\.\s*(\d+)", txt0, re.I)

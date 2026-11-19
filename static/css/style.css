@@ -4532,3 +4532,10 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 .import-pdf-erro { background: #fdeceb; border-color: #f1a5a0; color: #842029; }
 .campo-importado { background-color: #fff3bf !important; border-color: #e6c84c !important; }
 .campo-pendente { border-color: #fd7e14 !important; box-shadow: 0 0 0 .15rem rgba(253, 126, 20, .25) !important; }
+.lote-lista { display: flex; flex-direction: column; gap: .6rem; max-height: 70vh; overflow-y: auto; padding-right: .25rem; }
+.lote-card { background: #fff; border: 1px solid #cfd8e6; border-radius: .5rem; padding: .6rem .75rem; }
+.lote-card.lote-dup { border-color: #f0cf6b; background: #fffbea; }
+.lote-topo { display: flex; align-items: flex-start; gap: .6rem; }
+.lote-topo .form-check-input { margin-top: .3rem; flex: 0 0 auto; }
+.lote-titulo { cursor: pointer; display: block; }
+.lote-avisos { color: #664d03; }
