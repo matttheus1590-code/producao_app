@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Estações · Modo TV{% endblock %}
+{% block content %}
+{# Modo TV das Estações (pedido do Bruno, 19/11/2026: "tela cheia modo TV... algo que toda a área irá visualizar, para todas as estações").
+   Mesmo padrão do Kanban Expedição em Modo TV: abre sozinho em tela cheia, atualiza os números a cada 60s sem recarregar
+   a página, sem links/cliques. Mesmos números da tela Estações (fila, em produção, críticos, lead time). #}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+  <h4 class="mb-0"><i class="bi bi-tv"></i> Estações <span class="badge text-bg-dark align-middle fs-6">Modo TV</span></h4>
+  <div class="d-flex gap-2">
+    <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#estacoesTv" data-tela-cheia-titulo="Estações · Modo TV"><i class="bi bi-arrows-fullscreen"></i> Tela cheia</button>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('estacoes_lista') }}"><i class="bi bi-x-lg"></i> Sair do modo TV</a>
+  </div>
+</div>
+
+{% set maxn = [grupos | map(attribute='linhas') | map('length') | max, 1] | max %}
+<div class="etv" id="estacoesTv" style="--etv-n: {{ maxn }}; --etv-cols: {{ grupos | length }};">
+  <div class="etv-topo">
+    <div class="etv-titulo"><i class="bi bi-diagram-3"></i> ESTAÇÕES · PRODUÇÃO</div>
+    <div class="etv-totais">
+      <div class="etv-total etv-total-fila"><b>{{ totais.fila }}</b><span>OP/produto na fila</span><small>{{ totais.fila_itens }} itens</small></div>
+      <div class="etv-total etv-total-prod"><b>{{ totais.producao }}</b><span>OP/produto em produção</span><small>{{ totais.producao_itens }} itens</small></div>
+      <div class="etv-total {{ 'etv-total-crit' if totais.criticos else 'etv-total-ok' }}"><b>{{ totais.criticos }}</b><span>crítico(s) · atrasados</span><small>{{ totais.estacoes_criticas }} estação(ões)</small></div>
+    </div>
+    <div class="etv-relogio"><div class="etv-hora" id="etvHora">{{ atualizado_em[-5:] }}</div><div class="etv-data">{{ atualizado_em[:10] }}</div><div class="etv-sync" id="etvSync">atualizado às {{ atualizado_em[-5:] }}</div></div>
+  </div>
+
+  <div class="etv-colunas">
+    {% for grupo in grupos %}
+    <section class="etv-col">
+      <div class="etv-col-titulo">{{ grupo.titulo }}</div>
+      <div class="etv-tiles">
+        {% for l in grupo.linhas %}
+        <div class="etv-tile {% if l.criticos > 0 %}etv-tile-crit{% endif %}">
+          <div class="etv-tile-nome">{{ l.rotulo }}{% if l.criticos > 0 %}<span class="etv-badge">{{ l.criticos }} crítico{{ 's' if l.criticos != 1 }}</span>{% endif %}</div>
+          <div class="etv-nums">
+            <div class="etv-num etv-n-fila">
+              <b>{{ l.fila }}</b><span>na fila</span><small>{{ l.fila_itens }} itens</small>
+            </div>
+            <div class="etv-num etv-n-prod">
+              <b>{{ l.em_producao }}</b><span>produção</span><small>{{ l.em_producao_itens }} itens</small>
+            </div>
+            <div class="etv-num etv-n-lt">
+              <b>{{ l.lt_medio if l.lt_medio is not none else "—" }}</b><span>lead time</span><small>dias</small>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="etv-vazio">Nenhuma estação ativa.</div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  // Atualiza os números sozinho a cada 60s SEM recarregar a página (a tela cheia não se perde).
+  let falhas = 0;
+  function atualizar() {
+    fetch(window.location.href, { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+      .then(function (html) {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const novo = doc.getElementById("estacoesTv");
+        const atual = document.getElementById("estacoesTv");
+        if (!novo || !atual) return Promise.reject();  // ex.: sessão expirou e voltou a tela de login
+        atual.innerHTML = novo.innerHTML;
+        falhas = 0;
+      })
+      .catch(function () {
+        falhas += 1;
+        const s = document.getElementById("etvSync");
+        if (s && falhas >= 2) { s.textContent = "sem atualização — verifique a conexão / login"; s.classList.add("etv-sync-erro"); }
+      });
+  }
+  setInterval(atualizar, 60000);
+  // Relógio (só visual; os números vêm do servidor).
+  function relogio() {
+    const h = document.getElementById("etvHora");
+    if (h) h.textContent = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  }
+  setInterval(relogio, 1000);
+  document.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      if (!document.querySelector(".tela-cheia-overlay")) {
+        const b = document.querySelector('[data-tela-cheia-alvo="#estacoesTv"]');
+        if (b) b.click();
+      }
+    }, 300);
+  });
+})();
+</script>
+{% endblock %}

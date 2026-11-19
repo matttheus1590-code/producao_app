@@ -27923,6 +27923,18 @@ def register_routes(app):
         if extras:
             grupos.append({"titulo": "Outras estações", "linhas": extras})
 
+        # Modo TV (pedido do Bruno, 19/11/2026): painel grande, em tela cheia, com TODAS as estações — mesmos números
+        # dos cards acima (fila / em produção / críticos / lead time), totais no topo, atualiza sozinho a cada 60s.
+        if request.args.get("tv") == "1":
+            todas = [l for g in grupos for l in g["linhas"]]
+            totais = {
+                "fila": sum(l["fila"] for l in todas), "fila_itens": sum(l["fila_itens"] for l in todas),
+                "producao": sum(l["em_producao"] for l in todas), "producao_itens": sum(l["em_producao_itens"] for l in todas),
+                "criticos": sum(l["criticos"] for l in todas), "estacoes_criticas": sum(1 for l in todas if l["criticos"] > 0),
+            }
+            return render_template("estacoes_tv.html", grupos=grupos, totais=totais,
+                                   atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"))
+
         return render_template("estacoes_lista.html", grupos=grupos, conclusoes_opcoes=_opcoes_conclusao_estacoes(hoje))
 
     @app.route("/estacoes/<nome>")
