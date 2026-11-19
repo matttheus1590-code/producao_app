@@ -4,13 +4,14 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0">
-    <i class="bi bi-kanban"></i> {{ rotulo }}
+    <i class="bi bi-kanban"></i> {{ rotulo }}{% if modo_tv %} <span class="badge text-bg-dark align-middle fs-6">Modo TV</span>{% endif %}
     {% if rotulo != estacao.nome %}<span class="text-muted fs-6 fw-normal">({{ estacao.nome }})</span>{% endif %}
   </h4>
   <div class="d-flex align-items-center gap-2">
-    {% if not pode_editar %}
+    {% if not pode_editar and not modo_tv %}
     <span class="badge bg-secondary">Somente leitura</span>
     {% endif %}
+    {% if not modo_tv %}
     <div class="dropdown">
       <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
         <i class="bi bi-file-earmark-pdf"></i> Relatório PDF
@@ -57,16 +58,29 @@
         </li>
       </ul>
     </div>
-    <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#kanbanBoardEstacao" data-tela-cheia-extra="#kanbanBuscaWrap"
-            data-tela-cheia-titulo="{{ rotulo }}" title="Abre o quadro em tela cheia (Esc para sair)">
+    {% endif %}
+    {% if not modo_tv %}
+    <a class="btn btn-outline-dark btn-sm" href="{{ url_tv }}" title="Painel grande só com as colunas desta estação — atualiza sozinho (para a TV da área)"><i class="bi bi-tv"></i> Modo TV</a>
+    {% endif %}
+    <button type="button" class="btn btn-outline-dark btn-sm" data-tela-cheia-alvo="#kanbanBoardEstacao" {% if modo_tv %}data-tela-cheia-extra="#kbTvInfo"{% else %}data-tela-cheia-extra="#kanbanBuscaWrap"{% endif %}
+            data-tela-cheia-titulo="{{ rotulo }}{% if modo_tv %} · Modo TV{% endif %}" title="Abre o quadro em tela cheia (Esc para sair)">
       <i class="bi bi-arrows-fullscreen"></i> Tela cheia
     </button>
+    {% if modo_tv %}
+    <a href="{{ url_sem_tv }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x-lg"></i> Sair do modo TV</a>
+    {% else %}
     <a href="{{ url_for('estacoes_lista') }}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-arrow-left"></i> Voltar
     </a>
+    {% endif %}
   </div>
 </div>
 
+{% if modo_tv %}
+<div id="kbTvInfo" class="kb-tv-info"><span class="kb-tv-hora" id="kbTvHora">{{ atualizado_em[-5:] }}</span> <span class="kb-tv-data">{{ atualizado_em[:10] }}</span> <span class="kb-tv-sync" id="kbTvSync">· atualizado às {{ atualizado_em[-5:] }}</span></div>
+{% endif %}
+
+{% if not modo_tv %}
 <div class="mb-3 kb-barra" id="kanbanBuscaWrap">
   <div class="kb-barra-busca">
   <div class="input-group input-group-sm kanban-busca-input" style="max-width: 440px;">
@@ -115,7 +129,8 @@
   {% endif %}
 </div>
 
-<div class="kanban-board" id="kanbanBoardEstacao">
+{% endif %}{# fim kb-barra (oculta no modo TV) #}
+<div class="kanban-board{% if modo_tv %} kb-tv{% endif %}" id="kanbanBoardEstacao">
   {% for etapa in STATUS_CHAO_OPCOES %}
   <div class="kanban-coluna">
     <div class="kanban-coluna-titulo bg-{{ STATUS_CHAO_CORES.get(etapa, 'secondary') }} bg-opacity-25">
@@ -542,4 +557,66 @@
   });
 })();
 </script>
+{% if modo_tv %}
+<script>
+(function () {
+  // Modo TV da estação (pedido do Bruno, 19/11/2026: "modo TV dentro da estação, só pra ver a estação e as colunas"):
+  // abre sozinho em tela cheia, atualiza as colunas a cada 60s SEM recarregar a página e rola devagar as colunas
+  // que não cabem na tela (ninguém mexe no mouse numa TV). Sem cliques/edição.
+  document.body.classList.add("modo-tv-clean");
+  const estado = {};   // por coluna: posição da rolagem e pausa nas pontas
+  let falhas = 0;
+
+  function passo() {
+    document.querySelectorAll("#kanbanBoardEstacao .kanban-coluna-corpo").forEach(function (c) {
+      const max = c.scrollHeight - c.clientHeight;
+      const e = estado[c.id] || (estado[c.id] = { pos: 0, pausa: 90, fim: false });
+      if (max <= 4) { e.pos = 0; c.scrollTop = 0; return; }
+      if (e.pausa > 0) { e.pausa -= 1; return; }
+      if (e.fim) { e.pos = 0; e.fim = false; e.pausa = 90; c.scrollTop = 0; return; }   // chegou ao fim: volta ao topo
+      e.pos += 1;
+      if (e.pos >= max) { e.pos = max; e.fim = true; e.pausa = 90; }
+      c.scrollTop = e.pos;
+    });
+  }
+  setInterval(passo, 33);
+
+  function atualizar() {
+    fetch(window.location.href, { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+      .then(function (html) {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const novo = doc.getElementById("kanbanBoardEstacao");
+        const atual = document.getElementById("kanbanBoardEstacao");
+        if (!novo || !atual) return Promise.reject();  // ex.: sessão expirou e voltou a tela de login
+        atual.innerHTML = novo.innerHTML;
+        document.querySelectorAll("#kanbanBoardEstacao .kanban-coluna-corpo").forEach(function (c) {
+          const e = estado[c.id]; if (e && e.pos > 0) c.scrollTop = e.pos;
+        });
+        const info = doc.getElementById("kbTvSync"), s = document.getElementById("kbTvSync");
+        if (info && s) { s.textContent = info.textContent; s.classList.remove("kb-tv-sync-erro"); }
+        falhas = 0;
+      })
+      .catch(function () {
+        falhas += 1;
+        const s = document.getElementById("kbTvSync");
+        if (s && falhas >= 2) { s.textContent = "· sem atualização — verifique a conexão / login"; s.classList.add("kb-tv-sync-erro"); }
+      });
+  }
+  setInterval(atualizar, 60000);
+  setInterval(function () {
+    const h = document.getElementById("kbTvHora");
+    if (h) h.textContent = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  }, 1000);
+  document.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      if (!document.querySelector(".tela-cheia-overlay")) {
+        const b = document.querySelector('[data-tela-cheia-alvo="#kanbanBoardEstacao"]');
+        if (b) b.click();
+      }
+    }, 300);
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

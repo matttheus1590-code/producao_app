@@ -28082,6 +28082,12 @@ def register_routes(app):
             materiais_principais_por_coluna=materiais_principais_por_coluna,
             pcp_por_item=pcp_por_item,
             pcp_filtro=pcp_filtro,
+            # Modo TV da estação (pedido do Bruno, 19/11/2026): só o nome da estação e as colunas, em tela cheia,
+            # atualizando sozinho — sem busca, relatórios nem botões de mover.
+            modo_tv=request.args.get("tv") == "1",
+            url_tv=url_for("estacao_kanban", nome=nome, tv=1),
+            url_sem_tv=url_for("estacao_kanban", nome=nome),
+            atualizado_em=_agora_brt().strftime("%d/%m/%Y %H:%M"),
         )
 
     @app.route("/estacoes/<nome>/relatorio.pdf")

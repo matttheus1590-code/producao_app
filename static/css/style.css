@@ -4541,41 +4541,59 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 .lote-avisos { color: #664d03; }
 
 /* Modo TV das Estações (pedido do Bruno, 19/11/2026) — painel escuro, números grandes, cabe numa tela sem rolagem. */
-.etv { background: #0f1722; color: #e8edf5; border-radius: .6rem; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: 1rem;
+.etv { background: #f4f6f9; color: #1f2937; border-radius: .6rem; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: 1rem;
        height: calc(100vh - 8rem); min-height: 32rem; }
 .tela-cheia-corpo > .etv.tela-cheia-ativa { height: 100%; border-radius: .4rem; }
 .etv-topo { display: flex; align-items: center; gap: 1.5rem; flex: 0 0 auto; }
 .etv-titulo { font-size: clamp(1rem, 1.8vw, 2rem); font-weight: 700; letter-spacing: .06em; white-space: nowrap; }
 .etv-totais { display: flex; gap: 1rem; flex: 1 1 auto; justify-content: center; flex-wrap: wrap; }
-.etv-total { display: grid; grid-template-columns: auto 1fr; column-gap: .75rem; align-items: center; background: #1a2638; border-radius: .6rem;
+.etv-total { display: grid; grid-template-columns: auto 1fr; column-gap: .75rem; align-items: center; background: #fff; border: 1px solid #dde2e8; border-radius: .6rem;
              padding: .4rem .9rem; min-width: 0; }
 .etv-total b { grid-row: span 2; font-size: clamp(2rem, 4.5vh, 4rem); line-height: 1; font-variant-numeric: tabular-nums; }
-.etv-total span { font-size: clamp(.8rem, 1.3vw, 1.2rem); color: #b7c3d6; }
-.etv-total small { font-size: clamp(.75rem, 1.1vw, 1rem); color: #8696ad; }
-.etv-total-fila b { color: #ff6b6b; } .etv-total-prod b { color: #ffd43b; }
-.etv-total-crit { background: #5c1a1a; } .etv-total-crit b { color: #fff; } .etv-total-crit span, .etv-total-crit small { color: #ffd0d0; }
-.etv-total-ok b { color: #69db7c; }
+.etv-total span { font-size: clamp(.8rem, 1.3vw, 1.2rem); color: #4b5563; }
+.etv-total small { font-size: clamp(.75rem, 1.1vw, 1rem); color: #8a93a3; }
+.etv-total-fila b { color: #d9363e; } .etv-total-prod b { color: #e08a00; }
+.etv-total-crit { background: #fff0f0; border-color: #f1a5a0; } .etv-total-crit b { color: #c92a2a; } .etv-total-crit span, .etv-total-crit small { color: #7a2a2a; }
+.etv-total-ok b { color: #2f9e44; }
 .etv-relogio { text-align: right; flex: 0 0 auto; }
 .etv-hora { font-size: clamp(1.6rem, 3.4vw, 3.4rem); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-.etv-data { font-size: clamp(.8rem, 1.2vw, 1.2rem); color: #b7c3d6; }
-.etv-sync { font-size: .8rem; color: #8696ad; }
-.etv-sync-erro { color: #ffa94d; font-weight: 700; }
+.etv-data { font-size: clamp(.8rem, 1.2vw, 1.2rem); color: #6b7280; }
+.etv-sync { font-size: .8rem; color: #8a93a3; }
+.etv-sync-erro { color: #d9480f; font-weight: 700; }
 .etv-colunas { display: grid; grid-template-columns: repeat(var(--etv-cols, 3), minmax(0, 1fr)); gap: 1rem; flex: 1 1 auto; min-height: 0; }
 .etv-col { display: flex; flex-direction: column; min-height: 0; gap: .6rem; }
-.etv-col-titulo { font-size: clamp(.95rem, 1.6vw, 1.7rem); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #8ab4ff;
-                  border-bottom: 2px solid #2a3a55; padding-bottom: .25rem; }
+.etv-col-titulo { font-size: clamp(.95rem, 1.6vw, 1.7rem); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #1c5fd4;
+                  border-bottom: 2px solid #cfd8e6; padding-bottom: .25rem; }
 .etv-tiles { display: flex; flex-direction: column; gap: .6rem; flex: 1 1 auto; min-height: 0; }
-.etv-tile { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; background: #17212f; border: 2px solid #26344a; border-radius: .6rem; padding: .3rem .9rem;
+.etv-tile { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; background: #fff; border: 1px solid #dde2e8; border-radius: .6rem; padding: .3rem .9rem;
             display: flex; flex-direction: column; justify-content: center; gap: .25rem; }
-.etv-tile-crit { border-color: #ff4d4d; box-shadow: 0 0 0 .15rem rgba(255, 77, 77, .25); background: #2a1a20; }
+.etv-tile-crit { border: 2px solid #e03131; background: #fff7f7; }
 .etv-tile-nome { font-size: clamp(.8rem, min(1.5vw, calc((100vh - 330px) / var(--etv-n, 5) * .15)), 1.9rem); font-weight: 700; line-height: 1.1; padding-right: 5.2em; }
 .etv-badge { position: absolute; top: .35rem; right: .6rem; white-space: nowrap; background: #e03131; color: #fff; border-radius: 2rem; padding: .05rem .7rem; font-size: .6em; font-weight: 700; animation: etv-pulsa 1.4s infinite; }
 @keyframes etv-pulsa { 50% { opacity: .55; } }
 .etv-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; text-align: center; }
 .etv-num { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
 .etv-num b { font-size: clamp(1.5rem, calc((100vh - 330px) / var(--etv-n, 5) * .32), 4.4rem); font-variant-numeric: tabular-nums; }
-.etv-num span { font-size: clamp(.75rem, 1.1vw, 1.1rem); color: #b7c3d6; text-transform: uppercase; letter-spacing: .04em; }
-.etv-num small { font-size: clamp(.7rem, 1vw, 1rem); color: #8696ad; }
-.etv-n-fila b { color: #ff6b6b; } .etv-n-prod b { color: #ffd43b; } .etv-n-lt b { color: #8ab4ff; }
-.etv-vazio { color: #8696ad; padding: 1rem; }
+.etv-num span { font-size: clamp(.75rem, 1.1vw, 1.1rem); color: #4b5563; text-transform: uppercase; letter-spacing: .04em; }
+.etv-num small { font-size: clamp(.7rem, 1vw, 1rem); color: #8a93a3; }
+.etv-n-fila b { color: #d9363e; } .etv-n-prod b { color: #e08a00; } .etv-n-lt b { color: #1c5fd4; }
+.etv-vazio { color: #8a93a3; padding: 1rem; }
 @media (max-width: 900px) { .etv { height: auto; } .etv-colunas { grid-template-columns: 1fr; } .etv-topo { flex-wrap: wrap; } }
+
+/* ---- Modo TV "clean" (pedido do Bruno, 19/11/2026: "achei bem escura a tela, deixe em modo clean") ---- */
+.modo-tv-clean .tela-cheia-overlay { background: #f4f6f9; }
+.modo-tv-clean .tela-cheia-barra { background: #fff; color: #1f2937; border-bottom: 1px solid #dee2e6; }
+.modo-tv-clean .tela-cheia-sair { border: 1px solid #ced4da; }
+.kb-tv-info { display: none; }
+.tela-cheia-extra .kb-tv-info { display: flex; align-items: baseline; gap: .6rem; color: #6b7280; }
+.kb-tv-hora { font-size: 1.5rem; font-weight: 700; color: #1f2937; font-variant-numeric: tabular-nums; }
+.kb-tv-sync-erro { color: #d9480f; font-weight: 700; }
+/* quadro da estação no modo TV: só o nome da estação (barra do topo) e as colunas; sem botões nem matéria-prima; fontes maiores */
+.kb-tv .kanban-item-rodape .d-flex, .kb-tv .kanban-coluna-materia-prima, .kb-tv .kanban-coluna-principais { display: none !important; }
+.kb-tv { overflow: hidden; }
+.kb-tv .kanban-coluna { min-width: 0; }
+.kb-tv .kanban-coluna-corpo { overflow: hidden; scrollbar-width: none; }
+.kb-tv .kanban-coluna-corpo::-webkit-scrollbar { display: none; }
+@media (min-width: 1200px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 1.25; } }
+@media (min-width: 1700px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 1.4; } }
+@media (min-width: 2400px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 2.1; } }
