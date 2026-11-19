@@ -4522,3 +4522,13 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 .pw-pane[data-semana="mes"] .pw-kpi-v, .pw-tabela-mes tfoot .pw-total-valor { white-space: nowrap; }
 .pw-pane[data-semana="mes"] .pw-kpi-valor .pw-kpi-v { font-size: 2.05rem; }
 .pw-tabela-mes tfoot .pw-total td.pw-total-valor { font-weight: 800 !important; font-size: 1.2rem !important; color: #1b2a4a; }
+
+/* ===== Novo pedido · preencher a partir do PDF do ERP (Bruno, 19/11/2026) ===== */
+.import-pdf-card { border: 1px dashed #6ea8fe; background: #f5f9ff; }
+.import-pdf-card.import-pdf-drag { background: #e3efff; border-color: #0d6efd; }
+.import-pdf-msg { border-radius: .4rem; padding: .5rem .75rem; border: 1px solid; }
+.import-pdf-ok { background: #e8f6ee; border-color: #8fd0aa; color: #14532d; }
+.import-pdf-aviso { background: #fff7e0; border-color: #f0cf6b; color: #664d03; }
+.import-pdf-erro { background: #fdeceb; border-color: #f1a5a0; color: #842029; }
+.campo-importado { background-color: #fff3bf !important; border-color: #e6c84c !important; }
+.campo-pendente { border-color: #fd7e14 !important; box-shadow: 0 0 0 .15rem rgba(253, 126, 20, .25) !important; }

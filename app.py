@@ -25870,6 +25870,37 @@ def register_routes(app):
 
         return render_template("novo_pedido.html", form={}, itens=[])
 
+    @app.route("/pedidos/novo/importar-pdf", methods=["POST"])
+    @requer_role("ADMIN", "PCP")
+    def novo_pedido_importar_pdf():
+        """Lê o PDF "Confirmação do Pedido" do ERP (SIGA/1076) e devolve os campos pra tela "Novo pedido" se
+        preencher sozinha (pedido do Bruno, 19/11/2026). SÓ LÊ: nada é gravado aqui — o PCP confere, completa
+        Prioridade / Tipo de pedido / Status (que não vêm no PDF) e salva pelo formulário de sempre."""
+        import importar_pedido_pdf
+        arquivo = request.files.get("pdf")
+        if arquivo is None or not arquivo.filename:
+            return jsonify(ok=False, erro="Nenhum arquivo enviado."), 400
+        dados = arquivo.read(8 * 1024 * 1024 + 1)
+        if len(dados) > 8 * 1024 * 1024:
+            return jsonify(ok=False, erro="Arquivo grande demais (máximo 8 MB)."), 413
+        if not dados.startswith(b"%PDF"):
+            return jsonify(ok=False, erro="O arquivo não é um PDF."), 400
+        try:
+            resultado = importar_pedido_pdf.ler_pedido_pdf(dados)
+        except importar_pedido_pdf.PdfPedidoInvalido as e:
+            return jsonify(ok=False, erro=str(e)), 422
+        except Exception:  # PDF corrompido/inesperado: nunca derruba a tela
+            app.logger.exception("Falha ao ler PDF de pedido")
+            return jsonify(ok=False, erro="Não consegui ler esse PDF. Confira se é o relatório de Confirmação do Pedido."), 422
+        # pedido já cadastrado? (mesma regra de comparação do resto do site: sem espaços/zeros à esquerda)
+        pv = resultado.get("pedido_venda")
+        if pv:
+            existente = Pedido.query.filter(_pedido_venda_normalizado_sql(Pedido.pedido_venda) == _normalizar_pedido_venda(pv)).first()
+            if existente is not None:
+                resultado["avisos"].insert(0, f"Atenção: já existe o pedido {existente.pedido_venda} cadastrado "
+                                              f"({existente.cliente}). Confira antes de incluir de novo.")
+        return jsonify(ok=True, **resultado)
+
     @app.route("/pedidos/<int:pedido_id>/editar", methods=["GET", "POST"])
     @requer_role("ADMIN", "PCP", "LIDER")
     def editar_pedido(pedido_id):

@@ -15,6 +15,25 @@
       e ficam calculadas automaticamente.
     </p>
 
+    {# Preencher a partir do PDF do ERP (pedido do Bruno, 19/11/2026) — só lê o PDF e preenche a tela; nada é salvo até o PCP conferir e clicar em "Incluir pedido". #}
+    <div class="card p-3 mb-3 shadow-sm import-pdf-card" id="importPdfCard">
+      <div class="d-flex flex-wrap align-items-center gap-3">
+        <div class="flex-grow-1" style="min-width: 16rem;">
+          <div class="fw-semibold"><i class="bi bi-file-earmark-pdf"></i> Preencher a partir do PDF do pedido (ERP)</div>
+          <div class="small text-muted">
+            Anexe (ou arraste aqui) o relatório <strong>“Confirmação do Pedido”</strong> (SIGA/1076). Cliente, CNPJ, cidade/UF, vendedor, frete,
+            datas, pedido de venda e itens são preenchidos sozinhos — <strong>nada é salvo</strong> até você conferir e clicar em
+            <em>Incluir pedido</em>. <strong>Prioridade, Tipo de pedido e Status do pedido</strong> não vêm no PDF: escolha você.
+          </div>
+        </div>
+        <div>
+          <input type="file" id="pdfPedidoArquivo" accept="application/pdf,.pdf" class="d-none">
+          <button type="button" id="btnImportarPdf" class="btn btn-primary"><i class="bi bi-upload"></i> Anexar PDF</button>
+        </div>
+      </div>
+      <div id="importPdfResultado" class="mt-2" aria-live="polite"></div>
+    </div>
+
     <form method="post" class="card p-4 shadow-sm">
       <div class="row g-3">
         <div class="col-md-3">
@@ -275,6 +294,120 @@
       atualizarTotal();
     }
   });
+
+
+  // ---- Preencher a partir do PDF do ERP (pedido do Bruno, 19/11/2026) ----
+  const formPedido = document.querySelector('form.card');
+  const cardPdf = document.getElementById('importPdfCard');
+  const inputPdf = document.getElementById('pdfPedidoArquivo');
+  const btnPdf = document.getElementById('btnImportarPdf');
+  const resultadoPdf = document.getElementById('importPdfResultado');
+  const CAMPOS_PENDENTES = ['prioridade', 'go_tipo_pedido', 'go_status_pedido_info'];
+
+  function campo(nome) { return formPedido.querySelector('[name="' + nome + '"]'); }
+
+  function preencher(nome, valor) {
+    const el = campo(nome);
+    if (!el || valor === null || valor === undefined || valor === '') return;
+    el.value = valor;
+    if (el.tagName === 'SELECT' && el.value !== String(valor)) { el.value = ''; return; }  // opção que não existe na lista
+    el.classList.add('campo-importado');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('focusout', { bubbles: true }));
+  }
+
+  function limparMarcas() {
+    formPedido.querySelectorAll('.campo-importado, .campo-pendente').forEach(function(el) {
+      el.classList.remove('campo-importado', 'campo-pendente');
+    });
+  }
+  formPedido.addEventListener('input', function(e) { e.target.classList.remove('campo-importado', 'campo-pendente'); });
+  formPedido.addEventListener('change', function(e) { e.target.classList.remove('campo-importado', 'campo-pendente'); });
+
+  function brl(v) { return 'R$ ' + BR.fmt(v, 2, 2); }
+  function dataBr(iso) { return iso ? iso.split('-').reverse().join('/') : '—'; }
+
+  function mostrar(tipo, titulo, linhas) {
+    resultadoPdf.innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'import-pdf-msg import-pdf-' + tipo;
+    const t = document.createElement('div');
+    t.className = 'fw-semibold';
+    t.textContent = titulo;
+    box.appendChild(t);
+    if (linhas && linhas.length) {
+      const ul = document.createElement('ul');
+      ul.className = 'mb-0 small ps-3';
+      linhas.forEach(function(l) { const li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
+      box.appendChild(ul);
+    }
+    resultadoPdf.appendChild(box);
+  }
+
+  function aplicarPdf(d) {
+    limparMarcas();
+    ['pedido_venda', 'data_inclusao_pedido', 'data_cliente', 'cliente', 'cnpj', 'cidade', 'estado', 'pais', 'frete',
+     'vendedor', 'go_pedido_compra_cliente'].forEach(function(n) { preencher(n, d[n]); });
+    if (d.go_valor_pedido_operacao !== null && d.go_valor_pedido_operacao !== undefined) {
+      preencher('go_valor_pedido_operacao', BR.fmt(d.go_valor_pedido_operacao, 2, 2));
+    }
+    if (d.itens && d.itens.length) {
+      container.innerHTML = '';
+      d.itens.forEach(function(it) {
+        const linha = linhaTemplate();
+        container.appendChild(linha);
+        const desc = linha.querySelector('.item-descricao'), q = linha.querySelector('.item-quantidade'), c = linha.querySelector('.item-custo');
+        desc.value = it.descricao || '';
+        if (it.quantidade !== null && it.quantidade !== undefined) q.value = BR.fmt(it.quantidade, 0, 3);
+        if (it.custo_unitario !== null && it.custo_unitario !== undefined) c.value = BR.fmt(it.custo_unitario, 2, 5);
+        [desc, q, c].forEach(function(el) { el.classList.add('campo-importado'); });
+        q.dispatchEvent(new Event('focusout', { bubbles: true }));
+        c.dispatchEvent(new Event('focusout', { bubbles: true }));
+      });
+      atualizarTotal();
+    }
+    CAMPOS_PENDENTES.forEach(function(n) { const el = campo(n); if (el) el.classList.add('campo-pendente'); });
+
+    const linhas = [];
+    (d.itens || []).forEach(function(it) {
+      linhas.push('Item: ' + it.descricao + ' — ' + (it.quantidade !== null ? BR.fmt(it.quantidade, 0, 3) : '?') + ' × ' +
+                  (it.custo_unitario !== null ? brl(it.custo_unitario) : '?') + ' — entrega ' + dataBr(it.entrega));
+    });
+    (d.avisos || []).forEach(function(a) { linhas.push('⚠ ' + a); });
+    linhas.push('Falta você escolher: Prioridade, Tipo de pedido e Status do pedido (marcados em laranja).');
+    const resumo = 'PDF lido — pedido ' + (d.pedido_venda || '?') + ' · ' + (d.cliente || 'cliente não identificado') +
+                   ' · ' + (d.itens || []).length + ' item(ns)' +
+                   (d.go_valor_pedido_operacao ? ' · ' + brl(d.go_valor_pedido_operacao) : '') +
+                   '. Confira os campos destacados antes de incluir.';
+    mostrar((d.avisos && d.avisos.length) ? 'aviso' : 'ok', resumo, linhas);
+    const el = campo('cliente'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function enviarPdf(arquivo) {
+    if (!arquivo) return;
+    if (!/\.pdf$/i.test(arquivo.name) && arquivo.type !== 'application/pdf') {
+      mostrar('erro', 'Escolha um arquivo PDF.'); return;
+    }
+    btnPdf.disabled = true;
+    btnPdf.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Lendo PDF…';
+    const fd = new FormData();
+    fd.append('pdf', arquivo);
+    fetch({{ url_for('novo_pedido_importar_pdf') | tojson }}, { method: 'POST', body: fd, credentials: 'same-origin' })
+      .then(function(r) { return r.json().catch(function() { return { ok: false, erro: 'Sessão expirada ou resposta inesperada — recarregue a página e tente de novo.' }; }); })
+      .then(function(d) { if (d.ok) { aplicarPdf(d); } else { mostrar('erro', d.erro || 'Não consegui ler o PDF.'); } })
+      .catch(function() { mostrar('erro', 'Falha de conexão ao enviar o PDF. Tente de novo.'); })
+      .finally(function() { btnPdf.disabled = false; btnPdf.innerHTML = '<i class="bi bi-upload"></i> Anexar PDF'; inputPdf.value = ''; });
+  }
+
+  btnPdf.addEventListener('click', function() { inputPdf.click(); });
+  inputPdf.addEventListener('change', function() { enviarPdf(inputPdf.files[0]); });
+  ['dragenter', 'dragover'].forEach(function(ev) {
+    cardPdf.addEventListener(ev, function(e) { e.preventDefault(); cardPdf.classList.add('import-pdf-drag'); });
+  });
+  ['dragleave', 'drop'].forEach(function(ev) {
+    cardPdf.addEventListener(ev, function(e) { e.preventDefault(); cardPdf.classList.remove('import-pdf-drag'); });
+  });
+  cardPdf.addEventListener('drop', function(e) { enviarPdf(e.dataTransfer.files[0]); });
 
   atualizarTotal();
 })();
