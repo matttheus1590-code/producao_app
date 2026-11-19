@@ -4588,12 +4588,11 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 .tela-cheia-extra .kb-tv-info { display: flex; align-items: baseline; gap: .6rem; color: #6b7280; }
 .kb-tv-hora { font-size: 1.5rem; font-weight: 700; color: #1f2937; font-variant-numeric: tabular-nums; }
 .kb-tv-sync-erro { color: #d9480f; font-weight: 700; }
-/* quadro da estação no modo TV: só o nome da estação (barra do topo) e as colunas; sem botões nem matéria-prima; fontes maiores */
+/* quadro da estação no modo TV: só o nome da estação (barra do topo) e as colunas; sem botões nem matéria-prima; fontes maiores; rolagem manual */
 .kb-tv .kanban-item-rodape .d-flex, .kb-tv .kanban-coluna-materia-prima, .kb-tv .kanban-coluna-principais { display: none !important; }
 .kb-tv { overflow: hidden; }
 .kb-tv .kanban-coluna { min-width: 0; }
-.kb-tv .kanban-coluna-corpo { overflow: hidden; scrollbar-width: none; }
-.kb-tv .kanban-coluna-corpo::-webkit-scrollbar { display: none; }
+.kb-tv .kanban-coluna-corpo { overflow-y: auto; scrollbar-width: thin; }  /* rolagem manual (mouse/scroll) */
 @media (min-width: 1200px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 1.25; } }
 @media (min-width: 1700px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 1.4; } }
 @media (min-width: 2400px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 2.1; } }

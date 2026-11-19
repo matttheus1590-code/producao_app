@@ -561,25 +561,10 @@
 <script>
 (function () {
   // Modo TV da estação (pedido do Bruno, 19/11/2026: "modo TV dentro da estação, só pra ver a estação e as colunas"):
-  // abre sozinho em tela cheia, atualiza as colunas a cada 60s SEM recarregar a página e rola devagar as colunas
-  // que não cabem na tela (ninguém mexe no mouse numa TV). Sem cliques/edição.
+  // abre sozinho em tela cheia e atualiza as colunas a cada 60s SEM recarregar a página (a rolagem de cada
+  // coluna é MANUAL — pedido do Bruno: não ficar rolando sozinho — e é preservada na atualização). Sem cliques/edição.
   document.body.classList.add("modo-tv-clean");
-  const estado = {};   // por coluna: posição da rolagem e pausa nas pontas
   let falhas = 0;
-
-  function passo() {
-    document.querySelectorAll("#kanbanBoardEstacao .kanban-coluna-corpo").forEach(function (c) {
-      const max = c.scrollHeight - c.clientHeight;
-      const e = estado[c.id] || (estado[c.id] = { pos: 0, pausa: 90, fim: false });
-      if (max <= 4) { e.pos = 0; c.scrollTop = 0; return; }
-      if (e.pausa > 0) { e.pausa -= 1; return; }
-      if (e.fim) { e.pos = 0; e.fim = false; e.pausa = 90; c.scrollTop = 0; return; }   // chegou ao fim: volta ao topo
-      e.pos += 1;
-      if (e.pos >= max) { e.pos = max; e.fim = true; e.pausa = 90; }
-      c.scrollTop = e.pos;
-    });
-  }
-  setInterval(passo, 33);
 
   function atualizar() {
     fetch(window.location.href, { credentials: "same-origin", cache: "no-store" })
@@ -589,9 +574,12 @@
         const novo = doc.getElementById("kanbanBoardEstacao");
         const atual = document.getElementById("kanbanBoardEstacao");
         if (!novo || !atual) return Promise.reject();  // ex.: sessão expirou e voltou a tela de login
+        // guarda onde cada coluna estava rolada (a rolagem é manual) e devolve depois de trocar os dados
+        const pos = {};
+        document.querySelectorAll("#kanbanBoardEstacao .kanban-coluna-corpo").forEach(function (c) { pos[c.id] = c.scrollTop; });
         atual.innerHTML = novo.innerHTML;
         document.querySelectorAll("#kanbanBoardEstacao .kanban-coluna-corpo").forEach(function (c) {
-          const e = estado[c.id]; if (e && e.pos > 0) c.scrollTop = e.pos;
+          if (pos[c.id]) c.scrollTop = pos[c.id];
         });
         const info = doc.getElementById("kbTvSync"), s = document.getElementById("kbTvSync");
         if (info && s) { s.textContent = info.textContent; s.classList.remove("kb-tv-sync-erro"); }
