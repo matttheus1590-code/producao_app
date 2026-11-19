@@ -1165,7 +1165,8 @@ document.addEventListener("click", function (ev) {
   </div>
   {% if linhas %}
     {% for l in linhas %}
-    <div class="d-flex align-items-center gap-1 mb-1" title="{{ l.nome }}: {{ lt.atual_curto }} {{ (l.atual_media|string + 'd (' ~ l.atual_n ~ ')') if l.atual_media is not none else 'sem dados' }} · {{ lt.mes_curto }}: {{ (l.mes_media|string + 'd (' ~ l.mes_n ~ ')') if l.mes_media is not none else 'sem dados' }} · média do ano {{ l.media }}d ({{ l.n }})">
+    {% if l.fora_geral and (loop.first or not loop.previtem.fora_geral) %}<div class="text-muted border-top pt-1 mt-1 mb-1" style="font-size:0.64rem;">⚠️ À parte — esta estação <strong>não entra</strong> no lead time geral</div>{% endif %}
+    <div class="d-flex align-items-center gap-1 mb-1{{ ' opacity-75' if l.fora_geral else '' }}" title="{{ l.nome }}: {{ lt.atual_curto }} {{ (l.atual_media|string + 'd (' ~ l.atual_n ~ ')') if l.atual_media is not none else 'sem dados' }} · {{ lt.mes_curto }}: {{ (l.mes_media|string + 'd (' ~ l.mes_n ~ ')') if l.mes_media is not none else 'sem dados' }} · média do ano {{ l.media }}d ({{ l.n }})">
       <span style="width:1.3rem;">{{ l.emoji }}</span>
       <span class="small text-truncate" style="width:6rem;">{{ l.nome }}</span>
       <div class="flex-grow-1">
@@ -1226,6 +1227,16 @@ document.addEventListener("click", function (ev) {
         {{ lt_tile("🏆", "Lead time total produção", "Fila de espera + Chão de fábrica (Inclusão → Liberação efetiva)", lp.total, lt, "dark", destaque=True, altura_total=False, concl=lp.concluidos, col="total", lado="dir") }}
         <div class="mt-2">{{ lt_linhas(lp.total.por_estacao, "🏆 Total produção por estação", lt, "dark") }}</div>
       </div>
+    </div>
+    {# Legenda da regra "estação OUTROS fica de fora do lead time geral" (pedido do Bruno, 19/11/2026) #}
+    <div class="lt-legenda-geral rounded-3 border border-warning-subtle bg-warning-subtle bg-opacity-25 px-3 py-2 mt-3 small" id="lt-legenda-geral">
+      <div class="fw-semibold">ℹ️ Como o lead time geral é calculado</div>
+      <div>A estação <strong>OUTROS</strong> é uma estação à parte das demais e <strong>não pontua no lead time geral</strong>:
+        ela fica de fora da fila de espera, do chão de fábrica, do lead time total produção, dos concluídos do card (hover),
+        do comparativo semanal e dos relatórios PDF/Excel deste quadrante — assim o lead time geral reflete só as estações de produção.
+        Nas listas <em>“por estação”</em> ela continua aparecendo (no fim, marcada <em>“à parte”</em>) só para consulta.
+        No <strong>Quadrante 02</strong> (Gestão Operação, calculado por pedido), um pedido cujos itens são <strong>todos</strong> da
+        estação OUTROS também fica de fora; pedido com itens de outras estações continua contando normalmente.</div>
     </div>
     {# comparativo semana a semana / quinzena a quinzena do mês atual #}
     {% set cmp = lt.comparativo %}
@@ -1431,6 +1442,7 @@ document.addEventListener("click", function (ev) {
       <h6 class="text-uppercase mb-0 fw-bold text-primary">🚚 Quadrante 02 · Gestão Operação — lead time</h6>
       <span class="badge text-bg-light border">📅 {{ lt.atual_label }} (mês atual, parcial) · ref.: {{ lt.mes_label }} (mês anterior) e 📊 média {{ lt.ano }}</span>
     </div>
+    <div class="text-muted small mb-2" style="font-size:0.7rem;">ℹ️ Pedido cujos itens são <strong>todos</strong> da estação <strong>OUTROS</strong> (estação à parte) não entra nestes lead times — ver legenda do Quadrante 01.</div>
     <div class="row g-3">
       <div class="col-12 col-xl-7">
         <div class="row g-3">

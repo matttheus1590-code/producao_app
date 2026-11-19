@@ -8187,6 +8187,24 @@ _EMOJI_REGIAO_PAINEL = {
 }
 
 
+# Estações que ficam FORA do lead time GERAL do Painel (pedido do Bruno, 19/11/2026: "nesse painel de lead time,
+# não quero que pontue no geral a estação OUTROS, pois é uma estação à parte de todas as outras — com isso vai cair
+# bem o lead time"). Continuam aparecendo nas linhas "por estação" (marcadas "à parte"), mas NÃO entram nas médias
+# gerais, no lead time total, nos concluídos do hover nem no comparativo semanal. No quadrante 02 (por pedido), um
+# pedido cujos itens são TODOS dessas estações também fica de fora; pedido misto continua contando.
+ESTACOES_FORA_LEAD_TIME_GERAL = {"OUTROS"}
+
+
+def _estacao_fora_lt_geral(nome):
+    return (nome or "").strip().upper() in ESTACOES_FORA_LEAD_TIME_GERAL
+
+
+def _pedido_fora_lt_geral(pedido):
+    """True se o pedido tem itens e TODOS estão em estação fora do lead time geral."""
+    itens = list(pedido.itens or [])
+    return bool(itens) and all(_estacao_fora_lt_geral(i.estacao) for i in itens)
+
+
 def _coletar_lead_times_painel(inicio=None, fim=None, incluir_operacao=True):
     """Valores crus (listas de dias) dos lead times do Painel, num recorte
     opcional de datas inclusivas (`inicio`/`fim`). Cada valor entra no mês em
@@ -8227,33 +8245,38 @@ def _coletar_lead_times_painel(inicio=None, fim=None, incluir_operacao=True):
     }
     for pedido in pedidos:
         for item in pedido.itens:
+            fora = _estacao_fora_lt_geral(item.estacao)  # estação à parte: só nas linhas "por estação"
             if item.liberacao_real and _no_periodo(item.liberacao_real):
                 if item.inicio_producao:
                     dias = (item.liberacao_real - item.inicio_producao).days
-                    r["chao"].append(dias)
+                    if not fora:
+                        r["chao"].append(dias)
                     # Itens CONCLUÍDOS (liberação efetiva no período) com as 3
                     # leituras lado a lado — alimenta o resumo que aparece ao
                     # passar o mouse nos cards do Painel (pedido do Bruno,
                     # 21/10/2026). fila + chão = total, exatamente, por item.
                     fila_item = (item.inicio_producao - pedido.data_inclusao_pedido).days
-                    r["concluidos"].append({
-                        "pedido_id": pedido.id, "itens_total": len(pedido.itens),
-                        "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
-                        "produto": item.descricao_produto, "estacao": item.estacao,
-                        "inclusao": pedido.data_inclusao_pedido, "liberacao": item.liberacao_real,
-                        "fila": fila_item, "chao": dias, "total": fila_item + dias,
-                    })
+                    if not fora:
+                        r["concluidos"].append({
+                            "pedido_id": pedido.id, "itens_total": len(pedido.itens),
+                            "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
+                            "produto": item.descricao_produto, "estacao": item.estacao,
+                            "inclusao": pedido.data_inclusao_pedido, "liberacao": item.liberacao_real,
+                            "fila": fila_item, "chao": dias, "total": fila_item + dias,
+                        })
                     if item.estacao:
                         r["chao_est"].setdefault(item.estacao, []).append(dias)
                 dias_tp = (item.liberacao_real - pedido.data_inclusao_pedido).days
-                r["total_producao"].append(dias_tp)
+                if not fora:
+                    r["total_producao"].append(dias_tp)
                 if item.estacao:
                     r["total_producao_est"].setdefault(item.estacao, []).append(dias_tp)
             if item.tempo_espera_dias is not None and _no_periodo(item.inicio_producao):
-                r["fila"].append(item.tempo_espera_dias)
+                if not fora:
+                    r["fila"].append(item.tempo_espera_dias)
                 if item.estacao:
                     r["fila_est"].setdefault(item.estacao, []).append(item.tempo_espera_dias)
-        if pedido.data_cliente and _no_periodo(pedido.data_inclusao_pedido):
+        if pedido.data_cliente and _no_periodo(pedido.data_inclusao_pedido) and not _pedido_fora_lt_geral(pedido):
             r["prazo"].append((pedido.data_cliente - pedido.data_inclusao_pedido).days)
 
     if not incluir_operacao:
@@ -8262,7 +8285,7 @@ def _coletar_lead_times_painel(inicio=None, fim=None, incluir_operacao=True):
     entrega_por_pedido = _entrega_cliente_por_pedido_venda([p.pedido_venda for p in pedidos if p.pedido_venda])
     for p in pedidos:
         data_entrega = entrega_por_pedido.get(_normalizar_pedido_venda(p.pedido_venda))
-        if data_entrega and _no_periodo(data_entrega):
+        if data_entrega and _no_periodo(data_entrega) and not _pedido_fora_lt_geral(p):
             dias_total = (data_entrega - p.data_inclusao_pedido).days
             r["total"].append(dias_total)
             if p.frete == "CIF":
@@ -8304,22 +8327,25 @@ def _coletar_lead_times_pcp(rotulos):
         pedido = item.pedido
         if not pedido or not pedido.data_inclusao_pedido:
             continue
-        r["n_plan_itens"] += 1
-        pedidos_plan.add(pedido.id)
+        fora = _estacao_fora_lt_geral(item.estacao)  # estação à parte: só nas linhas "por estação"
+        if not fora:
+            r["n_plan_itens"] += 1
+            pedidos_plan.add(pedido.id)
         if not (item.inicio_producao and item.liberacao_real):
             continue
         fila = (item.inicio_producao - pedido.data_inclusao_pedido).days
         chao = (item.liberacao_real - item.inicio_producao).days
-        r["fila"].append(fila)
-        r["chao"].append(chao)
-        r["total_producao"].append(fila + chao)
-        r["concluidos"].append({
-            "pedido_id": pedido.id, "itens_total": len(pedido.itens),
-            "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
-            "produto": item.descricao_produto, "estacao": item.estacao,
-            "inclusao": pedido.data_inclusao_pedido, "liberacao": item.liberacao_real,
-            "fila": fila, "chao": chao, "total": fila + chao,
-        })
+        if not fora:
+            r["fila"].append(fila)
+            r["chao"].append(chao)
+            r["total_producao"].append(fila + chao)
+            r["concluidos"].append({
+                "pedido_id": pedido.id, "itens_total": len(pedido.itens),
+                "pedido_venda": pedido.pedido_venda, "cliente": pedido.cliente,
+                "produto": item.descricao_produto, "estacao": item.estacao,
+                "inclusao": pedido.data_inclusao_pedido, "liberacao": item.liberacao_real,
+                "fila": fila, "chao": chao, "total": fila + chao,
+            })
         if item.estacao:
             r["fila_est"].setdefault(item.estacao, []).append(fila)
             r["chao_est"].setdefault(item.estacao, []).append(chao)
@@ -8436,18 +8462,23 @@ def _linhas_lt_comparativo(hist_por_chave, mes_por_chave, media_ref, nome_fn, em
 def _finalizar_linhas_lt(linhas, media_ref):
     """Ordena (maior lead time do mês atual primeiro), calcula as barras
     (mesma escala) e o semáforo de cada linha."""
-    linhas.sort(key=lambda l: (l["atual_media"] is None, -(l["atual_media"] or 0), -l["media"], l["nome"]))
+    # estação à parte (OUTROS): aparece na lista (no fim), mas fora do geral — sem semáforo contra a média geral e sem
+    # esticar a escala das barras das demais estações.
+    for l in linhas:
+        l["fora_geral"] = _estacao_fora_lt_geral(l.get("chave"))
+    linhas.sort(key=lambda l: (l["fora_geral"], l["atual_media"] is None, -(l["atual_media"] or 0), -l["media"], l["nome"]))
+    base_escala = [l for l in linhas if not l["fora_geral"]] or linhas
     maior = max(
-        [l["media"] for l in linhas]
-        + [l["mes_media"] for l in linhas if l["mes_media"] is not None]
-        + [l["atual_media"] for l in linhas if l["atual_media"] is not None],
+        [l["media"] for l in base_escala]
+        + [l["mes_media"] for l in base_escala if l["mes_media"] is not None]
+        + [l["atual_media"] for l in base_escala if l["atual_media"] is not None],
         default=0,
     )
     for l in linhas:
-        l["barra_pct"] = round(100 * max(l["media"], 0) / maior) if maior > 0 else 0
-        l["barra_mes_pct"] = round(100 * max(l["mes_media"], 0) / maior) if (maior > 0 and l["mes_media"] is not None) else 0
-        l["barra_atual_pct"] = round(100 * max(l["atual_media"], 0) / maior) if (maior > 0 and l["atual_media"] is not None) else 0
-        if l["atual_media"] is None or media_ref is None or media_ref <= 0:
+        l["barra_pct"] = min(100, round(100 * max(l["media"], 0) / maior)) if maior > 0 else 0
+        l["barra_mes_pct"] = min(100, round(100 * max(l["mes_media"], 0) / maior)) if (maior > 0 and l["mes_media"] is not None) else 0
+        l["barra_atual_pct"] = min(100, round(100 * max(l["atual_media"], 0) / maior)) if (maior > 0 and l["atual_media"] is not None) else 0
+        if l["fora_geral"] or l["atual_media"] is None or media_ref is None or media_ref <= 0:
             l["semaforo"] = "⚪"
         elif l["atual_media"] > media_ref * 1.25:
             l["semaforo"] = "🔴"
@@ -9012,6 +9043,9 @@ def _gerar_pdf_lead_time_q1(dados):
         f'{_icone_pdf("target", 9)} Linha <b>vermelha</b> = lead time total acima da média {lt["ano"]} ({dias(refs.get("total"))}) · '
         f'valores em <font color="{VERMELHO}"><b>vermelho</b></font> = métrica acima da sua média (fila {dias(refs.get("fila"))} · chão {dias(refs.get("chao"))} · total {dias(refs.get("total"))}) · '
         f'{_icone_pdf("warning", 9)} = acima de {LT_CRITICO_DIAS} dias (crítico). Uma linha por pedido: média dos itens liberados (faixa mín–máx quando os itens divergem).', nota))
+    elementos.append(P(
+        'Estação <b>OUTROS</b> (à parte das demais) <b>não pontua</b> no lead time geral: fica de fora da fila, do chão, do total '
+        'produção, dos concluídos e do comparativo; aparece só nas listas por estação, marcada como à parte.', nota))
     elementos.append(Spacer(1, 1.5 * mm))
     if conc["todos"]:
         def val(p, k):
@@ -9148,6 +9182,8 @@ def _gerar_xlsx_lead_time_q1(dados):
         ws.cell(row=i, column=1).border = c.border = borda
     ws["A20"] = "Como ler: fila entra pelo mês do INÍCIO de produção; chão e total, pela LIBERAÇÃO efetiva. Total = fila + chão (soma das médias). Linha vermelha = acima da média do ano; 🚨 = acima de 30 dias."
     ws["A20"].font = f_sub
+    ws["A21"] = "Estação OUTROS (à parte das demais) NÃO pontua no lead time geral: fica de fora da fila, do chão, do total produção, dos concluídos e do comparativo; aparece só nas listas por estação, marcada como à parte."
+    ws["A21"].font = f_sub
     ws.freeze_panes = "A6"
 
     # ---------------- 2. Semanal ----------------
