@@ -4604,3 +4604,14 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
                    background: #eef1f5; border: 1px solid #dde2e8; border-radius: .8rem; padding: .02rem .5rem; color: #384152; }
 .risco-item-chip strong { color: #1c5fd4; }
 .risco-item-ok { opacity: .6; background: #f4f6f9; }
+
+/* Lead time atual dentro do card de OP/produto das Estações (pedido do Bruno, 24/11/2026) */
+.kanban-item-lt { display: flex; flex-wrap: wrap; gap: .25rem; margin: .3rem 0 .35rem; font-size: .7rem; }
+.kanban-item-lt .lt-cel { border: 1px solid #dde2e8; border-radius: .4rem; padding: .05rem .4rem; background: #f8f9fb; color: #4b5563; white-space: nowrap; }
+.kanban-item-lt .lt-cel strong { font-size: .8rem; }
+.kanban-item-lt .lt-fila strong { color: #c77700; }
+.kanban-item-lt .lt-prod strong { color: #2b8a3e; }
+.kanban-item-lt .lt-total { background: #eef3ff; border-color: #c5d5f5; }
+.kanban-item-lt .lt-total strong { color: #1c5fd4; }
+.kanban-item-lt .lt-aberto { border-style: dashed; border-color: #8a93a3; }
+.kanban-item-lt .lt-vazio { opacity: .55; }

@@ -28046,6 +28046,34 @@ def register_routes(app):
         colunas_agrupadas = {chave: _agrupar_por_pedido(colunas[chave]) for chave in STATUS_CHAO_OPCOES}
         pcp_por_item, pcp_filtro = _filtro_pcp_estacao(itens)
 
+        # Lead time ATUAL de cada OP/produto (pedido do Bruno, 24/11/2026: "em tempo real, dentro de cada card de
+        # op/produto, me mostre o lead time atual do produto — dias x em fila, dias y em produção, dias t total — em
+        # todas as estações e em todas as colunas"). Recalculado a cada acesso, com a data de hoje (Brasília):
+        #   fila     = inclusão do pedido -> início da produção (sem início ainda: até hoje, "contando");
+        #   produção = início da produção -> término (em produção: até hoje, "contando"; não iniciado: sem valor);
+        #   total    = inclusão do pedido -> término (item aberto: até hoje, "contando") — fila + produção = total.
+        hoje_lt = _agora_brt().date()
+
+        def _lt_item(it):
+            inclusao = it.pedido.data_inclusao_pedido if it.pedido else None
+            if not inclusao:
+                return None
+            inicio = it.inicio_producao
+            fim = (it.termino_inspecao or it.liberacao_real) if it.status_producao == "FINALIZADO" else None
+            if fim and inicio and fim < inicio:
+                fim = inicio
+            ref_fila = inicio or fim or hoje_lt
+            fila = max(0, (ref_fila - inclusao).days)
+            producao = max(0, ((fim or hoje_lt) - inicio).days) if inicio else None
+            total = fila + (producao or 0)  # fila + produção = total, sempre (mesma régua do Painel)
+            return {
+                "fila": fila, "fila_aberta": inicio is None and fim is None,
+                "producao": producao, "producao_aberta": bool(inicio) and fim is None,
+                "total": total, "total_aberto": fim is None,
+            }
+
+        lt_por_item = {item.id: _lt_item(item) for item in itens}
+
         # Total de matéria-prima (kg) por item e por coluna — pedido do
         # Bruno (22/09/2026): "quero enxergar o total de materia prima" nas
         # Estações, "quando eu abrir um item, ou colunas do kanban".
@@ -28133,6 +28161,7 @@ def register_routes(app):
             materiais_principais_por_coluna=materiais_principais_por_coluna,
             pcp_por_item=pcp_por_item,
             pcp_filtro=pcp_filtro,
+            lt_por_item=lt_por_item,
             # Modo TV da estação (pedido do Bruno, 19/11/2026): só o nome da estação e as colunas, em tela cheia,
             # atualizando sozinho — sem busca, relatórios nem botões de mover.
             modo_tv=request.args.get("tv") == "1",

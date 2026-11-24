@@ -130,6 +130,9 @@
 </div>
 
 {% endif %}{# fim kb-barra (oculta no modo TV) #}
+{% if not modo_tv %}
+<div class="small text-muted mb-2"><i class="bi bi-stopwatch"></i> <strong>Lead time em cada card</strong> (atualizado a cada acesso): <em>Fila</em> = inclusão do pedido → início da produção · <em>Produção</em> = início → término · <em>Total</em> = inclusão → término. Tracejado = ainda contando até hoje.</div>
+{% endif %}
 <div class="kanban-board{% if modo_tv %} kb-tv{% endif %}" id="kanbanBoardEstacao">
   {% for etapa in STATUS_CHAO_OPCOES %}
   <div class="kanban-coluna">
@@ -264,6 +267,16 @@
             {% endif %}
             {% endif %}
           </div>
+          {# Lead time atual do OP/produto (pedido do Bruno, 24/11/2026): fila / produção / total em dias, na hora do acesso.
+             Tracejado = ainda contando (até hoje). #}
+          {% set lt = lt_por_item.get(item.id) %}
+          {% if lt %}
+          <div class="kanban-item-lt" title="Lead time atual deste OP/produto · fila = inclusão do pedido → início da produção · produção = início → término · total = inclusão → término (tracejado = ainda contando até hoje)">
+            <span class="lt-cel lt-fila{{ ' lt-aberto' if lt.fila_aberta else '' }}"><i class="bi bi-hourglass-split"></i> Fila <strong>{{ lt.fila }}d</strong></span>
+            <span class="lt-cel lt-prod{{ ' lt-aberto' if lt.producao_aberta else '' }}{{ ' lt-vazio' if lt.producao is none else '' }}"><i class="bi bi-gear"></i> Produção <strong>{{ (lt.producao ~ 'd') if lt.producao is not none else '—' }}</strong></span>
+            <span class="lt-cel lt-total{{ ' lt-aberto' if lt.total_aberto else '' }}"><i class="bi bi-stopwatch"></i> Total <strong>{{ lt.total }}d</strong></span>
+          </div>
+          {% endif %}
           <div class="kanban-item-rodape">
             <span class="badge bg-{{ SEMAFORO_CORES.get(cor, 'secondary') }}" title="{{ SEMAFORO_LABELS.get(cor, cor) }}">
               {% if dias is none %}sem prazo{% elif dias < 0 %}{{ -dias }}d atrasado{% else %}{{ dias }}d{% endif %}
