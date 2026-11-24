@@ -148,7 +148,7 @@ def gerar(dados, agora, logo_path, icone_base, moeda):
         P(f'{icone("hourglass", 17)} GESTÃO DE RISCO DE PARADOS — VISÃO EXECUTIVA', titulo),
         Spacer(1, 1 * mm),
         P(f'{icone("clipboard", 10)} Emitido em <b>{agora.strftime("%d/%m/%Y")}</b> às <b>{agora.strftime("%H:%M")}</b> (horário de Brasília) · '
-          f'{icone("calendar", 10)} Posição de <b>{_dm(hoje)}</b> · pedidos sem movimentação e OP/produto em fila e espera · horizontes de '
+          f'{icone("calendar", 10)} Posição de <b>{_dm(hoje)}</b> · pedidos 100% sem movimentação (nenhum item movimentado, contando da entrada do pedido) e OP/produto em fila e espera · horizontes de '
           f'<b>{" / ".join(str(h) for h in horizontes)} dias</b> (parado há X dias ou mais; quem já passou do horizonte também entra)', sub),
     ]
     cab = Table([[logo, bloco]], colWidths=[56 * mm, largura - 56 * mm])

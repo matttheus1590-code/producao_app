@@ -6743,6 +6743,7 @@ def _risco_parados_painel(limite=6):
     linhas_pedido = {"FOB": [], "CIF": [], "OUTROS": []}
     linhas_fila, linhas_espera = [], []
     sem_referencia = {"pedido": 0, "item": 0}
+    pedidos_com_movimento = 0  # pedidos em aberto que ficam de fora por já terem algum item movimentado
     for p in pedidos:
         itens_abertos = [i for i in p.itens if i.status_producao != "FINALIZADO"]
         movs_itens = [mov[i.id] for i in p.itens if i.id in mov]
@@ -6753,7 +6754,13 @@ def _risco_parados_painel(limite=6):
         classe, dias_prazo = _classe_parado(p.data_cliente, hoje)
 
         # ---- pedido inteiro ----
-        if not candidatos:
+        # Pedido do Bruno (24/11/2026): "mostre somente pedidos que, de forma 100% (todos os itens), não foram
+        # movimentados nas estações — com isso consigo ver pedidos parados há X tempo ou mais". Só entra o pedido em que
+        # NENHUM item teve movimentação (nem mudança de status/estação no histórico, nem data de início/inspeção/
+        # liberação/envio). O "parado há X dias" conta da entrada do pedido. Basta 1 item movimentado pra pedido sair.
+        if movs_itens:
+            pedidos_com_movimento += 1
+        elif not candidatos:
             sem_referencia["pedido"] += 1
         elif ("pedido", p.id) not in ocultos:
             data_mov, desc_mov = max(candidatos, key=lambda m: m[0])
@@ -6818,6 +6825,7 @@ def _risco_parados_painel(limite=6):
         "fila": {"horizontes": _horizontes_parados(_ordena(linhas_fila), limite), "abertos": len(linhas_fila)},
         "espera": {"horizontes": _horizontes_parados(_ordena(linhas_espera), limite), "abertos": len(linhas_espera)},
         "sem_referencia": sem_referencia,
+        "pedidos_com_movimento": pedidos_com_movimento,
     }
 
     por_id = {p.id: p for p in pedidos}

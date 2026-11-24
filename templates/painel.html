@@ -650,7 +650,7 @@ document.addEventListener("click", function (ev) {
         <span class="fw-semibold">{{ l.pedido_venda or "—" }} · {{ l.cliente }}</span>
         <span class="d-flex gap-1 flex-wrap justify-content-end">{{ chip_dias(l) }}{{ badge_prazo(l.classe) }}</span>
       </div>
-      <div class="small text-muted">Última movimentação: <strong>{{ l.ultimo_mov.strftime("%d/%m/%Y") }}</strong> — {{ l.ultimo_mov_desc }}</div>
+      <div class="small text-muted">Nenhum item movimentado desde a entrada do pedido em <strong>{{ l.ultimo_mov.strftime("%d/%m/%Y") }}</strong></div>
       <div class="small text-muted">Onde está: {{ l.onde }} · {{ l.itens_abertos }}/{{ l.itens_total }} itens abertos{% if l.uf %} · {{ l.uf }}{% endif %}</div>
       <div class="small text-muted">{{ txt_prazo(l) }} · {{ l.valor | moeda_brl }} em aberto</div>
       <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ l.sugestao }}</div>
@@ -703,7 +703,7 @@ document.addEventListener("click", function (ev) {
         ⏸️ <i class="bi bi-pause-circle"></i> Gestão de risco — pedidos parados sem movimentação
       </h6>
       <div class="d-flex align-items-center gap-2 flex-wrap">
-        <span class="text-muted small">Última movimentação de qualquer item × hoje · prazo do cliente como urgência</span>
+        <span class="text-muted small">Só pedidos com 100% dos itens sem movimentação · dias parado desde a entrada do pedido · prazo do cliente como urgência</span>
         <a href="{{ url_for('painel_parados_relatorio_pdf') }}" class="btn btn-sm btn-outline-danger"><i class="bi bi-file-earmark-pdf"></i> Relatório executivo (PDF)</a>
       </div>
     </div>
@@ -715,7 +715,7 @@ document.addEventListener("click", function (ev) {
       {% set dados = RP.pedidos[chave] %}
       <div class="{{ 'col-md-6' if colunas|length == 2 else 'col-lg-4' }}">
         <div class="border rounded p-2 h-100">
-          <div class="fw-semibold mb-1">{{ rotulo }} <span class="text-muted small fw-normal">· {{ dados.abertos }} pedido(s) em aberto</span></div>
+          <div class="fw-semibold mb-1">{{ rotulo }} <span class="text-muted small fw-normal">· {{ dados.abertos }} pedido(s) 100% sem movimentação</span></div>
           {% for h in (5, 10, 20) %}
           {% set d = dados.horizontes[h] %}
           <div class="parado-hz" data-hz="{{ h }}"{% if h != 10 %} style="display:none"{% endif %}>
@@ -755,6 +755,7 @@ document.addEventListener("click", function (ev) {
       </div>
     </details>
     {% endif %}
+    <p class="text-muted small mt-2 mb-0"><i class="bi bi-info-circle"></i> Só entram pedidos em aberto em que <strong>nenhum item</strong> foi movimentado nas estações. Basta um item ter sido movimentado para o pedido sair desta lista{% if RP.pedidos_com_movimento %} ({{ RP.pedidos_com_movimento }} pedido(s) em aberto já têm movimentação e não aparecem aqui){% endif %}.</p>
     {% if RP.sem_referencia.pedido %}<p class="text-muted small mt-2 mb-0"><i class="bi bi-info-circle"></i> {{ RP.sem_referencia.pedido }} pedido(s) em aberto sem data de inclusão nem movimentação — não entram na análise.</p>{% endif %}
   </div>
 </div>
