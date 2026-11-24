@@ -10989,6 +10989,8 @@ def _medias_fila_chao_periodos(nome):
         return {
             "fila": _media([(i - inc).days for i, t, inc in selecionados if inc]),
             "chao": _media([(t - i).days for i, t, inc in selecionados]),
+            # Total = inclusão do pedido -> conclusão (pedido do Bruno, 24/11/2026: "coloque uma coluna total").
+            "total": _media([(t - inc).days for i, t, inc in selecionados if inc]),
             "n": len(selecionados),
         }
 
