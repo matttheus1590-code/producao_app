@@ -511,6 +511,24 @@ body.col-resizing-ativo {
   border-bottom: 3px solid #6ea8fe;
 }
 
+/* Médias de fila / chão de fábrica por período nos cards de /estacoes
+   (pedido do Bruno, 24/11/2026) — pequeno e discreto; a linha do ano é ainda menor. */
+.estacao-medias {
+  font-size: 0.72rem;
+  line-height: 1.25;
+  border-top: 1px solid #dee2e6;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.estacao-medias th {
+  font-weight: 500;
+  font-size: 0.66rem;
+  color: #6c757d;
+  padding: 0.25rem 0.15rem 0.1rem;
+}
+.estacao-medias td { padding: 0.05rem 0.15rem; }
+.estacao-medias .estacao-medias-ano td { font-size: 0.62rem; padding-top: 0.15rem; }
+
 /* ---------------------------------------------------------------------
    Menu lateral (sidebar) do Dashboard Gerencial de PCP
 --------------------------------------------------------------------- */

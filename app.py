@@ -10943,6 +10943,66 @@ def _lead_times_estacao(nome, meses_historico=3):
     return {"fila": fila, "chao": chao, "total": total, "historico": historico}
 
 
+def _medias_fila_chao_periodos(nome):
+    """Média de dias em FILA (inclusão do pedido -> início da OP) e em CHÃO DE
+    FÁBRICA (início -> término) de 1 estação, no MÊS ATUAL, no MÊS ANTERIOR e
+    no ANO (de 1º/jan até hoje) — pedido do Bruno (24/11/2026), mostrado em
+    cada card de /estacoes. Mesma régua do "Histórico mensal" do lead time
+    detalhado (_lead_times_estacao): só OP com início e término preenchidos,
+    e o mês é o da CONCLUSÃO (termino_inspecao); a fila só entra quando o
+    pedido tem data de inclusão. Uma query leve (3 colunas, sem ORM) por
+    estação."""
+    hoje = _agora_brt().date()
+    ini_mes = date(hoje.year, hoje.month, 1)
+    ini_ant = date(hoje.year - 1, 12, 1) if hoje.month == 1 else date(hoje.year, hoje.month - 1, 1)
+    ini_ano = date(hoje.year, 1, 1)
+
+    linhas = (
+        db.session.query(ItemPedido.inicio_producao, ItemPedido.termino_inspecao, Pedido.data_inclusao_pedido)
+        .join(Pedido, ItemPedido.pedido_id == Pedido.id)
+        .filter(
+            ItemPedido.estacao == nome,
+            ItemPedido.inicio_producao.isnot(None),
+            ItemPedido.termino_inspecao.isnot(None),
+            ItemPedido.termino_inspecao >= ini_ano,
+        )
+        .all()
+    )
+    # No ano de virada (jan), o mês anterior é dezembro do ano passado: busca à parte.
+    if ini_ant < ini_ano:
+        linhas += (
+            db.session.query(ItemPedido.inicio_producao, ItemPedido.termino_inspecao, Pedido.data_inclusao_pedido)
+            .join(Pedido, ItemPedido.pedido_id == Pedido.id)
+            .filter(
+                ItemPedido.estacao == nome,
+                ItemPedido.inicio_producao.isnot(None),
+                ItemPedido.termino_inspecao >= ini_ant,
+                ItemPedido.termino_inspecao < ini_ano,
+            )
+            .all()
+        )
+
+    def _media(valores):
+        return round(sum(valores) / len(valores), 1) if valores else None
+
+    def _bucket(selecionados):
+        return {
+            "fila": _media([(i - inc).days for i, t, inc in selecionados if inc]),
+            "chao": _media([(t - i).days for i, t, inc in selecionados]),
+            "n": len(selecionados),
+        }
+
+    prox_mes = date(hoje.year + 1, 1, 1) if hoje.month == 12 else date(hoje.year, hoje.month + 1, 1)
+    return {
+        "mes_atual": _bucket([l for l in linhas if ini_mes <= l[1] < prox_mes]),
+        "mes_anterior": _bucket([l for l in linhas if ini_ant <= l[1] < ini_mes]),
+        "ano": _bucket([l for l in linhas if ini_ano <= l[1] < date(hoje.year + 1, 1, 1)]),
+        "rotulo_mes_atual": f"{MESES_PT[hoje.month - 1]}/{str(hoje.year)[2:]}",
+        "rotulo_mes_anterior": f"{MESES_PT[ini_ant.month - 1]}/{str(ini_ant.year)[2:]}",
+        "rotulo_ano": str(hoje.year),
+    }
+
+
 # ----------------------------------------------------------------------
 # Lead Time de Produção — parametrização por Produto + Estação (pedido do
 # Bruno, 11/09/2026): base OFICIAL de "quanto tempo uma estação normalmente
@@ -27947,6 +28007,9 @@ def register_routes(app):
                 "fila": fila_op, "fila_itens": fila_itens,
                 "em_producao": producao_op, "em_producao_itens": producao_itens,
                 "criticos": criticos, "lt_medio": lead_times["chao"], "lead_times": lead_times,
+                # Pedido do Bruno (24/11/2026): média de fila e chão de fábrica
+                # do mês atual, do mês anterior e do ano, dentro de cada card.
+                "medias_periodo": _medias_fila_chao_periodos(e.nome),
             }
 
         # 3 colunas fixas (pedido do Bruno, 03/09/2026) — ver

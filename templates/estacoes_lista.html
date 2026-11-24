@@ -278,6 +278,34 @@
                 <div class="text-muted small">📊 lead time médio (d)</div>
               </div>
             </div>
+            {# Pedido do Bruno (24/11/2026): tempo médio de fila de espera e de chão de fábrica — mês atual, mês anterior e (bem pequeno) a média do ano. Mês = mês da conclusão da OP, mesma régua do lead time detalhado. #}
+            {% set mp = l.medias_periodo %}
+            <table class="estacao-medias w-100 mt-2 mb-0" title="Média de dias em fila (inclusão do pedido → início da OP) e em chão de fábrica (início → conclusão), das OPs concluídas em cada período">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th class="text-center">⏳ fila (d)</th>
+                  <th class="text-center">🏭 chão (d)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>{{ mp.rotulo_mes_atual }} <span class="text-muted">(mês atual)</span></td>
+                  <td class="text-center fw-semibold">{{ mp.mes_atual.fila if mp.mes_atual.fila is not none else "—" }}</td>
+                  <td class="text-center fw-semibold">{{ mp.mes_atual.chao if mp.mes_atual.chao is not none else "—" }}</td>
+                </tr>
+                <tr>
+                  <td>{{ mp.rotulo_mes_anterior }} <span class="text-muted">(mês anterior)</span></td>
+                  <td class="text-center fw-semibold">{{ mp.mes_anterior.fila if mp.mes_anterior.fila is not none else "—" }}</td>
+                  <td class="text-center fw-semibold">{{ mp.mes_anterior.chao if mp.mes_anterior.chao is not none else "—" }}</td>
+                </tr>
+                <tr class="estacao-medias-ano text-muted">
+                  <td>média {{ mp.rotulo_ano }}</td>
+                  <td class="text-center">{{ mp.ano.fila if mp.ano.fila is not none else "—" }}</td>
+                  <td class="text-center">{{ mp.ano.chao if mp.ano.chao is not none else "—" }}</td>
+                </tr>
+              </tbody>
+            </table>
           </a>
           <button type="button" class="btn btn-outline-secondary btn-sm w-100 mt-2"
                   data-bs-toggle="modal" data-bs-target="#modalLeadTime{{ l.estacao.id }}">
