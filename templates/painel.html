@@ -256,6 +256,12 @@
       {% if p.frete == 'CIF' and p.frete_dias is not none and p.data_prevista_pcp %}· + frete {{ p.frete_dias }}d{% endif %}
       {% if p.entrega_projetada %}→ <strong>entrega projetada {{ p.entrega_projetada.strftime("%d/%m/%Y") }}</strong>{% endif %}
     </div>
+    {% if p.itens_lista %}
+    <div class="risco-itens mt-1" title="Itens do pedido e quantidade (✓ = já finalizado)">
+      <span class="risco-itens-rot"><i class="bi bi-box-seam"></i> {{ p.itens_lista|length }} {{ 'item' if p.itens_lista|length == 1 else 'itens' }}:</span>
+      {% for it in p.itens_lista %}{% set q = it.quantidade %}<span class="risco-item-chip{{ ' risco-item-ok' if it.finalizado else '' }}" title="{{ it.descricao }}{{ ' — finalizado' if it.finalizado else '' }}">{{ '✓ ' if it.finalizado else '' }}{{ it.descricao }} <strong>× {% if q is none %}—{% elif q == q|int %}{{ q|int }}{% else %}{{ q|string|replace('.', ',') }}{% endif %}</strong></span>{% endfor %}
+    </div>
+    {% endif %}
     <div class="small text-body mt-1"><i class="bi bi-lightbulb"></i> {{ p.sugestao }}</div>
   </a>
   {% if pode_apontar_revisao %}

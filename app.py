@@ -6490,6 +6490,13 @@ def _avaliar_risco_entrega(pedido, mapa_lead_time, hoje):
         "valor_aberto": round(sum(i.valor_total for i in itens_abertos), 2),
         "itens_abertos": len(itens_abertos),
         "itens_total": len(pedido.itens),
+        # Itens do pedido (descrição + quantidade) pro card do Painel (pedido do Bruno, 24/11/2026: "dentro de cada
+        # quadrante, quero que brevemente mostre todos os itens dentro do pedido, juntamente com sua quantidade").
+        # Todos os itens entram; os já finalizados vão marcados pra não confundir com o que ainda falta produzir.
+        "itens_lista": [
+            {"descricao": i.descricao_produto, "quantidade": i.quantidade, "finalizado": i.status_producao == "FINALIZADO"}
+            for i in sorted(pedido.itens, key=lambda x: x.id)
+        ],
     }
 
 

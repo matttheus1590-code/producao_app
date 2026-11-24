@@ -4596,3 +4596,11 @@ a.op-grupo-linha:hover { background: rgba(0,0,0,.03); color: inherit; }
 @media (min-width: 1200px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 1.25; } }
 @media (min-width: 1700px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 1.4; } }
 @media (min-width: 2400px) { .kb-tv .kanban-coluna-titulo, .kb-tv .kanban-coluna-corpo { zoom: 2.1; } }
+
+/* Itens do pedido nos cards da gestão de risco de prazos do Painel (pedido do Bruno, 24/11/2026) */
+.risco-itens { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .3rem; font-size: .72rem; }
+.risco-itens-rot { color: #6b7280; font-weight: 600; margin-right: .1rem; }
+.risco-item-chip { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                   background: #eef1f5; border: 1px solid #dde2e8; border-radius: .8rem; padding: .02rem .5rem; color: #384152; }
+.risco-item-chip strong { color: #1c5fd4; }
+.risco-item-ok { opacity: .6; background: #f4f6f9; }
