@@ -235,10 +235,20 @@
       </ul>
       {% if logistica_info %}
       <div class="small text-muted mt-1"><i class="bi bi-link-45deg"></i> Origem: <b>Logística</b>{% if logistica_info.atualizado_em %} · atualizado em {{ logistica_info.atualizado_em.strftime("%d/%m/%Y %H:%M") }}{% endif %}{% if logistica_info.status %} · {{ logistica_info.status }}{% endif %}</div>
+      {% if logistica_info.divergencias_comerciais %}
+      <div class="small mt-2 p-2 border border-warning rounded bg-warning-subtle"><i class="bi bi-exclamation-triangle"></i> <b>Conferir com a Logística</b> (o número daqui não foi alterado):
+        {% for d in logistica_info.divergencias_comerciais %}<div>{{ d.rotulo }}: aqui está <b>{{ d.site }}</b>, a Logística tem <b>{{ d.logistica }}</b></div>{% endfor %}
+      </div>
+      {% endif %}
       {% if current_user.is_authenticated and current_user.role == 'ADMIN' and logistica_info.bruto %}
       <div class="small mt-1 p-2 border rounded bg-light"><i class="bi bi-bug"></i> <b>Diagnóstico (só admin)</b> — o que a Logística mandou:
         {% for c, r in (('data_expedicao','expedição'),('data_chegada_destino','chegada ao destino'),('data_entrega_cliente','entrega ao cliente')) %}
         <span class="ms-2">{{ r }}: <b>{{ logistica_info.bruto[c] or 'vazio' }}</b></span>{% endfor %}
+        <div class="mt-1"><b>Proposta / contrato / pedido de compra encontrados:</b>
+          proposta <b>{{ logistica_info.comercial.go_proposta or 'não veio' }}</b> ·
+          contrato <b>{{ logistica_info.comercial.go_contrato or 'não veio' }}</b> ·
+          pedido de compra <b>{{ logistica_info.comercial.go_pedido_compra_cliente or 'não veio' }}</b></div>
+        <div class="mt-1"><b>Campos que a Logística envia:</b> {{ logistica_info.campos_recebidos | join(', ') }}</div>
       </div>
       {% endif %}
       {% if logistica_info.remessas and logistica_info.remessas.total > 1 %}

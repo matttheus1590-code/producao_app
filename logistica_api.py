@@ -17,6 +17,8 @@ Sem URL e chave, a integração fica DESLIGADA e o site funciona exatamente como
 
 import json
 import os
+import re
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -312,6 +314,94 @@ def mapear(payload, parte=None):
         "go_data_emissao_nf": max(emissoes) if emissoes else None,
         "go_valor_nf_emitida": round(sum(valores), 2) if valores else None,
     }
+
+
+# ----------------------------------------------------------------------------
+# Dados comerciais do pedido (Proposta, Contrato, Pedido de compra do cliente) — pedido do Bruno
+# (25/11/2026): a Logística também tem esses números e o site os busca de lá, preenchendo o que
+# estiver vazio no pedido. O contrato da API não define nomes fixos pra eles, então a busca é
+# tolerante: aceita variações de nome ("proposta", "numero_proposta", "pedido_compra_cliente",
+# "ordem_de_compra"...), no topo do JSON ou em blocos de 1-2 níveis ("comercial": {...}).
+# ----------------------------------------------------------------------------
+CAMPOS_COMERCIAIS = ("go_proposta", "go_contrato", "go_pedido_compra_cliente")
+_CHAVES_IGNORADAS = {"remessas", "notas_fiscais", "frete", "itens", "produtos"}
+_TOKENS_EXCLUIDOS = {"data", "dt", "valor", "vl", "status", "tipo", "prazo", "vigencia", "descricao", "situacao"}
+_PEDIDO_COMPRA_EXATOS = {
+    "po", "oc", "pc", "po_cliente", "oc_cliente", "pc_cliente", "pedido_cliente", "pedido_do_cliente",
+    "numero_pedido_cliente", "num_pedido_cliente", "nr_pedido_cliente", "pedido_compra", "pedido_de_compra",
+}
+
+
+def _chave_norm(chave):
+    t = unicodedata.normalize("NFKD", str(chave or "")).encode("ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"[^a-z0-9]+", "_", t).strip("_")
+
+
+def _campo_comercial_da_chave(chave):
+    """Nome do campo do site (go_proposta/go_contrato/go_pedido_compra_cliente) que essa chave do JSON representa, ou None."""
+    n = _chave_norm(chave)
+    if not n or set(n.split("_")) & _TOKENS_EXCLUIDOS:
+        return None
+    if "proposta" in n:
+        return "go_proposta"
+    if "contrato" in n:
+        return "go_contrato"
+    if n in _PEDIDO_COMPRA_EXATOS or ("compra" in n and ("pedido" in n or "ordem" in n)) \
+            or n.endswith("pedido_cliente") or n.endswith("pedido_do_cliente"):
+        return "go_pedido_compra_cliente"
+    return None
+
+
+def _valor_comercial(v):
+    """Texto do número (até 60 caracteres) ou None. Aceita texto, número inteiro ou um bloco {"numero": ...}."""
+    if isinstance(v, dict):
+        for k in ("numero", "codigo", "id", "valor"):
+            if k in v:
+                return _valor_comercial(v[k])
+        return None
+    if isinstance(v, bool) or v is None or isinstance(v, (list, tuple)):
+        return None
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    t = str(v).strip()
+    return t[:60] if t else None
+
+
+def extrair_dados_comerciais(payload, profundidade=2):
+    """JSON de UM pedido da Logística -> {go_proposta, go_contrato, go_pedido_compra_cliente} só com o que veio
+    preenchido. Procura primeiro no topo do JSON e depois nos blocos internos (até `profundidade` níveis)."""
+    achados = {}
+    niveis = [payload] if isinstance(payload, dict) else []
+    for _ in range(profundidade + 1):
+        proximos = []
+        for d in niveis:
+            for chave, valor in d.items():
+                if _chave_norm(chave) in _CHAVES_IGNORADAS:
+                    continue
+                campo = _campo_comercial_da_chave(chave)
+                if campo and campo not in achados:
+                    texto = _valor_comercial(valor)
+                    if texto:
+                        achados[campo] = texto
+                        continue
+                if isinstance(valor, dict):
+                    proximos.append(valor)
+        niveis = proximos
+        if not niveis or len(achados) == len(CAMPOS_COMERCIAIS):
+            break
+    return achados
+
+
+def campos_recebidos(payload):
+    """Nomes dos campos que a Logística mandou (topo e blocos de 1 nível: "bloco.campo") — pro diagnóstico do admin."""
+    nomes = []
+    if not isinstance(payload, dict):
+        return nomes
+    for chave, valor in payload.items():
+        nomes.append(str(chave))
+        if isinstance(valor, dict):
+            nomes.extend(f"{chave}.{sub}" for sub in valor)
+    return sorted(nomes)
 
 
 def resumo_remessas(payload):

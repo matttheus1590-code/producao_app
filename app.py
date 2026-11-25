@@ -11,7 +11,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from itertools import zip_longest
 
-from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -9761,10 +9761,91 @@ def _logistica_info(reg):
         "status": payload.get("status_logistica"),
         "remessas": logistica_api.resumo_remessas(payload),
         "pedido_venda": reg.pedido_venda_logistica,
+        # Proposta / Contrato / Pedido de compra do cliente que a Logística tem (pedido do Bruno, 25/11/2026)
+        "comercial": logistica_api.extrair_dados_comerciais(payload),
+        "campos_recebidos": logistica_api.campos_recebidos(payload),
         # Campos crus do JSON da Logística (diagnóstico, só ADMIN vê na Consulta)
         "bruto": {c: payload.get(c) for c in ("data_prevista_coleta", "data_expedicao", "data_prevista_entrega",
                                               "data_chegada_destino", "data_entrega_cliente")},
     }
+
+
+_LOGISTICA_ROTULOS_COMERCIAIS = (
+    ("go_proposta", "Proposta"),
+    ("go_contrato", "Contrato"),
+    ("go_pedido_compra_cliente", "Pedido de compra do cliente"),
+)
+
+
+def _logistica_preencher_comerciais(po, dados):
+    """Pedido do Bruno (25/11/2026): Proposta, Contrato e Pedido de compra do cliente que a Logística tem entram no
+    pedido do site. Só PREENCHE o que está vazio — nunca troca o que alguém já digitou (a diferença aparece como
+    "conferir" na Consulta Pedido). Cada preenchimento fica no histórico como "Logística (API)". Devolve os campos
+    preenchidos."""
+    preenchidos = []
+    for campo, _rotulo in _LOGISTICA_ROTULOS_COMERCIAIS:
+        valor = (dados or {}).get(campo)
+        if not valor:
+            continue
+        atual = getattr(po, campo, None)
+        if atual is not None and str(atual).strip():
+            continue
+        setattr(po, campo, valor)
+        preenchidos.append(campo)
+        db.session.add(HistoricoAlteracao(
+            entidade_tipo="pedido_operacao", entidade_id=po.id, pedido_id=None,
+            usuario_id=None, usuario_nome=LOGISTICA_USUARIO_HISTORICO, campo=campo,
+            valor_anterior=None, valor_novo=valor,
+        ))
+    return preenchidos
+
+
+def _logistica_divergencias_comerciais(info, po):
+    """Campos em que o site já tem um número e a Logística tem OUTRO (pra conferir; o site não é alterado)."""
+    if not info or po is None:
+        return []
+    norm = lambda x: re.sub(r"\s+", "", str(x)).casefold().lstrip("0")
+    divergencias = []
+    for campo, rotulo in _LOGISTICA_ROTULOS_COMERCIAIS:
+        da_logistica = (info.get("comercial") or {}).get(campo)
+        do_site = getattr(po, campo, None)
+        if da_logistica and do_site and str(do_site).strip() and norm(da_logistica) != norm(do_site):
+            divergencias.append({"rotulo": rotulo, "site": str(do_site).strip(), "logistica": da_logistica})
+    return divergencias
+
+
+def _logistica_apos_inclusao(pedidos_operacao, em_lote=False):
+    """Depois de incluir pedido(s) no site: confronta com a Logística e preenche Proposta / Contrato / Pedido de
+    compra do cliente (pedido do Bruno, 25/11/2026). 1 pedido: consulta direta (timeout curto), já preenchido na tela
+    seguinte. Lote: sincronização forçada em segundo plano (não atrasa a tela de conferência). Se a Logística ainda
+    não conhece o pedido, a sincronização de 5 em 5 minutos preenche assim que ela passar a conhecer. Nunca levanta
+    exceção. Devolve os rótulos preenchidos (só no caso de 1 pedido)."""
+    if not logistica_api.configurado():
+        return []
+    try:
+        if em_lote:
+            app_atual = current_app._get_current_object()
+
+            def _trabalho():
+                with app_atual.app_context():
+                    try:
+                        _logistica_sincronizar(forcar=True)
+                    except Exception:
+                        db.session.rollback()
+                    finally:
+                        db.session.remove()
+
+            threading.Thread(target=_trabalho, daemon=True, name="logistica-pos-inclusao").start()
+            return []
+        po = pedidos_operacao[0]
+        antes = {c: getattr(po, c) for c, _ in _LOGISTICA_ROTULOS_COMERCIAIS}
+        _logistica_atualizar_pedido(po.pedido_venda, max_idade_seg=0)
+        db.session.refresh(po)
+        return [r for c, r in _LOGISTICA_ROTULOS_COMERCIAIS if not antes[c] and getattr(po, c)]
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Falha ao buscar dados comerciais na Logística após a inclusão")
+        return []
 
 
 def _logistica_transportadora_id(nome):
@@ -9817,6 +9898,11 @@ def _logistica_aplicar_payload(payload, agora=None):
     if reg.cancelado:
         reg.aplicado = True
         return "aplicado"  # pedido cancelado na Logística: guarda o aviso, não mexe nos campos
+
+    # Proposta / Contrato / Pedido de compra do cliente: só preenche o que está vazio (pedido do Bruno, 25/11/2026)
+    dados_comerciais = logistica_api.extrair_dados_comerciais(payload)
+    for po in po_lista:
+        _logistica_preencher_comerciais(po, dados_comerciais)
 
     atualizou_algum = False
     for po in po_lista:
@@ -24047,6 +24133,8 @@ def register_routes(app):
         # último dado recebido).
         logistica_info, logistica_erro = _logistica_atualizar_pedido(request.args.get("pedido_venda", ""))
         go = PedidoOperacao.query.filter(_pedido_venda_normalizado_sql(PedidoOperacao.pedido_venda) == chave).first()
+        if logistica_info is not None:
+            logistica_info["divergencias_comerciais"] = _logistica_divergencias_comerciais(logistica_info, go)
 
         if pedido is None and go is None:
             return render_template("_consulta_pedido_detalhe.html", nao_encontrado=True, pedido_venda=chave)
@@ -25972,11 +26060,14 @@ def register_routes(app):
             # cópia inicial dos dados; dali em diante cada um é editado
             # independente na sua própria tela (ver
             # _criar_pedido_operacao_a_partir_de_producao).
-            _criar_pedido_operacao_a_partir_de_producao(pedido, f)
+            po_novo = _criar_pedido_operacao_a_partir_de_producao(pedido, f)
             db.session.commit()
+            # Confronta com a Logística e completa Proposta / Contrato / Pedido de compra do cliente (25/11/2026).
+            preenchidos_log = _logistica_apos_inclusao([po_novo])
             flash(
                 f"Pedido de {pedido.cliente} incluído com sucesso ({len(itens)} item(ns)) "
-                "— também já apareceu na Listagem Geral de Gestão Operação.",
+                "— também já apareceu na Listagem Geral de Gestão Operação."
+                + (f" Preenchido a partir da Logística: {', '.join(preenchidos_log)}." if preenchidos_log else ""),
                 "success",
             )
             return redirect(url_for("editar_pedido", pedido_id=pedido.id))
@@ -26113,6 +26204,8 @@ def register_routes(app):
                 db.session.rollback()
                 app.logger.exception("Falha ao incluir pedido %s em lote", rotulo)
                 resultados.append({"pedido_venda": rotulo, "ok": False, "erro": "Erro ao gravar este pedido."})
+        if any(r["ok"] for r in resultados):
+            _logistica_apos_inclusao([], em_lote=True)  # busca na Logística em segundo plano (25/11/2026)
         return jsonify(ok=True, resultados=resultados, incluidos=sum(1 for r in resultados if r["ok"]))
 
     @app.route("/pedidos/<int:pedido_id>/editar", methods=["GET", "POST"])
