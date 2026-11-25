@@ -27,6 +27,11 @@ _RE_CNPJ = re.compile(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}")
 _RE_CPF = re.compile(r"\d{3}\.\d{3}\.\d{3}-\d{2}")
 
 
+_RX_NUM_PEDIDO = r"PEDIDO\s+N\s*[.º°o:]*\s*(\d+)"
+_RE_NUM_PEDIDO = re.compile(r"PEDIDO\s+N\s*[.º°o:]*\s*\d+", re.I)
+_RE_TITULO = re.compile(r"CONFIRMA[CÇ][AÃ]O\s+DO\s+PEDIDO", re.I)
+
+
 class PdfPedidoInvalido(Exception):
     """O arquivo não é (ou não parece) o relatório de Confirmação do Pedido."""
 
@@ -139,22 +144,45 @@ def ler_pedidos_pdf(dados):
     with pdf:
         grupos = []  # [[(pagina, texto), ...], ...] — 1 grupo por pedido
         ultimo_num = None
+        textos = []
         for pg in pdf.pages:
             txt = pg.extract_text() or ""
-            if not (re.search(r"CONFIRMACAO\s+DO\s+PEDIDO", txt, re.I) and re.search(r"PEDIDO\s+N\.", txt, re.I)):
+            textos.append(txt)
+            if not (_RE_TITULO.search(txt) and _RE_NUM_PEDIDO.search(txt)):
                 continue
-            num = _campo(r"PEDIDO\s+N\.\s*(\d+)", txt, re.I)
+            num = _campo(_RX_NUM_PEDIDO, txt, re.I)
             if grupos and num == ultimo_num:
                 grupos[-1].append((pg, txt))
             else:
                 grupos.append([(pg, txt)])
             ultimo_num = num
         if not grupos:
-            raise PdfPedidoInvalido(
-                "Esse PDF não parece o relatório \"Confirmação do Pedido\" do ERP (SIGA/1076). "
-                "Gere o relatório do pedido e anexe de novo."
-            )
+            raise PdfPedidoInvalido(_motivo_nao_reconhecido(textos, (pdf.metadata or {}).get("Producer", "")))
         return [_ler_um_pedido(g) for g in grupos]
+
+
+def _motivo_nao_reconhecido(textos, produtor=""):
+    """Mensagem específica pro motivo de o PDF não ter sido reconhecido (o PCP vê na tela): sem texto
+    (imagem/escaneado), só a página de parâmetros do ERP (nenhum pedido no intervalo) ou outro relatório."""
+    gere = "Gere o relatório \"Confirmação do Pedido\" direto pelo ERP (SIGA/1076) e anexe de novo."
+    total = sum(len(t.strip()) for t in textos)
+    if total < 30:
+        if "print to pdf" in str(produtor).lower():
+            return ("Esse PDF foi criado com a impressora \"Microsoft Print to PDF\", que transforma o texto em desenho "
+                    "— por isso o sistema não consegue ler. Gere o PDF pelo próprio ERP (exportar/salvar em PDF, "
+                    "como nos pedidos anteriores) ou use \"Salvar como PDF\" em vez dessa impressora.")
+        return ("Esse PDF não tem texto que o sistema consiga ler (parece imagem, escaneado ou impresso como figura). "
+                + gere)
+    todo = "\n".join(textos)
+    if re.search(r"Pergunta\s*0?1\s*:\s*Do\s+Pedido", todo, re.I):
+        m = re.search(r"Do\s+Pedido\s*\?\s*(\d+)", todo, re.I)
+        ate = re.search(r"Ate\s+o\s+Pedido\s*\?\s*(\d+)", todo, re.I)
+        faixa = f" ({m.group(1)} até {ate.group(1)})" if m and ate else ""
+        return (f"O ERP gerou só a página de parâmetros{faixa}, sem nenhum pedido dentro. "
+                "Confira se o número do pedido existe/está liberado e gere o relatório de novo.")
+    primeira = next((l.strip() for l in todo.splitlines() if l.strip()), "")
+    dica = f" (o arquivo começa com: \"{primeira[:70]}\")" if primeira else ""
+    return f"Esse PDF não parece o relatório \"Confirmação do Pedido\" do ERP (SIGA/1076){dica}. " + gere
 
 
 def ler_pedido_pdf(dados):
@@ -168,7 +196,7 @@ def _ler_um_pedido(paginas):
     cliente, cnpj, cidade, uf = _bloco_cliente(pg0)
 
     avisos = []
-    num_ped = _campo(r"PEDIDO\s+N\.\s*(\d+)", txt0, re.I)
+    num_ped = _campo(_RX_NUM_PEDIDO, txt0, re.I)
     pedido_venda = (num_ped.lstrip("0") or "0") if num_ped else None
     emissao = _data_iso(_campo(r"EMISSAO:\s*(\d{2}/\d{2}/\d{4})", txt0, re.I))
 
