@@ -127,4 +127,4 @@ def test_coleta_imediata_e_sem_agendamento_sem_data(app, pedido_id):
     # "a partir de" sem data cai para imediata (não inventa agendamento)
     c.post(f"/pedidos/{pedido_id}/baixa", data=dict(DADOS_AUT, coleta_modo="agendada", coleta_data="", csrf_token=_token(c)), headers={"X-Requested-With": "fetch"})
     html = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento?sem=1").get_data(as_text=True)
-    assert "COLETA LIBERADA" in html and "IMEDIATA" in html
+    assert "COLETA LIBERADA IMEDIATA" in html

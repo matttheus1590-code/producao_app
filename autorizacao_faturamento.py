@@ -1,9 +1,11 @@
 """Autorização de faturamento do pedido (Bruno, 26/11/2026).
 
-Documento impresso que leva a conclusão do pedido para a expedição. Fica
-EXPOSTO sobre o pedido na expedição, à vista de toda a logística: por isso o
-layout (v2, 26/11/2026) é de "cartaz" — nº do pedido gigante, cliente grande,
-frete em destaque e faixa verde de COLETA (imediata, ou a partir de dia/hora).
+Documento impresso que leva a conclusão do pedido para a expedição (fica
+exposto sobre o pedido). Layout CLÁSSICO, no desenho do modelo da empresa —
+um "cartaz" colorido foi testado em 26/11/2026 e o Bruno preferiu o clássico —
+com: nº do pedido em destaque no título, cliente/frete/situação, linha de
+COLETA (imediata, ou a partir de dia/hora), data e hora de emissão no topo,
+volumes com medidas e peso bruto, e caixa de observações.
 Este módulo concentra as regras (leitura do formulário, formatação das linhas,
 totais) e o PDF (reportlab); a página HTML de impressão usa os mesmos dados
 (ver templates/autorizacao_faturamento.html).
@@ -127,9 +129,11 @@ def montar_dados(pedido, aut, data_liberacao=None):
     imediata = True if not aut else bool(aut.coleta_imediata)
     if imediata:
         coleta_l1, coleta_l2 = "COLETA LIBERADA", "IMEDIATA"
+        coleta_txt = "COLETA LIBERADA IMEDIATA"
     else:
         quando = aut.coleta_data.strftime("%d/%m/%Y") + (f" ÀS {aut.coleta_hora}" if aut.coleta_hora else "")
         coleta_l1, coleta_l2 = "COLETA LIBERADA A PARTIR DE", quando
+        coleta_txt = f"COLETA LIBERADA A PARTIR DE: {quando}"
     return {
         "pedido_venda": pedido.pedido_venda or f"#{pedido.id}",
         "cliente": (aut.cliente_doc if aut and aut.cliente_doc else pedido.cliente) or "",
@@ -140,6 +144,7 @@ def montar_dados(pedido, aut, data_liberacao=None):
         "coleta_imediata": imediata,
         "coleta_l1": coleta_l1,
         "coleta_l2": coleta_l2,
+        "coleta_txt": coleta_txt,
         "volumes": vols,
         "observacoes": (aut.observacoes if aut and aut.observacoes else ""),
         "tot_volumes": tot_vol,
@@ -148,158 +153,97 @@ def montar_dados(pedido, aut, data_liberacao=None):
     }
 
 
-VERDE = (0 / 255, 156 / 255, 59 / 255)  # verde bandeira, o mesmo do "LIBERADO" no painel
-
-
 def gerar_pdf(dados, logo_path):
-    """PDF A4 "cartaz" para ficar exposto na expedição (layout v2)."""
+    """PDF A4 no desenho clássico do modelo da empresa."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.utils import ImageReader, simpleSplit
-    from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.pdfgen import canvas
-
-    def ajusta(texto, fonte, tamanho_max, largura, tamanho_min=8):
-        t = tamanho_max
-        while t > tamanho_min and stringWidth(texto, fonte, t) > largura:
-            t -= 1
-        return t
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle(f"Autorização de faturamento - pedido {dados['pedido_venda']}")
     W, H = A4
-    m = 22
+    m = 28
     c.setLineWidth(1)
     c.rect(m, m, W - 2 * m, H - 2 * m)
-    x0, x1 = m + 22, W - m - 22
-    larg = x1 - x0
 
-    # topo: logo + data/hora de emissão
-    y = H - m - 22
+    x0 = 85
+    xr = W - 85
+    y = H - 62
     try:
         img = ImageReader(logo_path)
         iw, ih = img.getSize()
-        lw = 140
-        c.drawImage(img, x0, y - lw * ih / iw, width=lw, height=lw * ih / iw, mask="auto")
+        lw = 150
+        c.drawImage(img, x0, y - lw * ih / iw + 8, width=lw, height=lw * ih / iw, mask="auto")
     except Exception:
         c.setFont("Helvetica-Bold", 16)
-        c.drawString(x0, y - 14, "4PIPE solutions")
+        c.drawString(x0, y, "4PIPE solutions")
+    c.setFont("Helvetica", 10)
+    c.drawRightString(xr, y - 8, dados["emissao_txt"])
+
+    y = H - 150
+    c.setFont("Helvetica-Bold", 17)
+    c.drawString(x0, y, f"AUTORIZAÇÃO DE FATURAMENTO DO PEDIDO: {dados['pedido_venda']}")
+    y -= 32
     c.setFont("Helvetica-Bold", 11)
-    c.drawRightString(x1, y - 12, dados["emissao_txt"])
+    c.drawString(x0, y, "CLIENTE:")
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    cli = dados["cliente"]
+    tam = 17
+    while tam > 10 and stringWidth(cli, "Helvetica-BoldOblique", tam) > (xr - x0 - 62):
+        tam -= 1  # nome comprido: reduz a fonte para caber dentro da moldura
+    c.setFont("Helvetica-BoldOblique", tam)
+    c.drawString(x0 + 62, y - 1, cli)
+    y -= 24
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(x0, y, "FRETE:")
+    c.setFont("Helvetica-BoldOblique", 11)
+    c.drawString(x0 + 46, y, dados["frete"])
+    y -= 24
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(x0, y, f"SITUAÇÃO: {dados['situacao']}")
+    y -= 24
+    c.drawString(x0, y, dados["coleta_txt"])
 
-    # título + número do pedido gigante
-    y -= 62
-    c.setFont("Helvetica-Bold", 15)
-    c.drawString(x0, y, "AUTORIZAÇÃO DE FATURAMENTO")
-    y -= 10
-    caixa_h = 120
-    c.setLineWidth(4)
-    c.rect(x0, y - caixa_h, larg, caixa_h)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(x0 + 14, y - 26, "PEDIDO")
-    num = str(dados["pedido_venda"])
-    t = ajusta(num, "Helvetica-Bold", 110, larg - 40, 30)
-    c.setFont("Helvetica-Bold", t)
-    c.drawCentredString(x0 + larg / 2, y - caixa_h + 26, num)
-    y -= caixa_h + 22
-
-    # cliente
+    y -= 46
     c.setFont("Helvetica-Bold", 10)
-    c.setFillGray(0.35)
-    c.drawString(x0, y, "CLIENTE")
-    c.setFillGray(0)
-    y -= 6
-    cli = dados["cliente"].upper()
-    tam = 26
-    linhas = simpleSplit(cli, "Helvetica-Bold", tam, larg)
-    while len(linhas) > 2 and tam > 14:
-        tam -= 2
-        linhas = simpleSplit(cli, "Helvetica-Bold", tam, larg)
-    c.setFont("Helvetica-Bold", tam)
-    for ln in linhas[:2]:
-        y -= tam + 2
-        c.drawString(x0, y, ln)
-    y -= 18
+    c.drawString(x0, y, "QUANTIDADE  /  TIPO  /  MEDIDAS (mm)")
+    c.drawRightString(xr, y, "PESO BRUTO")
+    y -= 14
+    c.setLineWidth(0.6)
+    c.line(x0, y, xr, y)
+    y -= 26
 
-    # frete (caixa preta) + situação
-    bh = 50
-    fr = dados["frete"]
-    fw = max(110, stringWidth(fr, "Helvetica-Bold", 34) + 36)
-    c.setFillGray(0)
-    c.rect(x0, y - bh, fw, bh, fill=1, stroke=0)
-    c.setFillGray(1)
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(x0 + 10, y - 13, "FRETE")
-    c.setFont("Helvetica-Bold", 34)
-    c.drawString(x0 + 10, y - bh + 8, fr)
-    c.setFillGray(0)
-    c.setLineWidth(2)
-    sx = x0 + fw + 14
-    c.rect(sx, y - bh, x1 - sx, bh)
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(sx + 10, y - 13, "SITUAÇÃO")
-    c.setFont("Helvetica-Bold", 24)
-    c.drawString(sx + 10, y - bh + 9, dados["situacao"])
-    y -= bh + 16
-
-    # faixa de coleta (verde)
-    ch = 92
-    c.setFillColorRGB(*VERDE)
-    c.rect(x0, y - ch, larg, ch, fill=1, stroke=0)
-    c.setFillGray(1)
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(x0 + larg / 2, y - 26, dados["coleta_l1"])
-    t2 = ajusta(dados["coleta_l2"], "Helvetica-Bold", 46, larg - 30, 20)
-    c.setFont("Helvetica-Bold", t2)
-    c.drawCentredString(x0 + larg / 2, y - ch + 18, dados["coleta_l2"])
-    c.setFillGray(0)
-    y -= ch + 22
-
-    # volumes
-    obs_h = 92
-    y_min = m + 14 + obs_h + 20
-    c.setFont("Helvetica-Bold", 10)
-    c.setFillGray(0.35)
-    c.drawString(x0, y, "VOLUMES (mm)")
-    c.drawRightString(x1, y, "PESO BRUTO")
-    c.setFillGray(0)
-    y -= 6
-    c.setLineWidth(1)
-    c.line(x0, y, x1, y)
+    caixa_h = 92
+    y_min = m + caixa_h + 60
     n = len(dados["volumes"])
-    reserva_total = 46 if dados["volumes"] else 0
-    disp = y - y_min - reserva_total
-    passo = min(32, max(15, disp / max(n, 1)))
-    fonte = 19 if passo >= 30 else (15 if passo >= 22 else 11)
-    y -= passo - 4
+    passo = 25 if n <= 14 else max(15, int((y - y_min) / max(n, 1)))
+    fonte = 15 if n <= 14 else 11
     for v in dados["volumes"]:
         c.setFont("Helvetica-Bold", fonte)
-        c.drawString(x0 + 6, y, v["texto"])
-        c.drawRightString(x1, y, v["pb_txt"] or "—")
+        c.drawString(x0 + 20, y, v["texto"])
+        c.drawRightString(xr, y, v["pb_txt"] or "—")
         y -= passo
     if dados["volumes"]:
-        y += passo - 12
-        c.setFillGray(0.92)
-        c.rect(x0, y - 30, larg, 30, fill=1, stroke=0)
-        c.setFillGray(0)
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(x0 + 8, y - 21, "TOTAL: " + dados["tot_txt"])
+        c.setLineWidth(0.6)
+        c.line(x0, y + passo - 12, xr, y + passo - 12)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(x0 + 20, y + passo - 28, "TOTAL: " + dados["tot_txt"])
 
-    # observações
-    bx, bw = x0 - 12, larg + 24
-    by = m + 14
+    bx, bw = m + 10, W - 2 * m - 20
+    by = m + 10
     c.setLineWidth(1.5)
-    c.rect(bx, by, bw, obs_h)
+    c.rect(bx, by, bw, caixa_h)
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(bx + 10, by + obs_h - 18, "OBSERVAÇÕES:")
-    c.setFont("Helvetica", 11)
-    ty = by + obs_h - 36
+    c.drawString(bx + 10, by + caixa_h - 20, "OBSERVAÇÕES:")
+    c.setFont("Helvetica", 10)
+    ty = by + caixa_h - 38
     linhas_obs = []
     for par in (dados["observacoes"] or "").splitlines():
-        linhas_obs += simpleSplit(par, "Helvetica", 11, bw - 20) or [""]
+        linhas_obs += simpleSplit(par, "Helvetica", 10, bw - 20) or [""]
     for linha in linhas_obs[:4]:
         c.drawString(bx + 10, ty, linha)
-        ty -= 14
+        ty -= 13
     c.showPage()
     c.save()
     return buf.getvalue()

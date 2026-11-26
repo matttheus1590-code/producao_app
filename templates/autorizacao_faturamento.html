@@ -8,36 +8,27 @@
   @page { size: A4 portrait; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body { background: #e9ecef; font-family: Arial, Helvetica, sans-serif; color: #000; }
+  body { background: #e9ecef; font-family: Calibri, "Segoe UI", Arial, sans-serif; color: #000; }
   .barra { position: sticky; top: 0; z-index: 5; background: #1b2a4a; color: #fff; padding: .6rem 1rem; display: flex; gap: .6rem; align-items: center; font-size: .95rem; }
   .barra b { margin-right: auto; }
   .barra a, .barra button { background: #fff; color: #1b2a4a; border: 0; border-radius: .35rem; padding: .4rem .9rem; font-weight: 700; text-decoration: none; cursor: pointer; font-size: .9rem; }
-  .pagina { width: 210mm; height: 297mm; margin: 14px auto; background: #fff; padding: 8mm; }
-  .folha { width: 100%; height: 100%; border: 1px solid #000; padding: 8mm 9mm 6mm; display: flex; flex-direction: column; }
+  .pagina { width: 210mm; height: 297mm; margin: 14px auto; background: #fff; padding: 10mm; }
+  .folha { width: 100%; height: 100%; border: 1px solid #000; padding: 14mm 18mm 8mm; display: flex; flex-direction: column; }
   .topo { display: flex; justify-content: space-between; align-items: flex-start; }
-  .topo img { width: 49mm; }
-  .topo .data { font-size: 11pt; font-weight: 700; margin-top: 1mm; }
-  .tit { font-size: 15pt; font-weight: 700; margin: 9mm 0 3mm; letter-spacing: .02em; }
-  .pedido { border: 4px solid #000; padding: 3mm 5mm 2mm; text-align: center; position: relative; }
-  .pedido .lbl { position: absolute; left: 5mm; top: 3mm; font-size: 14pt; font-weight: 700; }
-  .pedido .num { font-size: {{ 92 if d.pedido_venda|length <= 5 else (70 if d.pedido_venda|length <= 8 else 52) }}pt; font-weight: 700; line-height: 1.12; }
-  .cli-l { font-size: 10pt; font-weight: 700; color: #555; margin: 7mm 0 1mm; }
-  .cli { font-size: 24pt; font-weight: 700; line-height: 1.1; text-transform: uppercase; }
-  .faixa { display: flex; gap: 5mm; margin-top: 6mm; }
-  .frete { background: #000; color: #fff; padding: 2mm 7mm 2mm 4mm; min-width: 36mm; }
-  .sit { border: 2px solid #000; padding: 2mm 4mm; flex: 1; }
-  .mini { font-size: 9pt; font-weight: 700; }
-  .frete .v { font-size: 30pt; font-weight: 700; line-height: 1.1; }
-  .sit .v { font-size: 21pt; font-weight: 700; line-height: 1.3; }
-  .coleta { margin-top: 6mm; background: #009c3b; color: #fff; text-align: center; padding: 4mm 3mm 3mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .coleta .l1 { font-size: 15pt; font-weight: 700; }
-  .coleta .l2 { font-size: {{ 40 if d.coleta_imediata else 25 }}pt; font-weight: 700; line-height: 1.15; }
-  .vol-cab { display: flex; justify-content: space-between; font-size: 10pt; font-weight: 700; color: #555; border-bottom: 1px solid #000; padding-bottom: 1mm; margin-top: 7mm; }
-  .vol { display: flex; justify-content: space-between; font-size: 17pt; font-weight: 700; padding: 1.6mm 0 1.6mm 2mm; }
-  .tot { background: #ebebeb; font-size: 15pt; font-weight: 700; padding: 2.4mm 3mm; margin-top: 1.5mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .obs { margin-top: auto; border: 2px solid #000; padding: 3mm 4mm; min-height: 31mm; }
+  .topo img { width: 52mm; }
+  .topo .data { font-size: 10pt; margin-top: 4mm; }
+  h1 { font-size: 15pt; margin: 14mm 0 5mm; }
+  .linha { font-size: 11.5pt; font-weight: 700; margin: 3mm 0; }
+  .linha .cli { font-size: 17pt; font-style: italic; margin-left: 4px; }
+  .linha i { font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10mm; }
+  th { text-align: left; font-size: 10pt; padding: 0 0 2mm; border-bottom: 1px solid #000; }
+  th.n, td.n { text-align: right; width: 34mm; white-space: nowrap; }
+  td { font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 14pt; padding: 2.2mm 0 2.2mm 6mm; }
+  tfoot td { font-size: 10pt; border-top: 1px solid #000; padding-top: 2mm; }
+  .obs { margin-top: auto; border: 2px solid #000; padding: 3mm 4mm; min-height: 32mm; }
   .obs b { font-size: 11pt; }
-  .obs div { white-space: pre-wrap; font-size: 11pt; margin-top: 2mm; }
+  .obs div { white-space: pre-wrap; font-size: 10.5pt; margin-top: 2mm; }
   @media print {
     body { background: #fff; }
     .barra { display: none; }
@@ -56,20 +47,22 @@
     <img src="{{ url_for('static', filename='img/logo_4pipe.png') }}" alt="4PIPE solutions">
     <div class="data">{{ d.emissao_txt }}</div>
   </div>
-  <div class="tit">AUTORIZAÇÃO DE FATURAMENTO</div>
-  <div class="pedido"><span class="lbl">PEDIDO</span><div class="num">{{ d.pedido_venda }}</div></div>
-  <div class="cli-l">CLIENTE</div>
-  <div class="cli">{{ d.cliente }}</div>
-  <div class="faixa">
-    <div class="frete"><div class="mini">FRETE</div><div class="v">{{ d.frete }}</div></div>
-    <div class="sit"><div class="mini">SITUAÇÃO</div><div class="v">{{ d.situacao }}</div></div>
-  </div>
-  <div class="coleta"><div class="l1">{{ d.coleta_l1 }}</div><div class="l2">{{ d.coleta_l2 }}</div></div>
-  <div class="vol-cab"><span>VOLUMES (mm)</span><span>PESO BRUTO</span></div>
-  {% for v in d.volumes %}
-  <div class="vol"><span>{{ v.texto }}</span><span>{{ v.pb_txt or "—" }}</span></div>
-  {% endfor %}
-  {% if d.volumes %}<div class="tot">TOTAL: {{ d.tot_txt }}</div>{% endif %}
+  <h1>AUTORIZAÇÃO DE FATURAMENTO DO PEDIDO: {{ d.pedido_venda }}</h1>
+  <div class="linha">CLIENTE: <span class="cli">{{ d.cliente }}</span></div>
+  <div class="linha">FRETE: <i>{{ d.frete }}</i></div>
+  <div class="linha">SITUAÇÃO: {{ d.situacao }}</div>
+  <div class="linha">{{ d.coleta_txt }}</div>
+  <table>
+    <thead><tr><th>QUANTIDADE / TIPO / MEDIDAS (mm)</th><th class="n">PESO BRUTO</th></tr></thead>
+    <tbody>
+      {% for v in d.volumes %}
+      <tr><td>{{ v.texto }}</td><td class="n">{{ v.pb_txt or "—" }}</td></tr>
+      {% endfor %}
+    </tbody>
+    {% if d.volumes %}
+    <tfoot><tr><td>TOTAL: {{ d.tot_txt }}</td><td class="n"></td></tr></tfoot>
+    {% endif %}
+  </table>
   <div class="obs"><b>OBSERVAÇÕES:</b><div>{{ d.observacoes }}</div></div>
 </div></div>
 {% if not request.args.get('sem') %}
