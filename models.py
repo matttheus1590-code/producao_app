@@ -2591,3 +2591,46 @@ class ApontamentoEvento(db.Model):
     motivo = db.Column(db.String(60), nullable=True)
     usuario_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=True)
     usuario_nome = db.Column(db.String(120), nullable=True)
+
+
+class AutorizacaoFaturamento(db.Model):
+    """Autorização de faturamento do pedido (Bruno, 26/11/2026): o documento
+    impresso que leva a conclusão do pedido para a expedição. Uma por pedido
+    (reimprimir/editar atualiza a mesma). A data de liberação efetiva NÃO é
+    guardada aqui: vem do pedido (ItemPedido.liberacao_real), para nunca
+    divergir da baixa."""
+
+    __tablename__ = "autorizacoes_faturamento"
+
+    id = db.Column(db.Integer, primary_key=True)
+    pedido_id = db.Column(db.Integer, db.ForeignKey("pedidos.id"), nullable=False, unique=True, index=True)
+    pedido = db.relationship("Pedido", backref=db.backref("autorizacao_faturamento", uselist=False, cascade="all, delete-orphan"))
+
+    data_emissao = db.Column(db.Date, nullable=False)
+    cliente_doc = db.Column(db.String(160), nullable=True)  # nome como sai no documento (pode ser abreviado)
+    observacoes = db.Column(db.Text, nullable=True)
+    atualizado_por = db.Column(db.String(120), nullable=True)
+    atualizado_em = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    volumes = db.relationship(
+        "AutorizacaoVolume", backref="autorizacao", cascade="all, delete-orphan",
+        order_by="AutorizacaoVolume.ordem",
+    )
+
+
+class AutorizacaoVolume(db.Model):
+    """Uma linha de volumes da autorização: "1X VOL. 500 X 360 X 360 — 3 KGS"
+    (medidas em mm; pesos em kg, da linha toda)."""
+
+    __tablename__ = "autorizacao_volumes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    autorizacao_id = db.Column(db.Integer, db.ForeignKey("autorizacoes_faturamento.id"), nullable=False, index=True)
+    ordem = db.Column(db.Integer, nullable=False, default=0)
+    quantidade = db.Column(db.Integer, nullable=False, default=1)
+    tipo = db.Column(db.String(30), nullable=False, default="VOL.")
+    comprimento = db.Column(db.Float, nullable=True)
+    largura = db.Column(db.Float, nullable=True)
+    altura = db.Column(db.Float, nullable=True)
+    peso_bruto = db.Column(db.Float, nullable=True)
+    peso_liquido = db.Column(db.Float, nullable=True)

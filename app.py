@@ -25,9 +25,12 @@ from sqlalchemy.orm import selectinload
 import logistica_api
 import seguranca
 import regras_prazo
+import autorizacao_faturamento as autfat
 from extensions import db, login_manager
 from models import (
     APONTAMENTO_MOTIVOS_PAUSA,
+    AutorizacaoFaturamento,
+    AutorizacaoVolume,
     Apontamento,
     ApontamentoEvento,
     _MESES_ABREV_PCP,
@@ -26371,37 +26374,126 @@ def register_routes(app):
     # itens — então a baixa aparece como "LIBERADO" no Painel semanal e a linha
     # fica verde na Listagem. Não mexe em produção/faturamento dos itens.
     # ------------------------------------------------------------------
+    def _salvar_autorizacao(pedido, form):
+        """Grava/atualiza a autorização de faturamento do pedido a partir do
+        formulário da janela "Finalizar" (datas, cliente no documento,
+        observações e linhas de volume)."""
+        aut = pedido.autorizacao_faturamento
+        if aut is None:
+            aut = AutorizacaoFaturamento(pedido=pedido)
+            db.session.add(aut)
+        aut.data_emissao = _parse_data_form(form.get("data_emissao")) or date.today()
+        aut.cliente_doc = (form.get("cliente_doc") or "").strip()[:160] or None
+        aut.observacoes = (form.get("observacoes") or "").strip() or None
+        aut.atualizado_por = getattr(current_user, "nome", None) or getattr(current_user, "username", None)
+        aut.volumes[:] = [
+            AutorizacaoVolume(ordem=i, **linha) for i, linha in enumerate(autfat.ler_volumes(form))
+        ]
+        return aut
+
+    def _lib_efetiva_pedido(pedido):
+        datas = [i.liberacao_real for i in pedido.itens if i.liberacao_real]
+        return max(datas) if datas else None
+
+    def _json_autorizacao(pedido):
+        aut = pedido.autorizacao_faturamento
+        return {
+            "pedido_venda": pedido.pedido_venda or f"#{pedido.id}",
+            "cliente": pedido.cliente,
+            "frete": pedido.frete or "",
+            "data_liberacao": (_lib_efetiva_pedido(pedido).isoformat() if _lib_efetiva_pedido(pedido) else ""),
+            "data_emissao": (aut.data_emissao.isoformat() if aut else date.today().isoformat()),
+            "cliente_doc": (aut.cliente_doc if aut and aut.cliente_doc else pedido.cliente) or "",
+            "observacoes": (aut.observacoes if aut and aut.observacoes else ""),
+            "volumes": [
+                {"quantidade": v.quantidade, "tipo": v.tipo, "comprimento": v.comprimento, "largura": v.largura,
+                 "altura": v.altura, "peso_bruto": v.peso_bruto, "peso_liquido": v.peso_liquido}
+                for v in (aut.volumes if aut else [])
+            ],
+        }
+
+    @app.route("/pedidos/<int:pedido_id>/autorizacao.json")
+    @requer_role("ADMIN", "PCP", "LIDER")
+    def autorizacao_faturamento_json(pedido_id):
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None:
+            return jsonify({"erro": "Pedido não encontrado."}), 404
+        return jsonify(_json_autorizacao(pedido))
+
     @app.route("/pedidos/<int:pedido_id>/baixa", methods=["POST"])
     @requer_role("ADMIN", "PCP", "LIDER")
     def baixa_pedido(pedido_id):
+        """Baixa do pedido + autorização de faturamento (janela "Finalizar").
+        `acao`: "baixa" (só salva e volta), "imprimir" ou "pdf" (salvam e a
+        tela abre o documento). Quando chamada por fetch (cabeçalho
+        X-Requested-With) responde JSON com os endereços do documento."""
+        por_fetch = request.headers.get("X-Requested-With") == "fetch"
         pedido = db.session.get(Pedido, pedido_id)
         voltar = request.form.get("voltar") or ""
         if not (voltar.startswith("/") and not voltar.startswith("//") and "\\" not in voltar):
             voltar = url_for("dashboard")
-        if pedido is None:
-            flash("Pedido não encontrado.", "danger")
+
+        def erro(msg, codigo=400):
+            if por_fetch:
+                return jsonify({"ok": False, "erro": msg}), codigo
+            flash(msg, "danger")
             return redirect(voltar)
 
+        if pedido is None:
+            return erro("Pedido não encontrado.", 404)
         data_baixa = _parse_data_form(request.form.get("liberacao_real"))
         if data_baixa is None:
-            flash("Informe a data de liberação efetiva para dar a baixa.", "danger")
-            return redirect(voltar)
+            return erro("Informe a data de liberação efetiva para dar a baixa.")
         if not pedido.itens:
-            flash("Este pedido não tem itens para dar baixa.", "danger")
-            return redirect(voltar)
+            return erro("Este pedido não tem itens para dar baixa.")
 
         for item in pedido.itens:
             antes = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
             item.liberacao_real = data_baixa
             depois = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
             _registrar_alteracoes("item_pedido", item.id, pedido.id, antes, depois, CAMPOS_HISTORICO_ITEM)
+        _salvar_autorizacao(pedido, request.form)
         db.session.commit()
-        flash(
+        msg = (
             f"Baixa registrada: pedido {pedido.pedido_venda or pedido.id} liberado em "
-            f"{data_baixa.strftime('%d/%m/%Y')} ({len(pedido.itens)} item(ns)).",
-            "success",
+            f"{data_baixa.strftime('%d/%m/%Y')} ({len(pedido.itens)} item(ns)). Autorização de faturamento salva."
         )
+        if por_fetch:
+            flash(msg, "success")
+            return jsonify({
+                "ok": True,
+                "imprimir": url_for("autorizacao_faturamento_imprimir", pedido_id=pedido.id),
+                "pdf": url_for("autorizacao_faturamento_pdf", pedido_id=pedido.id),
+            })
+        flash(msg, "success")
         return redirect(voltar)
+
+    def _dados_autorizacao(pedido):
+        return autfat.montar_dados(pedido, pedido.autorizacao_faturamento, _lib_efetiva_pedido(pedido))
+
+    @app.route("/pedidos/<int:pedido_id>/autorizacao-faturamento")
+    @requer_role("ADMIN", "PCP", "LIDER")
+    def autorizacao_faturamento_imprimir(pedido_id):
+        """Página A4 pronta para imprimir (abre o diálogo de impressão sozinha)."""
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None or pedido.autorizacao_faturamento is None:
+            flash("Autorização de faturamento não encontrada — dê a baixa do pedido primeiro.", "warning")
+            return redirect(url_for("dashboard"))
+        return render_template("autorizacao_faturamento.html", d=_dados_autorizacao(pedido), fmt=autfat.fmt_num,
+                               extenso=autfat.data_extenso)
+
+    @app.route("/pedidos/<int:pedido_id>/autorizacao-faturamento.pdf")
+    @requer_role("ADMIN", "PCP", "LIDER")
+    def autorizacao_faturamento_pdf(pedido_id):
+        pedido = db.session.get(Pedido, pedido_id)
+        if pedido is None or pedido.autorizacao_faturamento is None:
+            flash("Autorização de faturamento não encontrada — dê a baixa do pedido primeiro.", "warning")
+            return redirect(url_for("dashboard"))
+        dados = _dados_autorizacao(pedido)
+        pdf = autfat.gerar_pdf(dados, _ESPELHO_LOGO_PATH)
+        nome = re.sub(r"[^A-Za-z0-9_-]+", "_", f"Autorizacao_Faturamento_{dados['pedido_venda']}")
+        return Response(pdf, mimetype="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{nome}.pdf"'})
 
     # ------------------------------------------------------------------
     # Dividir pedido (parcial) — pedido do Bruno (30/10/2026): "duplicar
