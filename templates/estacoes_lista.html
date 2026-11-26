@@ -5,7 +5,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h4 class="mb-0"><i class="bi bi-diagram-3"></i> Estações</h4>
-    <p class="text-muted small mb-0">Fila (aguardando início) e em produção — com nº de OP/produto e total de itens de cada um — críticos (atrasados) e lead time médio de cada estação, agrupados por processo.</p>
+    <p class="text-muted small mb-0">Fila (aguardando início) e em produção — com nº de OP/produto e total de itens de cada um — críticos (atrasados) e tempos médios (fila, chão de fábrica e total) de cada estação, agrupados por processo.</p>
   </div>
   <div class="d-flex gap-2 flex-wrap justify-content-end">
     <a class="btn btn-dark btn-sm" href="{{ url_for('estacoes_lista', tv=1) }}" title="Painel grande em tela cheia com todas as estações — atualiza sozinho (para a TV da área)"><i class="bi bi-tv"></i> Modo TV</a>
@@ -273,14 +273,21 @@
                 <div class="text-muted small">🟡 OP/produto em produção</div>
                 <div class="small fw-semibold text-body mt-1">{{ l.em_producao_itens }} <span class="text-muted fw-normal">itens</span></div>
               </div>
-              <div class="col-4">
-                <div class="fs-4 fw-semibold">{{ l.lt_medio if l.lt_medio is not none else "—" }}</div>
-                <div class="text-muted small">📊 lead time médio (d)</div>
+              {# Pedido do Bruno (26/11/2026): o número grande é SÓ o chão de fábrica (início da OP → conclusão); logo abaixo, menores, a fila média e o total (inclusão do pedido → conclusão). Tudo = média de 2026, mesma régua da tabela de meses abaixo (a antiga linha "média do ano" foi removida pra não duplicar). #}
+              {% set mp = l.medias_periodo %}
+              {% set ano = mp.ano %}
+              <div class="col-4" title="Média de {{ mp.rotulo_ano }} das OPs concluídas. Chão de fábrica = do início da OP até a conclusão. Fila = da inclusão do pedido até o início da OP. Total = fila + chão (inclusão do pedido → conclusão).">
+                <div class="fs-4 fw-semibold">{{ ano.chao if ano.chao is not none else "—" }}</div>
+                <div class="text-muted small">🏭 só chão de fábrica (d)</div>
+                <div class="text-muted" style="font-size: 0.66rem; line-height: 1.15;">início da OP → conclusão</div>
+                <div class="mt-1 text-nowrap" style="font-size: 0.74rem;">⏳ fila: <span class="fw-semibold">{{ ano.fila if ano.fila is not none else "—" }}</span>d</div>
+                <div class="text-nowrap" style="font-size: 0.74rem;">📊 total: <span class="fw-semibold">{{ ano.total if ano.total is not none else "—" }}</span>d</div>
+                <div class="text-muted" style="font-size: 0.62rem;">média de {{ mp.rotulo_ano }}</div>
               </div>
             </div>
-            {# Pedido do Bruno (24/11/2026): tempo médio de fila de espera e de chão de fábrica — mês atual, mês anterior e (bem pequeno) a média do ano. Mês = mês da conclusão da OP, mesma régua do lead time detalhado. #}
-            {% set mp = l.medias_periodo %}
-            <table class="estacao-medias w-100 mt-2 mb-0" title="Média de dias em fila (inclusão do pedido → início da OP), em chão de fábrica (início → conclusão) e total (inclusão → conclusão), das OPs concluídas em cada período">
+            {# Pedido do Bruno (24/11/2026): tempo médio de fila de espera e de chão de fábrica — mês atual e mês anterior. Mês = mês da conclusão da OP, mesma régua do lead time detalhado. #}
+            <div class="text-muted mt-2" style="font-size: 0.68rem;">Por mês de conclusão da OP (dias):</div>
+            <table class="estacao-medias w-100 mb-0" title="Média de dias em fila (inclusão do pedido → início da OP), em chão de fábrica (início → conclusão) e total (inclusão → conclusão), das OPs concluídas em cada período">
               <thead>
                 <tr>
                   <th></th>
@@ -301,12 +308,6 @@
                   <td class="text-center fw-semibold">{{ mp.mes_anterior.fila if mp.mes_anterior.fila is not none else "—" }}</td>
                   <td class="text-center fw-semibold">{{ mp.mes_anterior.chao if mp.mes_anterior.chao is not none else "—" }}</td>
                   <td class="text-center fw-bold">{{ mp.mes_anterior.total if mp.mes_anterior.total is not none else "—" }}</td>
-                </tr>
-                <tr class="estacao-medias-ano text-muted">
-                  <td>média {{ mp.rotulo_ano }}</td>
-                  <td class="text-center">{{ mp.ano.fila if mp.ano.fila is not none else "—" }}</td>
-                  <td class="text-center">{{ mp.ano.chao if mp.ano.chao is not none else "—" }}</td>
-                  <td class="text-center">{{ mp.ano.total if mp.ano.total is not none else "—" }}</td>
                 </tr>
               </tbody>
             </table>
