@@ -1,4 +1,5 @@
 import csv
+import hmac
 import io
 import json
 import math
@@ -22,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 import logistica_api
+import seguranca
 from extensions import db, login_manager
 from models import (
     APONTAMENTO_MOTIVOS_PAUSA,
@@ -125,7 +127,7 @@ from models import (
     rotulo_estacao,
     semanas_pcp_agrupadas,
 )
-from permissoes import ROLES, ROLES_LABELS, pode_acessar_endpoint, pode_editar_estacao, requer_role, ve_pd_qualidade_custos
+from permissoes import ROLES, ROLES_EDITAM_PD, ROLES_EDITAM_QUALIDADE, ROLES_LABELS, pode_acessar_endpoint, pode_editar_estacao, requer_role, ve_pd_qualidade_custos
 
 MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 MESES_PT_EXTENSO = [
@@ -1701,6 +1703,7 @@ def create_app():
         )
 
     register_routes(app)
+    seguranca.init_seguranca(app, Usuario, db)
     return app
 
 
@@ -24076,8 +24079,13 @@ def register_routes(app):
         if request.method == "POST":
             username = request.form.get("username", "").strip()
             senha = request.form.get("senha", "")
+            espera = seguranca.login_bloqueado(username)
+            if espera:
+                flash(f"Muitas tentativas de login. Aguarde cerca de {max(1, espera // 60)} min e tente de novo.", "danger")
+                return render_template("login.html"), 429
             usuario = Usuario.query.filter_by(username=username).first()
             if usuario and usuario.checar_senha(senha):
+                seguranca.limpar_falhas_login(username)
                 login_user(usuario)
                 # Bug do Roberto (19/10/2026): o login mandava pro ?next= (ex.:
                 # /painel) mesmo quando o papel dele não pode abrir aquela tela
@@ -24086,6 +24094,7 @@ def register_routes(app):
                 # inicial do papel.
                 destino = _destino_pos_login(usuario, request.args.get("next"))
                 return redirect(destino)
+            seguranca.registrar_falha_login(username)
             flash("Usuário ou senha inválidos.", "danger")
 
         return render_template("login.html")
@@ -25684,7 +25693,7 @@ def register_routes(app):
         tarefa agendada)."""
         token_esperado = os.environ.get("RELATORIO_DIARIO_TOKEN")
         token_recebido = request.headers.get("X-Report-Key") or request.args.get("chave")
-        if not token_esperado or token_recebido != token_esperado:
+        if not token_esperado or not hmac.compare_digest(str(token_recebido or ""), str(token_esperado)):
             abort(403)
         dia_brt = None
         dia_str = request.args.get("dia", "").strip()
@@ -27341,7 +27350,7 @@ def register_routes(app):
         )
 
     @app.route("/qualidade/novo", methods=["GET", "POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_QUALIDADE)
     def qualidade_novo():
         if request.method == "POST":
             f = request.form
@@ -27361,7 +27370,7 @@ def register_routes(app):
         return render_template("qualidade_novo.html", valores={})
 
     @app.route("/qualidade/<int:rnc_id>/editar", methods=["GET", "POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_QUALIDADE)
     def qualidade_editar(rnc_id):
         rnc = db.session.get(RncQualidade, rnc_id)
         if rnc is None:
@@ -27427,7 +27436,7 @@ def register_routes(app):
         )
 
     @app.route("/qualidade/rdim/novo", methods=["GET", "POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_QUALIDADE)
     def rdim_novo():
         item_id_inicial = request.args.get("item_id", "").strip()
 
@@ -27503,7 +27512,7 @@ def register_routes(app):
         return render_template("qualidade_rdim_visualizar.html", inspecao=inspecao)
 
     @app.route("/qualidade/rdim/<int:inspecao_id>/editar", methods=["GET", "POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_QUALIDADE)
     def rdim_editar(inspecao_id):
         inspecao = db.session.get(InspecaoFinal, inspecao_id)
         if inspecao is None:
@@ -27651,7 +27660,7 @@ def register_routes(app):
         return _responder_xlsx_pd_projetos(projetos)
 
     @app.route("/pd/novo", methods=["GET", "POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_PD)
     def pd_novo():
         if request.method == "POST":
             f = request.form
@@ -27672,7 +27681,7 @@ def register_routes(app):
         return render_template("pd_novo.html", valores={})
 
     @app.route("/pd/<int:projeto_id>/editar", methods=["GET", "POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_PD)
     def pd_editar(projeto_id):
         projeto = db.session.get(ProjetoPD, projeto_id)
         if projeto is None:
@@ -27708,7 +27717,7 @@ def register_routes(app):
         )
 
     @app.route("/pd/<int:projeto_id>/testes/novo", methods=["POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_PD)
     def pd_teste_novo(projeto_id):
         projeto = db.session.get(ProjetoPD, projeto_id)
         if projeto is None:
@@ -27736,7 +27745,7 @@ def register_routes(app):
         return redirect(url_for("pd_editar", projeto_id=projeto.id) + "#testes")
 
     @app.route("/pd/<int:projeto_id>/eventos/novo", methods=["POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_PD)
     def pd_evento_novo(projeto_id):
         projeto = db.session.get(ProjetoPD, projeto_id)
         if projeto is None:
@@ -27775,7 +27784,7 @@ def register_routes(app):
         return render_template("pd_kanban.html", colunas=colunas)
 
     @app.route("/pd/<int:projeto_id>/mover-etapa", methods=["POST"])
-    @login_required
+    @requer_role(*ROLES_EDITAM_PD)
     def pd_mover_etapa(projeto_id):
         projeto = db.session.get(ProjetoPD, projeto_id)
         if projeto is None:

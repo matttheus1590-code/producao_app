@@ -102,6 +102,14 @@ ENDPOINTS_PERMITIDOS_COMERCIAL_GERAL = {
 ENDPOINTS_SEMPRE_LIVRES = {"login", "logout", "static"}
 
 
+# Quem pode CRIAR/EDITAR registros de Qualidade (RNC e inspeção final RDIM) e
+# de P&D. Gestão acompanha, mas não edita (auditoria de 26/11/2026). Para
+# devolver a edição à Gestão, basta acrescentar "GESTAO" na tupla abaixo.
+# COMERCIAL e COMERCIAL_GERAL já não entram nessas áreas (lista de endpoints).
+ROLES_EDITAM_QUALIDADE = ("ADMIN", "PCP", "LIDER")
+ROLES_EDITAM_PD = ("ADMIN", "PCP", "LIDER", "PD")
+
+
 def pode_acessar_endpoint(usuario, endpoint):
     """True se `usuario` pode acessar esta rota. Hoje só o papel PD tem
     restrição de VISUALIZAÇÃO por área — todo o resto do sistema sempre
