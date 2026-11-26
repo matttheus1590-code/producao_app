@@ -26364,6 +26364,46 @@ def register_routes(app):
         )
 
     # ------------------------------------------------------------------
+    # Baixa do pedido pelo PCP direto da Listagem Geral (pedido do Bruno,
+    # 26/11/2026): botão "Finalizar" ao lado do "Editar" abre uma janela para
+    # informar a DATA DE LIBERAÇÃO EFETIVA. É exatamente o campo "Liberação
+    # real (PCP)" da tela de edição — um só por pedido, replicado em TODOS os
+    # itens — então a baixa aparece como "LIBERADO" no Painel semanal e a linha
+    # fica verde na Listagem. Não mexe em produção/faturamento dos itens.
+    # ------------------------------------------------------------------
+    @app.route("/pedidos/<int:pedido_id>/baixa", methods=["POST"])
+    @requer_role("ADMIN", "PCP", "LIDER")
+    def baixa_pedido(pedido_id):
+        pedido = db.session.get(Pedido, pedido_id)
+        voltar = request.form.get("voltar") or ""
+        if not (voltar.startswith("/") and not voltar.startswith("//") and "\\" not in voltar):
+            voltar = url_for("dashboard")
+        if pedido is None:
+            flash("Pedido não encontrado.", "danger")
+            return redirect(voltar)
+
+        data_baixa = _parse_data_form(request.form.get("liberacao_real"))
+        if data_baixa is None:
+            flash("Informe a data de liberação efetiva para dar a baixa.", "danger")
+            return redirect(voltar)
+        if not pedido.itens:
+            flash("Este pedido não tem itens para dar baixa.", "danger")
+            return redirect(voltar)
+
+        for item in pedido.itens:
+            antes = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+            item.liberacao_real = data_baixa
+            depois = {c: getattr(item, c) for c in CAMPOS_HISTORICO_ITEM}
+            _registrar_alteracoes("item_pedido", item.id, pedido.id, antes, depois, CAMPOS_HISTORICO_ITEM)
+        db.session.commit()
+        flash(
+            f"Baixa registrada: pedido {pedido.pedido_venda or pedido.id} liberado em "
+            f"{data_baixa.strftime('%d/%m/%Y')} ({len(pedido.itens)} item(ns)).",
+            "success",
+        )
+        return redirect(voltar)
+
+    # ------------------------------------------------------------------
     # Dividir pedido (parcial) — pedido do Bruno (30/10/2026): "duplicar
     # pedido, tipo 888 e 888/1, para cenários em que, durante o trajeto/
     # produção, surja a necessidade de enviar o pedido de forma parcial —

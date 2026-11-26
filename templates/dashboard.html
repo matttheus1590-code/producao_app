@@ -408,7 +408,7 @@ document.addEventListener("click", function (ev) {
 <div class="table-responsive tabela-listagem-geral-wrap" id="listagemGeralWrap">
   <table class="table table-hover table-sm align-middle bg-white tabela-listagem-geral" id="tabelaListagemGeral">
     <colgroup>
-      <col style="width:88px">
+      <col style="width:{{ 124 if current_user.role in ('ADMIN', 'PCP', 'LIDER') else 88 }}px">
       <col style="width:72px">
       <col style="width:160px">
       <col style="width:120px">
@@ -479,6 +479,14 @@ document.addEventListener("click", function (ev) {
           <a href="{{ url_for('editar_pedido', pedido_id=l.pedido_id) }}" class="btn btn-sm btn-outline-primary" title="Editar">
             <i class="bi bi-pencil-square"></i>
           </a>
+          {# Baixa do pedido (Bruno, 26/11/2026): abre a janela p/ informar a liberação efetiva (PCP). #}
+          <button type="button" class="btn btn-sm {{ 'btn-success' if l.liberacao_real else 'btn-outline-success' }}"
+                  data-bs-toggle="modal" data-bs-target="#modalBaixaPedido"
+                  data-pedido-id="{{ l.pedido_id }}" data-pedido-venda="{{ l.pedido_venda or '' }}" data-cliente="{{ l.cliente }}"
+                  data-lib-real="{{ l.liberacao_real.isoformat() if l.liberacao_real else '' }}"
+                  title="{{ 'Pedido já baixado em ' ~ l.liberacao_real.strftime('%d/%m/%Y') ~ ' — clique para alterar a data' if l.liberacao_real else 'Finalizar: dar baixa do pedido (liberação efetiva)' }}">
+            <i class="bi bi-check2-circle"></i>
+          </button>
           {% endif %}
         </td>
         <td>{{ l.pedido_venda or "—" }}</td>
@@ -524,8 +532,49 @@ document.addEventListener("click", function (ev) {
 </nav>
 {% endif %}
 
+{% if current_user.role in ('ADMIN', 'PCP', 'LIDER') %}
+{# Janela da baixa do pedido (Bruno, 26/11/2026) — mesma data do campo "Liberação real (PCP)" da edição do pedido. #}
+<div class="modal fade" id="modalBaixaPedido" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" class="modal-content" id="formBaixaPedido">
+      <input type="hidden" name="voltar" value="{{ request.full_path.rstrip('?') }}">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-check2-circle text-success"></i> Finalizar pedido <span id="baixaPedidoNum"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="small text-muted mb-3" id="baixaPedidoCliente"></div>
+        <label class="form-label fw-semibold" for="baixaDataLiberacao">✅ Data de liberação efetiva (PCP)</label>
+        <input type="date" class="form-control" name="liberacao_real" id="baixaDataLiberacao" required>
+        <div class="form-text">A data vale para todos os itens do pedido e aparece como "LIBERADO" no Painel semanal.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="submit" class="btn btn-success"><i class="bi bi-check2-circle"></i> Dar baixa</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 {% block scripts %}
+<script>
+(function() {
+  var modal = document.getElementById("modalBaixaPedido");
+  if (!modal) return;
+  modal.addEventListener("show.bs.modal", function(ev) {
+    var b = ev.relatedTarget;
+    if (!b) return;
+    var hoje = new Date();
+    var iso = hoje.getFullYear() + "-" + String(hoje.getMonth() + 1).padStart(2, "0") + "-" + String(hoje.getDate()).padStart(2, "0");
+    document.getElementById("formBaixaPedido").action = "/pedidos/" + b.getAttribute("data-pedido-id") + "/baixa";
+    document.getElementById("baixaPedidoNum").textContent = b.getAttribute("data-pedido-venda") || "";
+    document.getElementById("baixaPedidoCliente").textContent = b.getAttribute("data-cliente") || "";
+    document.getElementById("baixaDataLiberacao").value = b.getAttribute("data-lib-real") || iso;
+  });
+})();
+</script>
 <script>
 // Filtros dinâmicos (23/10/2026): selects, datas/meses e o interruptor de
 // atrasados aplicam sozinhos ao mudar; campos de texto continuam por Enter/
@@ -561,6 +610,8 @@ document.addEventListener("click", function (ev) {
       if (Array.isArray(salvo) && salvo.length === cols.length) {
         salvo.forEach(function(w, i) {
           if (typeof w === "number" && w >= LARGURA_MINIMA) {
+            // 1ª coluna = botões (ver/editar/finalizar): nunca menor que o padrão, senão o 3º botão some
+            if (i === 0 && w < largurasPadrao[0]) w = largurasPadrao[0];
             cols[i].style.width = w + "px";
           }
         });
