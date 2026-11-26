@@ -5,6 +5,7 @@ services:
     plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app"
+    healthCheckPath: /health
     envVars:
       - key: SECRET_KEY
         generateValue: true

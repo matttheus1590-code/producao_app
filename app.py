@@ -24,6 +24,7 @@ from sqlalchemy.orm import selectinload
 
 import logistica_api
 import seguranca
+import regras_prazo
 from extensions import db, login_manager
 from models import (
     APONTAMENTO_MOTIVOS_PAUSA,
@@ -2013,7 +2014,11 @@ def _organizar_estacoes_03_09_2026(app):
     nome_antigo, nome_novo = _ESTACAO_RENOMEADA_03_09_2026
     estacao_manutencao = Estacao.query.filter_by(nome=nome_antigo).first()
     if estacao_manutencao is not None:
-        estacao_manutencao.nome = nome_novo
+        if Estacao.query.filter_by(nome=nome_novo).first() is not None:
+            # banco novo: o cadastro já nasceu com o nome novo — só descarta o antigo
+            db.session.delete(estacao_manutencao)
+        else:
+            estacao_manutencao.nome = nome_novo
 
     itens_renomeados = ItemPedido.query.filter_by(estacao=nome_antigo).update(
         {"estacao": nome_novo}, synchronize_session=False
@@ -5296,9 +5301,7 @@ def _predicado_status(status):
 def _predicado_atrasado():
     """Pedido "atrasado": tem pelo menos um item com liberação prevista já
     vencida e que ainda não foi finalizado — mesma regra do semáforo vermelho."""
-    return Pedido.itens.any(
-        and_(ItemPedido.liberacao_prevista < date.today(), ItemPedido.status_producao != "FINALIZADO")
-    )
+    return Pedido.itens.any(regras_prazo.sql_item_atrasado_plano(ItemPedido))
 
 
 def _calcular_resumo():
@@ -7203,8 +7206,8 @@ def _linha_atraso_pedido(p, hoje, mapa_prod, mapa_transp):
     """Linha de "atrasado contextualizado" de UM pedido (ver
     _atrasados_contextualizados) ou None quando nenhum item em aberto está
     com a liberação prevista vencida."""
-    abertos = [i for i in p.itens if i.status_producao != "FINALIZADO"]
-    atrasados = [i for i in abertos if i.liberacao_prevista and i.liberacao_prevista < hoje]
+    abertos = [i for i in p.itens if regras_prazo.item_aberto(i)]
+    atrasados = [i for i in abertos if regras_prazo.item_atrasado_plano(i, hoje)]
     if not atrasados:
         return None
     atrasados.sort(key=lambda i: i.liberacao_prevista)
@@ -11302,9 +11305,7 @@ def _gargalos_por_estacao():
         nome = e.nome
         abertos = ItemPedido.query.filter(ItemPedido.estacao == nome, ItemPedido.status_producao != "FINALIZADO")
         fila = abertos.count()
-        atraso = abertos.filter(
-            ItemPedido.liberacao_prevista.isnot(None), ItemPedido.liberacao_prevista < hoje
-        ).count()
+        atraso = abertos.filter(regras_prazo.sql_item_atrasado_plano(ItemPedido, hoje)).count()
         valor_parado = (
             db.session.query(func.sum(ItemPedido.quantidade * ItemPedido.custo_unitario))
             .filter(ItemPedido.estacao == nome, ItemPedido.status_producao != "FINALIZADO")
@@ -18840,9 +18841,7 @@ def _gerar_pdf_conclusoes_estacoes(titulo_periodo, tag_arquivo, itens_por_estaca
         """Dias de atraso (liberação prevista vencida e item ainda aberto) ou 0 —
         é um ALERTA sobreposto ao status (um item pendente/em produção pode
         estar atrasado), nunca substitui "Pendente"/"Em produção"."""
-        if it.status_producao != "FINALIZADO" and it.liberacao_prevista and it.liberacao_prevista < hoje:
-            return (hoje - it.liberacao_prevista).days
-        return 0
+        return regras_prazo.dias_atraso_plano(it, hoje)
 
     def situacao_item(it):
         """(chave de cor da linha, texto, ícone): o status SEMPRE aparece;
@@ -19510,10 +19509,7 @@ def _pdf_estacao_bytes(estacao, itens, status_filtro, incluir_mp, escala, maximo
     total_pecas_txt = int(total_pecas) if total_pecas == int(total_pecas) else total_pecas
     na_fila = sum(1 for item in itens if item.status_producao == "PENDENTE")
     em_producao = total_itens - na_fila
-    criticos = sum(
-        1 for item in itens
-        if item.liberacao_prevista is not None and item.liberacao_prevista < hoje
-    )
+    criticos = sum(1 for item in itens if regras_prazo.item_atrasado_plano(item, hoje))
 
     kpis = [
         _kpi(total_itens, "OP/produto no relatório"),
@@ -20126,10 +20122,7 @@ def _gerar_pdf_estacoes_multiplas(estacoes_com_itens, status_filtro, incluir_mp=
     total_pecas_txt = int(total_pecas) if total_pecas == int(total_pecas) else total_pecas
     na_fila = sum(1 for item in todos_itens if item.status_producao == "PENDENTE")
     em_producao = total_itens - na_fila
-    criticos = sum(
-        1 for item in todos_itens
-        if item.liberacao_prevista is not None and item.liberacao_prevista < hoje
-    )
+    criticos = sum(1 for item in todos_itens if regras_prazo.item_atrasado_plano(item, hoje))
 
     # KPI geral, somando TODAS as estações escolhidas (visão rápida de topo,
     # antes de entrar seção por seção) — mesmo estilo do relatório de uma
@@ -28101,9 +28094,7 @@ def register_routes(app):
             )
             criticos = ItemPedido.query.filter(
                 ItemPedido.estacao == e.nome,
-                ItemPedido.status_producao != "FINALIZADO",
-                ItemPedido.liberacao_prevista.isnot(None),
-                ItemPedido.liberacao_prevista < hoje,
+                regras_prazo.sql_item_atrasado_plano(ItemPedido, hoje),
             ).count()
             lead_times = _lead_times_estacao(e.nome)
             return {
