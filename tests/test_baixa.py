@@ -53,3 +53,56 @@ def test_perfis_sem_permissao_nao_dao_baixa(app, pedido_id, usuario):
     c.post(f"/pedidos/{pedido_id}/baixa", data={"liberacao_real": "2026-11-25", "csrf_token": _token(c) or ""})
     with app.app_context():
         assert all(i.liberacao_real is None for i in db.session.get(Pedido, pedido_id).itens)
+
+
+# ------------------------- autorização de faturamento -------------------------
+import autorizacao_faturamento as AF
+
+DADOS_AUT = {
+    "liberacao_real": "2026-11-25", "data_emissao": "2026-11-26", "cliente_doc": "DELP", "observacoes": "Doca 2",
+    "vol_qtd[]": ["1", "2"], "vol_tipo[]": ["VOL.", "CAIXA"], "vol_c[]": ["500", "460"], "vol_l[]": ["360", "460"],
+    "vol_a[]": ["360", "460"], "vol_pb[]": ["3", "8,5"], "vol_pl[]": ["2,5", ""],
+}
+
+
+def test_formatacao_das_linhas():
+    assert AF.fmt_num(3.0) == "3" and AF.fmt_num(8.5) == "8,5" and AF.fmt_num(None) == ""
+    assert AF.num_br("1.250,75") == 1250.75 and AF.num_br("3,5") == 3.5 and AF.num_br("abc") is None and AF.num_br("-2") is None
+    assert AF.texto_linha({"quantidade": 1, "tipo": "VOL.", "comprimento": 500.0, "largura": 360.0, "altura": 360.0}) == "1X VOL. 500 X 360 X 360"
+    assert AF.data_extenso(date(2026, 11, 26)) == "26 de novembro de 2026"
+
+
+def test_salva_autorizacao_e_gera_documentos(app, pedido_id):
+    c = app.test_client()
+    entrar(c, "t_pcp")
+    r = c.post(f"/pedidos/{pedido_id}/baixa", data=dict(DADOS_AUT, csrf_token=_token(c)), headers={"X-Requested-With": "fetch"})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    j = c.get(f"/pedidos/{pedido_id}/autorizacao.json").get_json()
+    assert j["cliente_doc"] == "DELP" and len(j["volumes"]) == 2 and j["volumes"][1]["peso_bruto"] == 8.5
+    pdf = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento.pdf")
+    assert pdf.status_code == 200 and pdf.data.startswith(b"%PDF") and "attachment" in pdf.headers["Content-Disposition"]
+    html = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento").get_data(as_text=True)
+    assert "1X VOL. 500 X 360 X 360" in html and "2X CAIXA 460 X 460 X 460" in html and "T-9001" in html
+
+
+def test_reimprimir_atualiza_a_mesma_autorizacao(app, pedido_id):
+    c = app.test_client()
+    entrar(c, "t_pcp")
+    for obs in ("primeira", "segunda"):
+        c.post(f"/pedidos/{pedido_id}/baixa", data=dict(DADOS_AUT, observacoes=obs, csrf_token=_token(c)), headers={"X-Requested-With": "fetch"})
+    with app.app_context():
+        from models import AutorizacaoFaturamento
+        auts = AutorizacaoFaturamento.query.filter_by(pedido_id=pedido_id).all()
+        assert len(auts) == 1 and auts[0].observacoes == "segunda" and len(auts[0].volumes) == 2
+
+
+def test_documento_sem_autorizacao_nao_abre(app, pedido_id):
+    c = app.test_client()
+    entrar(c, "t_pcp")
+    assert c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento.pdf").status_code == 302
+
+
+def test_gestao_nao_acessa_a_autorizacao(app, pedido_id):
+    c = app.test_client()
+    entrar(c, "t_gestao")
+    assert c.get(f"/pedidos/{pedido_id}/autorizacao.json").status_code in (302, 403)
