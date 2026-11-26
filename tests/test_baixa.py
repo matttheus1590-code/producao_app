@@ -9,7 +9,7 @@ from models import ItemPedido, Pedido, db
 @pytest.fixture()
 def pedido_id(app):
     with app.app_context():
-        p = Pedido(cliente="CLIENTE TESTE BAIXA", pedido_venda="T-9001", data_cliente=date(2026, 12, 20))
+        p = Pedido(cliente="CLIENTE TESTE BAIXA", pedido_venda="T-9001", data_cliente=date(2026, 12, 20), cidade="Belo Horizonte", estado="MG")
         p.itens.append(ItemPedido(descricao_produto="ITEM A", quantidade=1, estacao="PU"))
         p.itens.append(ItemPedido(descricao_produto="ITEM B", quantidade=2, estacao="PU"))
         db.session.add(p)
@@ -86,6 +86,8 @@ def test_salva_autorizacao_e_gera_documentos(app, pedido_id):
     assert "500 X 360 X 360" in html and "460 X 460 X 460" in html and "T-9001" in html
     # peso: unitário 8,5 x 2 volumes = total 17 KGS na linha; total geral 3 + 17 = 20 KGS
     assert "8,5 KGS" in html and "17 KGS" in html and "20 KGS" in html and "PESO BRUTO TOTAL" in html
+    # cidade/UF logo abaixo do cliente
+    assert "CIDADE/UF:" in html and "BELO HORIZONTE / MG" in html
 
 
 def test_reimprimir_atualiza_a_mesma_autorizacao(app, pedido_id):
@@ -130,3 +132,10 @@ def test_coleta_imediata_e_sem_agendamento_sem_data(app, pedido_id):
     c.post(f"/pedidos/{pedido_id}/baixa", data=dict(DADOS_AUT, coleta_modo="agendada", coleta_data="", csrf_token=_token(c)), headers={"X-Requested-With": "fetch"})
     html = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento?sem=1").get_data(as_text=True)
     assert "COLETA LIBERADA" in html and ">IMEDIATA<" in html and "A PARTIR DE" not in html
+
+
+def test_local_cidade_uf_e_pais():
+    from types import SimpleNamespace as NS
+    assert AF._local(NS(cidade="Belo Horizonte", estado="MG", pais="Brasil")) == "BELO HORIZONTE / MG"
+    assert AF._local(NS(cidade="Houston", estado="TX", pais="EUA")) == "HOUSTON / TX · EUA"
+    assert AF._local(NS(cidade=None, estado=None, pais="Brasil")) == "—"

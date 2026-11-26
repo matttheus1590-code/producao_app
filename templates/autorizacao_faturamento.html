@@ -24,8 +24,10 @@
   .titulo .ped { font-size: 44pt; font-weight: 700; line-height: 1.05; margin-top: 1mm; }
   .campos { display: flex; flex-direction: column; gap: 6.5mm; }
   .linha { display: flex; align-items: baseline; gap: 4mm; font-size: 12pt; font-weight: 700; }
-  .linha .rot { min-width: 25mm; }
+  .linha .rot { min-width: 30mm; }
   .linha .val { font-size: 24pt; font-style: italic; line-height: 1.1; text-transform: uppercase; }
+  .linha.loc { margin-top: -3mm; }
+  .linha.loc .val { font-size: 16pt; }
   .linha.sit .val { font-size: 14pt; font-style: normal; }
   .linha.col .rot { min-width: 0; }
   .linha.col .val { font-size: 21pt; font-style: normal; }
@@ -66,6 +68,7 @@
   </div>
   <div class="campos">
     <div class="linha"><span class="rot">CLIENTE:</span><span class="val">{{ d.cliente }}</span></div>
+    <div class="linha loc"><span class="rot">CIDADE/UF:</span><span class="val">{{ d.local }}</span></div>
     <div class="linha"><span class="rot">FRETE:</span><span class="val">{{ d.frete }}</span></div>
     <div class="linha sit"><span class="rot">SITUAÇÃO:</span><span class="val">{{ d.situacao }}</span></div>
     <div class="linha col"><span class="rot">{{ d.coleta_rotulo }}:</span><span class="val">{{ d.coleta_valor }}</span></div>

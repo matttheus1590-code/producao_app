@@ -111,6 +111,16 @@ def texto_linha(v):
     return base + (" " + " X ".join(medidas) if medidas else "")
 
 
+def _local(pedido):
+    """'CIDADE / UF' do cliente (País só quando não é Brasil)."""
+    partes = [(getattr(pedido, "cidade", None) or "").strip(), (getattr(pedido, "estado", None) or "").strip()]
+    txt = " / ".join(x for x in partes if x)
+    pais = (getattr(pedido, "pais", None) or "").strip()
+    if pais and pais.lower() not in ("brasil", "brazil"):
+        txt = (txt + " · " if txt else "") + pais
+    return txt.upper() or "—"
+
+
 def montar_dados(pedido, aut, data_liberacao=None):
     """Dicionário único usado pela tela de impressão e pelo PDF."""
     vols = []
@@ -144,6 +154,7 @@ def montar_dados(pedido, aut, data_liberacao=None):
     return {
         "pedido_venda": pedido.pedido_venda or f"#{pedido.id}",
         "cliente": (aut.cliente_doc if aut and aut.cliente_doc else pedido.cliente) or "",
+        "local": _local(pedido),
         "frete": (pedido.frete or "—").upper(),
         "situacao": "FINALIZADO (X)",
         "data_emissao": data_emissao,
@@ -193,8 +204,9 @@ def gerar_pdf(dados, logo_path):
     # Contas da folha A4: topo+título ocupam até y=656; a caixa de observações começa em y=158.
     n = len(dados["volumes"])
     passo = 46 if n <= 10 else 32          # distância entre cliente / frete / situação / coleta
-    lin_h = 30 if n <= 8 else max(10, min(30, (419 - 3 * passo - 36) / n))
-    gap = max(12, min(80, (419 - 3 * passo - n * lin_h) / 3))
+    # cidade/UF fica logo abaixo do cliente (passo curto de 30) -> 389 em vez de 419
+    lin_h = 30 if n <= 8 else max(10, min(30, (389 - 3 * passo - 36) / n))
+    gap = max(12, min(80, (389 - 3 * passo - n * lin_h) / 3))
     h_obs = 130
 
     y = H - m - 30
@@ -230,6 +242,11 @@ def gerar_pdf(dados, logo_path):
     tam = ajusta(cli, "Helvetica-BoldOblique", 24, larg - 78)
     c.setFont("Helvetica-BoldOblique", tam)
     c.drawString(x0 + 78, y - 1, cli)
+    y -= 30
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(x0, y, "CIDADE/UF:")
+    c.setFont("Helvetica-BoldOblique", ajusta(dados["local"], "Helvetica-BoldOblique", 16, larg - 78))
+    c.drawString(x0 + 78, y, dados["local"])
     y -= passo
     c.setFont("Helvetica-Bold", 12)
     c.drawString(x0, y, "FRETE:")
