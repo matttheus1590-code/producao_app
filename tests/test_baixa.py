@@ -83,7 +83,9 @@ def test_salva_autorizacao_e_gera_documentos(app, pedido_id):
     pdf = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento.pdf")
     assert pdf.status_code == 200 and pdf.data.startswith(b"%PDF") and "attachment" in pdf.headers["Content-Disposition"]
     html = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento").get_data(as_text=True)
-    assert "1X VOL. 500 X 360 X 360" in html and "2X CAIXA 460 X 460 X 460" in html and "T-9001" in html
+    assert "500 X 360 X 360" in html and "460 X 460 X 460" in html and "T-9001" in html
+    # peso: unitário 8,5 x 2 volumes = total 17 KGS na linha; total geral 3 + 17 = 20 KGS
+    assert "8,5 KGS" in html and "17 KGS" in html and "20 KGS" in html and "PESO BRUTO TOTAL" in html
 
 
 def test_reimprimir_atualiza_a_mesma_autorizacao(app, pedido_id):
@@ -117,7 +119,7 @@ def test_hora_e_coleta_agendada(app, pedido_id):
     j = c.get(f"/pedidos/{pedido_id}/autorizacao.json").get_json()
     assert j["coleta_modo"] == "agendada" and j["coleta_data"] == "2026-11-27" and j["coleta_hora"] == "14:00" and j["hora_emissao"] == "15:30"
     html = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento?sem=1").get_data(as_text=True)
-    assert "COLETA LIBERADA A PARTIR DE" in html and "27/11/2026 ÀS 14:00" in html and "26 de novembro de 2026 · 15:30" in html
+    assert "COLETA LIBERADA A PARTIR DE" in html and "27/11/2026 às 14:00" in html and "26 de novembro de 2026 · 15:30" in html
     assert "PESO LIQ" not in html.upper()
 
 
@@ -127,4 +129,4 @@ def test_coleta_imediata_e_sem_agendamento_sem_data(app, pedido_id):
     # "a partir de" sem data cai para imediata (não inventa agendamento)
     c.post(f"/pedidos/{pedido_id}/baixa", data=dict(DADOS_AUT, coleta_modo="agendada", coleta_data="", csrf_token=_token(c)), headers={"X-Requested-With": "fetch"})
     html = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento?sem=1").get_data(as_text=True)
-    assert "COLETA LIBERADA IMEDIATA" in html
+    assert "COLETA LIBERADA" in html and ">IMEDIATA<" in html and "A PARTIR DE" not in html
