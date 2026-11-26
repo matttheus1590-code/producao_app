@@ -61,7 +61,8 @@ import autorizacao_faturamento as AF
 DADOS_AUT = {
     "liberacao_real": "2026-11-25", "data_emissao": "2026-11-26", "cliente_doc": "DELP", "observacoes": "Doca 2",
     "vol_qtd[]": ["1", "2"], "vol_tipo[]": ["VOL.", "CAIXA"], "vol_c[]": ["500", "460"], "vol_l[]": ["360", "460"],
-    "vol_a[]": ["360", "460"], "vol_pb[]": ["3", "8,5"], "vol_pl[]": ["2,5", ""],
+    "vol_a[]": ["360", "460"], "vol_pb[]": ["3", "8,5"],
+    "hora_emissao": "15:30", "coleta_modo": "imediata",
 }
 
 
@@ -106,3 +107,24 @@ def test_gestao_nao_acessa_a_autorizacao(app, pedido_id):
     c = app.test_client()
     entrar(c, "t_gestao")
     assert c.get(f"/pedidos/{pedido_id}/autorizacao.json").status_code in (302, 403)
+
+
+def test_hora_e_coleta_agendada(app, pedido_id):
+    assert AF.ler_hora("9:05") == "09:05" and AF.ler_hora("1430") == "14:30" and AF.ler_hora("25:00") is None and AF.ler_hora("") is None
+    c = app.test_client()
+    entrar(c, "t_pcp")
+    c.post(f"/pedidos/{pedido_id}/baixa", data=dict(DADOS_AUT, coleta_modo="agendada", coleta_data="2026-11-27", coleta_hora="14:00", csrf_token=_token(c)), headers={"X-Requested-With": "fetch"})
+    j = c.get(f"/pedidos/{pedido_id}/autorizacao.json").get_json()
+    assert j["coleta_modo"] == "agendada" and j["coleta_data"] == "2026-11-27" and j["coleta_hora"] == "14:00" and j["hora_emissao"] == "15:30"
+    html = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento?sem=1").get_data(as_text=True)
+    assert "COLETA LIBERADA A PARTIR DE" in html and "27/11/2026 ÀS 14:00" in html and "26 de novembro de 2026 · 15:30" in html
+    assert "PESO LIQ" not in html.upper()
+
+
+def test_coleta_imediata_e_sem_agendamento_sem_data(app, pedido_id):
+    c = app.test_client()
+    entrar(c, "t_pcp")
+    # "a partir de" sem data cai para imediata (não inventa agendamento)
+    c.post(f"/pedidos/{pedido_id}/baixa", data=dict(DADOS_AUT, coleta_modo="agendada", coleta_data="", csrf_token=_token(c)), headers={"X-Requested-With": "fetch"})
+    html = c.get(f"/pedidos/{pedido_id}/autorizacao-faturamento?sem=1").get_data(as_text=True)
+    assert "COLETA LIBERADA" in html and "IMEDIATA" in html

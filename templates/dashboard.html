@@ -538,13 +538,15 @@ document.addEventListener("click", function (ev) {
   .baixa-sec { border: 1px solid #dfe5ee; border-radius: .6rem; padding: .8rem .9rem; margin-bottom: .8rem; background: #fbfcfe; }
   .baixa-sec-tit { font-weight: 800; color: #1b2a4a; margin-bottom: .55rem; font-size: .95rem; }
   .baixa-passo { display: inline-flex; align-items: center; justify-content: center; width: 1.4rem; height: 1.4rem; border-radius: 50%; background: #009c3b; color: #fff; font-size: .78rem; margin-right: .4rem; }
-  .baixa-vol-cab, .baixa-vol-linha { display: grid; grid-template-columns: 3.4rem 8.4rem repeat(3, 4.6rem) 5.2rem 5.2rem 2rem; gap: .35rem; align-items: center; }
+  .baixa-vol-cab, .baixa-vol-linha { display: grid; grid-template-columns: 3.4rem 8.4rem repeat(3, 4.6rem) 6rem 2rem; gap: .35rem; align-items: center; }
   .baixa-vol-cab { font-size: .68rem; color: #6b7280; font-weight: 700; text-transform: uppercase; margin-bottom: .2rem; }
   .baixa-vol-linha { margin-bottom: .35rem; }
   .baixa-vol-linha .form-control, .baixa-vol-linha .form-select { padding: .25rem .4rem; font-size: .85rem; }
   .baixa-total { font-size: .85rem; font-weight: 700; color: #1b2a4a; background: #e3f5e8; border-radius: 999px; padding: .15rem .7rem; display: inline-block; }
   #baixaVolumes { overflow-x: auto; }
-  #baixaVolumes > div { min-width: 40rem; }
+  #baixaVolumes > div { min-width: 34rem; }
+  .baixa-coleta-op { border: 2px solid #dfe5ee; border-radius: .6rem; padding: .55rem .8rem; cursor: pointer; background: #fff; flex: 1; }
+  .baixa-coleta-op.ativa { border-color: #009c3b; background: #e3f5e8; }
 </style>
 <div class="modal fade" id="modalBaixaPedido" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
@@ -555,7 +557,7 @@ document.addEventListener("click", function (ev) {
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
       </div>
       <div class="modal-body">
-        <div class="alert alert-light border small py-2 mb-3">👇 Preencha em 3 passos. No fim, escolha <b>🖨️ Imprimir</b> ou <b>💾 Salvar PDF</b> — a baixa já é registrada junto, e a autorização de faturamento segue para a expedição.</div>
+        <div class="alert alert-light border small py-2 mb-3">👇 Preencha em 4 passos. No fim, escolha <b>🖨️ Imprimir</b> ou <b>💾 Salvar PDF</b> — a baixa já é registrada junto, e a autorização de faturamento segue para a expedição.</div>
 
         <div class="baixa-sec">
           <div class="baixa-sec-tit"><span class="baixa-passo">1</span> 📅 Datas</div>
@@ -564,11 +566,15 @@ document.addEventListener("click", function (ev) {
               <label class="form-label small fw-semibold mb-1" for="baixaDataLiberacao">✅ Liberação efetiva (PCP)</label>
               <input type="date" class="form-control" name="liberacao_real" id="baixaDataLiberacao" required>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label small fw-semibold mb-1" for="baixaDataEmissao">🗓️ Emissão da autorização</label>
               <input type="date" class="form-control" name="data_emissao" id="baixaDataEmissao" required>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-2">
+              <label class="form-label small fw-semibold mb-1" for="baixaHoraEmissao">🕒 Hora</label>
+              <input type="time" class="form-control" name="hora_emissao" id="baixaHoraEmissao">
+            </div>
+            <div class="col-md-3">
               <label class="form-label small fw-semibold mb-1">🚚 Frete</label>
               <div class="form-control bg-light" id="baixaFrete">—</div>
             </div>
@@ -577,16 +583,34 @@ document.addEventListener("click", function (ev) {
         </div>
 
         <div class="baixa-sec">
-          <div class="baixa-sec-tit"><span class="baixa-passo">2</span> 🏢 Cliente no documento</div>
+          <div class="baixa-sec-tit"><span class="baixa-passo">2</span> 🚚 Coleta — quando a expedição pode liberar?</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <label class="baixa-coleta-op ativa" id="baixaOpImediata">
+              <input type="radio" class="form-check-input me-1" name="coleta_modo" value="imediata" checked> ⚡ <b>Liberada imediata</b>
+              <div class="small text-muted">A transportadora já pode coletar.</div>
+            </label>
+            <label class="baixa-coleta-op" id="baixaOpAgendada">
+              <input type="radio" class="form-check-input me-1" name="coleta_modo" value="agendada"> 📅 <b>Liberada a partir de…</b>
+              <div class="d-flex gap-2 mt-1">
+                <input type="date" class="form-control form-control-sm" name="coleta_data" id="baixaColetaData">
+                <input type="time" class="form-control form-control-sm" name="coleta_hora" id="baixaColetaHora" style="max-width:7rem">
+              </div>
+            </label>
+          </div>
+          <div class="form-text">Sai numa faixa verde bem grande na folha, para a expedição ver de longe.</div>
+        </div>
+
+        <div class="baixa-sec">
+          <div class="baixa-sec-tit"><span class="baixa-passo">3</span> 🏢 Cliente no documento</div>
           <input type="text" class="form-control" name="cliente_doc" id="baixaClienteDoc" maxlength="160" placeholder="Como o nome do cliente deve sair impresso (ex.: DELP)">
           <div class="form-text">Pode abreviar: sai exatamente assim na autorização.</div>
         </div>
 
         <div class="baixa-sec">
-          <div class="baixa-sec-tit"><span class="baixa-passo">3</span> 📦 Volumes e pesos <span class="baixa-total ms-2" id="baixaTotais">0 volumes · 0 kg</span></div>
+          <div class="baixa-sec-tit"><span class="baixa-passo">4</span> 📦 Volumes e peso <span class="baixa-total ms-2" id="baixaTotais">0 volumes · 0 kg</span></div>
           <div id="baixaVolumes">
             <div>
-              <div class="baixa-vol-cab"><span>Qtd</span><span>Tipo</span><span>Comp. (mm)</span><span>Larg. (mm)</span><span>Alt. (mm)</span><span>⚖️ Bruto (kg)</span><span>Líq. (kg)</span><span></span></div>
+              <div class="baixa-vol-cab"><span>Qtd</span><span>Tipo</span><span>Comp. (mm)</span><span>Larg. (mm)</span><span>Alt. (mm)</span><span>⚖️ Peso bruto (kg)</span><span></span></div>
               <div id="baixaVolLinhas"></div>
             </div>
           </div>
@@ -646,19 +670,36 @@ document.addEventListener("click", function (ev) {
       '<input type="text" inputmode="decimal" class="form-control" name="vol_l[]" value="' + num(v.largura) + '" placeholder="360">' +
       '<input type="text" inputmode="decimal" class="form-control" name="vol_a[]" value="' + num(v.altura) + '" placeholder="360">' +
       '<input type="text" inputmode="decimal" class="form-control" name="vol_pb[]" value="' + num(v.peso_bruto) + '" placeholder="3">' +
-      '<input type="text" inputmode="decimal" class="form-control" name="vol_pl[]" value="' + num(v.peso_liquido) + '" placeholder="opc.">' +
       '<button type="button" class="btn btn-sm btn-outline-danger px-1" title="Remover esta linha">🗑️</button>';
     d.querySelector("button").addEventListener("click", function() { d.remove(); totais(); });
     d.addEventListener("input", totais);
     linhas.appendChild(d);
     totais();
   }
+  function setColeta(modo, data, hora) {
+    form.querySelectorAll("[name='coleta_modo']").forEach(function(r) { r.checked = (r.value === modo); });
+    document.getElementById("baixaColetaData").value = data;
+    document.getElementById("baixaColetaHora").value = hora;
+    marcaColeta();
+  }
+  function marcaColeta() {
+    var agendada = form.querySelector("[name='coleta_modo'][value='agendada']").checked;
+    document.getElementById("baixaOpAgendada").classList.toggle("ativa", agendada);
+    document.getElementById("baixaOpImediata").classList.toggle("ativa", !agendada);
+    document.getElementById("baixaColetaData").required = agendada;
+  }
+  form.querySelectorAll("[name='coleta_modo']").forEach(function(r) { r.addEventListener("change", marcaColeta); });
+  ["baixaColetaData", "baixaColetaHora"].forEach(function(id) {
+    document.getElementById(id).addEventListener("input", function() {
+      form.querySelector("[name='coleta_modo'][value='agendada']").checked = true; marcaColeta();
+    });
+  });
   document.getElementById("baixaAddVol").addEventListener("click", function() { addLinha(); });
   document.getElementById("baixaDupVol").addEventListener("click", function() {
     var ult = linhas.querySelector(".baixa-vol-linha:last-child");
     if (!ult) { addLinha(); return; }
     var g = function(n) { return ult.querySelector("[name='" + n + "']").value; };
-    addLinha({quantidade: g("vol_qtd[]"), tipo: g("vol_tipo[]"), comprimento: g("vol_c[]"), largura: g("vol_l[]"), altura: g("vol_a[]"), peso_bruto: g("vol_pb[]"), peso_liquido: g("vol_pl[]")});
+    addLinha({quantidade: g("vol_qtd[]"), tipo: g("vol_tipo[]"), comprimento: g("vol_c[]"), largura: g("vol_l[]"), altura: g("vol_a[]"), peso_bruto: g("vol_pb[]")});
   });
 
   modal.addEventListener("show.bs.modal", function(ev) {
@@ -670,6 +711,9 @@ document.addEventListener("click", function (ev) {
     document.getElementById("baixaPedidoCliente").textContent = "· " + (b.getAttribute("data-cliente") || "");
     document.getElementById("baixaDataLiberacao").value = b.getAttribute("data-lib-real") || hojeISO();
     document.getElementById("baixaDataEmissao").value = hojeISO();
+    var agora = new Date();
+    document.getElementById("baixaHoraEmissao").value = String(agora.getHours()).padStart(2, "0") + ":" + String(agora.getMinutes()).padStart(2, "0");
+    setColeta("imediata", "", "");
     document.getElementById("baixaClienteDoc").value = b.getAttribute("data-cliente") || "";
     document.getElementById("baixaFrete").textContent = "carregando…";
     document.getElementById("baixaObs").value = "";
@@ -680,6 +724,8 @@ document.addEventListener("click", function (ev) {
         document.getElementById("baixaFrete").textContent = d.frete || "—";
         document.getElementById("baixaClienteDoc").value = d.cliente_doc || d.cliente || "";
         document.getElementById("baixaDataEmissao").value = d.data_emissao || hojeISO();
+        if (d.hora_emissao) document.getElementById("baixaHoraEmissao").value = d.hora_emissao;
+        setColeta(d.coleta_modo || "imediata", d.coleta_data || "", d.coleta_hora || "");
         if (d.data_liberacao) document.getElementById("baixaDataLiberacao").value = d.data_liberacao;
         document.getElementById("baixaObs").value = d.observacoes || "";
         (d.volumes && d.volumes.length ? d.volumes : [{}]).forEach(addLinha);

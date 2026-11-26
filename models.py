@@ -2607,6 +2607,11 @@ class AutorizacaoFaturamento(db.Model):
     pedido = db.relationship("Pedido", backref=db.backref("autorizacao_faturamento", uselist=False, cascade="all, delete-orphan"))
 
     data_emissao = db.Column(db.Date, nullable=False)
+    hora_emissao = db.Column(db.String(5), nullable=True)  # "HH:MM" (Brasília)
+    # Coleta (v2, 26/11/2026): imediata, ou liberada a partir de dia + hora.
+    coleta_imediata = db.Column(db.Boolean, nullable=False, default=True)
+    coleta_data = db.Column(db.Date, nullable=True)
+    coleta_hora = db.Column(db.String(5), nullable=True)
     cliente_doc = db.Column(db.String(160), nullable=True)  # nome como sai no documento (pode ser abreviado)
     observacoes = db.Column(db.Text, nullable=True)
     atualizado_por = db.Column(db.String(120), nullable=True)

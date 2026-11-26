@@ -1488,6 +1488,7 @@ def create_app():
         # existir de verdade no banco.
         _migrar_pedidos_operacao_coleta(app)
         _migrar_pedidos_operacao_baixa_manual(app)
+        _migrar_autorizacao_faturamento_v2(app)
         _migrar_dados_go_para_pedidos_operacao(app)
         # Só depois de TODAS as colunas de pedidos/itens existirem de verdade
         # (senão o ORM tenta selecionar coluna que ainda não foi criada nesta
@@ -2095,6 +2096,26 @@ def _migrar_pedidos_operacao_baixa_manual(app):
             conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_embarque_manual_em TIMESTAMP"))
         if "go_embarque_manual_por" not in colunas:
             conn.execute(text("ALTER TABLE pedidos_operacao ADD COLUMN go_embarque_manual_por VARCHAR(120)"))
+
+
+def _migrar_autorizacao_faturamento_v2(app):
+    """Autorização de faturamento v2 (26/11/2026): hora de emissão e dados da
+    coleta (imediata ou a partir de dia/hora). A tabela já existe em produção
+    (criada pelo create_all na v1), então as colunas novas entram por ALTER."""
+    db.session.remove()
+    inspector = inspect(db.engine)
+    if "autorizacoes_faturamento" not in inspector.get_table_names():
+        return
+    colunas = {c["name"] for c in inspector.get_columns("autorizacoes_faturamento")}
+    with db.engine.begin() as conn:
+        if "hora_emissao" not in colunas:
+            conn.execute(text("ALTER TABLE autorizacoes_faturamento ADD COLUMN hora_emissao VARCHAR(5)"))
+        if "coleta_imediata" not in colunas:
+            conn.execute(text("ALTER TABLE autorizacoes_faturamento ADD COLUMN coleta_imediata BOOLEAN NOT NULL DEFAULT TRUE"))
+        if "coleta_data" not in colunas:
+            conn.execute(text("ALTER TABLE autorizacoes_faturamento ADD COLUMN coleta_data DATE"))
+        if "coleta_hora" not in colunas:
+            conn.execute(text("ALTER TABLE autorizacoes_faturamento ADD COLUMN coleta_hora VARCHAR(5)"))
 
 
 def _migrar_logistica_itens(app):
@@ -26382,7 +26403,14 @@ def register_routes(app):
         if aut is None:
             aut = AutorizacaoFaturamento(pedido=pedido)
             db.session.add(aut)
-        aut.data_emissao = _parse_data_form(form.get("data_emissao")) or date.today()
+        agora = _agora_brt()
+        aut.data_emissao = _parse_data_form(form.get("data_emissao")) or agora.date()
+        aut.hora_emissao = autfat.ler_hora(form.get("hora_emissao")) or agora.strftime("%H:%M")
+        aut.coleta_imediata = form.get("coleta_modo", "imediata") != "agendada"
+        aut.coleta_data = None if aut.coleta_imediata else _parse_data_form(form.get("coleta_data"))
+        aut.coleta_hora = None if aut.coleta_imediata else autfat.ler_hora(form.get("coleta_hora"))
+        if not aut.coleta_imediata and aut.coleta_data is None:
+            aut.coleta_imediata = True  # sem data informada, não inventa agendamento
         aut.cliente_doc = (form.get("cliente_doc") or "").strip()[:160] or None
         aut.observacoes = (form.get("observacoes") or "").strip() or None
         aut.atualizado_por = getattr(current_user, "nome", None) or getattr(current_user, "username", None)
@@ -26402,12 +26430,16 @@ def register_routes(app):
             "cliente": pedido.cliente,
             "frete": pedido.frete or "",
             "data_liberacao": (_lib_efetiva_pedido(pedido).isoformat() if _lib_efetiva_pedido(pedido) else ""),
-            "data_emissao": (aut.data_emissao.isoformat() if aut else date.today().isoformat()),
+            "data_emissao": (aut.data_emissao.isoformat() if aut else _agora_brt().date().isoformat()),
+            "hora_emissao": (aut.hora_emissao if aut and aut.hora_emissao else _agora_brt().strftime("%H:%M")),
+            "coleta_modo": ("agendada" if aut and not aut.coleta_imediata else "imediata"),
+            "coleta_data": (aut.coleta_data.isoformat() if aut and aut.coleta_data else ""),
+            "coleta_hora": (aut.coleta_hora if aut and aut.coleta_hora else ""),
             "cliente_doc": (aut.cliente_doc if aut and aut.cliente_doc else pedido.cliente) or "",
             "observacoes": (aut.observacoes if aut and aut.observacoes else ""),
             "volumes": [
                 {"quantidade": v.quantidade, "tipo": v.tipo, "comprimento": v.comprimento, "largura": v.largura,
-                 "altura": v.altura, "peso_bruto": v.peso_bruto, "peso_liquido": v.peso_liquido}
+                 "altura": v.altura, "peso_bruto": v.peso_bruto}
                 for v in (aut.volumes if aut else [])
             ],
         }
