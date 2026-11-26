@@ -1,11 +1,11 @@
 """Autorização de faturamento do pedido (Bruno, 26/11/2026).
 
 Documento impresso que leva a conclusão do pedido para a expedição (fica
-exposto sobre o pedido). Layout sóbrio (v3, 26/11/2026 — um "cartaz" colorido
-foi testado e descartado): grade com os campos-chave em destaque (PEDIDO DE
-VENDA, FRETE, CLIENTE, COLETA LIBERADA e SITUAÇÃO), tabela de volumes com
-quantidade, tipo, medidas, PESO BRUTO UNITÁRIO e PESO BRUTO TOTAL
+exposto sobre o pedido). Layout CLÁSSICO (o do modelo da empresa), com os blocos espalhados por toda a
+folha A4 e os campos-chave em letra grande (pedido, cliente, frete, coleta
+liberada). Volumes com PESO BRUTO UNITÁRIO e PESO BRUTO TOTAL da linha
 (quantidade × unitário), data/hora de emissão no topo e caixa de observações.
+(Em 26/11/2026 o Bruno recusou o "cartaz" colorido e a grade em caixas; ficou o clássico.)
 Este módulo concentra as regras (leitura do formulário, formatação das linhas,
 totais) e o PDF (reportlab); a página HTML de impressão usa os mesmos dados
 (ver templates/autorizacao_faturamento.html).
@@ -164,11 +164,10 @@ def montar_dados(pedido, aut, data_liberacao=None):
 
 
 NAVY = (27 / 255, 42 / 255, 74 / 255)  # azul da identidade do sistema
-CINZA = 0.93
 
 
 def gerar_pdf(dados, logo_path):
-    """PDF A4 sóbrio, com a grade de campos-chave e a tabela de volumes."""
+    """PDF A4 no desenho clássico, distribuído por toda a folha."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.utils import ImageReader, simpleSplit
     from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -178,162 +177,120 @@ def gerar_pdf(dados, logo_path):
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle(f"Autorização de faturamento - pedido {dados['pedido_venda']}")
     W, H = A4
-    m = 26
+    m = 28
     c.setLineWidth(1)
     c.rect(m, m, W - 2 * m, H - 2 * m)
-    x0, x1 = m + 28, W - m - 28
+    x0, x1 = 66, W - 66
     larg = x1 - x0
 
-    def ajusta(txt, fonte, tmax, largura, tmin=9):
+    def ajusta(txt, fonte, tmax, largura, tmin=10):
         t = tmax
         while t > tmin and stringWidth(txt, fonte, t) > largura:
             t -= 1
         return t
 
-    def celula(x, ytopo, w, h, rotulo, valor, tmax, fonte="Helvetica-Bold", fundo=None, centro=False):
-        if fundo is not None:
-            c.setFillGray(fundo)
-            c.rect(x, ytopo - h, w, h, fill=1, stroke=0)
-            c.setFillGray(0)
-        c.setLineWidth(1)
-        c.rect(x, ytopo - h, w, h)
-        c.setFillColorRGB(*NAVY)
-        c.setFont("Helvetica-Bold", 8.5)
-        c.drawString(x + 10, ytopo - 15, rotulo)
-        c.setFillGray(0)
-        t = ajusta(valor, fonte, tmax, w - 20)
-        c.setFont(fonte, t)
-        base = ytopo - h + (h - 22 - t) / 2 + 4
-        if centro:
-            c.drawCentredString(x + w / 2, base, valor)
-        else:
-            c.drawString(x + 10, base, valor)
+    # ---- espaçamento: a folga da página é dividida em 3 intervalos iguais (g) ----
+    # Contas da folha A4: topo+título ocupam até y=656; a caixa de observações começa em y=158.
+    n = len(dados["volumes"])
+    passo = 46 if n <= 10 else 32          # distância entre cliente / frete / situação / coleta
+    lin_h = 30 if n <= 8 else max(10, min(30, (419 - 3 * passo - 36) / n))
+    gap = max(12, min(80, (419 - 3 * passo - n * lin_h) / 3))
+    h_obs = 130
 
+    y = H - m - 30
     # topo: logo + emissão
-    y = H - m - 24
     try:
         img = ImageReader(logo_path)
         iw, ih = img.getSize()
-        lw = 140
-        c.drawImage(img, x0, y - lw * ih / iw + 6, width=lw, height=lw * ih / iw, mask="auto")
+        lw = 165
+        c.drawImage(img, x0, y - lw * ih / iw + 10, width=lw, height=lw * ih / iw, mask="auto")
     except Exception:
-        c.setFont("Helvetica-Bold", 16)
+        c.setFont("Helvetica-Bold", 18)
         c.drawString(x0, y - 10, "4PIPE solutions")
-    c.setFillGray(0.4)
-    c.setFont("Helvetica", 8.5)
-    c.drawRightString(x1, y - 4, "EMITIDO EM")
-    c.setFillGray(0)
     c.setFont("Helvetica-Bold", 11)
-    c.drawRightString(x1, y - 19, dados["emissao_txt"])
-    y -= 62
-    c.setLineWidth(1.4)
+    c.drawRightString(x1, y - 8, dados["emissao_txt"])
+
+    # título + nº do pedido (campo-chave)
+    y -= 72
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(x0, y, "AUTORIZAÇÃO DE FATURAMENTO DO PEDIDO:")
+    y -= 44
+    c.setFont("Helvetica-Bold", 40)
+    c.drawString(x0, y, str(dados["pedido_venda"]))
+    c.setLineWidth(1.2)
     c.setStrokeColorRGB(*NAVY)
-    c.line(x0, y, x1, y)
+    c.line(x0, y - 12, x1, y - 12)
     c.setStrokeGray(0)
 
-    # título
-    y -= 42
-    c.setFillColorRGB(*NAVY)
-    c.setFont("Helvetica-Bold", 22)
-    c.drawCentredString(W / 2, y, "AUTORIZAÇÃO DE FATURAMENTO")
-    c.setFont("Helvetica", 9.5)
-    c.setFillGray(0.4)
-    c.drawCentredString(W / 2, y - 16, "Liberação do pedido para a expedição")
-    c.setFillGray(0)
-
-    # grade de campos-chave
-    y -= 40
-    w1 = larg * 0.6
-    celula(x0, y, w1, 82, "PEDIDO DE VENDA", str(dados["pedido_venda"]), 44, fundo=CINZA)
-    celula(x0 + w1, y, larg - w1, 82, "FRETE", dados["frete"], 40, fundo=CINZA, centro=True)
-    y -= 82
-    celula(x0, y, larg, 74, "CLIENTE", dados["cliente"].upper(), 22)
-    y -= 74
-    w3 = larg * 0.62
-    celula(x0, y, w3, 74, dados["coleta_rotulo"], dados["coleta_valor"], 26, fundo=CINZA)
-    celula(x0 + w3, y, larg - w3, 74, "SITUAÇÃO", dados["situacao"], 17, centro=True)
-    y -= 74
+    # campos-chave, bem espaçados
+    y -= 12 + gap + 14
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(x0, y, "CLIENTE:")
+    cli = dados["cliente"]
+    tam = ajusta(cli, "Helvetica-BoldOblique", 24, larg - 78)
+    c.setFont("Helvetica-BoldOblique", tam)
+    c.drawString(x0 + 78, y - 1, cli)
+    y -= passo
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(x0, y, "FRETE:")
+    c.setFont("Helvetica-BoldOblique", 24)
+    c.drawString(x0 + 78, y - 1, dados["frete"])
+    y -= passo
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(x0, y, "SITUAÇÃO:")
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(x0 + 78, y, dados["situacao"])
+    y -= passo
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(x0, y, dados["coleta_rotulo"] + ":")
+    r = stringWidth(dados["coleta_rotulo"] + ":", "Helvetica-Bold", 12)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(x0 + r + 10, y - 2, dados["coleta_valor"])
 
     # tabela de volumes
-    y -= 34
-    c.setFillColorRGB(*NAVY)
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(x0, y, "VOLUMES E PESOS")
-    c.setFillGray(0)
+    y -= 30 + gap
+    cu, ct = x1 - 130, x1  # bordas direitas: peso unitário | peso total da linha
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x0, y, "QUANTIDADE  /  TIPO  /  MEDIDAS (mm)")
+    c.drawRightString(cu, y, "PESO BRUTO UNIT.")
+    c.drawRightString(ct, y, "PESO BRUTO TOTAL")
     y -= 10
-    cols = [x0, x0 + 46, x0 + 130, x0 + 282, x0 + 392, x1]  # qtd | tipo | medidas | peso unit. | peso total
-    cab_h = 24
-    c.setFillColorRGB(*NAVY)
-    c.rect(x0, y - cab_h, larg, cab_h, fill=1, stroke=0)
-    c.setFillGray(1)
-    c.setFont("Helvetica-Bold", 8.5)
-    c.drawString(cols[0] + 8, y - 15, "QTD")
-    c.drawString(cols[1] + 8, y - 15, "TIPO")
-    c.drawString(cols[2] + 8, y - 15, "MEDIDAS (mm)")
-    c.drawRightString(cols[4] - 10, y - 15, "PESO BRUTO UNIT.")
-    c.drawRightString(cols[5] - 10, y - 15, "PESO BRUTO TOTAL")
-    c.setFillGray(0)
-    y -= cab_h
-
-    obs_h = 100
-    base_min = m + 14 + obs_h + 28
-    n = len(dados["volumes"])
-    tot_h = 30 if dados["volumes"] else 0
-    disp = y - base_min - tot_h
-    lin_h = max(14, min(32, disp / max(n, 1)))
-    fonte = 13 if lin_h >= 26 else (11 if lin_h >= 19 else 9)
-    c.setLineWidth(0.5)
-    for i, v in enumerate(dados["volumes"]):
-        if i % 2:
-            c.setFillGray(0.97)
-            c.rect(x0, y - lin_h, larg, lin_h, fill=1, stroke=0)
-            c.setFillGray(0)
-        by = y - lin_h / 2 - fonte / 3
+    c.setLineWidth(0.8)
+    c.line(x0, y, x1, y)
+    y -= lin_h * 0.72
+    fonte = 15 if lin_h >= 26 else (12 if lin_h >= 19 else (10 if lin_h >= 14 else 8))
+    for v in dados["volumes"]:
         c.setFont("Helvetica-Bold", fonte)
-        c.drawString(cols[0] + 8, by, f"{v['quantidade']}X")
-        c.setFont("Helvetica", fonte)
-        c.drawString(cols[1] + 8, by, v["tipo"])
-        c.drawString(cols[2] + 8, by, v["medidas_txt"])
-        c.drawRightString(cols[4] - 10, by, v["pu_txt"])
-        c.setFont("Helvetica-Bold", fonte)
-        c.drawRightString(cols[5] - 10, by, v["pt_txt"])
+        c.drawString(x0 + 14, y, v["texto"])
+        c.drawRightString(cu, y, v["pu_txt"])
+        c.drawRightString(ct, y, v["pt_txt"])
         y -= lin_h
-        c.setStrokeGray(0.75)
-        c.line(x0, y, x1, y)
-        c.setStrokeGray(0)
-    if dados["volumes"]:
-        c.setFillGray(CINZA)
-        c.rect(x0, y - tot_h, larg, tot_h, fill=1, stroke=0)
-        c.setFillGray(0)
-        c.setLineWidth(1)
-        c.rect(x0, y - tot_h, larg, tot_h)
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(cols[0] + 8, y - 20, "TOTAL")
-        c.drawString(cols[1] + 8, y - 20, f"{dados['tot_volumes']} VOLUME" + ("S" if dados["tot_volumes"] != 1 else ""))
-        c.drawRightString(cols[5] - 10, y - 20, dados["tot_pb_txt"])
-        y -= tot_h
+    if n:
+        yl = y + lin_h * 0.72 - 6
+        c.setLineWidth(0.8)
+        c.line(x0, yl, x1, yl)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(x0 + 14, yl - 18, f"TOTAL:  {dados['tot_volumes']} VOLUME" + ("S" if dados["tot_volumes"] != 1 else ""))
+        c.setFont("Helvetica-Bold", 13)
+        c.drawRightString(ct, yl - 19, dados["tot_pb_txt"])
     else:
         c.setFont("Helvetica-Oblique", 10)
-        c.setFillGray(0.45)
-        c.drawString(x0 + 8, y - 20, "Nenhum volume informado.")
-        c.setFillGray(0)
+        c.drawString(x0 + 14, y, "Nenhum volume informado.")
 
-    # observações (rodapé)
-    bx, bw = x0, larg
-    by = m + 22
-    c.setLineWidth(1)
-    c.rect(bx, by, bw, obs_h)
-    c.setFillColorRGB(*NAVY)
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(bx + 10, by + obs_h - 15, "OBSERVAÇÕES")
-    c.setFillGray(0)
+    # observações (fixa no pé da folha)
+    bx, bw = m + 12, W - 2 * m - 24
+    by = m + 12
+    c.setLineWidth(1.5)
+    c.rect(bx, by, bw, h_obs - 12)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(bx + 12, by + h_obs - 12 - 22, "OBSERVAÇÕES:")
     c.setFont("Helvetica", 10.5)
-    ty = by + obs_h - 34
+    ty = by + h_obs - 12 - 42
     linhas_obs = []
     for par in (dados["observacoes"] or "").splitlines():
-        linhas_obs += simpleSplit(par, "Helvetica", 10.5, bw - 20) or [""]
+        linhas_obs += simpleSplit(par, "Helvetica", 10.5, bw - 24) or [""]
     for linha in linhas_obs[:5]:
-        c.drawString(bx + 10, ty, linha)
+        c.drawString(bx + 12, ty, linha)
         ty -= 14
     c.showPage()
     c.save()

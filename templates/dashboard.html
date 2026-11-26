@@ -538,13 +538,14 @@ document.addEventListener("click", function (ev) {
   .baixa-sec { border: 1px solid #dfe5ee; border-radius: .6rem; padding: .8rem .9rem; margin-bottom: .8rem; background: #fbfcfe; }
   .baixa-sec-tit { font-weight: 800; color: #1b2a4a; margin-bottom: .55rem; font-size: .95rem; }
   .baixa-passo { display: inline-flex; align-items: center; justify-content: center; width: 1.4rem; height: 1.4rem; border-radius: 50%; background: #009c3b; color: #fff; font-size: .78rem; margin-right: .4rem; }
-  .baixa-vol-cab, .baixa-vol-linha { display: grid; grid-template-columns: 3.4rem 8.4rem repeat(3, 4.6rem) 7.4rem 2rem; gap: .35rem; align-items: center; }
+  .baixa-vol-cab, .baixa-vol-linha { display: grid; grid-template-columns: 3.4rem 8.4rem repeat(3, 4.6rem) 7.6rem 7.6rem 2rem; gap: .35rem; align-items: center; }
   .baixa-vol-cab { font-size: .68rem; color: #6b7280; font-weight: 700; text-transform: uppercase; margin-bottom: .2rem; }
   .baixa-vol-linha { margin-bottom: .35rem; }
   .baixa-vol-linha .form-control, .baixa-vol-linha .form-select { padding: .25rem .4rem; font-size: .85rem; }
   .baixa-total { font-size: .85rem; font-weight: 700; color: #1b2a4a; background: #e3f5e8; border-radius: 999px; padding: .15rem .7rem; display: inline-block; }
   #baixaVolumes { overflow-x: auto; }
-  #baixaVolumes > div { min-width: 34rem; }
+  #baixaVolumes > div { min-width: 42rem; }
+  .baixa-vol-linha .baixa-pt { font-weight: 700; background: #f0f7f2; }
   .baixa-coleta-op { border: 2px solid #dfe5ee; border-radius: .6rem; padding: .55rem .8rem; cursor: pointer; background: #fff; flex: 1; }
   .baixa-coleta-op.ativa { border-color: #009c3b; background: #e3f5e8; }
 </style>
@@ -597,7 +598,7 @@ document.addEventListener("click", function (ev) {
               </div>
             </label>
           </div>
-          <div class="form-text">Sai numa faixa verde bem grande na folha, para a expedição ver de longe.</div>
+          <div class="form-text">Sai em letra grande na folha, na linha "COLETA LIBERADA", para a expedição ver de longe.</div>
         </div>
 
         <div class="baixa-sec">
@@ -610,13 +611,13 @@ document.addEventListener("click", function (ev) {
           <div class="baixa-sec-tit"><span class="baixa-passo">4</span> 📦 Volumes e peso <span class="baixa-total ms-2" id="baixaTotais">0 volumes · 0 kg</span></div>
           <div id="baixaVolumes">
             <div>
-              <div class="baixa-vol-cab"><span>Qtd</span><span>Tipo</span><span>Comp. (mm)</span><span>Larg. (mm)</span><span>Alt. (mm)</span><span>⚖️ Peso bruto unit. (kg)</span><span></span></div>
+              <div class="baixa-vol-cab"><span>Qtd</span><span>Tipo</span><span>Comp. (mm)</span><span>Larg. (mm)</span><span>Alt. (mm)</span><span>⚖️ Peso unit. (kg)</span><span>🧮 Peso total (kg)</span><span></span></div>
               <div id="baixaVolLinhas"></div>
             </div>
           </div>
           <button type="button" class="btn btn-sm btn-outline-primary mt-1" id="baixaAddVol">➕ Adicionar volume</button>
           <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="baixaDupVol" title="Repete a última linha (útil para volumes iguais)">📋 Repetir última linha</button>
-          <div class="form-text">Ex.: 1 · Volume · 500 × 360 × 360 · 3 kg. O peso bruto é de cada volume (unitário): o total da linha é calculado (quantidade × unitário).</div>
+          <div class="form-text">Ex.: 2 · Caixa · 500 × 360 × 360 · 3 kg cada = 6 kg na linha. Preencha o <strong>peso bruto unitário</strong> (de cada pacote/volume) e o <strong>total da linha</strong> é calculado — ou digite o total e o unitário é calculado. Os dois saem no documento.</div>
         </div>
 
         <div class="baixa-sec mb-0">
@@ -658,6 +659,18 @@ document.addEventListener("click", function (ev) {
     });
     document.getElementById("baixaTotais").textContent = vols + " volume" + (vols === 1 ? "" : "s") + " · " + (Math.round(kg * 100) / 100).toString().replace(".", ",") + " kg";
   }
+  function fmtKg(n, casas) { return (Math.round(n * Math.pow(10, casas)) / Math.pow(10, casas)).toString().replace(".", ","); }
+  // unitário × quantidade = total da linha; digitando o total, o unitário é recalculado (total ÷ quantidade)
+  function linhaPeso(l, alvo) {
+    var q = parseInt(l.querySelector("[name='vol_qtd[]']").value, 10) || 0;
+    var un = l.querySelector("[name='vol_pb[]']"), tt = l.querySelector("[data-pt]");
+    if (alvo === tt) {
+      if (tt.value.trim() === "") { un.value = ""; return; }
+      un.value = q > 0 ? fmtKg(lerNum(tt) / q, 4) : "";
+    } else {
+      tt.value = un.value.trim() === "" ? "" : fmtKg(q * lerNum(un), 2);
+    }
+  }
   function addLinha(v) {
     v = v || {};
     var d = document.createElement("div");
@@ -669,11 +682,13 @@ document.addEventListener("click", function (ev) {
       '<input type="text" inputmode="decimal" class="form-control" name="vol_c[]" value="' + num(v.comprimento) + '" placeholder="500">' +
       '<input type="text" inputmode="decimal" class="form-control" name="vol_l[]" value="' + num(v.largura) + '" placeholder="360">' +
       '<input type="text" inputmode="decimal" class="form-control" name="vol_a[]" value="' + num(v.altura) + '" placeholder="360">' +
-      '<input type="text" inputmode="decimal" class="form-control" name="vol_pb[]" value="' + num(v.peso_bruto) + '" placeholder="3">' +
+      '<input type="text" inputmode="decimal" class="form-control" name="vol_pb[]" value="' + num(v.peso_bruto) + '" placeholder="3" title="Peso bruto de UMA unidade (pacote/volume)">' +
+      '<input type="text" inputmode="decimal" class="form-control baixa-pt" data-pt="1" value="" placeholder="auto" title="Peso bruto total da linha (quantidade × unitário). Pode digitar o total que o unitário é calculado.">' +
       '<button type="button" class="btn btn-sm btn-outline-danger px-1" title="Remover esta linha">🗑️</button>';
     d.querySelector("button").addEventListener("click", function() { d.remove(); totais(); });
-    d.addEventListener("input", totais);
+    d.addEventListener("input", function(ev) { linhaPeso(d, ev.target); totais(); });
     linhas.appendChild(d);
+    linhaPeso(d, null);
     totais();
   }
   function setColeta(modo, data, hora) {

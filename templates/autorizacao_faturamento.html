@@ -8,46 +8,37 @@
   @page { size: A4 portrait; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  :root { --navy: #1b2a4a; --cinza: #ededed; }
+  :root { --navy: #1b2a4a; }
   body { background: #e9ecef; font-family: Calibri, "Segoe UI", Arial, sans-serif; color: #000; }
   .barra { position: sticky; top: 0; z-index: 5; background: var(--navy); color: #fff; padding: .6rem 1rem; display: flex; gap: .6rem; align-items: center; font-size: .95rem; }
   .barra b { margin-right: auto; }
   .barra a, .barra button { background: #fff; color: var(--navy); border: 0; border-radius: .35rem; padding: .4rem .9rem; font-weight: 700; text-decoration: none; cursor: pointer; font-size: .9rem; }
-  .pagina { width: 210mm; height: 297mm; margin: 14px auto; background: #fff; padding: 9mm; }
-  .folha { width: 100%; height: 100%; border: 1px solid #000; padding: 10mm 12mm 9mm; display: flex; flex-direction: column; justify-content: space-between; }
-  .topo { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid var(--navy); padding-bottom: 4mm; }
-  .topo img { width: 50mm; }
-  .emitido { text-align: right; }
-  .emitido small { display: block; font-size: 8.5pt; color: #666; letter-spacing: .04em; }
-  .emitido b { font-size: 11.5pt; }
-  .titulo { text-align: center; }
-  .titulo h1 { margin: 0; font-size: 22pt; color: var(--navy); letter-spacing: .03em; }
-  .titulo p { margin: 1.5mm 0 0; font-size: 9.5pt; color: #666; }
-  .grade { border-collapse: collapse; width: 100%; table-layout: fixed; }
-  .grade td { border: 1px solid #000; padding: 2.2mm 3.5mm 2.6mm; vertical-align: top; }
-  .grade .l { display: block; font-size: 8.5pt; font-weight: 700; color: var(--navy); letter-spacing: .05em; margin-bottom: 1.2mm; }
-  .grade .v { display: block; font-weight: 700; line-height: 1.1; }
-  .grade .cz { background: var(--cinza); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .g-ped .v { font-size: 40pt; }
-  .g-fre .v { font-size: 36pt; text-align: center; }
-  .g-cli .v { font-size: 21pt; text-transform: uppercase; }
-  .g-col .v { font-size: 24pt; }
-  .g-sit .v { font-size: 16pt; text-align: center; padding-top: 2mm; }
-  .g-ped, .g-fre { height: 29mm; }
-  .g-cli, .g-col, .g-sit { height: 25mm; }
-  h2 { margin: 0 0 2mm; font-size: 11pt; color: var(--navy); }
-  table.vol { width: 100%; border-collapse: collapse; }
-  table.vol th { background: var(--navy); color: #fff; font-size: 8.5pt; padding: 2.2mm 2.5mm; text-align: left; letter-spacing: .03em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  table.vol td { padding: 2.6mm 2.5mm; font-size: 12.5pt; border-bottom: 1px solid #bbb; }
-  table.vol tbody tr:nth-child(even) td { background: #f7f7f7; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  table.vol .n { text-align: right; white-space: nowrap; }
-  table.vol .q { font-weight: 700; width: 14mm; }
-  table.vol tfoot td { background: var(--cinza); font-weight: 700; font-size: 12pt; border-top: 1px solid #000; border-bottom: 1px solid #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  table.vol tfoot td:first-child { border-left: 1px solid #000; }
-  table.vol tfoot td:last-child { border-right: 1px solid #000; }
-  .vazio { font-style: italic; color: #777; padding: 3mm 2.5mm; border-bottom: 1px solid #bbb; }
-  .obs { border: 1px solid #000; padding: 2.5mm 4mm; height: 34mm; }
-  .obs b { font-size: 9pt; color: var(--navy); letter-spacing: .05em; }
+  .pagina { width: 210mm; height: 297mm; margin: 14px auto; background: #fff; padding: 10mm; }
+  /* layout clássico; os 4 blocos são espalhados por toda a altura da folha */
+  .folha { width: 100%; height: 100%; border: 1px solid #000; padding: 12mm 17mm 9mm; display: flex; flex-direction: column; justify-content: space-between; }
+  .topo { display: flex; justify-content: space-between; align-items: flex-start; }
+  .topo img { width: 58mm; }
+  .topo .data { font-size: 11.5pt; font-weight: 700; margin-top: 3mm; }
+  .titulo { margin-top: 9mm; border-bottom: 2px solid var(--navy); padding-bottom: 3mm; }
+  .titulo h1 { font-size: 15.5pt; margin: 0; }
+  .titulo .ped { font-size: 44pt; font-weight: 700; line-height: 1.05; margin-top: 1mm; }
+  .campos { display: flex; flex-direction: column; gap: 6.5mm; }
+  .linha { display: flex; align-items: baseline; gap: 4mm; font-size: 12pt; font-weight: 700; }
+  .linha .rot { min-width: 25mm; }
+  .linha .val { font-size: 24pt; font-style: italic; line-height: 1.1; text-transform: uppercase; }
+  .linha.sit .val { font-size: 14pt; font-style: normal; }
+  .linha.col .rot { min-width: 0; }
+  .linha.col .val { font-size: 21pt; font-style: normal; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 10pt; padding: 0 0 2.2mm; border-bottom: 1px solid #000; }
+  th.n, td.n { text-align: right; width: 38mm; white-space: nowrap; }
+  td { font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 15pt; padding: 3.2mm 0 3.2mm 5mm; }
+  table.compacto td { font-size: 11pt; padding: 1.4mm 0 1.4mm 5mm; }
+  tfoot td { font-size: 11.5pt; border-top: 1px solid #000; padding-top: 2.6mm; }
+  tfoot td.n { font-size: 13pt; }
+  .vazio { font-style: italic; color: #777; padding: 3mm 0 0 5mm; }
+  .obs { border: 2px solid #000; padding: 3.5mm 5mm; height: 40mm; }
+  .obs b { font-size: 12pt; }
   .obs div { white-space: pre-wrap; font-size: 10.5pt; margin-top: 2mm; }
   @media print {
     body { background: #fff; }
@@ -63,38 +54,37 @@
   <a href="{{ url_for('autorizacao_faturamento_pdf', pedido_id=request.view_args.pedido_id) }}">💾 Salvar PDF</a>
 </div>
 <div class="pagina"><div class="folha">
-  <div class="topo">
-    <img src="{{ url_for('static', filename='img/logo_4pipe.png') }}" alt="4PIPE solutions">
-    <div class="emitido"><small>EMITIDO EM</small><b>{{ d.emissao_txt }}</b></div>
-  </div>
-  <div class="titulo"><h1>AUTORIZAÇÃO DE FATURAMENTO</h1><p>Liberação do pedido para a expedição</p></div>
-  <table class="grade">
-    <tr>
-      <td class="g-ped cz" style="width:60%"><span class="l">PEDIDO DE VENDA</span><span class="v">{{ d.pedido_venda }}</span></td>
-      <td class="g-fre cz"><span class="l">FRETE</span><span class="v">{{ d.frete }}</span></td>
-    </tr>
-    <tr><td class="g-cli" colspan="2"><span class="l">CLIENTE</span><span class="v">{{ d.cliente }}</span></td></tr>
-    <tr>
-      <td class="g-col cz"><span class="l">{{ d.coleta_rotulo }}</span><span class="v">{{ d.coleta_valor }}</span></td>
-      <td class="g-sit"><span class="l">SITUAÇÃO</span><span class="v">{{ d.situacao }}</span></td>
-    </tr>
-  </table>
   <div>
-    <h2>VOLUMES E PESOS</h2>
-    <table class="vol">
-      <thead><tr><th>QTD</th><th>TIPO</th><th>MEDIDAS (mm)</th><th class="n">PESO BRUTO UNIT.</th><th class="n">PESO BRUTO TOTAL</th></tr></thead>
+    <div class="topo">
+      <img src="{{ url_for('static', filename='img/logo_4pipe.png') }}" alt="4PIPE solutions">
+      <div class="data">{{ d.emissao_txt }}</div>
+    </div>
+    <div class="titulo">
+      <h1>AUTORIZAÇÃO DE FATURAMENTO DO PEDIDO:</h1>
+      <div class="ped">{{ d.pedido_venda }}</div>
+    </div>
+  </div>
+  <div class="campos">
+    <div class="linha"><span class="rot">CLIENTE:</span><span class="val">{{ d.cliente }}</span></div>
+    <div class="linha"><span class="rot">FRETE:</span><span class="val">{{ d.frete }}</span></div>
+    <div class="linha sit"><span class="rot">SITUAÇÃO:</span><span class="val">{{ d.situacao }}</span></div>
+    <div class="linha col"><span class="rot">{{ d.coleta_rotulo }}:</span><span class="val">{{ d.coleta_valor }}</span></div>
+  </div>
+  <div>
+    <table class="{{ 'compacto' if d.volumes|length > 8 else '' }}">
+      <thead><tr><th>QUANTIDADE / TIPO / MEDIDAS (mm)</th><th class="n">PESO BRUTO UNIT.</th><th class="n">PESO BRUTO TOTAL</th></tr></thead>
       <tbody>
         {% for v in d.volumes %}
-        <tr><td class="q">{{ v.quantidade }}X</td><td>{{ v.tipo }}</td><td>{{ v.medidas_txt }}</td><td class="n">{{ v.pu_txt }}</td><td class="n"><b>{{ v.pt_txt }}</b></td></tr>
+        <tr><td>{{ v.texto }}</td><td class="n">{{ v.pu_txt }}</td><td class="n">{{ v.pt_txt }}</td></tr>
         {% endfor %}
       </tbody>
       {% if d.volumes %}
-      <tfoot><tr><td colspan="2">TOTAL · {{ d.tot_volumes }} VOLUME{{ "S" if d.tot_volumes != 1 else "" }}</td><td></td><td></td><td class="n">{{ d.tot_pb_txt }}</td></tr></tfoot>
+      <tfoot><tr><td>TOTAL: {{ d.tot_volumes }} VOLUME{{ "S" if d.tot_volumes != 1 else "" }}</td><td class="n"></td><td class="n">{{ d.tot_pb_txt }}</td></tr></tfoot>
       {% endif %}
     </table>
     {% if not d.volumes %}<div class="vazio">Nenhum volume informado.</div>{% endif %}
   </div>
-  <div class="obs"><b>OBSERVAÇÕES</b><div>{{ d.observacoes }}</div></div>
+  <div class="obs"><b>OBSERVAÇÕES:</b><div>{{ d.observacoes }}</div></div>
 </div></div>
 {% if not request.args.get('sem') %}
 <script>window.addEventListener("load", function () { setTimeout(function () { window.print(); }, 400); });</script>
