@@ -14747,6 +14747,10 @@ def _kanban_parados_expedicao(args, hoje=None):
             continue  # sem liberação efetiva, ou ela ainda é futura: ainda não está na Expedição
         exp_real, ent_real, via_log = _datas_reais_logistica(go, regs)
         fob = _frete_tipo(go.frete) == "FOB"
+        # Liberação efetiva ≠ expedição (Bruno, 27/11/2026): FOB liberado p/ o cliente coletar às vezes chega da
+        # Logística com "data de expedição" sem NF. Sem NF o material não saiu: continua parado aguardando coleta.
+        if exp_real and fob and via_log and exp_real >= hoje - timedelta(days=30) and not _expedicao_com_evidencia(go):
+            exp_real = None
         # FOB (Bruno, 12/11/2026): "entrega real" = pedido apto p/ o cliente retirar; ele só sai da planta
         # depois da baixa de expedição da Logística. Pedido FOB que a Logística conhece, com entrega real
         # mas sem expedição, continua parado (aguardando retirada).

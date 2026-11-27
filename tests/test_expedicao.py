@@ -40,3 +40,24 @@ def test_painel_mostra_aviso_de_liberado_sem_expedicao(app):
     entrar(c, "t_admin")
     html = c.get("/painel").get_data(as_text=True)
     assert "liberado(s) para coleta, ainda sem NF/expedição" in html and "T-EXP-9" in html
+
+
+def test_fob_liberado_sem_nf_continua_parado_na_expedicao(app, monkeypatch):
+    """O FOB 'liberado p/ coleta' (Logística manda data de expedição, mas sem NF) tem que aparecer
+    no Kanban de parados em vez de sumir; com NF ele é expedição de verdade e sai do quadro."""
+    import json
+    from models import LogisticaSync
+    hoje = date(2026, 11, 27)
+    monkeypatch.setattr(A.logistica_api, "configurado", lambda: True)
+    payload = json.dumps({"data_expedicao": "2026-11-27", "data_entrega_cliente": "2026-11-27"})
+    with app.app_context():
+        _po("T-EXP-20", "FOB SEM NF", go_data_efetiva_liberacao_pcp=hoje)
+        _po("T-EXP-21", "FOB COM NF", go_data_efetiva_liberacao_pcp=hoje, go_numero_nf="8127")
+        for pv in ("T-EXP-20", "T-EXP-21"):
+            db.session.add(LogisticaSync(pedido_venda_norm=pv, pedido_venda_logistica=pv, payload_json=payload))
+        db.session.commit()
+        with app.test_request_context("/gestao-operacao/kanban-expedicao"):
+            r = A._kanban_parados_expedicao({}, hoje=hoje)
+        parados = {c["pedido_venda"] for col in r["colunas"] for c in col["cards"]}
+        assert "T-EXP-20" in parados      # liberado p/ coleta, sem NF: segue parado
+        assert "T-EXP-21" not in parados  # NF emitida + data da Logística: expedido de verdade
