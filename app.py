@@ -14232,7 +14232,7 @@ def _central_logistica(pedidos, info, painel_log, filtros, fc, ve_custos, hoje=N
             pe["max_dias"] = max(pe["max_dias"], i["dias_atraso"])
         elif i["situacao"] == "risco":
             pe["risco"] += 1
-        if p.go_data_pedido_expedido == hoje:
+        if p.go_data_pedido_expedido == hoje and _expedicao_com_evidencia(p):
             expedidos_hoje += 1
         if p.go_custo_frete_previsto:
             custo_prev += p.go_custo_frete_previsto
@@ -14621,7 +14621,9 @@ def _kanban_expedicao():
             continue  # PCP ainda não liberou (ou a data efetiva ainda não chegou) — não entra no kanban
 
         expedido_hoje = go.go_data_pedido_expedido == hoje
-        if go.go_data_pedido_expedido and not expedido_hoje:
+        if expedido_hoje and not _expedicao_com_evidencia(go):
+            expedido_hoje = False  # só liberado p/ coleta (sem NF): continua parado no board, não "expedido hoje"
+        elif go.go_data_pedido_expedido and not expedido_hoje:
             continue  # expedido em dia anterior — some do board, como hoje
 
         dias_parado = (hoje - liberacao_efetiva).days
@@ -14930,6 +14932,17 @@ def _auditoria_expedicao(dias=45, filtro="", hoje=None):
     return {"dias": dias, "configurado": configurado, "total": total, "contagem": contagem, "linhas": linhas}
 
 
+def _expedicao_com_evidencia(go):
+    """LIBERAÇÃO EFETIVA ≠ EXPEDIÇÃO (Bruno, 27/11/2026). Liberar o pedido para o
+    cliente coletar (FOB) não é o material ter saído da fábrica: sem NF o material
+    não pode sair. Por isso uma data de expedição (hoje/ontem) só vale como
+    "material expedido" quando há NF emitida, ou quando alguém registrou à mão o
+    embarque/baixa no site (decisão explícita da pessoa)."""
+    if go.go_embarque_manual_em or go.go_baixa_manual_em:
+        return True
+    return bool(go.go_numero_nf or go.go_data_emissao_nf)
+
+
 def _expedidos_recentes_painel(hoje=None):
     """Aviso do Painel (Radar operacional): o que saiu da Expedição hoje e
     ontem. Regra do Bruno (09/11/2026): a data de expedição vem SÓ da
@@ -14947,6 +14960,7 @@ def _expedidos_recentes_painel(hoje=None):
     regs = _logistica_regs_por_base() if pedidos else {}
     dias = {"hoje": [], "ontem": []}
     nao_confirmados = []
+    liberados_sem_expedicao = []  # tem "data de expedição", mas sem NF: foi só liberado p/ coleta, não expedido
 
     # ---- PARTES do pedido (Bruno, 17/11/2026: "esse pedido é 1033/2"): a Operação pode ter a linha pelo nº base
     # ("1033") enquanto a Produção/Logística trabalham com a parte ("1033/2"). O aviso mostra a PARTE que de fato
@@ -15001,6 +15015,9 @@ def _expedidos_recentes_painel(hoje=None):
                 exp_r = logistica_api._data(r.get("data_expedicao"))
                 pr = pedido_por_rotulo.get(rid)
                 nfs_r = ", ".join(str(x).strip() for x in (r.get("notas_fiscais") or []) if str(x).strip())[:30]
+                if not (nfs_r or _expedicao_com_evidencia(go)):
+                    liberados_sem_expedicao.append(rid)  # sem NF: liberação p/ coleta, não expedição
+                    continue
                 dias["hoje" if exp_r == hoje else "ontem"].append({
                     "id": go.id,
                     "liberacao_efetiva": (liberacao_pcp.get(rid) or {}).get("efetiva"),
@@ -15041,6 +15058,9 @@ def _expedidos_recentes_painel(hoje=None):
                 exp_data = m.get("go_data_pedido_expedido")
                 ent_data = m.get("go_data_entregue_cliente")
                 via_log = True
+        if not _expedicao_com_evidencia(go):
+            liberados_sem_expedicao.append(rotulo or go.pedido_venda or str(go.id))
+            continue
         efetiva = (liberacao_pcp.get(rotulo) or liberacao_pcp.get(chave_pv) or {}).get("efetiva") or go.go_data_efetiva_liberacao_pcp
         valor = go.go_valor_pedido_operacao or 0.0
         if pr_parte is not None and pr_parte.valor_total:
@@ -15067,6 +15087,7 @@ def _expedidos_recentes_painel(hoje=None):
         "logistica_ok": bool(st["configurado"] and st["ultimo_sucesso"]),
         "ultimo_sync": st["ultimo_sucesso"],
         "nao_confirmados": nao_confirmados,
+        "liberados_sem_expedicao": sorted(set(liberados_sem_expedicao)),
         "data_hoje": hoje, "data_ontem": ontem,
     }
 
